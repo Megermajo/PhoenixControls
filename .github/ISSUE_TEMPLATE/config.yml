@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & ideas (Discussions)
+    url: https://github.com/Megermajo/PhoenixControls/discussions
+    about: Open-ended questions, ideas, and show-and-tell go here.
+  - name: Security vulnerability
+    url: https://github.com/Megermajo/PhoenixControls/security/advisories/new
+    about: Report security issues privately — please do not open a public issue.
+  - name: Megermajo Productions
+    url: https://megermajo-productions.com
+    about: Project home page.

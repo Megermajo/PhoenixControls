@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest an idea or improvement for Phoenix Controls.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea? Great. For open-ended "would this be a good idea?" chats, the
+        [Discussions](https://github.com/Megermajo/PhoenixControls/discussions) tab
+        is often a better fit — use this form when you have a concrete request.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or workflow behind the request — not just the solution.
+      placeholder: When I stream, I want to ... but right now ...
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to see?
+      description: Your proposed feature or change.
+    validations:
+      required: true
+  - type: dropdown
+    id: app
+    attributes:
+      label: Which app would it live in?
+      options:
+        - Hub
+        - Architect
+        - Visualist
+        - Across the suite
+        - Not sure
+    validations:
+      required: false

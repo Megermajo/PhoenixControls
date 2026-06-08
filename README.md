@@ -11,6 +11,14 @@
 [![License](https://img.shields.io/badge/license-MIT-E5A24E?style=flat-square)](LICENSE)
 [![AI authored](https://img.shields.io/badge/source-100%25%20AI--authored-E5A24E?style=flat-square)](#-ai-disclaimer)
 
+<br />
+
+<a href="https://github.com/Megermajo/PhoenixControls/releases/latest/download/PhoenixControls-Setup.exe"><img src="https://img.shields.io/badge/Download-Installer-E5A24E?style=for-the-badge&logo=windows&logoColor=1B1713" alt="Download Installer" height="34" /></a>
+&nbsp;&nbsp;
+<a href="https://github.com/Megermajo/PhoenixControls/archive/refs/heads/code.zip"><img src="https://img.shields.io/badge/Download-Source%20Code-1B1713?style=for-the-badge&logo=github&logoColor=E5A24E" alt="Download Source Code (zip)" height="34" /></a>
+
+<sub>Installer link goes live with the first release · Source Code is a `.zip` of the latest source on the `code` branch</sub>
+
 </div>
 
 ---
@@ -159,6 +167,13 @@ If any of these matter to you, say so in the repo's [Discussions](../../discussi
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for the full text.
 
 In short: do what you like with it, just keep the copyright notice.
+
+### Code signing
+
+Release builds are produced on GitHub-hosted CI from the public source on the
+[`code`](https://github.com/Megermajo/PhoenixControls/tree/code) branch. See the
+[**Code signing policy**](CODE_SIGNING_POLICY.md) for how releases are built, who
+approves them, and the privacy commitment.
 
 ---
 
