@@ -23,6 +23,14 @@
 
 ---
 
+> [!NOTE]
+> ### 🎉 Version 1.0 — just shipped
+> This is the first public release. It's stable and ready to use — and actively
+> developed, so expect a steady flow of new features and fixes. Hit a rough edge?
+> Open an [issue](../../issues) or say hi in [Discussions](../../discussions).
+
+---
+
 > [!IMPORTANT]
 > ### 🤖 AI Disclaimer
 > **100% of the source in this repository was authored by AI** — directed, reviewed,
@@ -73,7 +81,7 @@ Four steps, usually under ten minutes. You'll need a working Streamer.bot on the
 Grab a build from the repo's **Releases** page:
 
 - **Installer** (`PhoenixControls-Setup.exe`) — registers the `.phx` file type and adds Start-menu shortcuts.
-- **Portable zip** — unzip anywhere and run `PhoenixControls.exe`.
+- **Portable zip** — unzip anywhere and launch Hub from `Hub\Phoenix.Controls.Hub.WinUI.exe` (or run `CreateShortcuts.ps1` once to add Start-menu shortcuts).
 
 > 📂 **Where your data lives:** `%LOCALAPPDATA%\PhoenixControls\`
 > Sample flows land in `data\logic\examples\`.
@@ -151,11 +159,13 @@ You design both halves: the idle layer that lives on stream, and the reactions s
 
 ## 4 · On the Horizon
 
-A few ideas we've kicked around. **Parked, not promised.**
+A few things we're working toward. Some are already wired internally but stay hidden until they're solid enough to trust on stream. **Parked, not promised.**
 
+- **AI nodes** — prompt an LLM, auto-moderate chat, generate images, describe what's on screen. The plumbing exists but isn't finished or tested yet, so it's hidden until it's reliable.
+- **Live Twitch & OBS data** — reading live state *back* into your flows (viewer counts, follower info, OBS scene state), not just sending actions out. Today Phoenix dispatches through Streamer.bot; richer read-back is the next step.
+- **AI Inspector** — once AI is live, a window into each call: what you asked, what it remembered, what it cost.
 - **A more distinctive Hub window** — a custom-shaped silhouette instead of a plain rectangle.
 - **Pop-out windows that remember you** — filters and drafts that survive a restart, not just a pop-out.
-- **AI Inspector** — a look inside AI calls: who you asked, what it remembered, what it cost.
 - **Smoother idle frames** — performance polish so Hub stays light even when it's quiet.
 
 If any of these matter to you, say so in the repo's [Discussions](../../discussions) tab.

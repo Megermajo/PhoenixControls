@@ -22,19 +22,11 @@ Phoenix Controls is maintained by a single author, who holds all roles:
 
 ## Code signing
 
-> **Status — enrolling.** Phoenix Controls is enrolling in the free
-> [SignPath Foundation](https://signpath.org) open-source code-signing program.
-> Until enrollment completes, release binaries are **unsigned**, and Windows
-> will show an "unknown publisher" prompt on first run. Once active, this
-> section will read:
->
-> > Free code signing provided by [SignPath.io](https://about.signpath.io),
-> > certificate by [SignPath Foundation](https://signpath.org).
->
-> Signed binaries will show **SignPath Foundation** as the verified Windows
-> publisher. A freshly issued certificate builds Windows SmartScreen reputation
-> gradually, so early downloads may still show a caution prompt until that
-> reputation accumulates.
+> **Status — unsigned.** Release binaries are currently **unsigned**, so Windows
+> may show an "unknown publisher" / SmartScreen prompt on first run — expected
+> for a young project. Verify your download against the published `.sha256`
+> sidecar if you want to confirm integrity. Code signing is planned; this section
+> will be updated with the details once it's in place.
 
 ## Privacy
 
