@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.MainView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls"
+    xmlns:canvas="using:Phoenix.Controls.Visualist.WinUI.Canvas">
+
+    <!-- Sprint E — pillar-local focus-visual implicit Styles. Merged here
+         (rather than in Hub.WinUI's App.xaml) so Visualist's overrides
+         win for its own subtree and the file stays Visualist-owned per
+         feedback_visualist_architect_chrome_independence.md. -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Phoenix.Controls.Visualist.WinUI/Themes/FocusVisuals.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- R54 — Ctrl+N / Ctrl+O accelerators for the embedded Visualist File menu
+         commands (New Layer / Open Layer). Fire when focus is anywhere in the
+         Visualist pillar subtree. -->
+    <UserControl.KeyboardAccelerators>
+        <KeyboardAccelerator Modifiers="Control" Key="N" Invoked="OnNewLayerAccelerator" />
+        <KeyboardAccelerator Modifiers="Control" Key="O" Invoked="OnOpenLayerAccelerator" />
+    </UserControl.KeyboardAccelerators>
+
+    <!-- Single-HUB collapse (T15 retirement): Hub.MainWindow embeds this view
+         inside its MainPaneRegion and owns the only visible chrome. The
+         pillar-local VisualistChrome was deleted in  polish — the
+         Chrome was Visibility="Collapsed" since T15 but its event
+         subscriptions and compiled-XAML bindings still ran. The public action
+         methods on this MainView (NewLayer, OpenLayerDialog, …) carry the
+         former Chrome's responsibilities (TODO 2026-05-07 P3 — dead
+         VisualistChrome control). -->
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="24" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LayerRailColumn" Width="200" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="280" />
+            </Grid.ColumnDefinitions>
+
+            <controls:LayerRail
+                x:Name="LayerRailControl"
+                Grid.Column="0"
+                DataContext="{x:Bind ViewModel}" />
+
+            <controls:InspectorPanel
+                x:Name="InspectorPanelControl"
+                Grid.Column="2"
+                DataContext="{x:Bind ViewModel}" />
+
+            <!-- The [Layer Canvas | Widget Editor] shell sub-tab bar was removed
+                 (Majo, 2026-06-08): it duplicated navigation the per-widget
+                 trigger strip's "← Back" already provides, and double-clicking a
+                 widget enters the editor. Mode switching still flows through
+                 SelectSubTab (View menu, ← Back, EnterWidget) — the bar was the
+                 only redundant always-on surface. MainPaneRegion now fills the
+                 column directly. -->
+            <ContentControl
+                x:Name="MainPaneRegion"
+                Grid.Column="1"
+                HorizontalContentAlignment="Stretch"
+                VerticalContentAlignment="Stretch" />
+        </Grid>
+
+        <!-- Status bar — 3-zone 24px strip. Visual language mirrors Architect's
+             status strip (Architect.WinUI/MainView.xaml:232-302); paint code is
+             duplicated locally per feedback_visualist_architect_chrome_independence.md
+             (no Shared/UI/). RefreshStatusBar in code-behind drives all three zones. -->
+        <Border Grid.Row="1"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0"
+                AutomationProperties.Name="Status Strip">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Left zone: traffic-light dot + save status text -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="10,0,0,0" Spacing="6">
+                    <Ellipse x:Name="StatusLight"
+                             Width="10" Height="10"
+                             Fill="{StaticResource CoalDividerBrush}"
+                             Stroke="{StaticResource CoalCardBrush}"
+                             StrokeThickness="1"
+                             VerticalAlignment="Center" />
+                    <TextBlock x:Name="StatusLeft"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                </StackPanel>
+
+                <!-- Center zone: active layer filename. R59 — trim long names
+                     with an ellipsis (full name on hover, set in RefreshStatusBar). -->
+                <TextBlock Grid.Column="1"
+                           x:Name="StatusCenter"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           MaxWidth="320"
+                           TextTrimming="CharacterEllipsis"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="11"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+
+                <!-- Right zone: widget count -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Margin="0,0,12,0" Spacing="10">
+                    <TextBlock x:Name="StatusRight"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

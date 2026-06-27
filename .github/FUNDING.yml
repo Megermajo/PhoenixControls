@@ -1,0 +1,4 @@
+# Phoenix Controls — funding links shown on the public repo's "Sponsor" button.
+# ko-fi.com/megermajo is the single donate URL used across every surface (this
+# file, the public README/site donate CTA, and the in-app KofiSupportButton).
+ko_fi: megermajo

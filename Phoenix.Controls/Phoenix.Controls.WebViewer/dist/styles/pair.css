@@ -1,0 +1,143 @@
+/* Phoenix Controls Viewer — PIN pairing card. */
+
+.pair-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.pair-stage .watermark {
+  position: absolute;
+  inset: 0;
+  background-image: url("../assets/phoenix-mark.png");
+  background-size: min(60vh, 60vw);
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.04;
+  pointer-events: none;
+}
+.pair-stage .rays {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 60%, rgba(229,162,78,0.10), transparent 55%);
+  filter: blur(20px);
+  pointer-events: none;
+}
+.pair-card {
+  position: relative;
+  z-index: 1;
+  width: 460px;
+  padding: 36px 40px 32px;
+  background: var(--coal-1);
+  border: 1px solid var(--coal-4);
+  border-radius: 6px;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(229,162,78,0.06);
+}
+.pair-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--ember-200), var(--ember-500) 50%, var(--coal-3));
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+}
+.pair-card .mark {
+  width: 60px; height: 60px;
+  margin: 0 auto 16px;
+  background-image: url("../assets/phoenix-mark.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  filter: drop-shadow(0 0 16px rgba(229,162,78,0.5));
+}
+.pair-card .eyebrow {
+  text-align: center;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: var(--ember-300);
+}
+.pair-card h1 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 24px;
+  color: var(--coal-10);
+  margin: 4px 0 6px;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.pair-card p.lead {
+  color: var(--coal-7);
+  font-size: 12px;
+  margin: 0 0 24px;
+  text-align: center;
+  line-height: 1.5;
+}
+.pin-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+.pin-cell {
+  width: 48px; height: 56px;
+  background: var(--coal-2);
+  border: 1px solid var(--coal-4);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ember-200);
+  box-shadow: var(--sh-deboss);
+  transition: all 100ms ease-out;
+}
+.pin-cell.filled {
+  background: var(--coal-0);
+  border-color: var(--ember-500);
+  box-shadow: 0 0 8px rgba(229,162,78,0.25);
+}
+.pin-cell.cursor::after {
+  content: "";
+  width: 1px; height: 26px;
+  background: var(--ember-300);
+  animation: phx-pulse 1s ease-in-out infinite;
+}
+.pin-input {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.pair-meta {
+  padding: 8px 12px;
+  background: var(--coal-0);
+  border: 1px solid var(--coal-3);
+  border-left: 2px solid var(--ember-400);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--coal-8);
+  display: flex;
+  justify-content: space-between;
+}
+.pair-meta strong {
+  color: var(--ember-200);
+  font-weight: 400;
+}
+.pair-foot {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--coal-7);
+  text-align: center;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.pair-foot .countdown { color: var(--ember-200); }
+.pair-foot .err { color: var(--err); }

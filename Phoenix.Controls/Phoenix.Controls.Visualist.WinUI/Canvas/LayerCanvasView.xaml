@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Canvas.LayerCanvasView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Visualist.WinUI.Canvas"
+    xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls">
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /> <!-- R23 command bar -->
+            <RowDefinition Height="*" />    <!-- stage + overlays -->
+        </Grid.RowDefinitions>
+
+        <!-- ── R22/R23/R24 — Layer Canvas command bar ─────────────────────
+             Restores the pre-WinUI authoring affordances that were menu /
+             right-click-only after the rework: Add Widget + the shared
+             Preview-Layer popout, the Canvas-Preview toggle, the preview
+             backdrop swatches, and the Auto-Sync-on-edit toggle (all
+             config-wired with no UI before this). Per-pillar chrome. -->
+        <Border
+            Grid.Row="0"
+            Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="8,5">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <Button x:Name="AddWidgetButton"
+                        Click="OnAddWidgetCommand"
+                        ToolTipService.ToolTip="Add a widget to this layer"
+                        Padding="10,4"
+                        Background="{StaticResource CoalCardBrush}"
+                        BorderThickness="0"
+                        Foreground="{StaticResource CoalBodyTextBrush}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                        <TextBlock Text="Add Widget" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Button x:Name="PreviewLayerButton"
+                        Click="OnPreviewLayerCommand"
+                        ToolTipService.ToolTip="Open a popout preview of the whole layer"
+                        Padding="10,4"
+                        Background="{StaticResource CoalCardBrush}"
+                        BorderThickness="0"
+                        Foreground="{StaticResource CoalBodyTextBrush}"
+                        Content="Preview Layer" />
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+
+                <ToggleButton x:Name="CanvasPreviewToggle"
+                              Click="OnCanvasPreviewToggle"
+                              ToolTipService.ToolTip="Render live widget previews on the canvas"
+                              Padding="10,4" MinWidth="0"
+                              Content="Preview" />
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+
+                <!-- Backdrop swatches — Transparent / Black / Gray / White. -->
+                <TextBlock Text="BG" VerticalAlignment="Center" FontSize="10"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                <StackPanel x:Name="BackdropSwatches" Orientation="Horizontal" Spacing="3" VerticalAlignment="Center" />
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+
+                <ToggleButton x:Name="AutoSyncToggle"
+                              Click="OnAutoSyncToggle"
+                              ToolTipService.ToolTip="Auto-save on edit so OBS / previews refresh live (saved layers only)"
+                              Padding="10,4" MinWidth="0"
+                              Content="Auto-Sync" />
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+
+                <!-- P3 — snap-to-grid toggle. Before this the snap state was
+                     in-memory only with no UI badge, so the user had no way to
+                     see or change it (only the Alt-held momentary suppression).
+                     Checked = grid + alignment snap on (the default). -->
+                <ToggleButton x:Name="SnapToggle"
+                              Click="OnSnapToggle"
+                              ToolTipService.ToolTip="Snap widgets to the 8px grid and alignment guides while dragging / resizing (hold Alt to suppress momentarily)"
+                              Padding="10,4" MinWidth="0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xF0E2;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                        <TextBlock Text="Snap" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                </ToggleButton>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1" x:Name="StageHost" Background="Transparent">
+            <!-- Hex-pattern pasteboard backdrop (the "Hex" preview-background variant).
+                 Fills the whole stage host BEHIND the layer; the opaque layer rect
+                 (StageFrame, inside the Viewbox) sits on top, so the hex shows only
+                 around the layer = "hex outside, flat inside", visually framing the
+                 layer bounds. IsHitTestVisible=False (set on the control) so canvas
+                 pan/zoom/marquee keep firing through it. Collapsed unless Hex is the
+                 selected backdrop; toggled in ApplyCanvasBackdrop. -->
+            <controls:HexPatternOverlay x:Name="HexBackdrop"
+                                        HexRadius="26"
+                                        Visibility="Collapsed" />
+
+            <!-- Stage: aspect-ratio-locked via Viewbox(Uniform) wrapping a fixed-size Canvas.
+                 P3 — zoom/pan restore. A ScaleTransform + TranslateTransform on the
+                 Viewbox layers user zoom/pan ON TOP of the Viewbox's uniform fit, so
+                 the aspect-lock stays intact and (critically) all the canvas pointer
+                 math is untouched: GetPosition(WidgetSurface) accounts for ancestor
+                 RenderTransforms automatically, so drag / lasso / resize keep working
+                 in canvas space without inverse-transform code. Ctrl+wheel zooms about
+                 the cursor; middle-mouse drag pans. The StageHost grid
+                 carries Background="Transparent" so wheel / middle-button events fire
+                 in the empty letterbox region around the stage too. -->
+            <Viewbox
+                x:Name="StageViewbox"
+                Stretch="Uniform"
+                StretchDirection="Both"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Margin="40"
+                RenderTransformOrigin="0,0">
+                <Viewbox.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform x:Name="StageScale" ScaleX="1" ScaleY="1" />
+                        <TranslateTransform x:Name="StagePan" X="0" Y="0" />
+                    </TransformGroup>
+                </Viewbox.RenderTransform>
+                <Border
+                    x:Name="StageFrame"
+                    BorderBrush="{StaticResource CoalDividerBrush}"
+                    BorderThickness="1"
+                    Background="{StaticResource CoalOverlay50Brush}">
+                    <!-- Background="Transparent" is load-bearing, not cosmetic: a
+                         null-Background Canvas is NOT hit-test-visible in its empty
+                         regions, so every empty-canvas gesture (right-click → Add
+                         Widget, click-to-deselect, marquee/lasso select) silently
+                         died after the WinForms→WinUI rework. Transparent keeps the
+                         surface invisible while restoring hit-testing; widget views
+                         paint on top unaffected. -->
+                    <Canvas
+                        x:Name="WidgetSurface"
+                        Width="1920"
+                        Height="1080"
+                        Background="Transparent" />
+                </Border>
+            </Viewbox>
+
+            <!-- Resolution badge — top-left corner of the visible canvas region. -->
+            <Border
+                x:Name="ResolutionBadge"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="40,18,0,0">
+                <TextBlock
+                    x:Name="ResolutionLabel"
+                    Style="{StaticResource MonoSmallTextStyle}"
+                    Text="(no layer loaded)" />
+            </Border>
+
+            <!-- R47 — empty-state overlay. Shown when no layer is loaded, so a
+                 fresh Visualist session offers New / Open instead of a blank
+                 stage. Toggled from Render(). -->
+            <Grid x:Name="EmptyStateOverlay"
+                  Visibility="Collapsed"
+                  Background="{StaticResource CoalShellBrush}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="12" MaxWidth="420">
+                    <TextBlock Text="No layer open"
+                               HorizontalAlignment="Center"
+                               FontSize="16"
+                               Foreground="{StaticResource CoalBodyTextBrush}" />
+                    <TextBlock Text="Create a new .phxlayer or open an existing one to start compositing widgets for an OBS browser source."
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+                        <Button x:Name="EmptyNewButton"
+                                Click="OnEmptyNewLayer"
+                                Padding="14,6"
+                                Content="New Layer" />
+                        <Button x:Name="EmptyOpenButton"
+                                Click="OnEmptyOpenLayer"
+                                Padding="14,6"
+                                Content="Open Layer…" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <!-- Context-aware hotkey cheatsheet — anchored bottom-left of the
+                 layer canvas. Sibling of the WidgetGraphCanvas instance so the
+                 two stay visually consistent across the surfaces a Visualist
+                 user switches between. Open/closed state persists via
+                 AppConfig.VisualistHotkeyCheatsheetExpanded. -->
+            <local:HotkeyCheatsheet x:Name="HotkeyCheatsheetOverlay"
+                                    x:FieldModifier="public" />
+        </Grid>
+    </Grid>
+</UserControl>

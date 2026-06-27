@@ -1,0 +1,11 @@
+# Script — Generated from "subscription_alert"
+# Exported: 2026-06-24 14:29
+
+on_event(Twitch.Sub):
+    # [System.Log]
+    system.log("Sub from {user.name} (tier {user.tier}, month {user.sub_months})", "StreamEvent")
+    # [Visual.Trigger]
+    visual.trigger_queued("main", "00000000-0000-0000-0000-000000000001", "new_sub")
+    # [Twitch.SendChat]
+    twitch.send_chat(text.format("{0} thank for your subscription for X months o7", "", "", ""))
+

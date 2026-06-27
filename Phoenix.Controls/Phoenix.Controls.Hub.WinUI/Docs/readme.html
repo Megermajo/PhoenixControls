@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phoenix Controls — README</title>
+<!-- Offline-first, like the rest of the bundle. tokens.css + doc-viewer.css are
+     local; the Google Fonts link is progressive enhancement with system-font
+     fallbacks. Authored from README.md so it renders with no network (the
+     exported README.html is a CDN bundler page that can't). -->
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="doc-viewer.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  .rm-lede { font-size: 17px; line-height: 1.6; color: var(--coal-8); max-width: 760px; }
+  .rm-lede strong { color: var(--coal-10); font-weight: 600; }
+  .rm-h2 { font-family: var(--font-display); font-weight: 500; font-size: 30px; color: var(--coal-10); letter-spacing: 0.01em; margin: 56px 0 14px; }
+  .rm-p { font-size: 14px; line-height: 1.7; color: var(--coal-8); max-width: 820px; margin: 0 0 12px; }
+  .rm-p strong { color: var(--coal-10); }
+  .rm-p code, .rm-li code, .pillar p code { font-family: var(--font-mono); color: var(--ember-200); background: var(--coal-2); padding: 1px 5px; border-radius: 2px; font-size: 12px; border: 1px solid var(--coal-3); }
+  .pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 18px; }
+  .pillar { background: var(--coal-1); border: 1px solid var(--coal-3); border-radius: 4px; box-shadow: var(--sh-card); padding: 18px 18px 16px; }
+  .pillar .tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .pillar h3 { font-family: var(--font-display); font-weight: 500; font-size: 23px; color: var(--coal-10); margin: 6px 0 4px; }
+  .pillar .ex { font-family: var(--font-mono); font-size: 11px; color: var(--coal-7); margin-bottom: 8px; }
+  .pillar p { font-size: 12.5px; line-height: 1.55; color: var(--coal-8); margin: 0; }
+  ol.rm-steps, ul.rm-list { max-width: 820px; padding-left: 22px; }
+  .rm-li { font-size: 13.5px; line-height: 1.7; color: var(--coal-8); margin-bottom: 8px; }
+  .rm-li strong { color: var(--coal-10); }
+  .keyrow { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; max-width: 820px; font-size: 12.5px; color: var(--coal-8); padding: 5px 0; border-bottom: 1px solid var(--coal-2); }
+  .keyrow code { font-family: var(--font-mono); color: var(--ember-200); font-size: 12px; }
+  @media (max-width: 900px) { .pillars { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="repo-bar">
+  <div class="repo-bar-inner">
+    <span class="crumb"><b>megermajo</b><span class="slash">/</span><b>phoenix-controls</b><span class="slash">/</span><b>README</b></span>
+    <span class="repo-actions"><span>A professional-grade stream suite for Twitch</span></span>
+  </div>
+</div>
+
+<div class="page">
+
+  <section class="hero" style="grid-template-columns: 1fr;">
+    <div>
+      <h1>Phoenix <em>Controls</em></h1>
+      <p class="rm-lede">
+        <strong>A professional-grade stream management suite for Twitch streamers.</strong>
+        Phoenix Controls replaces a stack of fragmented overlay tools, chatbot helpers, and one-off scripts
+        with a single coordinated trio of apps that share an IPC bus and a SQLite databank. You design your
+        bot logic visually in <strong>Architect</strong>, design your OBS overlays visually in
+        <strong>Visualist</strong>, and let <strong>Hub</strong> run everything live while you stream.
+      </p>
+    </div>
+  </section>
+
+  <h2 class="rm-h2">The three apps</h2>
+  <p class="rm-p">Three independent processes that run side-by-side and talk over a local WebSocket bus.</p>
+  <div class="pillars">
+    <div class="pillar">
+      <div class="tag" style="color:#C9533C;">The runtime</div>
+      <h3>Hub</h3>
+      <div class="ex">Phoenix.Controls.Hub.WinUI.exe</div>
+      <p>The only process that talks to Streamer.bot, Twitch and OBS — the "always-on while you stream" app. Live Event Feed, Chat Monitor, Script Monitor and System Log. Hosts the HUD overlay server (<code>:18080</code>) and the IPC bus (<code>:18081</code>).</p>
+    </div>
+    <div class="pillar">
+      <div class="tag" style="color:#E5A24E;">The logic builder</div>
+      <h3>Architect</h3>
+      <div class="ex">Phoenix.Controls.Architect.WinUI.exe</div>
+      <p>Where you build bot behaviour. Drop nodes on a canvas, wire them Unreal-Blueprints style, and Architect compiles the graph into a <code>.phx</code> script Hub picks up automatically. Never talks to Twitch directly — bus only, for live debug.</p>
+    </div>
+    <div class="pillar">
+      <div class="tag" style="color:#C893BC;">The compositor</div>
+      <h3>Visualist</h3>
+      <div class="ex">Phoenix.Controls.Visualist.WinUI.exe</div>
+      <p>Where you build OBS overlays. Each <code>.phxlayer</code> is one OBS browser source; place widgets and author per-trigger behaviour as a node graph. Triggers fire from Architect via <code>Visual.Trigger</code> and run in OBS.</p>
+    </div>
+  </div>
+
+  <h2 class="rm-h2">Your first overlay</h2>
+  <p class="rm-p">A minimal "type a chat command, see the bot reply" loop — the whole thing in six moves.</p>
+  <ol class="rm-steps">
+    <li class="rm-li">In <strong>Architect</strong>, <strong>File → New</strong> and save <code>hello.phxg</code> into Hub's logic folder.</li>
+    <li class="rm-li">Press <strong>Space</strong> (or right-click) and spawn <code>Twitch.ChatMessage</code>, <code>Logic.If</code> and <code>Twitch.SendChat</code>.</li>
+    <li class="rm-li">Wire the flow through, set <code>Logic.If</code> so <code>{message}</code> equals <code>!hello</code>, and set <code>Twitch.SendChat</code>'s message to <code>Hello, {user.name}!</code>.</li>
+    <li class="rm-li"><strong>Save</strong> — Architect exports <code>hello.phx</code> and Hub hot-reloads it within ~250&nbsp;ms (watch the Script Monitor).</li>
+    <li class="rm-li">Type <code>!hello</code> in your chat — a green pulse flashes through the nodes and the bot replies.</li>
+    <li class="rm-li">Make it visible: fire a <code>Visual.Trigger</code> into a Visualist layer and add a browser source at <code>http://127.0.0.1:18080/layer/main</code>.</li>
+  </ol>
+  <p class="rm-p">Press <strong>F1</strong> on any node — or open <a href="node-reference.html" style="color:var(--ember-200);">the Node Reference</a> — for the full catalogue, the <code>{token}</code> vocabulary and every keyboard chord.</p>
+
+  <h2 class="rm-h2">Install (for streamers)</h2>
+  <ol class="rm-steps">
+    <li class="rm-li">Download <strong>Phoenix Controls Setup &lt;version&gt;.exe</strong> from the GitHub Releases page (~3–5&nbsp;MB; needs internet during install to fetch + SHA-verify the runtime payload).</li>
+    <li class="rm-li">Run it. SmartScreen warns because the app isn't code-signed yet — <strong>More info → Run anyway</strong> (a signing cert is on the roadmap).</li>
+    <li class="rm-li">Follow the wizard. Default is a per-user install under <code>%LocalAppData%\Programs\Phoenix Controls\</code> — no admin prompt.</li>
+    <li class="rm-li">If the <strong>.NET 8 Desktop Runtime</strong> is missing, the installer points you to Microsoft's download, then re-run.</li>
+    <li class="rm-li">Launch from <strong>Start Menu → Phoenix Controls → Hub</strong>. Updates are handled in-app under <strong>Tools → Settings → Updates</strong>.</li>
+  </ol>
+
+  <h2 class="rm-h2">Settings cheat sheet</h2>
+  <div class="keyrow"><code>StreamerBotUrl</code><span>Where Hub finds Streamer.bot's WebSocket Server (default <code>ws://127.0.0.1:8080/</code>).</span></div>
+  <div class="keyrow"><code>HUDServerPort</code><span>Port the OBS browser-source overlay listens on (default <code>18080</code>).</span></div>
+  <div class="keyrow"><code>BotUsername</code><span>Comma-separated bot accounts whose chat scripts ignore — prevents self-triggering.</span></div>
+  <div class="keyrow"><code>ScriptTimeoutSeconds</code><span>Max seconds a single script run may take before cancel (default <code>30</code>, <code>0</code> = unlimited).</span></div>
+  <div class="keyrow"><code>OpenAIApiKey</code> / <code>AnthropicKey</code><span>API keys consumed by the <code>AI.Prompt</code> / <code>AI.Moderate</code> nodes.</span></div>
+
+  <h2 class="rm-h2">Troubleshooting, fastest first</h2>
+  <ul class="rm-list">
+    <li class="rm-li"><strong>Streamer.bot indicator red</strong> — Streamer.bot isn't running, its WebSocket Server is off, or the URL doesn't match Hub Settings.</li>
+    <li class="rm-li"><strong>OBS source blank</strong> — the URL must be <code>http://127.0.0.1:18080/layer/&lt;id&gt;</code> (note <code>/layer/</code>), the HUD dot must be green, and the source size must match the layer resolution.</li>
+    <li class="rm-li"><strong>Chat triggers nothing</strong> — either Streamer.bot isn't forwarding chat, or <code>BotUsername</code> is set to your own handle.</li>
+    <li class="rm-li"><strong>Anything else</strong> — open Hub's <strong>System Log</strong> and scroll back; every component logs there with a category prefix.</li>
+  </ul>
+
+  <footer class="doc-foot">
+    <span>Phoenix Controls · built by streamers, for streamers</span>
+    <span><a href="node-reference.html">Node Reference</a> · <a href="changelog.html">Changelog</a></span>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,545 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Canvas.LogicCanvasView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Architect.WinUI.Canvas"
+    xmlns:conv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters"
+    xmlns:win2d="using:Microsoft.Graphics.Canvas.UI.Xaml">
+
+    <UserControl.Resources>
+        <conv:HexStringToBrushConverter x:Key="HexBrush" />
+        <conv:BoolToVisibilityConverter x:Key="BoolVis" />
+    </UserControl.Resources>
+
+    <!-- 2026-05-22 (arch-perf #zoom-blur-mitigation-a) — UseLayoutRounding
+         lifted from NodeView up to HostRoot so the rounding pass covers the
+         FrameLayer + GridLayer + the welcome card / empty hint surfaces too.
+         WinUI 3 has no LayoutTransform, so ViewSurface's CompositeTransform
+         ScaleX/Y bitmap-samples the whole subtree at non-1.0× zoom; rounding
+         every laid-out element to integer pixels first cleans up the worst
+         subpixel artifacts before the GPU resample. This is the "(a) lightest"
+         mitigation from the TODO.md sprint — the residual blur on text at
+         fractional zoom factors (125 / 150%) survives because it's
+         fundamentally a RenderTransform-scaling artifact. The "(b)
+         LayoutTransform polyfill" + "(c) Composition Visual.Scale" paths
+         remain available if Majo's measurement says the residual is still
+         user-visible after this round; both expand scope past the canvas
+         XAML into wire / pan / hit-test math and need a dedicated sprint. -->
+    <Grid x:Name="HostRoot"
+          Background="{StaticResource CoalShellBrush}"
+          IsTabStop="True"
+          UseLayoutRounding="True"
+          DragLeave="OnHostDragLeave">
+        <!-- [perf/win2d-immediate-canvas] Immediate-mode GPU canvas. Lives in
+             HOST space (NOT under ViewSurface's CompositeTransform) so DirectWrite
+             text stays crisp at any zoom — a RenderTransform-scaled CanvasControl
+             would bitmap-blur, defeating the whole point. The renderer
+             (LogicCanvasView.Win2D.cs) bakes the pan/zoom into the draw session
+             itself. Collapsed by default: the retained ViewSurface path below is
+             the shipping default until run-app parity is confirmed. Ctrl+Alt+F7
+             toggles immediate mode on (hides the retained paint layers + shows
+             this control). Sits FIRST (lowest z) so the host-space overlays
+             (marquee, drop hint, minimap, welcome) still paint above it. -->
+        <win2d:CanvasControl x:Name="ImmediateCanvas"
+                             Visibility="Collapsed"
+                             ClearColor="Transparent" />
+
+        <!-- Pannable / zoomable surface. Both link layer and node layer share
+             this transform so wires and nodes stay in lockstep when panning. -->
+        <Grid x:Name="ViewSurface" RenderTransformOrigin="0,0">
+            <Grid.RenderTransform>
+                <CompositeTransform x:Name="ViewTransform"
+                                    ScaleX="1.0" ScaleY="1.0"
+                                    TranslateX="0" TranslateY="0" />
+            </Grid.RenderTransform>
+
+            <!-- Background dot grid (40px world-space spacing) — drawn FIRST so
+                 frames / wires / nodes paint over it. UE-Blueprints-style dots at
+                 each lattice intersection (Majo's call, replacing the prior thin-
+                 line mesh). The Data is a GeometryGroup of EllipseGeometry dots
+                 rebuilt in code-behind by RefreshDotGrid as an ENDLESS field: it
+                 covers the visible viewport (plus a margin) in canvas space and
+                 re-centres on demand, so panning / zooming never runs off the edge
+                 of the pattern the way the old fixed 8000×8000 mesh did ("the
+                 background is mostly out of view"). Fill (not Stroke) because dots
+                 are filled; ViewSurface's CompositeTransform still handles pan /
+                 zoom so the field stays glued to canvas-space between rebuilds. -->
+            <Path x:Name="GridLayer"
+                  Fill="{StaticResource CoalDividerBrush}"
+                  Opacity="0.5"
+                  IsHitTestVisible="False" />
+
+            <!-- Frame layer (under wires + nodes) — comment regions.
+                 Plain Canvas (NOT ItemsControl) because the WinUI 3
+                 ItemsControl.ItemContainerStyle.Setter Value="{Binding X/Y}"
+                 pattern doesn't resolve against the data context — every
+                 ContentPresenter falls through to Canvas.Left=0/Top=0 and the
+                 frames pile up at the origin. Code-behind populates Children
+                 manually with Canvas.SetLeft/Top, mirroring Visualist's
+                 WidgetGraphCanvas which has always used the same pattern. -->
+            <Canvas x:Name="FrameLayer" Width="8000" Height="8000" />
+
+            <!-- Wire layer — below nodes (XAML order = paint order in WinUI).
+                 0.11.5 reversal: Majo's audit re-flipped the prior "wires
+                 over nodes" decision because the pipes were visually
+                 dominating the canvas and obscuring node title/socket
+                 chrome — UE-Blueprints renders wires under the node body so
+                 the node always wins the foreground. The hit-zone Path
+                 keeps StrokeThickness=12 transparent for easy click target;
+                 anywhere a wire actually passes UNDER a node the pointer
+                 hits the node body first, which matches user expectation.
+                 Selected wires render thicker via
+                 LinkViewModel.EffectiveStrokeThickness so a clicked pipe
+                 visibly pops out of the unselected baseline; hover bumps
+                 stroke to 2.75px + a ~20% brightness lift via
+                 EffectiveStrokeBrush. Pointer event handlers on the 12px
+                 hit-zone Path flip LinkViewModel.IsHovered. -->
+            <ItemsControl x:Name="LinkLayer">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <Canvas IsHitTestVisible="True" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <!-- Canvas (NOT Grid) wrapper. Each link's PathData
+                             uses absolute canvas-space coords; Grid auto-sizes
+                             to the bezier bounding box and the ContentPresenter
+                             ended up sized to that box, which clipped wires
+                             whose path extended outside the slot. Canvas
+                             reports DesiredSize=(0,0) and does not size to its
+                             children, so each Path renders its geometry at
+                             native coords with no layout interference. -->
+                        <!-- [wire-virt] Visibility collapses the whole wire (hit-zone +
+                             stroke Paths) when the link's bbox falls outside the cull
+                             band, so WinUI's measure/arrange/render walk skips off-screen
+                             wires. Default true; the canvas settle-pass cull drives it.
+                             When node virtualization is OFF (Ctrl+Alt+F6) every link is
+                             forced visible. -->
+                        <Canvas Tag="{Binding}"
+                                Visibility="{Binding IsViewportVisible, Converter={StaticResource BoolVis}}">
+                            <!-- Wide transparent hit-zone — Path stroke is the
+                                 only thing hit-testable on a Path, so a 12px
+                                 transparent stroke gives an easy click target.
+                                 Path stroke hit-testing is curve-local, NOT a
+                                 bounding-box rectangle, so this layer sitting
+                                 above NodeLayer doesn't eat clicks meant for
+                                 node bodies — only points within ~6px of the
+                                 actual bezier intercept the pointer. PointerEntered
+                                 / Exited flip LinkViewModel.IsHovered so the
+                                 visible Path below bumps to the hover treatment. -->
+                            <Path Data="{Binding PathData}"
+                                  Stroke="Transparent"
+                                  StrokeThickness="12"
+                                  Stretch="None"
+                                  Tag="{Binding}"
+                                  PointerEntered="OnLinkHitZonePointerEntered"
+                                  PointerExited="OnLinkHitZonePointerExited" />
+                            <Path Data="{Binding PathData}"
+                                  Stroke="{Binding EffectiveStrokeBrush}"
+                                  StrokeThickness="{Binding EffectiveStrokeThickness}"
+                                  StrokeDashArray="{Binding EffectiveStrokeDashArray}"
+                                  Stretch="None"
+                                  IsHitTestVisible="False" />
+                        </Canvas>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Flow-wire decoration layer (above LinkLayer, below WirePreview).
+                 Renders a small directional chevron at the midpoint of every
+                 IsFlow wire so execution flow reads visually distinct from
+                 data wires. Empty Canvas — populated by code-behind from
+                 LogicCanvasView.Wires.cs in response to Links.CollectionChanged
+                 and LinkViewModel PropertyChanged (PathData / IsFlow). -->
+            <Canvas x:Name="FlowDecorLayer" Width="8000" Height="8000"
+                    IsHitTestVisible="False" />
+
+            <!-- Dangling-endpoint marker layer — paints a small "lost socket"
+                 anchor at the last-known coordinates of any wire whose
+                 endpoint resolved-then-vanished (template rename,
+                 MigrateNodes back-fill). LinkViewModel.IsDangling drives
+                 visibility; LinkViewModel.LastFromAnchor / LastToAnchor
+                 supplies coords. Populated by LogicCanvasView.Wires.cs. -->
+            <Canvas x:Name="DanglingMarkerLayer" Width="8000" Height="8000"
+                    IsHitTestVisible="False" />
+
+            <!-- Node layer — same broken-binding caveat as FrameLayer above.
+                 Code-behind mounts a NodeView per NodeViewModel and positions
+                 it via Canvas.SetLeft/Top. 0.11.5 reversal: nodes paint
+                 AFTER LinkLayer / FlowDecorLayer / DanglingMarkerLayer so the
+                 node body covers any wire that passes underneath it (UE
+                 Blueprints behaviour). The bubble overhang from
+                 SocketColumnInset=0 keeps the pin straddling the body edge
+                 so the wire still meets its pin visually. -->
+            <Canvas x:Name="NodeLayer" Width="8000" Height="8000" />
+
+            <!-- In-flight wire preview (drag from socket to socket). Sits
+                 above NodeLayer so the dragging wire renders on top of
+                 existing wires AND nodes — pre-fix it lived below the
+                 nodes and nodes obscured the wire. The dashed stroke
+                 (StrokeDashArray 4,2) restores the baseline affordance from
+                 Canvas.VisualPrims.cs:DrawLinks (Pen { DashStyle = Dash }) that
+                 signals the wire is in-flight and not yet committed; a solid
+                 preview read as an already-placed wire.
+
+                  Hosted in a Canvas with Stretch="None",
+                 mirroring the committed-wire LinkLayer EXACTLY (its item Paths
+                 also sit in a Canvas with Stretch="None"). The preview was the
+                 ONLY wire rendered as a bare Path child of the Grid with no
+                 Stretch set: a Path's geometry uses absolute canvas-space coords,
+                 and a Grid arranges/measures a stretched Shape to its cell, which
+                 can offset/clip a coordinate-space geometry — whereas a Canvas
+                 never sizes to or repositions its children, so the bezier paints
+                 at its native coords just like every committed wire. This is the
+                 "render the preview the same proven way as a real wire" fix for
+                 the pipe never appearing. The Canvas is hit-transparent so it
+                 can't intercept the wire-drop. -->
+            <Canvas IsHitTestVisible="False">
+                <Path x:Name="WirePreview"
+                      Stretch="None"
+                      StrokeThickness="2"
+                      Stroke="{StaticResource Ember200Brush}"
+                      StrokeDashArray="4,2"
+                      Visibility="Collapsed"
+                      IsHitTestVisible="False" />
+            </Canvas>
+        </Grid>
+
+        <!-- Drop overlay — shown while a .phxg file drag hovers the canvas.
+             Sits between ViewSurface and OverlayLayer so it paints above
+             nodes/wires but below the marquee. IsHitTestVisible="False"
+             keeps pointer interaction with the canvas unaffected.
+             LogicCanvasView.DragDrop.cs flips Visibility on
+             DragOver/DragLeave/Drop. -->
+        <Border x:Name="DropOverlay"
+                Background="{StaticResource SelectionDimBrush}"
+                BorderBrush="{StaticResource SelectionBrush}"
+                BorderThickness="2"
+                IsHitTestVisible="False"
+                Visibility="Collapsed">
+            <TextBlock Text="Drop .phxg to open"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       Foreground="{StaticResource TextLabelBrush}"
+                       FontSize="16"
+                       FontWeight="SemiBold" />
+        </Border>
+
+        <!--  (P1-A27) — transient banner surfaced when a .phx file is
+             dropped but its matching .phxg sibling is missing. Anchored to
+             the bottom of the canvas so it stays out of the way of the
+             welcome / empty-state surfaces and the spawn palette. The
+             DragDrop partial flips IsOpen + sets Title/Message and starts a
+             5-second DispatcherTimer to auto-dismiss. Per
+             feedback_no_modal_dialogs_for_repeatable_rejections.md this is
+             explicitly a non-modal surface — the user can dismiss it with
+             the close glyph or just keep working. -->
+        <InfoBar x:Name="DropStatusInfoBar"
+                 IsOpen="False"
+                 IsClosable="True"
+                 Severity="Warning"
+                 VerticalAlignment="Bottom"
+                 HorizontalAlignment="Stretch"
+                 Margin="12,0,12,12" />
+
+        <!-- Overlay layer — sits ABOVE the panned ViewSurface in host space,
+             so children positioned via Canvas.SetLeft/Top use raw screen
+             pixels (not canvas-space). Marquee rectangle parents here.
+             Pre-fix the marquee added itself directly to HostRoot (a Grid),
+             which silently ignores Canvas.SetLeft/Top — the dashed rect
+             stretched to the whole grid cell instead of tracking the drag. -->
+        <Canvas x:Name="OverlayLayer" IsHitTestVisible="False" />
+
+        <!--  — Mini-map / overview navigator. Anchored to the
+             bottom-right of HostRoot per Majo's styling-gate call (the
+             original brief said top-right; Majo picked bottom-right so it
+             stays out of the way of the chrome menu band and the spawn
+             palette's anchor point). Visibility is driven from code-behind
+             based on AppConfig.ArchitectMinimapVisible — the overlay's
+             internal × glyph and the chrome menu's "View → Minimap" toggle
+             both route through SetMinimapVisible so the two surfaces stay
+             in sync. -->
+        <local:MiniMapOverlay x:Name="MiniMap"
+                              x:FieldModifier="public"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Bottom"
+                              Visibility="Visible" />
+
+        <!-- Context-aware hotkey cheatsheet — anchored bottom-left so it
+             sits next to the (potentially collapsed) LeftRail without
+             colliding with the bottom-right MiniMap. Header strip is
+             always visible; clicking the chip toggles the expanded body.
+             Open/closed state persists via AppConfig.ArchitectHotkeyCheatsheetExpanded.
+             LogicCanvasView code-behind drives SetContext() from the
+             canvas selection / drag / inline-edit / panning state. -->
+        <local:HotkeyCheatsheet x:Name="HotkeyCheatsheetOverlay"
+                                x:FieldModifier="public" />
+
+        <!-- Empty-state hint (shown when no graph loaded). 0.10.0
+             (arch-ux-state #7) — when LoadedFilePath==null AND no nodes
+             exist, the bare "LOGIC CANVAS / right-click empty space" hint
+             swaps to a richer Welcome card with New / Open / Recent
+             action buttons. The card is replaced (not overlaid) so the
+             chrome reads as a single coherent first-launch surface.
+             ShowWelcome is flipped from code-behind by UpdateEmptyHint
+             based on the loaded-file state. -->
+        <StackPanel x:Name="EmptyHint"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="6"
+                    Visibility="Collapsed">
+            <TextBlock Text="LOGIC CANVAS"
+                       FontFamily="{StaticResource DisplayFont}"
+                       FontSize="22"
+                       CharacterSpacing="160"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Right-click empty space to spawn a node — Ctrl+O to open a graph"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11"
+                       Foreground="{StaticResource CoalMutedTextBrush}"
+                       HorizontalAlignment="Center" />
+            <!--  surface the otherwise-undiscoverable
+                 wheel + Home navigation chords. -->
+            <TextBlock Text="Ctrl+Wheel zoom · Wheel / Shift+Wheel pan · Home to fit"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11"
+                       Foreground="{StaticResource CoalMutedTextBrush}"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <!-- 0.10.0 — Welcome card for the no-file-loaded first-launch case.
+             Replaces the pre-0.10.0 "Track 6 fills this region…" placeholder
+             that lived inside MainView.xaml's MainPaneRegion ContentControl
+             (and was never visible because the canvas swapped in
+             immediately). This card sits above EmptyHint and is shown only
+             when LoadedFilePath==null AND no nodes exist. -->
+        <Border x:Name="WelcomeCard"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Background="{StaticResource CoalSurfaceBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="36,28,36,28"
+                MaxWidth="720"
+                Visibility="Collapsed">
+            <StackPanel Spacing="14">
+                <TextBlock Text="ARCHITECT"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           CharacterSpacing="220"
+                           Foreground="{StaticResource EmberPrimaryBrush}"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="Build script graphs for your stream"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="20"
+                           CharacterSpacing="60"
+                           Foreground="{StaticResource CoalPaperBrush}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="Start a new graph, open an existing .phxg, or pick a recent one."
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="12"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,4,0,0">
+                    <Button x:Name="WelcomeNewButton"
+                            Content="New Graph"
+                            Padding="14,6,14,6"
+                            Click="OnWelcomeNewClicked" />
+                    <Button x:Name="WelcomeOpenButton"
+                            Content="Open .phxg…"
+                            Padding="14,6,14,6"
+                            Click="OnWelcomeOpenClicked" />
+                    <Button x:Name="WelcomeRecentButton"
+                            Content="Recent…"
+                            Padding="14,6,14,6"
+                            Click="OnWelcomeRecentClicked" />
+                </StackPanel>
+
+                <!-- P1-A20 () — Samples section restores the pre-T15
+                     WelcomeDialog's Starter / Intermediate / Advanced sample
+                     browser. The three column lists are populated from the
+                     WelcomeSamples static registry in code-behind, and stale
+                     entries (file missing from data/logic/examples/ at runtime)
+                     gray out via Opacity binding — mirrors RecentFilesDialog
+                     Row.Opacity. Item click invokes the existing
+                     FileOpenRequested event with the absolute path resolved
+                     through Paths.HubLogic + "examples". -->
+                <Border BorderBrush="{StaticResource CoalDividerBrush}"
+                        BorderThickness="0,1,0,0"
+                        Margin="0,4,0,0"
+                        Padding="0,12,0,0">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="SAMPLES"
+                                   FontFamily="{StaticResource DisplayFont}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   CharacterSpacing="220"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   HorizontalAlignment="Center" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Column="0" Grid.Row="0"
+                                       Text="Starter"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource CoalPaperBrush}"
+                                       Margin="0,0,8,4" />
+                            <TextBlock Grid.Column="1" Grid.Row="0"
+                                       Text="Intermediate"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource CoalPaperBrush}"
+                                       Margin="4,0,4,4" />
+                            <TextBlock Grid.Column="2" Grid.Row="0"
+                                       Text="Advanced"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource CoalPaperBrush}"
+                                       Margin="8,0,0,4" />
+
+                            <ListView x:Name="WelcomeStarterList"
+                                      Grid.Column="0" Grid.Row="1"
+                                      Margin="0,0,8,0"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      SelectionMode="None"
+                                      IsItemClickEnabled="True"
+                                      ItemClick="OnWelcomeSampleItemClick">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="Padding" Value="6,4,6,4" />
+                                        <Setter Property="MinHeight" Value="0" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <!--  2px left-edge accent stripe per
+                                             sample tile, restoring the WinForms
+                                             WelcomeDialog.cs AccentBlue stripe affordance
+                                             that distinguished each sample tile. -->
+                                        <Border BorderThickness="2,0,0,0"
+                                                BorderBrush="{StaticResource Ember200Brush}"
+                                                Padding="6,0,0,0">
+                                            <StackPanel Spacing="1" Opacity="{Binding Opacity}"
+                                                        ToolTipService.ToolTip="{Binding ToolTip}">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource CoalPaperBrush}" />
+                                                <TextBlock Text="{Binding Description}"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource CoalMutedTextBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="NoWrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <ListView x:Name="WelcomeIntermediateList"
+                                      Grid.Column="1" Grid.Row="1"
+                                      Margin="4,0,4,0"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      SelectionMode="None"
+                                      IsItemClickEnabled="True"
+                                      ItemClick="OnWelcomeSampleItemClick">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="Padding" Value="6,4,6,4" />
+                                        <Setter Property="MinHeight" Value="0" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <!--  2px left-edge accent stripe per
+                                             sample tile (see Starter list). -->
+                                        <Border BorderThickness="2,0,0,0"
+                                                BorderBrush="{StaticResource Ember200Brush}"
+                                                Padding="6,0,0,0">
+                                            <StackPanel Spacing="1" Opacity="{Binding Opacity}"
+                                                        ToolTipService.ToolTip="{Binding ToolTip}">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource CoalPaperBrush}" />
+                                                <TextBlock Text="{Binding Description}"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource CoalMutedTextBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="NoWrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <ListView x:Name="WelcomeAdvancedList"
+                                      Grid.Column="2" Grid.Row="1"
+                                      Margin="8,0,0,0"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      SelectionMode="None"
+                                      IsItemClickEnabled="True"
+                                      ItemClick="OnWelcomeSampleItemClick">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="Padding" Value="6,4,6,4" />
+                                        <Setter Property="MinHeight" Value="0" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <!--  2px left-edge accent stripe per
+                                             sample tile (see Starter list). -->
+                                        <Border BorderThickness="2,0,0,0"
+                                                BorderBrush="{StaticResource Ember200Brush}"
+                                                Padding="6,0,0,0">
+                                            <StackPanel Spacing="1" Opacity="{Binding Opacity}"
+                                                        ToolTipService.ToolTip="{Binding ToolTip}">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource CoalPaperBrush}" />
+                                                <TextBlock Text="{Binding Description}"
+                                                           FontSize="10"
+                                                           Foreground="{StaticResource CoalMutedTextBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="NoWrap" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Tip — Ctrl+Space spawns a node, F frames the selection."
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           Foreground="{StaticResource CoalMutedTextBrush}"
+                           HorizontalAlignment="Center"
+                           Margin="0,6,0,0" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

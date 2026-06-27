@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+  </ItemGroup>
+
+  <!--
+    T15 retirement — converted from a WinForms exe shell to a runtime
+    library hosting the Architect graph engine (NodeRegistry,
+    GraphSerializer, ScriptExporter, ExporterRegistry, ArchitectBusClient).
+    Architect.WinUI consumes this via ProjectReference. WinForms-only
+    entry-point files (Program.cs, MainForm.*, Forms/, Controls/Canvas.*,
+    etc.) were deleted in the retirement commit.
+    UseWindowsForms=true preserved because some Core types still use
+    System.Drawing (Color/Point) — System.Drawing.Common comes in via
+    that switch.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- QC53-bugs — stripped stale <Content Include="Resources\SampleGraphs\*.phxg" />
+       and <Content Include="Assets\Icons\*.png" />: both source folders were
+       deleted in T15 alongside Forms/WelcomeDialog (sample graphs) and the
+       icon-strip pipeline (IconCache), so the globs matched nothing and just
+       added noise to MSBuild evaluation. Newtonsoft.Json PackageReference
+       also dropped — zero `using Newtonsoft` / `JsonConvert.` / `JObject`
+       hits across the project; System.Text.Json covers everything. -->
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+  </ItemGroup>
+
+</Project>

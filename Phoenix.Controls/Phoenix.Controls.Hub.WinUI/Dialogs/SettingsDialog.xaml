@@ -1,0 +1,682 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="Phoenix.Controls.Hub.WinUI.Dialogs.SettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:primitives="using:Microsoft.UI.Xaml.Controls.Primitives"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryClick"
+    Background="{StaticResource CoalSurfaceBrush}"
+    RequestedTheme="Dark">
+
+    <ContentDialog.Resources>
+        <!-- Local-only styles. Settings* prefix makes the locality explicit
+             so a future reviewer can grep for shared-vs-local origin
+             (TODO 2026-05-07 P1 — theme-key shadowing). -->
+        <Style TargetType="TextBlock" x:Key="SettingsSectionLabel">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+            <Setter Property="CharacterSpacing" Value="80" />
+            <Setter Property="Margin" Value="0,4,0,2" />
+        </Style>
+        <Style TargetType="TextBox" x:Key="SettingsValueBox">
+            <Setter Property="Background" Value="{StaticResource CoalShellBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource CoalPaperBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource CoalDividerBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="28" />
+        </Style>
+        <Style TargetType="PasswordBox" x:Key="SettingsPasswordBox">
+            <Setter Property="Background" Value="{StaticResource CoalShellBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource CoalPaperBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource CoalDividerBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="PasswordChar" Value="•" />
+            <!--  Default PasswordRevealMode is "Peek" — clicking the
+                 eye glyph reveals plaintext. For streamer-on-camera workflows
+                 entering API keys / bot tokens / webhook secrets, that's a
+                 trivial leak to chat. Force Hidden so the reveal-eye glyph is
+                 suppressed entirely; the streamer must use a copy/paste round-
+                 trip from their password manager if they need to verify. -->
+            <Setter Property="PasswordRevealMode" Value="Hidden" />
+        </Style>
+        <!-- Pivot header chrome — redesign R6 "Settings dialog 8-tab visual
+             conformance". Coal-secondary inactive labels in SansFont 11 px
+             with 120 letterspacing; the selected state inherits the Pivot's
+             system-driven highlight (a re-template would force us to ship a
+             full primitives style, which is heavier than the polish is
+             worth). Locally scoped so the rest of the app keeps its default
+             Pivot styling. -->
+        <Style TargetType="primitives:PivotHeaderItem">
+            <Setter Property="FontFamily"       Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize"         Value="11" />
+            <Setter Property="FontWeight"       Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="120" />
+            <Setter Property="Foreground"       Value="{StaticResource CoalSecondaryTextBrush}" />
+        </Style>
+
+        <!-- "↻ requires restart" badge for fields the dialog can't hot-reload
+             (TODO 2026-05-07 P2 — Settings dialog coverage gap).
+             Note: the badge Text is set per-instance in code-behind so the
+             string flows through Localizer.T(); the Setter only carries
+             the chrome (font/color/spacing). -->
+        <Style TargetType="TextBlock" x:Key="SettingsRestartBadge">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="Foreground" Value="{StaticResource Ember200Brush}" />
+            <Setter Property="CharacterSpacing" Value="80" />
+            <Setter Property="Margin" Value="6,0,0,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- HUB-UX P1 — inline numeric-field error caption. Sits directly
+             under the SettingsValueBox it validates. Collapsed in the
+             clean state; the code-behind sets Text + flips Visibility to
+             Visible on invalid input. Mono, 10pt, ErrBrush so the message
+             reads at-a-glance against the coal background. -->
+        <Style TargetType="TextBlock" x:Key="SettingsFieldErrorText">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Foreground" Value="{StaticResource ErrBrush}" />
+            <Setter Property="Margin" Value="0,2,0,0" />
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <!-- MinWidth (was Width=640) so the dialog can stretch with translated
+         labels in DE/FR/ES; MaxHeight 560 dropped so the ContentDialog can
+         size to its host XamlRoot rather than truncating long Localization
+         pivots. (TODO 2026-05-07 P1.) -->
+    <Grid MinWidth="640">
+        <Pivot x:Name="SettingsPivot">
+            <PivotItem x:Name="ConnectionPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <!--  StreamerBotUrl gets a restart badge —
+                             WS reads ConfigManager.Current.StreamerBotUrl only
+                             at WS ctor (`_url = ConfigManager.Current.StreamerBotUrl`),
+                             so a Settings edit doesn't reconnect until next launch. -->
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="StreamerBotUrlLabel" Style="{StaticResource SettingsSectionLabel}" />
+                            <TextBlock x:Name="RequiresRestartBadge8" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+                        <TextBox x:Name="StreamerBotUrlBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=StreamerBotUrlLabel}" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="StreamerBotPasswordLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                            <TextBlock x:Name="RequiresRestartBadge1" Style="{StaticResource SettingsRestartBadge}" Margin="6,12,0,2" />
+                        </StackPanel>
+                        <PasswordBox x:Name="StreamerBotPasswordBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=StreamerBotPasswordLabel}" />
+
+                        <TextBlock x:Name="BotUsernameLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="BotUsernameBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=BotUsernameLabel}" />
+
+                        <TextBlock x:Name="BroadcasterUsernameLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="BroadcasterUsernameBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=BroadcasterUsernameLabel}" />
+
+                        <TextBlock x:Name="BroadcasterUserIdLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="BroadcasterUserIdBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=BroadcasterUserIdLabel}" />
+
+                        <!--  Broadcaster-guard toggles (WS M31) — pair with the
+                             broadcaster identity fields above. These don't restart
+                             services; ScriptManager reads them per-event. -->
+                        <CheckBox x:Name="SuppressBroadcasterFollowBox"
+                                  Margin="0,8,0,0"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                        <CheckBox x:Name="SuppressBroadcasterChatBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                        <CheckBox x:Name="SuppressBroadcasterRedeemBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+
+                        <TextBlock x:Name="ChatActionLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="ChatActionBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=ChatActionLabel}" />
+
+                        <!--  AutoStart — Hub auto-connect to Streamer.bot on launch.
+                             Lives alongside the connection knobs because it's the "should I
+                             call WS.Connect on boot" toggle. -->
+                        <CheckBox x:Name="AutoStartBox"
+                                  Margin="0,8,0,0"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="HudPortLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                            <TextBlock x:Name="RequiresRestartBadge2" Style="{StaticResource SettingsRestartBadge}" Margin="6,12,0,2" />
+                        </StackPanel>
+                        <TextBox x:Name="HudPortBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=HudPortLabel}" />
+                        <TextBlock x:Name="HudPortError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <!--  LayoutDirectory is read at HUDServer init
+                             and by LayerWatcher / Visualist load — needs restart. -->
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="LayoutDirLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                            <TextBlock x:Name="RequiresRestartBadge10" Style="{StaticResource SettingsRestartBadge}" Margin="6,12,0,2" />
+                        </StackPanel>
+                        <TextBox x:Name="LayoutDirBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=LayoutDirLabel}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem x:Name="UpdatesPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <CheckBox x:Name="UpdateCheckOnStartupBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+
+                        <TextBlock x:Name="UpdateTimeoutLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="UpdateTimeoutBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=UpdateTimeoutLabel}" />
+                        <TextBlock x:Name="UpdateTimeoutError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="LatestStatusLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,16,0,2" />
+                        <Border Background="{StaticResource CoalCardBrush}"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="10,6">
+                            <TextBlock x:Name="UpdateStatusText"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource CoalBodyTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </Border>
+
+                        <TextBlock x:Name="ForceDownloadHeaderLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,16,0,2" />
+                        <TextBlock x:Name="ForceDownloadIntroText"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,4" />
+                        <Button x:Name="ForceDownloadButton"
+                                Click="OnForceDownloadClicked"
+                                HorizontalAlignment="Left" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem x:Name="LogicPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <!--  LogicDirectory is read by LogicWatcher,
+                             SchedulerService, and ScriptManager at init time
+                             only — flipping it needs a Hub restart. -->
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="LogicDirLabel" Style="{StaticResource SettingsSectionLabel}" />
+                            <TextBlock x:Name="RequiresRestartBadge9" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+                        <TextBox x:Name="LogicDirBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=LogicDirLabel}" />
+
+                        <TextBlock x:Name="ScriptTimeoutLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="ScriptTimeoutBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=ScriptTimeoutLabel}" />
+                        <TextBlock x:Name="ScriptTimeoutError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="MaxChatLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="MaxChatBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=MaxChatLabel}" />
+                        <TextBlock x:Name="MaxChatError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="MaxWebhookLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="MaxWebhookBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=MaxWebhookLabel}" />
+                        <TextBlock x:Name="MaxWebhookError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="WebhookSecretLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <PasswordBox x:Name="WebhookSecretBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=WebhookSecretLabel}" />
+
+                        <!-- C17 (audit/winui-regressions-2026-05-24) — per-webhook
+                             secret rotation. WebhookSecrets[<path>] takes
+                             precedence over the global WebhookSecret above;
+                             rotating one row invalidates only that integration
+                             instead of every connected webhook caller. -->
+                        <TextBlock x:Name="WebhookSecretsHeaderLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBlock x:Name="WebhookSecretsIntroText"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,4" />
+                        <ListView x:Name="WebhookSecretsList"
+                                  Background="{StaticResource CoalShellBrush}"
+                                  BorderBrush="{StaticResource CoalDividerBrush}"
+                                  BorderThickness="1"
+                                  MaxHeight="180"
+                                  SelectionMode="Single"
+                                  AutomationProperties.LabeledBy="{Binding ElementName=WebhookSecretsHeaderLabel}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="0,2,0,2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="160" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding Path}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource CoalPaperBrush}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding MaskedSecret}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+                            <Button x:Name="WebhookSecretsAddButton"
+                                    Click="OnWebhookSecretsAddClicked" />
+                            <Button x:Name="WebhookSecretsEditButton"
+                                    Click="OnWebhookSecretsEditClicked" />
+                            <Button x:Name="WebhookSecretsRemoveButton"
+                                    Click="OnWebhookSecretsRemoveClicked" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="MaxWebhookBodyBytesLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="MaxWebhookBodyBytesBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=MaxWebhookBodyBytesLabel}" />
+                        <TextBlock x:Name="MaxWebhookBodyBytesError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="MaxAssetSizeBytesLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="MaxAssetSizeBytesBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=MaxAssetSizeBytesLabel}" />
+                        <TextBlock x:Name="MaxAssetSizeBytesError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="UrlImageCacheTtlLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="UrlImageCacheTtlBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=UrlImageCacheTtlLabel}" />
+                        <TextBlock x:Name="UrlImageCacheTtlError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="ArchitectReconnectBackoffLabel"
+                                       Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                            <TextBlock x:Name="RequiresRestartBadge3" Style="{StaticResource SettingsRestartBadge}" Margin="6,12,0,2" />
+                        </StackPanel>
+                        <TextBox x:Name="ArchitectReconnectBackoffBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=ArchitectReconnectBackoffLabel}" />
+                        <TextBlock x:Name="ArchitectReconnectBackoffError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <!--  SystemLogMaxRows — Hub's SystemLog panel
+                             buffer cap. Read by SystemLogViewModel on load; a
+                             change won't shrink an already-loaded buffer but
+                             takes effect on next panel open / Hub launch. -->
+                        <TextBlock x:Name="SystemLogMaxRowsLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="SystemLogMaxRowsBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=SystemLogMaxRowsLabel}" />
+                        <TextBlock x:Name="SystemLogMaxRowsError" Style="{StaticResource SettingsFieldErrorText}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <!-- 2026-06-24 — this pivot was the "AI" tab; the AI runtime is
+                 untested / not fully functional, so the AI fields (Default AI
+                 Model, OpenAI / Anthropic / Cerebras keys, Ollama URL) are
+                 commented out and deferred as a TODO. The Architect AI nodes
+                 are hidden in parallel (NodeRegistry.HiddenFromPalette). The
+                 Discord bot-token field is unrelated to AI and stays, so the
+                 tab is relabelled "Discord" (header set in ApplyLocalizedChrome).
+                 To restore AI: uncomment the block below, re-instate the
+                 commented label/load/save lines in SettingsDialog.xaml.cs, and
+                 un-hide the six AI titles in NodeRegistry.HiddenFromPalette. -->
+            <PivotItem x:Name="AiPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <!-- AI fields (commented out 2026-06-24 — see note above)
+                        <TextBlock x:Name="DefaultAiModelLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" />
+                        <TextBox x:Name="DefaultAiModelBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=DefaultAiModelLabel}" />
+
+                        <TextBlock x:Name="OpenAiApiKeyLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <PasswordBox x:Name="OpenAiApiKeyBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=OpenAiApiKeyLabel}" />
+
+                        <TextBlock x:Name="AnthropicKeyLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <PasswordBox x:Name="AnthropicKeyBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=AnthropicKeyLabel}" />
+
+                        <TextBlock x:Name="CerebrasApiKeyLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <PasswordBox x:Name="CerebrasApiKeyBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=CerebrasApiKeyLabel}" />
+
+                        <TextBlock x:Name="OllamaUrlLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="OllamaUrlBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=OllamaUrlLabel}" />
+                        -->
+
+                        <!--  Discord bot token — read by discord.send_message
+                             / discord.send_embed at command invocation time. Hidden-only
+                             reveal per the global SettingsPasswordBox style. -->
+                        <TextBlock x:Name="DiscordBotTokenLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" />
+                        <PasswordBox x:Name="DiscordBotTokenBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=DiscordBotTokenLabel}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem x:Name="RemotePivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <!--  Restart badge removed from RemoteEnabled —
+                             RemoteBridgeServer is started/stopped in place by the
+                             Remote Devices panel, so the flip is hot-applied. -->
+                        <CheckBox x:Name="RemoteEnabledBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+
+                        <TextBlock x:Name="RemoteBindHostLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="RemoteBindHostBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=RemoteBindHostLabel}" />
+
+                        <TextBlock x:Name="RemotePortLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="RemotePortBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=RemotePortLabel}" />
+                        <TextBlock x:Name="RemotePortError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <TextBlock x:Name="RemoteTlsCertPathLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="RemoteTlsCertPathBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=RemoteTlsCertPathLabel}" />
+
+                        <!--  Pairing-code TTL (seconds) — single-use plus
+                             this TTL is the LAN-mode pairing-interception mitigation
+                             per Viewer roadmap auth. RemoteBridge reads it on grant
+                             issue; hot-applies. -->
+                        <TextBlock x:Name="RemotePairingTtlLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="RemotePairingTtlBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=RemotePairingTtlLabel}" />
+                        <TextBlock x:Name="RemotePairingTtlError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <Border Margin="0,16,0,0"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="0,1,0,0" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <CheckBox x:Name="WebSocketServerEnabledBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadge5" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="WebSocketServerBindHostLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="WebSocketServerBindHostBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=WebSocketServerBindHostLabel}" />
+
+                        <TextBlock x:Name="WebSocketServerPortLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="WebSocketServerPortBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=WebSocketServerPortLabel}" />
+                        <TextBlock x:Name="WebSocketServerPortError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <!--  WebSocketServer LAN gate — pairs with the BindHost field
+                             above; without this checkbox the service downgrades to loopback
+                             even when BindHost is 0.0.0.0/LAN IP. Defense-in-depth per AppConfig
+                             docs (line 418-428). -->
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                            <CheckBox x:Name="WebSocketServerLanModeEnabledBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadgeWsLan" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+
+                        <!-- [S38] WebSocketServer Token — fully internal, not a user-tweakable
+                             knob. Generated at ConfigManager.Load and rotated via the
+                             "Regenerate token" panic button below. The raw value is
+                             intentionally NOT surfaced in this UI; treat it like a password
+                             and read from %AppData%/PhoenixControls/config.json if a client
+                             needs to be configured by hand. -->
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                            <TextBlock x:Name="WebSocketServerTokenLabel"
+                                       Style="{StaticResource SettingsSectionLabel}"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,0,0" />
+                            <Button x:Name="WebSocketServerTokenRotateButton"
+                                    Click="OnWebSocketServerTokenRotateClicked" />
+                        </StackPanel>
+
+                        <Border Margin="0,16,0,0"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="0,1,0,0" />
+
+                        <!--  ViewerServer v2 — separate from the legacy RemoteBridge.
+                             Defaults to off / loopback; ViewerServerLan flips the bind to the
+                             wildcard prefix for LAN access (urlacl reservation required). -->
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <CheckBox x:Name="ViewerServerEnabledBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadgeViewerEnabled" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="ViewerServerPortLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="ViewerServerPortBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=ViewerServerPortLabel}" />
+                        <TextBlock x:Name="ViewerServerPortError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                            <CheckBox x:Name="ViewerServerLanBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadgeViewerLan" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="ViewerServerChannelLabel" Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="ViewerServerChannelBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=ViewerServerChannelLabel}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem x:Name="CaptionsPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <!--  LiveCaptionsEnabled controls construction
+                             of LiveCaptionService at HubBootstrapper init; flipping
+                             the toggle won't start/stop the UIA hook until next
+                             Hub launch. -->
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <CheckBox x:Name="LiveCaptionsEnabledBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadge11" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+                        <CheckBox x:Name="LiveCaptionsAutoLaunchBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                        <CheckBox x:Name="LiveCaptionsBroadcastBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+
+                        <TextBlock x:Name="LiveCaptionsAllowedLayersLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="LiveCaptionsAllowedLayersBox"
+                                 Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=LiveCaptionsAllowedLayersLabel}" />
+
+                        <TextBlock x:Name="TranslationProviderLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="TranslationProviderBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=TranslationProviderLabel}" />
+
+                        <TextBlock x:Name="TranslationHttpEndpointLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="TranslationHttpEndpointBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=TranslationHttpEndpointLabel}" />
+
+                        <TextBlock x:Name="TranslationApiKeyLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <PasswordBox x:Name="TranslationApiKeyBox" Style="{StaticResource SettingsPasswordBox}"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=TranslationApiKeyLabel}" />
+
+                        <TextBlock x:Name="CaptionTargetLanguageLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,12,0,2" />
+                        <TextBox x:Name="CaptionTargetLanguageBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=CaptionTargetLanguageLabel}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem x:Name="FeaturesPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <CheckBox x:Name="HotkeysEnabledBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadge6" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <CheckBox x:Name="ClipboardWatchEnabledBox"
+                                      Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock x:Name="RequiresRestartBadge7" Style="{StaticResource SettingsRestartBadge}" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem x:Name="LocalizationPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6" Padding="0,8,0,0">
+                        <TextBlock x:Name="LanguageLabel" Style="{StaticResource SettingsSectionLabel}" />
+                        <ComboBox x:Name="LanguageCombo"
+                                  HorizontalAlignment="Stretch"
+                                  Background="{StaticResource CoalShellBrush}"
+                                  Foreground="{StaticResource CoalPaperBrush}"
+                                  AutomationProperties.LabeledBy="{Binding ElementName=LanguageLabel}" />
+
+                        <TextBlock x:Name="LanguageRestartNoticeText"
+                                   Margin="0,16,0,0"
+                                   FontSize="11"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+
+            <!-- C18 (audit/winui-regressions-2026-05-24) — Diagnostics tab.
+                 Surfaces the AppDataMigrator re-run affordance so an operator
+                 who suspects a stalled migration (legacy PhoenixSovereign /
+                 Phoenix.Sovereign folders still present at AppData root) can
+                 manually retrigger the pass without restarting the suite.
+                 The migrator is hard-coded once-per-process by design; the
+                 re-run path is a manual escape hatch and the inline status
+                 line explains the result-tracking caveat.
+                 -->
+            <PivotItem x:Name="DiagnosticsPivotItem">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="10" Padding="0,8,0,0">
+                        <!-- Log-history retention. Auto-prunes the SystemHistory +
+                             EventLog SQLite tables (the System Log / Event Log
+                             persistence) older than the cap. DB.RunRetentionSweepAsync
+                             runs it at boot and immediately on Save; 0 = disabled.
+                             Only those two log tables are touched — variables and
+                             user data are never affected. -->
+                        <TextBlock x:Name="LogHistorySectionLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" />
+                        <TextBlock x:Name="LogHistoryIntro"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource CoalBodyTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <CheckBox x:Name="LogRetentionEnabledBox"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                        <TextBlock x:Name="LogRetentionDaysLabel"
+                                   Style="{StaticResource SettingsSectionLabel}" Margin="0,8,0,2" />
+                        <TextBox x:Name="LogRetentionDaysBox" Style="{StaticResource SettingsValueBox}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=LogRetentionDaysLabel}" />
+                        <TextBlock x:Name="LogRetentionDaysError" Style="{StaticResource SettingsFieldErrorText}" />
+
+                        <Border Height="1" Background="{StaticResource CoalDividerBrush}" Margin="0,14,0,6" />
+
+                        <TextBlock x:Name="DiagnosticsMigrationHeader"
+                                   Style="{StaticResource SettingsSectionLabel}" />
+
+                        <TextBlock x:Name="DiagnosticsMigrationIntro"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource CoalBodyTextBrush}"
+                                   TextWrapping="Wrap" />
+
+                        <Grid ColumnSpacing="10" RowSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="160" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                       x:Name="DiagnosticsMigrationLastRunLabel"
+                                       Style="{StaticResource SettingsSectionLabel}" />
+                            <TextBlock Grid.Row="0" Grid.Column="1"
+                                       x:Name="DiagnosticsMigrationLastRunValue"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource CoalPaperBrush}"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+
+                            <TextBlock Grid.Row="1" Grid.Column="0"
+                                       x:Name="DiagnosticsMigrationStatusLabel"
+                                       Style="{StaticResource SettingsSectionLabel}" />
+                            <TextBlock Grid.Row="1" Grid.Column="1"
+                                       x:Name="DiagnosticsMigrationStatusValue"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+
+                        <Button x:Name="DiagnosticsRerunMigrationsButton"
+                                HorizontalAlignment="Left"
+                                Background="{StaticResource CoalShellBrush}"
+                                Foreground="{StaticResource CoalPaperBrush}"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="1"
+                                Padding="12,6"
+                                Click="OnRerunMigrationsClicked" />
+
+                        <TextBlock x:Name="DiagnosticsMigrationNote"
+                                   Margin="0,8,0,0"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </PivotItem>
+        </Pivot>
+    </Grid>
+</ContentDialog>

@@ -1,0 +1,99 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Single-HUB collapse (TODO.md P0 #3) — Visualist.WinUI is now a library
+    consumed by Hub.WinUI's pillar-tab navigation, not a standalone exe.
+    Dropped: <OutputType>WinExe</OutputType>, <ApplicationIcon>,
+    <RuntimeIdentifiers>, <WindowsPackageType>, <EnableMsixTooling>. The
+    PRI for the linked PhoenixDark theme + this assembly's XAML pages is
+    still produced via UseWinUI=true; Hub.WinUI's exe build merges it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Phoenix.Controls.Visualist.WinUI</RootNamespace>
+    <!-- UseRidGraph=true keeps the WinAppSDK's transitive win10-* RID list
+         valid under .NET 9 SDK; without it the legacy win10-arm /
+         win10-x64-aot etc. entries trigger NETSDK1083. -->
+    <UseRidGraph>true</UseRidGraph>
+    <EnableMsixTooling>true</EnableMsixTooling>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Pinned to WindowsAppSDK 1.5.* in lockstep with Hub.WinUI / Architect.WinUI.
+      The real fix that unblocks the build on a stand-alone .NET SDK 9.0.300
+      (no VS UWP/MSIX workload installed) is <EnableMsixTooling>true</EnableMsixTooling>
+      in the PropertyGroup above — without it, MrtCore.PriGen.targets resolves
+      a UsingTask path that points at Microsoft.Build.Packaging.Pri.Tasks.dll
+      under the .NET SDK's VisualStudio\v17.0\AppxPackage\ folder (which the
+      .NET SDK does not ship) and fails MSB4062. With EnableMsixTooling=true
+      PriGen takes the unpackaged-WinUI codepath that uses MakePri.exe from
+      the Windows SDK build tools instead.
+    -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.*" />
+    <!--
+      Visualist live-preview pipeline (regression audit 2026-05-31, Area 5).
+      No separate Microsoft.Web.WebView2 PackageReference is needed: the WinUI 3
+      WebView2 control (Microsoft.UI.Xaml.Controls.WebView2) and its CoreWebView2
+      API surface — EnsureCoreWebView2Async, CapturePreviewAsync,
+      CoreWebView2CapturePreviewImageFormat, PostWebMessageAsJson — are projected
+      directly into Microsoft.WinUI.dll by WindowsAppSDK. Adding the standalone
+      WebView2 SDK package instead causes a CS0433 duplicate-type collision
+      (CoreWebView2* exists in both assemblies), so the capture engine consumes
+      only the WindowsAppSDK-projected types.
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+    <ProjectReference Include="..\Phoenix.Controls.Shared.WinUI\Phoenix.Controls.Shared.WinUI.csproj" />
+    <ProjectReference Include="..\Phoenix.Controls.Visualist.Engine\Phoenix.Controls.Visualist.Engine.csproj" />
+  </ItemGroup>
+
+  <!--
+     (P1-9) — expose VisualTriggerSnippetProducer's internal escape
+    helpers (BuildPlainText / EscapePlainText) to the xUnit test project so
+    the clipboard escape can be asserted without spinning up a WinUI
+    DataPackage. Mirrors the Shared / Hub / Architect / Visualist.Engine
+    InternalsVisibleTo entries already in place.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+  </ItemGroup>
+
+  <!--
+    PhoenixDark.xaml is owned by Phoenix.Controls.Shared.WinUI (Track 1) and
+    shipped as <Content> there. WinUI 3 cannot merge a ResourceDictionary
+    from another project's Content payload at runtime via ms-appx://, so we
+    link it as a <Page> here. The link compiles the ResourceDictionary into
+    Visualist.WinUI's PRI without duplicating the source — Track 1 still owns
+    the canonical file. Track 2/5 (Hub.WinUI / Architect.WinUI) will repeat
+    the same link from their own csproj.
+  -->
+  <ItemGroup>
+    <Page Include="..\Phoenix.Controls.Shared.WinUI\Themes\PhoenixDark.xaml">
+      <Link>Themes\PhoenixDark.xaml</Link>
+    </Page>
+    <Page Include="..\Phoenix.Controls.Shared.WinUI\Themes\PhoenixIcons.xaml">
+      <Link>Themes\PhoenixIcons.xaml</Link>
+    </Page>
+    <!--
+      Sprint E (focus-visual sweep). Visualist owns Themes\FocusVisuals.xaml;
+      the .NET SDK auto-discovers it via the implicit <Page> glob, so no
+      explicit Include is needed here. MainView merges it at
+      UserControl.Resources rather than at App-level so Visualist's
+      overrides win inside its own subtree (per
+      feedback_visualist_architect_chrome_independence.md — typed-data
+      socket pickers may eventually want a per-data-type focus tint).
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+  </ItemGroup>
+
+</Project>

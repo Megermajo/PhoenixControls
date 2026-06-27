@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Controls.WidgetSinglePreviewPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls">
+
+    <!-- WidgetSinglePreviewPanel — embedded preview pane that loads
+         http://127.0.0.1:18080/layer/<id>?widget=<widgetId>&bg=<color> in a
+         WebView2. compositor.js reads ?widget= and resizes its canvas to that
+         widget's rect, so this pane shows ONLY that widget filling the area.
+         Same renderer as the OBS source — pixels match.
+
+         Layout: a content area (WebView2 + placeholder) over a thin bottom band
+         that hosts the width-resize grip. Dragging the grip changes the pane
+         width (height auto-derives from the widget aspect) and persists to
+         VisualistUserConfig.EditorPreviewWidth via OnResized. -->
+    <Grid Background="{StaticResource CoalShellBrush}"
+          BorderBrush="{StaticResource CoalCardBrush}"
+          BorderThickness="1">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="14" />  <!-- resize-grip band -->
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <controls:WebView2
+                x:Name="PreviewWeb"
+                Visibility="Collapsed"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch" />
+            <TextBlock
+                x:Name="Placeholder"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                TextAlignment="Center"
+                TextWrapping="Wrap"
+                Margin="16"
+                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                Text="Save the layer first to preview." />
+        </Grid>
+
+        <!-- Resize grip — bottom band, drag left/right to set the pane width.
+             A chevron-ish triangle hints the affordance; the whole band is the
+             hit target. ProtectedCursor (set in code-behind) shows the resize
+             cursor on hover. -->
+        <Border
+            Grid.Row="1"
+            x:Name="ResizeGrip"
+            Background="{StaticResource CoalRaisedBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,1,0,0">
+            <Polygon
+                x:Name="GripGlyph"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Center"
+                Margin="3,0,0,0"
+                Points="0,8 8,8 0,0"
+                Fill="{StaticResource AccentValueBrush}" />
+        </Border>
+    </Grid>
+</UserControl>

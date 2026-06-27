@@ -1,0 +1,23 @@
+# Script — Generated from "New Logic Graph"
+# Exported: 2026-06-24 14:37
+
+on_interval(300):
+    # [Twitch.GetViewers]
+    twitch.get_viewers("global._viewers_b47e11")
+    # [Flow.ForEach]
+    global._foreach_a17a66 = {global._viewers_b47e11}
+    for_each({global._foreach_a17a66})
+        # [DB.FindRow]
+        db.find_row(User_Points, name, {loop.item}, "global._rid_5c113b")
+        if global._rid_5c113b != "":
+            # [DB.Increment]
+            db.increment_cell("User_Points", global._rid_5c113b, "currency", 50)
+            global._db_inc_af7311 = db.get_cell("User_Points", global._rid_5c113b, "currency")
+        else:
+            # [DB.InsertRow]
+            db.insert_row(User_Points, name, {loop.item}, "global._newrowid_b60aa0")
+            # [DB.SetCell]
+            db.set_cell(User_Points, global._newrowid_b60aa0, currency, 50)
+    # [System.Log]
+    system.log(text.format("Channelpoints were added for {0} users", convert.to_string(array.length({global._viewers_b47e11})), "", ""), LogicExecution)
+

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     #10 — floating Inspector window. Replaces the right-rail
+    docked Inspector card in MainView / ArchitectSiblingWindow; the
+    Inspector now lives in its own top-level Window the user can move,
+    resize, and place wherever it makes sense on their multi-monitor
+    setup (per feedback_multi_window_default.md "multi-window where it
+    makes sense").
+
+    One instance per Architect ViewModel — calling Open(avm) re-uses an
+    existing window when it matches and focuses it; calling with a
+    different AVM closes the old window and spawns a fresh one. The
+    factory is exposed via InspectorWindow.OpenFor(avm) and
+    InspectorWindow.Close(avm) so MainView / ArchitectSiblingWindow can
+    drive the toggle from their respective "Show Inspector" affordances.
+
+    Chrome decomposition:
+      Row 0: ArchitectWindowChrome (caption-only — no menu strip; the
+             chrome's SecondaryContent slot stays empty so the row
+             collapses to Auto height per the chrome's RowDefinition
+             template).
+      Row 1: LogicInspector content host. DataContext is set in
+             InspectorWindow.xaml.cs to ArchitectViewModel.LogicInspector
+             so the panel mirrors the same selection the embedded canvas
+             tracks.
+
+    Per feedback_visualist_architect_chrome_independence.md the chrome
+    primitive (ArchitectWindowChrome) stays Architect-local. This window
+    is also Architect-local; Visualist would author its own analogue if
+    a floating inspector ever lands there.
+-->
+<Window
+    x:Class="Phoenix.Controls.Architect.WinUI.Hosting.InspectorWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls">
+
+    <Grid Background="{StaticResource CoalShellBrush}"
+          AutomationProperties.Name="Inspector Window">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Custom chrome — caption only, no SecondaryContent. Mirrors the
+             SubGraphWindow pattern (caption-only sub-graph editor) so the
+             three Architect-owned top-level windows
+             (ArchitectSiblingWindow, SubGraphWindow, InspectorWindow)
+             read as one window family. -->
+        <controls:ArchitectWindowChrome x:Name="Chrome" Grid.Row="0">
+            <!-- Left caption slot: eyebrow + file-name reference so the
+                 user can tell at a glance which graph the inspector is
+                 mirroring (matters when multiple sibling windows are
+                 open and the inspector only follows one of them — the
+                 "active focus" graph). -->
+            <controls:ArchitectWindowChrome.LeftCaptionContent>
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock x:Name="EyebrowText"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               CharacterSpacing="180"
+                               Foreground="{StaticResource EmberPrimaryBrush}"
+                               Text="INSPECTOR" />
+                    <TextBlock x:Name="CaptionFileName"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource CoalPaperBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="280"
+                               Text="(unsaved)" />
+                </StackPanel>
+            </controls:ArchitectWindowChrome.LeftCaptionContent>
+        </controls:ArchitectWindowChrome>
+
+        <!-- Inspector host. Constructs a fresh LogicInspector at runtime so
+             a new ArchitectViewModel binding doesn't smash the cached
+             instance's DataContext while it's mid-render. The CoalSurface
+             background matches the right-column treatment the pre-Sprint-26
+             docked inspector card had so a user transitioning to the
+             floating window sees a familiar panel surface. -->
+        <Border Grid.Row="1"
+                Background="{StaticResource CoalSurfaceBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0">
+            <ContentControl x:Name="InspectorHost"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch"
+                            AutomationProperties.Name="Inspector Content" />
+        </Border>
+    </Grid>
+</Window>

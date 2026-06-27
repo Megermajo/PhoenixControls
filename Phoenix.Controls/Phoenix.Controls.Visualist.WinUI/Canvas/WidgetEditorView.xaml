@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Canvas.WidgetEditorView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Phoenix.Controls.Visualist.WinUI.Canvas"
+    xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls"
+    IsTabStop="True"
+    UseSystemFocusVisuals="False"><!-- R28 — focusable so a selected keyframe can be removed with Delete. -->
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <!-- R16 — column 0 = editor (toolbar/tabs/graph/timeline/status); column 1
+             = docked media library rail (collapsible via the toolbar Media toggle). -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition x:Name="MediaColumn" Width="240" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /> <!-- editor toolbar (Test Run / preview / conn dot) -->
+            <RowDefinition Height="28" />   <!-- trigger tabs -->
+            <RowDefinition Height="*" />    <!-- node graph view + floating preview overlay -->
+            <RowDefinition Height="Auto" /> <!-- timeline (header w/ transport + scrubber) -->
+            <RowDefinition Height="Auto" /> <!-- status bar -->
+        </Grid.RowDefinitions>
+
+        <!-- ── Editor toolbar (Lane B / Area 4+5 P1) ──────────────────────
+             Test Run sends a VISUAL_TRIGGER for the active trigger to the live
+             OBS source (warm-green "go" semantic, disabled when the bus is
+             offline). Preview Layer / Preview Widget open the popout windows.
+             A small connection dot reflects VisualistBusClient bus presence. -->
+        <Border
+            Grid.Row="0"
+            Background="{StaticResource CoalRaisedBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="8,5">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <Button
+                    x:Name="TestRunButton"
+                    Click="OnTestRunClicked"
+                    ToolTipService.ToolTip="Run this trigger on the live OBS source (Hub bus)"
+                    Padding="12,4"
+                    Background="#FF3C5A3C"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1"
+                    Foreground="{StaticResource CoalPaperBrush}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="&#x25B6;" FontSize="11" VerticalAlignment="Center" />
+                        <TextBlock Text="Test Run" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <!-- Bus connection indicator — fill driven by OnConnectionStatusChanged. -->
+                <Ellipse
+                    x:Name="BusStatusDot"
+                    Width="9" Height="9"
+                    VerticalAlignment="Center"
+                    Fill="{StaticResource ErrBrush}"
+                    ToolTipService.ToolTip="Hub bus offline" />
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+
+                <Button
+                    x:Name="PreviewLayerButton"
+                    Click="OnPreviewLayerClicked"
+                    ToolTipService.ToolTip="Open a popout preview of the whole layer"
+                    Padding="10,4"
+                    Background="{StaticResource CoalCardBrush}"
+                    BorderThickness="0"
+                    Foreground="{StaticResource CoalBodyTextBrush}"
+                    Content="Preview Layer" />
+
+                <Button
+                    x:Name="PreviewWidgetButton"
+                    Click="OnPreviewWidgetClicked"
+                    ToolTipService.ToolTip="Open a popout preview of just this widget"
+                    Padding="10,4"
+                    Background="{StaticResource CoalCardBrush}"
+                    BorderThickness="0"
+                    Foreground="{StaticResource CoalBodyTextBrush}"
+                    Content="Preview Widget" />
+
+                <!-- R16 — show/hide the docked media library rail. -->
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <ToggleButton
+                    x:Name="MediaToggle"
+                    IsChecked="True"
+                    Click="OnMediaToggleClick"
+                    Content="Media"
+                    Padding="10,4" MinWidth="0"
+                    ToolTipService.ToolTip="Show / hide the media library" />
+
+                <!-- Track E — per-trigger simple volume mixer. A small toolbar
+                     button opens a Flyout with a Master fader (WidgetTrigger.Volume)
+                     plus one fader per Audio.Play node in the active trigger. Rows
+                     are rebuilt in code-behind on Opening so the mixer always
+                     reflects the live active trigger. -->
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Button
+                    x:Name="AudioMixerButton"
+                    Padding="10,4" MinWidth="0"
+                    Background="{StaticResource CoalCardBrush}"
+                    BorderThickness="0"
+                    Foreground="{StaticResource CoalBodyTextBrush}"
+                    ToolTipService.ToolTip="Audio mixer — master + per-source volume for this trigger">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="&#x1F509;" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="Audio" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <Button.Flyout>
+                        <Flyout x:Name="AudioMixerFlyout" Placement="Bottom">
+                            <StackPanel x:Name="AudioMixerRoot" MinWidth="280" Spacing="8" />
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <!-- Trigger tab strip — populated from VisualistViewModel.TriggerNames in code-behind. -->
+        <Border
+            Grid.Row="1"
+            Background="{StaticResource CoalRaisedBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="10,0,0,0">
+            <!-- Canvas overlay sibling hosts the drag insertion marker (Area 1 P2)
+                 so it can sit at an absolute X over the tab row without disturbing
+                 the StackPanel layout. -->
+            <Grid>
+                <StackPanel
+                    x:Name="TriggerTabStrip"
+                    Orientation="Horizontal"
+                    Spacing="1"
+                    VerticalAlignment="Bottom" />
+                <Canvas
+                    x:Name="TabDropMarkerLayer"
+                    IsHitTestVisible="False" />
+            </Grid>
+        </Border>
+
+        <!-- Interactive widget-graph canvas + floating per-widget preview pane. -->
+        <Grid Grid.Row="2">
+            <canvas:WidgetGraphCanvas x:Name="GraphCanvas" />
+
+            <!-- Floating embedded preview (Area 5 P1) — anchored top-right over
+                 the graph. Width from VisualistUserConfig.EditorPreviewWidth; the
+                 grip persists it. Gated on EditorEmbeddedPreviewEnabled (toggled
+                 visible/collapsed in code-behind). -->
+            <controls:WidgetSinglePreviewPanel
+                x:Name="EmbeddedPreview"
+                Visibility="Collapsed"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,8,8,0"
+                Width="480"
+                Height="284"
+                MinWidth="200" />
+
+            <!-- R8 — empty-state. When no widget is selected (fresh layer, after
+                 deleting the selected widget, after undo/redo) the editor would
+                 otherwise be a blank graph + a disabled "+" — "the second tab is
+                 useless". This hint occludes the graph and points the user back
+                 to the canvas. Toggled from ApplyEmptyState(). Topmost child so
+                 it covers the graph + embedded preview. -->
+            <Grid x:Name="NoWidgetEmptyState"
+                  Visibility="Collapsed"
+                  Background="{StaticResource CoalShellBrush}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Spacing="10" MaxWidth="380">
+                    <TextBlock Text="No widget selected"
+                               HorizontalAlignment="Center"
+                               FontSize="15"
+                               Foreground="{StaticResource CoalBodyTextBrush}" />
+                    <TextBlock Text="Double-click a widget on the Layer Canvas to edit its trigger graphs, or pick one from the Widgets list."
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                    <Button x:Name="EmptyStateBackButton"
+                            Content="&#x2190; Back to Layer Canvas"
+                            HorizontalAlignment="Center"
+                            Click="OnEmptyStateBackClicked" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+
+        <!-- Timeline strip -->
+        <Border
+            Grid.Row="3"
+            Padding="12,8"
+            Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" MinHeight="48" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Transport (Area 5 P0 consumer) — Play / Pause / Stop +
+                         Loop toggle, driven by Core.TimelinePlayback. Each tick
+                         updates VM.PlayheadMs + the scrubber. -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                        <Button x:Name="PlayPauseButton" Click="OnPlayPauseClicked"
+                                ToolTipService.ToolTip="Play / Pause"
+                                Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
+                                Foreground="{StaticResource CoalPaperBrush}">
+                            <TextBlock x:Name="PlayPauseGlyph" Text="&#x25B6;" FontSize="11" />
+                        </Button>
+                        <Button x:Name="StopButton" Click="OnStopClicked"
+                                ToolTipService.ToolTip="Stop (reset to 0)"
+                                Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
+                                Foreground="{StaticResource CoalPaperBrush}">
+                            <TextBlock Text="&#x25A0;" FontSize="10" />
+                        </Button>
+                        <ToggleButton x:Name="LoopToggle" Click="OnLoopToggled"
+                                ToolTipService.ToolTip="Loop playback"
+                                Padding="6,2" MinWidth="0">
+                            <TextBlock Text="&#x21BB;" FontSize="12" />
+                        </ToggleButton>
+
+                        <!-- R39 — prev/next keyframe stepping. Jumps the playhead
+                             to the previous / next keyframe time across the whole
+                             timeline (shares the keyframe-time scan with the
+                             per-pill ◀▶ seek). -->
+                        <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                        <Button x:Name="PrevKeyButton" Click="OnPrevKeyframeClicked"
+                                ToolTipService.ToolTip="Previous keyframe"
+                                Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
+                                Foreground="{StaticResource CoalPaperBrush}">
+                            <TextBlock Text="|&#x25C0;" FontSize="10" />
+                        </Button>
+                        <Button x:Name="NextKeyButton" Click="OnNextKeyframeClicked"
+                                ToolTipService.ToolTip="Next keyframe"
+                                Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
+                                Foreground="{StaticResource CoalPaperBrush}">
+                            <TextBlock Text="&#x25B6;|" FontSize="10" />
+                        </Button>
+
+                        <!-- R5 — trigger duration editor + Fit. Without an
+                             editable duration a fresh trigger's timeline has
+                             DurationMs=0, so Play hard-bails and the ruler shows
+                             a placeholder 5s the playhead can't traverse. The
+                             NumberBox writes Timeline.DurationMs (undo + dirty);
+                             Fit sizes it to the last keyframe + a 200ms tail.
+                             Restores the pre-WinUI TimelinePanel _numDuration /
+                             _btnFitDuration controls. -->
+                        <Border Width="1" Margin="6,2" Background="{StaticResource CoalCardBrush}" />
+                        <TextBlock Text="Dur" VerticalAlignment="Center" FontSize="10"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                        <NumberBox x:Name="DurationBox"
+                                   ValueChanged="OnDurationChanged"
+                                   Minimum="0" Maximum="600000"
+                                   SmallChange="100" LargeChange="1000"
+                                   SpinButtonPlacementMode="Compact"
+                                   MinWidth="96" VerticalAlignment="Center"
+                                   ToolTipService.ToolTip="Trigger duration (ms)" />
+                        <Button x:Name="FitButton" Click="OnFitDurationClicked"
+                                Content="Fit" Padding="8,2"
+                                Background="{StaticResource CoalCardBrush}" BorderThickness="0"
+                                Foreground="{StaticResource CoalPaperBrush}"
+                                VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Fit duration to the last keyframe (+200ms)" />
+                    </StackPanel>
+
+                    <TextBlock
+                        x:Name="TimelineHeaderLabel"
+                        Grid.Column="1"
+                        Margin="10,0,0,0"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource EyebrowTextStyle}"
+                        Text="TIMELINE · — · 0.0S" />
+
+                    <!-- Zoom chip (QC52-03). -->
+                    <Border
+                        x:Name="TimelineZoomChip"
+                        Grid.Column="2"
+                        Padding="6,1"
+                        CornerRadius="3"
+                        BorderThickness="1"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        Background="{StaticResource CoalRaisedBrush}"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                        <TextBlock
+                            x:Name="TimelineZoomChipLabel"
+                            FontFamily="{StaticResource MonoFont}"
+                            FontSize="10"
+                            Foreground="{StaticResource CoalSecondaryTextBrush}"
+                            Text="x1.0" />
+                    </Border>
+                </Grid>
+
+                <Border
+                    Grid.Row="1"
+                    Background="{StaticResource CoalShellBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6">
+                    <!-- R4 — Background="Transparent" so the scrub/zoom pointer
+                         handlers (wired in SubscribeTimelineHandlers) fire on the
+                         empty track. A WinUI Panel with a null Background is NOT
+                         hit-test-visible in its empty regions, so blank-track
+                         click-to-seek and Ctrl+wheel-to-zoom were silently dead —
+                         the same null-Background gotcha 0.12.18 fixed for the
+                         WidgetSurface but missed on the timeline. The wrapping
+                         Border already paints CoalShellBrush, so Transparent here
+                         doesn't double-paint. -->
+                    <Grid x:Name="TimelineSurface" Background="Transparent" SizeChanged="OnTimelineSizeChanged" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- ── Status bar (Area 5 P2) ─────────────────────────────────────
+             Bottom strip carrying transient feedback from canvas / VM status
+             events; auto-clears to "Ready" after ~5s. -->
+        <Border
+            Grid.Row="4"
+            Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,1,0,0"
+            Padding="10,3">
+            <TextBlock
+                x:Name="StatusLabel"
+                FontSize="11"
+                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                Text="Ready" />
+        </Border>
+
+        <!-- R16 — docked media library rail. Inherits the VisualistViewModel
+             DataContext (for the delete reference-scan). Drag a tile onto the
+             node graph to spawn a pre-filled loader node (R20). -->
+        <controls:MediaLibraryPanel
+            x:Name="MediaPanel"
+            Grid.Column="1"
+            Grid.Row="0"
+            Grid.RowSpan="5"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="1,0,0,0" />
+    </Grid>
+</UserControl>

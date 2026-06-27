@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="Phoenix.Controls.Architect.WinUI.Dialogs.SaveValidationDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Validation"
+    Background="{StaticResource BgPanelBrush}"
+    BorderBrush="{StaticResource BorderSoftBrush}"
+    BorderThickness="1"
+    CornerRadius="6"
+    PrimaryButtonText="Save anyway"
+    SecondaryButtonText="Cancel"
+    DefaultButton="Secondary">
+
+    <Grid Width="540" Height="320">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="HeaderText"
+                   Grid.Row="0"
+                   FontSize="13"
+                   Foreground="{StaticResource TextStrongBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,8" />
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="WarningList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,0,0,4"
+                                Padding="8,6,8,6"
+                                Background="{StaticResource SelectionDimBrush}"
+                                BorderBrush="{Binding AccentBrush}"
+                                BorderThickness="3,0,0,0"
+                                CornerRadius="2">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Ellipse Width="10" Height="10"
+                                         VerticalAlignment="Top"
+                                         Margin="0,4,0,0"
+                                         Fill="{Binding AccentBrush}" />
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding SeverityText}"
+                                               FontSize="10"
+                                               CharacterSpacing="80"
+                                               Foreground="{Binding AccentBrush}" />
+                                    <TextBlock Text="{Binding Message}"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource TextStrongBrush}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</ContentDialog>

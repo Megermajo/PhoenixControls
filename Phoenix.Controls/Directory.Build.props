@@ -1,0 +1,22 @@
+<Project>
+
+  <!--
+    Phoenix Controls (public) — version stamp produced by the public export.
+    The dated build id ({MAJOR}.{MINOR}.{YYMMDD}{n}) lives in the string version
+    fields (what the updater + About + chrome read); AssemblyVersion/FileVersion
+    keep a UInt16-safe numeric mirror. PUBLIC_RELEASE is defined only when CI
+    passes -p:PublicRelease=true, which is what activates the public updater.
+  -->
+
+  <PropertyGroup>
+    <Version>1.0.2606271</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.2606271</InformationalVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublicRelease)' == 'true'">
+    <DefineConstants>$(DefineConstants);PUBLIC_RELEASE</DefineConstants>
+  </PropertyGroup>
+
+</Project>

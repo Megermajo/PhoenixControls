@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Canvas.WidgetGraphNodeView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls">
+
+    <!-- [pin-clip 2026-06-23] Root is a plain Grid (NOT the rounded Border) so the
+         node body never clips its own pins. A WinUI Border with a CornerRadius
+         clips its CHILD content to the rounded rect, so the negative-margin pin
+         columns below used to be sheared off at the body edge ("bubbles cut off")
+         and the border line drew over them ("bubbles under the frame"). The fix:
+         NodeChrome is now an EMPTY background+border UNDERLAY (an empty Border
+         clips nothing), and the header/preview/body — including the overhanging
+         pin columns — render as a SIBLING on TOP of it. Result: pins straddle the
+         edge unclipped and paint above the (selection) frame. The content layer is
+         inset 1px so the resting 1px border / 2px gold selection frame stay
+         visible around it. Mirrors Architect's "pins above border" treatment per
+         feedback_visualist_architect_chrome_independence (copied idiom, not lifted). -->
+    <Grid x:Name="NodeRoot">
+
+        <!-- Chrome underlay — rounded background + border + selection frame.
+             Drawn first (lowest z) and carries no child, so it clips nothing. -->
+        <Border
+            x:Name="NodeChrome"
+            Background="{StaticResource CoalRaisedBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="1"
+            CornerRadius="6" />
+
+        <!-- Content layer — header / preview / body pin-rows, ON TOP of the
+             underlay so the overhanging pins are never clipped and render above
+             the frame. Inset 1px to keep the underlay border visible. -->
+        <Grid Margin="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <!-- Sprint A — live preview row. Auto-height; the wrapping
+                     Border is Collapsed by default so a node whose template
+                     doesn't opt into PreviewSource adds zero pixels to the
+                     body. The actual paint surface is the ThumbnailHost
+                     UserControl under Controls/ — kept per-pillar inside
+                     Visualist.WinUI per feedback_visualist_architect_chrome_independence. -->
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Title bar — UE-Blueprints style header strip. -->
+            <Border
+                x:Name="TitleBar"
+                Grid.Row="0"
+                Background="{StaticResource EmberShadowBrush}"
+                CornerRadius="6,6,0,0"
+                Padding="8,4,8,4">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <!-- TextTrimming + MaxWidth so a long template name (e.g.
+                         "Image.LoadFromUrlWithCachedFallback") doesn't bleed
+                         past the node frame (TODO 2026-05-07 round 2 P1). -->
+                    <TextBlock
+                        x:Name="TitleText"
+                        FontFamily="{StaticResource MonoFont}"
+                        FontSize="11"
+                        FontWeight="SemiBold"
+                        MaxWidth="180"
+                        TextTrimming="CharacterEllipsis"
+                        Foreground="{StaticResource CoalPaperBrush}" />
+                    <TextBlock
+                        x:Name="CategoryText"
+                        FontFamily="{StaticResource MonoFont}"
+                        FontSize="9"
+                        TextTrimming="CharacterEllipsis"
+                        MaxWidth="120"
+                        Foreground="{StaticResource CoalSecondaryTextBrush}"
+                        VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+            <!-- Sprint A — live preview strip wrapper. ThumbnailHost owns the
+                 image / swatch / placeholder / error-tint visuals; this
+                 Border just provides padding + collapse-when-no-preview
+                 framing. Default 96x54 (widget aspect 16:9) is a sensible
+                 starting size — node body MinWidth keeps the rest of the
+                 chrome aligned when a template opts into the preview. -->
+            <Border
+                x:Name="PreviewStrip"
+                Grid.Row="1"
+                Background="{StaticResource CoalCardBrush}"
+                Padding="6,4,6,4"
+                Visibility="Collapsed">
+                <controls:ThumbnailHost
+                    x:Name="PreviewHost"
+                    Width="96"
+                    Height="54"
+                    HorizontalAlignment="Center" />
+            </Border>
+
+            <!-- Body — input pins (left), output pins (right). Background="Transparent"
+                 is load-bearing, not cosmetic: a WinUI Grid with a null Background is
+                 NOT hit-test-visible in its empty regions, so clicks landing between or
+                 below the pin rows would silently miss the node (no drag-prep, no
+                 selection). Transparent restores empty-area hit-testing without painting
+                 over the Border's CoalRaisedBrush. (Recurring null-Background gotcha.) -->
+            <Grid Grid.Row="2" Padding="0,4,0,4" Background="Transparent">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel
+                    x:Name="InputPinStack"
+                    Grid.Column="0"
+                    Orientation="Vertical"
+                    Spacing="3"
+                    HorizontalAlignment="Left"
+                    Margin="-4,0,0,0" />
+
+                <StackPanel
+                    x:Name="OutputPinStack"
+                    Grid.Column="1"
+                    Orientation="Vertical"
+                    Spacing="3"
+                    HorizontalAlignment="Right"
+                    Margin="0,0,-4,0" />
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

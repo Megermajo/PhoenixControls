@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.SystemLogPanel.SystemLogView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.SystemLogPanel"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="System Log panel"
+    AutomationProperties.HelpText="Rolling buffer of Hub system events (size configured via AppConfig.SystemLogMaxRows, default 10000), filterable by level (DBG / INF / WRN / ERR) and free-text search. Shift- and Ctrl-click extend the selection; Ctrl+C or the right-click menu copy selected rows. The log-folder button opens the rolling log file in Explorer.">
+
+    <UserControl.Resources>
+        <Style x:Key="SystemLogLevelChipStyle" TargetType="ToggleButton">
+            <Setter Property="MinWidth"          Value="0" />
+            <Setter Property="MinHeight"         Value="0" />
+            <Setter Property="Padding"           Value="5,2" />
+            <Setter Property="FontSize"          Value="9" />
+            <Setter Property="FontWeight"        Value="Bold" />
+            <Setter Property="FontFamily"        Value="{StaticResource MonoFont}" />
+            <Setter Property="BorderThickness"   Value="1" />
+            <Setter Property="Background"        Value="Transparent" />
+        </Style>
+
+        <!-- Tight per-row container — strip the default Fluent ListViewItem
+             padding/min-height so the log reads as a dense terminal feed,
+             not a touch-target list. Selection colours come from the
+             ListView.Resources block below (ListViewItemBackgroundSelected
+             theme-key overrides); the row's own Background must stay
+             UNSET so the template's VisualState transitions can swap
+             between the theme keys on hover/select/pressed. An explicit
+             Background Setter wins over the template's VisualState
+             change and stranded multi-row selection visually invisible
+             — Majo's 0.10.6 → 0.10.7 multi-select regression report.
+             -->
+        <Style x:Key="SystemLogItemContainerStyle" TargetType="ListViewItem">
+            <Setter Property="Padding"                   Value="0" />
+            <Setter Property="MinHeight"                 Value="0" />
+            <Setter Property="Margin"                    Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment"   Value="Top" />
+            <Setter Property="FocusVisualPrimaryBrush"   Value="{StaticResource EmberPrimaryBrush}" />
+            <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource CoalCardBrush}" />
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource Radius3Corner}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <hdr:PanelHeader Grid.Row="0"
+                             Eyebrow="04"
+                             TitleKey="panel.systemlog.title"
+                             Title="System Log">
+                <hdr:PanelHeader.RightContent>
+                    <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                        <TextBox x:Name="SearchBox"
+                                 Width="160"
+                                 Height="22"
+                                 FontFamily="{StaticResource MonoFont}"
+                                 FontSize="11"
+                                 Background="{StaticResource CoalShellBrush}"
+                                 Foreground="{StaticResource CoalPaperBrush}"
+                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                 BorderThickness="1"
+                                 Padding="6,1"
+                                 VerticalAlignment="Center"
+                                 TextChanged="OnSearchTextChanged" />
+                        <Border Width="1" Background="{StaticResource CoalDividerBrush}" Margin="6,2" />
+                        <TextBlock x:Name="FilterLabel"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="9"
+                                   CharacterSpacing="120"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   VerticalAlignment="Center" />
+
+                        <!-- DBG defaults to OFF — previously LogicExecution chatter
+                             flooded the panel by default. The persistent
+                             script-run "[on_chat] Executing…" / "Executed event…"
+                             lines now live at Debug tier; toggle DBG on for
+                             verbose tracing. -->
+                        <ToggleButton x:Name="DbgChip"
+                                      Style="{StaticResource SystemLogLevelChipStyle}"
+                                      Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                      BorderBrush="{StaticResource CoalSecondaryTextBrush}"
+                                      IsChecked="False"
+                                      Click="OnLevelChipClick" />
+                        <ToggleButton x:Name="InfChip"
+                                      Style="{StaticResource SystemLogLevelChipStyle}"
+                                      Foreground="{StaticResource InfoBrush}"
+                                      BorderBrush="{StaticResource InfoBrush}"
+                                      IsChecked="True"
+                                      Click="OnLevelChipClick" />
+                        <ToggleButton x:Name="WrnChip"
+                                      Style="{StaticResource SystemLogLevelChipStyle}"
+                                      Foreground="{StaticResource WarnBrush}"
+                                      BorderBrush="{StaticResource WarnBrush}"
+                                      IsChecked="True"
+                                      Click="OnLevelChipClick" />
+                        <ToggleButton x:Name="ErrChip"
+                                      Style="{StaticResource SystemLogLevelChipStyle}"
+                                      Foreground="{StaticResource ErrBrush}"
+                                      BorderBrush="{StaticResource ErrBrush}"
+                                      IsChecked="True"
+                                      Click="OnLevelChipClick" />
+
+                        <Border Width="1" Background="{StaticResource CoalDividerBrush}" Margin="6,2" />
+
+                        <!-- B1/B2 (audit 2026-05-24) — Export-to-file +
+                             Clear-buffer affordances. Both kept icon-only with
+                             a label to match the existing OpenLogFolder button.
+                             Clear is destructive and uncommon — a confirm
+                             ContentDialog gates the action (this is the
+                             carved-out exception to the modal-rule per
+                             feedback_no_modal_dialogs_for_repeatable_rejections.md:
+                             single user-initiated destructive op, not a
+                             repeatable validation rejection). -->
+                        <Button x:Name="ExportButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnExportClick">
+                            <!-- B1: text-only label — PhoenixIcons.xaml is in
+                                 Shared.WinUI/Themes (out of this sprint's edit
+                                 scope), so we can't add a dedicated save glyph
+                                 here. The label is set via
+                                 ApplyLocalizedStrings; pre-localization the
+                                 string lives in code-behind. -->
+                            <TextBlock x:Name="ExportLabel"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+                        </Button>
+                        <Button x:Name="ClearButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnClearClick">
+                            <TextBlock x:Name="ClearLabel"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+                        </Button>
+                        <Button x:Name="OpenLogFolderButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnOpenLogFolderClick">
+                            <!-- Tooltip + AutomationProperties.Name + label
+                                 text flow from SystemLogView.ApplyLocalizedStrings
+                                 via Localizer.T(); no inline strings here. -->
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                <PathIcon Data="{StaticResource PhoenixIcon_FolderOpen}"
+                                          Width="{StaticResource IconSizeS}"
+                                          Height="{StaticResource IconSizeS}"
+                                          Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                <TextBlock x:Name="OpenLogFolderLabel"
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="PopOutButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnPopOutClick">
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                <PathIcon Data="{StaticResource PhoenixIcon_PopOut}"
+                                          Width="{StaticResource IconSizeS}"
+                                          Height="{StaticResource IconSizeS}"
+                                          Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                <TextBlock x:Name="PopOutLabel"
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </hdr:PanelHeader.RightContent>
+            </hdr:PanelHeader>
+
+            <!-- Virtualised ListView — replaces the RichTextBlock that the
+                 v5 rework introduced. RichTextBlock kept every paragraph
+                 live in the visual tree (no virtualization), which broke
+                 auto-scroll direction discrimination under high-volume
+                 ingestion (BH-033), multi-row selection (Shift/Ctrl-click
+                 had no per-row container to extend over), and paint cost
+                 (2000 paragraphs × 4 Runs each, all measured every layout
+                 pass). The ListView uses the default VirtualizingStackPanel
+                 ItemsPanel so only on-screen rows are materialised — buffer
+                 size can comfortably exceed 10 000 without paint cost.
+                 Selection is Extended → Shift-click ranges, Ctrl-click
+                 toggles, drag-extend across rows. Copy is wired through
+                 Ctrl+C (KeyboardAccelerator) and a right-click context
+                 menu; both emit `[timestamp] [level] [source] message`
+                 lines per selected row. -->
+            <Grid Grid.Row="1">
+                <ListView x:Name="LogList"
+                          ItemsSource="{x:Bind ViewModel.VisibleRows, Mode=OneWay}"
+                          ItemContainerStyle="{StaticResource SystemLogItemContainerStyle}"
+                          SelectionMode="Extended"
+                          IsItemClickEnabled="False"
+                          CanDragItems="False"
+                          AllowDrop="False"
+                          ShowsScrollingPlaceholders="False"
+                          Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0,2,0,2"
+                          ScrollViewer.HorizontalScrollMode="Disabled"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Visible"
+                          ScrollViewer.IsVerticalRailEnabled="True"
+                          AutomationProperties.LiveSetting="Polite"
+                          AutomationProperties.Name="System log entries"
+                          RightTapped="OnLogRightTapped">
+                    <ListView.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="C" Modifiers="Control" Invoked="OnCopyAccelerator" />
+                        <KeyboardAccelerator Key="A" Modifiers="Control" Invoked="OnSelectAllAccelerator" />
+                    </ListView.KeyboardAccelerators>
+                    <!-- Hub UI sweep 2026-05-22 — override the theme-default
+                         ListViewItem selection brushes with our ember-tinted
+                         accents so selected rows stand out against the dark
+                         coal background. Pre-fix the default selection slate
+                         (~10% white over dark) was almost invisible.
+                         Round 2 (0.10.7 multi-select regression): the
+                         per-row Background Setter that previously lived on
+                         SystemLogItemContainerStyle was overriding the
+                         VisualState target, hiding selection entirely;
+                         that Setter has been removed and these brush
+                         overrides now actually paint. Alphas bumped from
+                         #40/#55/#66 to #80/#A0/#BF so a selected row is
+                         clearly distinguishable from a hovered or normal
+                         row even on Majo's coal background. -->
+                    <ListView.Resources>
+                        <SolidColorBrush x:Key="ListViewItemBackgroundSelected"
+                                         Color="#80C8822B" />
+                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver"
+                                         Color="#A0C8822B" />
+                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed"
+                                         Color="#BFC8822B" />
+                    </ListView.Resources>
+                    <!-- 0.10.8 row-template: IsTextSelectionEnabled stripped
+                         from every cell. The prior True value let TextBlock
+                         claim PointerPressed / PointerMoved for in-cell
+                         text-highlighting, which (a) blocked the ListView's
+                         built-in drag-rubberband multi-row selection (Majo's
+                         #2 report) and (b) starved the inner ScrollViewer of
+                         wheel input on hover (#1 report). Row-level copy is
+                         still ergonomic: Ctrl+C / right-click "Copy selection"
+                         emit `[timestamp] [level] [source] message` for every
+                         selected row. The TextBlock IsTextSelectionEnabled=
+                         False default also lets row-drag rubberband work
+                         natively — no handledEventsToo subscription, no root
+                         wheel handler workaround. -->
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:SystemLogRowVm">
+                            <!-- C6 (audit 2026-05-24) — DoubleTapped on the
+                                 row border mirrors the chevron tap so the
+                                 user can also double-click anywhere on the
+                                 row to expand/collapse the exception. The
+                                 chevron remains the explicit affordance for
+                                 discoverability; double-click is the
+                                 power-user shortcut the audit asks for. -->
+                            <Border Padding="14,2,14,2"
+                                    BorderBrush="{StaticResource CoalRaisedBrush}"
+                                    BorderThickness="0,0,0,1"
+                                    DoubleTapped="OnRowDoubleTapped">
+                                <!-- C6 (audit 2026-05-24) — expandable
+                                     exception view. Two rows: the standard
+                                     timestamp/level/source/message column
+                                     row on top; underneath, an optional
+                                     stack trace TextBlock that's only
+                                     visible when the row VM exposes an
+                                     Exception AND IsExceptionExpanded is
+                                     true. The chevron lives in a 5th column
+                                     of the header row and toggles the
+                                     visibility via OnChevronClick. -->
+                                <Grid RowSpacing="2">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid Grid.Row="0" ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="88" />
+                                            <ColumnDefinition Width="36" />
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="20" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{x:Bind TimestampText}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10.5"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Top" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{x:Bind LevelText}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10.5"
+                                                   FontWeight="Bold"
+                                                   Foreground="{x:Bind LevelBrush}"
+                                                   VerticalAlignment="Top" />
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{x:Bind Source}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10.5"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Top" />
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{x:Bind Message}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10.5"
+                                                   Foreground="{x:Bind MessageBrush}"
+                                                   TextWrapping="Wrap"
+                                                   VerticalAlignment="Top" />
+                                        <!-- Chevron — only visible when the row
+                                             actually carries an Exception.
+                                             OnChevronTap flips
+                                             IsExceptionExpanded; the stack
+                                             trace TextBlock below binds its
+                                             Visibility to that flag. Tap is
+                                             used instead of Click so it works
+                                             with the row's pointer-capture
+                                             selection pipeline. -->
+                                        <TextBlock Grid.Column="4"
+                                                   Text="{x:Bind ChevronGlyph, Mode=OneWay}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10.5"
+                                                   FontWeight="Bold"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Top"
+                                                   Visibility="{x:Bind HasExceptionVisibility, Mode=OneWay}"
+                                                   Tapped="OnChevronTapped" />
+                                    </Grid>
+                                    <!-- Expanded exception stack — coal-ink mono
+                                         block indented under the row. Wrap on
+                                         long stack frames. -->
+                                    <Border Grid.Row="1"
+                                            Margin="98,2,14,4"
+                                            Padding="8,6"
+                                            Background="{StaticResource CoalShellBrush}"
+                                            BorderBrush="{StaticResource CoalDividerBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{StaticResource Radius2Corner}"
+                                            Visibility="{x:Bind ExceptionExpandedVisibility, Mode=OneWay}">
+                                        <TextBlock Text="{x:Bind ExceptionText}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource CoalBodyTextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   IsTextSelectionEnabled="True" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
+                <!-- Scroll-to-latest affordance — visible only when the user
+                     has scrolled away from the bottom and auto-scroll is
+                     therefore paused (see OnLogScrollViewChanged in the
+                     code-behind). Clicking it un-pauses, snaps to the
+                     newest row, and hides itself. QC11-01: glyph swapped
+                     from the inline `↓` (Design_Orders §9 forbids emojis)
+                     to a PhoenixIcon_ScrollDown PathIcon — same convention
+                     as the panel-header pop-out / folder-open buttons.
+                     Tooltip + AutomationProperties.Name + label text are
+                     populated in SystemLogView.ApplyLocalizedStrings. -->
+                <Button x:Name="ScrollToLatestButton"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Margin="0,0,18,12"
+                        Padding="10,4"
+                        Background="{StaticResource CoalCardBrush}"
+                        BorderBrush="{StaticResource CoalDividerBrush}"
+                        BorderThickness="1"
+                        Foreground="{StaticResource CoalPrimaryTextBrush}"
+                        Visibility="Collapsed"
+                        Click="OnScrollToLatestClick">
+                    <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                        <PathIcon Data="{StaticResource PhoenixIcon_ScrollDown}"
+                                  Width="{StaticResource IconSizeS}"
+                                  Height="{StaticResource IconSizeS}"
+                                  Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                        <TextBlock x:Name="ScrollToLatestLabel"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

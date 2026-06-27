@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    T15 retirement — this project went from a WinForms exe shell (the
+    legacy `Phoenix.Controls.Hub.exe` host) to a runtime *library* hosting
+    the script engine / IPC bus / HUD server / databank / script manager
+    that `Phoenix.Controls.Hub.WinUI.exe` consumes via ProjectReference.
+    The WinForms-only entry-point files (Program.cs, MainForm.*, the
+    root-level forms, Controls/CaptionBar/StatusBar/Tooltip) were deleted
+    in the retirement commit; only the Core/ runtime + a few helpers
+    remain.
+
+    UseWindowsForms=true is preserved because some Core/ types still
+    reference System.Drawing (Color/Point/Image — used by NodeRegistry,
+    GraphSerializer, etc.) and the dependency would otherwise drop too.
+    UseWPF=true stays for LiveCaptionService's UIAutomation reference.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+    <!--
+       Hub.WinUI is the production wire-up site for LayerRuntime.Dispatcher
+      (HubBootstrapper sets it to HUDServer.SendToLayerAsync right after HUDServer
+      construction). The internal setter on LayerRuntime.Dispatcher / .Registry exists
+      to prevent *accidental* runtime swaps; Hub.WinUI's bootstrapper is the single
+      legitimate production consumer, so the friend-assembly carve-out matches the
+      same intent as the Tests entry above.
+    -->
+    <InternalsVisibleTo Include="Phoenix.Controls.Hub.WinUI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Websocket.Client" Version="5.3.0" />
+    <!-- System.Speech: needed by Core/AudioService.cs for audio.play_tts (Windows TTS). -->
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!--
+    Ship the data/ tree (overlay/ HTML+JS, assets/, media/, logic/, layers/,
+    config.json) into bin/ so the consuming Hub.WinUI exe resolves it via
+    Paths.HubData(...). The Content target propagates through ProjectReference
+    so Hub.WinUI's bin/ inherits the same data/ tree.
+  -->
+  <ItemGroup>
+    <Content Include="data\**\*"
+             Exclude="data\logic\script_states.json;data\logic\*.phx.bak*;data\**\*.tmp">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

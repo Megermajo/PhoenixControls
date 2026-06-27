@@ -1,0 +1,278 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Phoenix.Controls.Shared.Localization;
+using Windows.System;
+
+namespace Phoenix.Controls.Architect.WinUI.Dialogs;
+
+// Shared name + (optional) type prompt used by Variables / Macros / Processes
+// rail CRUD. 0.10.0 polish:
+//   * Enter on NameBox commits via OnNameBoxKeyDown (mirrors the F2 idiom).
+//   * Duplicate-name validation gated on an existingNames seed.
+//   * DefaultBox parses against the picked Type — empty is always allowed,
+//     non-empty must round-trip through Int32/Double parse for Number and
+//     match "true"/"false" for Bool. Number parsing preserves precision
+//     (Double instead of Int32) so 0.5 doesn't truncate.
+//   * Static TryParse(input, out NameTypeResult) helper for non-dialog
+//     consumers (scripted tests, paste-from-clipboard) that want the same
+//     validation surface without a XAML ContentDialog.
+public sealed partial class NameTypeDialog : ContentDialog
+{
+    private static readonly Regex NameRx = new(@"^[A-Za-z_][A-Za-z0-9_\.]*$", RegexOptions.Compiled);
+
+    public string EnteredName { get; private set; } = string.Empty;
+    public string EnteredType { get; private set; } = "String";
+    public string EnteredDefault { get; private set; } = string.Empty;
+
+    private HashSet<string> _existingNames = new(StringComparer.OrdinalIgnoreCase);
+
+    public NameTypeDialog()
+    {
+        InitializeComponent();
+        PrimaryButtonClick += OnPrimary;
+        //  Focus + select the name field when the dialog
+        // opens so the user can type immediately (and a typed name replaces any
+        // seeded default). Opened is the correct ContentDialog hook — it fires
+        // after the popup is in the tree, unlike Loaded which can race the host.
+        Opened += (_, _) =>
+        {
+            try { NameBox.Focus(Microsoft.UI.Xaml.FocusState.Programmatic); NameBox.SelectAll(); }
+            catch { /* designer / pre-realised */ }
+        };
+    }
+
+    public static NameTypeDialog ForVariable(XamlRoot root, string title,
+                                             string initialName = "", string initialType = "String", string initialDefault = "",
+                                             IEnumerable<string>? existingNames = null)
+    {
+        var d = new NameTypeDialog
+        {
+            XamlRoot = root,
+            Title = title,
+        };
+        d.EyebrowText.Text = Localizer.T("architect.dialog.name_type.variable_eyebrow", "VARIABLE");
+        d.NameBox.Text = initialName;
+        d.TypeBox.Visibility = Visibility.Visible;
+        d.DefaultBox.Visibility = Visibility.Visible;
+        d.DefaultBox.Text = initialDefault;
+        d.TypeBox.SelectedIndex = initialType?.ToLowerInvariant() switch
+        {
+            "number" or "int" or "integer" or "float" => 1,
+            "bool" or "boolean" => 2,
+            _ => 0,
+        };
+        d.SetExistingNames(existingNames);
+        return d;
+    }
+
+    public static NameTypeDialog ForName(XamlRoot root, string title, string eyebrow, string initialName = "",
+                                         IEnumerable<string>? existingNames = null)
+    {
+        var d = new NameTypeDialog
+        {
+            XamlRoot = root,
+            Title = title,
+        };
+        d.EyebrowText.Text = eyebrow;
+        d.NameBox.Text = initialName;
+        d.SetExistingNames(existingNames);
+        return d;
+    }
+
+    private void SetExistingNames(IEnumerable<string>? names)
+    {
+        _existingNames = names is null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(names.Where(n => !string.IsNullOrEmpty(n)), StringComparer.OrdinalIgnoreCase);
+    }
+
+    // ── Live commit handlers ──────────────────────────────────────────
+
+    private void OnNameBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            // Programmatically click the primary button so the validation +
+            // commit path runs identically to a button tap.
+            e.Handled = true;
+            TryCommit();
+        }
+    }
+
+    private void OnDefaultBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            TryCommit();
+        }
+    }
+
+    private void OnDefaultBoxTextChanged(object sender, TextChangedEventArgs e)
+    {
+        // Live-validate the default value against the picked type so the
+        // user sees the same error they'd hit on OK without committing.
+        var msg = ValidateDefault(DefaultBox.Text ?? string.Empty, SelectedTypeLabel());
+        SetErrorText(msg);
+    }
+
+    private void OnTypeBoxSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Re-validate the default in light of the new type — e.g. switching
+        // String → Bool with "yes" in the box must surface the error.
+        if (DefaultBox.Visibility == Visibility.Visible)
+            OnDefaultBoxTextChanged(this, null!);
+    }
+
+    private void TryCommit()
+    {
+        if (!ValidateAll(out var error))
+        {
+            SetErrorText(error);
+            return;
+        }
+        EnteredName = (NameBox.Text ?? string.Empty).Trim();
+        EnteredType = SelectedTypeLabel();
+        EnteredDefault = DefaultBox.Text ?? string.Empty;
+        Hide();
+    }
+
+    private void OnPrimary(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+    {
+        if (!ValidateAll(out var error))
+        {
+            SetErrorText(error);
+            args.Cancel = true;
+            return;
+        }
+        EnteredName = (NameBox.Text ?? string.Empty).Trim();
+        EnteredType = SelectedTypeLabel();
+        EnteredDefault = DefaultBox.Text ?? string.Empty;
+    }
+
+    private string SelectedTypeLabel() =>
+        (TypeBox.SelectedItem as ComboBoxItem)?.Content as string ?? "String";
+
+    private bool ValidateAll(out string error)
+    {
+        error = string.Empty;
+        var name = (NameBox.Text ?? string.Empty).Trim();
+        if (!NameRx.IsMatch(name))
+        {
+            error = "Name must start with a letter or underscore and contain only letters, digits, underscore or dot.";
+            return false;
+        }
+        if (_existingNames.Contains(name))
+        {
+            error = $"'{name}' already exists — pick a unique name.";
+            return false;
+        }
+        if (DefaultBox.Visibility == Visibility.Visible)
+        {
+            var defMsg = ValidateDefault(DefaultBox.Text ?? string.Empty, SelectedTypeLabel());
+            if (defMsg.Length > 0) { error = defMsg; return false; }
+        }
+        return true;
+    }
+
+    private static string ValidateDefault(string raw, string type)
+    {
+        if (string.IsNullOrEmpty(raw)) return string.Empty;
+        switch (type.ToLowerInvariant())
+        {
+            case "number":
+                // Number parses through Double (preserves precision so 0.5
+                // doesn't truncate). Allow ints by accepting the same surface.
+                if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+                    return $"Default '{raw}' is not a valid Number.";
+                return string.Empty;
+            case "bool":
+                if (!raw.Equals("true",  StringComparison.OrdinalIgnoreCase) &&
+                    !raw.Equals("false", StringComparison.OrdinalIgnoreCase))
+                    return $"Default '{raw}' must be 'true' or 'false'.";
+                return string.Empty;
+            default:
+                return string.Empty;
+        }
+    }
+
+    private void SetErrorText(string msg)
+    {
+        ErrorText.Text = msg;
+        ErrorText.Visibility = string.IsNullOrEmpty(msg) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // ── Non-dialog API ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Result of <see cref="TryParse"/> — same shape as the dialog's
+    /// EnteredName / EnteredType / EnteredDefault triple plus a normalised
+    /// numeric representation for "Number" types so callers don't have to
+    /// re-parse.
+    /// </summary>
+    public sealed record NameTypeResult(string Name, string Type, string Default);
+
+    /// <summary>
+    /// Validate <paramref name="input"/> (one of "name", "name : Type", or
+    /// "name : Type = default") against the same rules the dialog enforces.
+    /// On success returns true with <paramref name="result"/>; on failure
+    /// returns false with <paramref name="error"/> describing what broke.
+    /// </summary>
+    public static bool TryParse(string input, out NameTypeResult? result, out string error)
+    {
+        result = null;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            error = "Empty input.";
+            return false;
+        }
+
+        string name;
+        string type = "String";
+        string defaultValue = string.Empty;
+
+        var eq = input.IndexOf('=');
+        var head = eq < 0 ? input : input.Substring(0, eq);
+        if (eq >= 0) defaultValue = input.Substring(eq + 1).Trim();
+
+        var colon = head.IndexOf(':');
+        if (colon < 0)
+        {
+            name = head.Trim();
+        }
+        else
+        {
+            name = head.Substring(0, colon).Trim();
+            type = head.Substring(colon + 1).Trim();
+            if (string.IsNullOrEmpty(type)) type = "String";
+        }
+
+        if (!NameRx.IsMatch(name))
+        {
+            error = "Name must start with a letter or underscore and contain only letters, digits, underscore or dot.";
+            return false;
+        }
+        // Normalise type to one of the dialog's three options.
+        type = type.ToLowerInvariant() switch
+        {
+            "number" or "int" or "integer" or "float" or "double" => "Number",
+            "bool"   or "boolean"                                  => "Bool",
+            _                                                      => "String",
+        };
+        var defMsg = ValidateDefault(defaultValue, type);
+        if (defMsg.Length > 0) { error = defMsg; return false; }
+        result = new NameTypeResult(name, type, defaultValue);
+        return true;
+    }
+
+    /// <summary>Shorthand overload — discards the error string.</summary>
+    public static bool TryParse(string input, out NameTypeResult? result)
+        => TryParse(input, out result, out _);
+}

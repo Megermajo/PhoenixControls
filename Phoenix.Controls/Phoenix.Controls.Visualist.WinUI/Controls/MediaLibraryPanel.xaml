@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Controls.MediaLibraryPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- R16 — docked media library for the Widget Editor. Restores the pre-WinUI
+         MediaLibraryPanel (thumbnail grid + kind chips + Import + Delete + drag-out)
+         that the WinUI rework demoted to a menu-only delete-list dialog. Drag a
+         tile onto the node graph (R20) to spawn a pre-filled loader node.
+         Visualist-local per feedback_visualist_architect_chrome_independence. -->
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header: MEDIA + Import / Refresh -->
+        <Border Grid.Row="0"
+                Padding="10,8,8,6"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,0,0,1">
+            <Grid>
+                <TextBlock Style="{StaticResource EyebrowTextStyle}"
+                           Text="MEDIA" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="4">
+                    <Button x:Name="ImportButton"
+                            Content="Import"
+                            Click="OnImportClick"
+                            FontSize="11" Padding="8,2"
+                            Background="{StaticResource CoalCardBrush}"
+                            BorderThickness="0"
+                            Foreground="{StaticResource CoalPaperBrush}"
+                            ToolTipService.ToolTip="Import media into data/media" />
+                    <!-- P2 — restore the discoverable Delete affordance the WinUI
+                         port demoted to right-click only. Disabled until a tile is
+                         selected; runs the same reference-guarded DeleteWithGuardAsync
+                         as the context menu / Del key. -->
+                    <Button x:Name="DeleteButton"
+                            Content="Delete"
+                            Click="OnDeleteClick"
+                            IsEnabled="False"
+                            FontSize="11" Padding="8,2"
+                            Background="{StaticResource CoalCardBrush}"
+                            BorderThickness="0"
+                            Foreground="{StaticResource ErrBrush}"
+                            ToolTipService.ToolTip="Delete the selected media file (reference-checked)" />
+                    <Button x:Name="RefreshButton"
+                            Click="OnRefreshClick"
+                            FontSize="11" Padding="6,2"
+                            Background="Transparent" BorderThickness="0"
+                            Foreground="{StaticResource CoalBodyTextBrush}"
+                            Content="&#x21BB;"
+                            ToolTipService.ToolTip="Refresh" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Kind filter chips -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="3" Padding="8,5,8,5">
+            <ToggleButton x:Name="AllChip"   Content="All"   IsChecked="True" Click="OnFilterChipClick" FontSize="10" Padding="6,1" MinWidth="0" />
+            <ToggleButton x:Name="ImageChip" Content="Image" Click="OnFilterChipClick" FontSize="10" Padding="6,1" MinWidth="0" />
+            <ToggleButton x:Name="VideoChip" Content="Video" Click="OnFilterChipClick" FontSize="10" Padding="6,1" MinWidth="0" />
+            <ToggleButton x:Name="AudioChip" Content="Audio" Click="OnFilterChipClick" FontSize="10" Padding="6,1" MinWidth="0" />
+        </StackPanel>
+
+        <!-- Tile grid + empty hint -->
+        <Grid Grid.Row="2">
+            <GridView x:Name="MediaGrid"
+                      SelectionMode="Single"
+                      CanDragItems="True"
+                      DragItemsStarting="OnDragItemsStarting"
+                      SelectionChanged="OnGridSelectionChanged"
+                      Padding="6"
+                      ScrollViewer.HorizontalScrollMode="Disabled"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <GridView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Width="86" Height="92"
+                              ToolTipService.ToolTip="{Binding RelativePath}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0"
+                                    Background="{StaticResource CoalShellBrush}"
+                                    BorderBrush="{StaticResource CoalCardBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="3">
+                                <Grid>
+                                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                    <TextBlock Text="{Binding KindGlyph}"
+                                               Visibility="{Binding PlaceholderVisibility}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding FileName}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource CoalBodyTextBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,2,0,0" />
+                        </Grid>
+                    </DataTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
+
+            <TextBlock x:Name="EmptyHint"
+                       Visibility="Collapsed"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       MaxWidth="200"
+                       FontSize="11"
+                       Foreground="{StaticResource CoalMutedTextBrush}"
+                       Text="No media yet. Use Import to add images, video, or audio." />
+        </Grid>
+
+        <!-- P3 — persistent drag-gesture hint footer. The WinUI port only
+             surfaced the drag affordance via the empty-state message, so once
+             the library had content the hint vanished. This footer stays put
+             whenever the grid is non-empty (collapsed while empty so it doesn't
+             compete with EmptyHint). Text seeded from the localizer (with a
+             literal fallback) in the constructor. -->
+        <Border Grid.Row="3"
+                Padding="10,5,10,6"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0">
+            <TextBlock x:Name="DragHint"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource CoalMutedTextBrush}"
+                       Text="Drag a tile onto the node graph to add a loader node." />
+        </Border>
+    </Grid>
+</UserControl>

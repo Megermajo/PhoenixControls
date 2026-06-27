@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phoenix Controls — Architect Node Reference</title>
+<!-- Offline-first: tokens + page styles are local. The Google Fonts link is a
+     progressive enhancement only — every family in tokens.css falls back to a
+     Windows-present face, so the page renders fully with no network. -->
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="doc-viewer.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- repo bar -->
+<div class="repo-bar">
+  <div class="repo-bar-inner">
+    <span class="crumb"><b>megermajo</b><span class="slash">/</span><b>phoenix-controls</b><span class="slash">/</span>docs<span class="slash">/</span>architect<span class="slash">/</span><b>node-reference</b></span>
+    <span class="repo-actions">
+      <span><kbd>F1</kbd> opens this from any node</span>
+      <span class="filter-wrap">
+        <input id="filter" class="filter-box" type="text" placeholder="/  filter nodes…" autocomplete="off" spellcheck="false" />
+        <button id="filter-clear" class="filter-clear" title="Clear filter" hidden>&times;</button>
+      </span>
+    </span>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- hero -->
+  <section class="hero">
+    <div class="hero-glyph">A</div>
+    <div>
+      <h1>Node <em>Reference</em></h1>
+      <p class="hero-lede">
+        Every node you can spawn on the Architect canvas — what it fires, what it expects,
+        what it produces, and the one-line shape of how it's wired.
+        <strong>This is the in-app F1 reference</strong>, the same page Architect opens when
+        you hit help on a selected node.
+      </p>
+      <div class="hero-meta">
+        <span><b id="meta-cats">—</b> categories</span>
+        <span><b id="meta-nodes">—</b> nodes</span>
+        <span>Updated for <b id="meta-version">—</b></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- pin / socket legend -->
+  <div class="legend">
+    <div class="h-eyebrow" style="margin-bottom: 10px;">Socket legend</div>
+    <div class="legend-row" id="legend-row">
+      <!-- filled by JS from window.PHX.SOCKETS -->
+    </div>
+  </div>
+
+  <!-- main grid: TOC on left, content on right -->
+  <div class="body-grid">
+    <nav class="toc" id="toc">
+      <!-- filled by JS -->
+    </nav>
+    <main id="nodes-root">
+      <!-- filled by JS -->
+    </main>
+  </div>
+
+  <footer class="doc-foot">
+    <span>Phoenix Controls · forged by Megermajo &amp; contributors</span>
+    <span><a href="readme.html">README</a> · <a href="changelog.html">Changelog</a></span>
+  </footer>
+</div>
+
+<script src="node-reference.js"></script>
+</body>
+</html>

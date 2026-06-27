@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    C10 (audit/winui-regressions-2026-05-24) — Hub "About" dialog.
+
+    Before this sprint Help → About logged the version line to the System
+    Log and that was it; the menu entry was visually a no-op. This dialog
+    is the proper landing surface: wordmark, version + git SHA pulled at
+    runtime via Assembly + GitInfoService, short credits + copyright, and
+    a hyperlink to the GitHub repo.
+
+    Visual treatment matches the Architect KeyboardShortcutsDialog (the
+    only other ContentDialog using the forged-charcoal Coal* / Ember* /
+    Brass* tokens from PhoenixDark.xaml) so the dialog reads as part of
+    the same shell-chrome family.
+-->
+<ContentDialog
+    x:Class="Phoenix.Controls.Hub.WinUI.Dialogs.AboutDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="About Phoenix Controls"
+    Background="{StaticResource CoalShellBrush}"
+    BorderBrush="{StaticResource CoalCardBrush}"
+    BorderThickness="1"
+    CornerRadius="6"
+    CloseButtonText="Close"
+    DefaultButton="Close"
+    RequestedTheme="Dark">
+
+    <ContentDialog.Resources>
+        <Style x:Key="AboutEyebrow" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="180" />
+            <Setter Property="Foreground" Value="{StaticResource EmberPrimaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+
+        <Style x:Key="AboutWordmark" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+            <Setter Property="FontSize" Value="24" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="80" />
+            <Setter Property="Foreground" Value="{StaticResource CoalPaperBrush}" />
+        </Style>
+
+        <Style x:Key="AboutMetaKey" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+            <Setter Property="CharacterSpacing" Value="80" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="AboutMetaValue" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource CoalPaperBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+        </Style>
+
+        <Style x:Key="AboutBody" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource CoalBodyTextBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <Grid Width="520">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Wordmark band — eyebrow + display wordmark, matches the chrome
+             VersionStamp / KeyboardShortcutsDialog opening band. -->
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,4,0,10">
+            <TextBlock Text="PHOENIX CONTROLS" Style="{StaticResource AboutEyebrow}" />
+            <TextBlock Text="Phoenix Controls" Style="{StaticResource AboutWordmark}" />
+            <TextBlock x:Name="TaglineText"
+                       Style="{StaticResource AboutBody}"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       Text="Multi-process Twitch streamer suite — Hub · Architect · Visualist." />
+        </StackPanel>
+
+        <!-- Brass hairline. -->
+        <Rectangle Grid.Row="1" Fill="{StaticResource BrassGradientBrush}" />
+
+        <!-- Version + git SHA + build configuration. Each row is a tight
+             key / value pair so the values align on the Mono baseline. -->
+        <Grid Grid.Row="2" Margin="0,12,0,12" RowSpacing="6" ColumnSpacing="14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="VERSION"
+                       Style="{StaticResource AboutMetaKey}" />
+            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="VersionValue"
+                       Style="{StaticResource AboutMetaValue}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="GIT SHA"
+                       Style="{StaticResource AboutMetaKey}" />
+            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="GitShaValue"
+                       Style="{StaticResource AboutMetaValue}" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="BRANCH"
+                       Style="{StaticResource AboutMetaKey}" />
+            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="BranchValue"
+                       Style="{StaticResource AboutMetaValue}" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="BUILD"
+                       Style="{StaticResource AboutMetaKey}" />
+            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="BuildConfigValue"
+                       Style="{StaticResource AboutMetaValue}" />
+        </Grid>
+
+        <!-- Credits + copyright. Credits intentionally read as a single
+             ember-tinted line because the byline IS the brand voice. -->
+        <StackPanel Grid.Row="3" Spacing="4" Margin="0,0,0,8">
+            <TextBlock x:Name="CreditsText"
+                       FontFamily="{StaticResource SansFont}"
+                       FontSize="12"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource Ember200Brush}"
+                       Text="Built by Majo · with Claude Code" />
+            <TextBlock x:Name="CopyrightText"
+                       Style="{StaticResource AboutBody}"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+        </StackPanel>
+
+        <!-- GitHub link. HyperlinkButton routes through the dialog's code-
+             behind because ContentDialog suppresses inline ShellExecute by
+             default (no NavigateUri on the inline TextBlock). -->
+        <HyperlinkButton Grid.Row="4"
+                        x:Name="GitHubLinkButton"
+                        Click="OnGitHubLinkClick"
+                        Padding="0"
+                        Margin="0,4,0,0"
+                        Foreground="{StaticResource Ember200Brush}">
+            <TextBlock x:Name="GitHubLinkText"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="12"
+                       TextDecorations="Underline" />
+        </HyperlinkButton>
+    </Grid>
+</ContentDialog>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Compact glyph button used in the LeftRail footer strips. 32×32.
+
+    Consumers (LeftRail.BuildButtonStrips) pass plain-text glyphs:
+    "+" / "−" / "✎" / "Aa" / "×" / "+G". These are NOT Segoe Fluent Icons
+    PUA codepoints — they're regular ASCII / Unicode characters. The
+    button therefore renders through the default sans family (SansFont)
+    so each glyph resolves to a real glyph instead of .notdef tofu boxes.
+    Pre-fix the XAML forced `FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets"`
+    which has no coverage for any of these characters, so every footer
+    button in every rail section rendered as an empty rectangle.
+
+    0.10.0 (Architect P2 a11y): converted from a UserControl-wrapping-Border
+    to a UserControl hosting a real Button (with a custom ControlTemplate),
+    so keyboard navigation works for free (IsTabStop / IInvokeProvider /
+    Enter+Space invoke / focus visuals). Pre-P2 the surface was a Border +
+    Tapped, and screen readers / keyboard-only users couldn't reach or fire
+    it. The Button's Content is set in code-behind from the Glyph DP so
+    consumers can pass "+" / "−" / "✎" / "Aa" / "×" / "+G" as before, and
+    Foreground tracks AccentBrush so the "+" / "−" tint stays Ok / Err.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.RailButton"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Button x:Name="HostButton"
+            Width="32"
+            Height="32"
+            Padding="0"
+            MinWidth="32"
+            MinHeight="32"
+            FontFamily="{StaticResource SansFont}"
+            FontSize="14"
+            FontWeight="SemiBold"
+            Foreground="{StaticResource CoalPrimaryTextBrush}"
+            HorizontalContentAlignment="Center"
+            VerticalContentAlignment="Center"
+            UseSystemFocusVisuals="True"
+            FocusVisualPrimaryBrush="{StaticResource EmberPrimaryBrush}"
+            FocusVisualSecondaryBrush="{StaticResource CoalCardBrush}"
+            Click="OnHostButtonClick">
+        <Button.Template>
+            <ControlTemplate TargetType="Button">
+                <Border x:Name="Root"
+                        Background="{StaticResource CoalRaisedBrush}"
+                        BorderBrush="{StaticResource CoalHoverBrush}"
+                        BorderThickness="1"
+                        CornerRadius="3">
+                    <ContentPresenter HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Content="{TemplateBinding Content}"
+                                      Foreground="{TemplateBinding Foreground}"
+                                      FontFamily="{TemplateBinding FontFamily}"
+                                      FontSize="{TemplateBinding FontSize}" />
+                    <VisualStateManager.VisualStateGroups>
+                        <VisualStateGroup x:Name="CommonStates">
+                            <VisualState x:Name="Normal" />
+                            <VisualState x:Name="PointerOver">
+                                <Storyboard>
+                                    <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Background">
+                                        <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalHoverBrush}" />
+                                    </ObjectAnimationUsingKeyFrames>
+                                </Storyboard>
+                            </VisualState>
+                            <VisualState x:Name="Pressed">
+                                <Storyboard>
+                                    <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Background">
+                                        <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                    </ObjectAnimationUsingKeyFrames>
+                                </Storyboard>
+                            </VisualState>
+                            <VisualState x:Name="Disabled">
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Root"
+                                                     Storyboard.TargetProperty="Opacity"
+                                                     To="0.4"
+                                                     Duration="0:0:0" />
+                                </Storyboard>
+                            </VisualState>
+                        </VisualStateGroup>
+                    </VisualStateManager.VisualStateGroups>
+                </Border>
+            </ControlTemplate>
+        </Button.Template>
+    </Button>
+</UserControl>

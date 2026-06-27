@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    C3 (audit/winui-regressions-2026-05-24) — Visualist preset gallery.
+
+    The window is the discovery surface for built-in widget presets +
+    (future) user-saved presets. A 3-column GridView lists each preset
+    with name + thumbnail + Apply / Drop-on-canvas button.
+
+    Per feedback_visualist_architect_chrome_independence.md the gallery
+    lives under Visualist.WinUI/Windows/ — Architect has no analogue
+    (logic graphs don't have a preset surface). Per
+    feedback_no_modal_dialogs_for_repeatable_rejections.md the gallery
+    never blocks the user with a modal; Apply commits, gallery stays open.
+-->
+<Window
+    x:Class="Phoenix.Controls.Visualist.WinUI.Hosting.PresetGalleryWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header — title + brief subtitle. -->
+        <Border Grid.Row="0"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,12,16,12">
+            <StackPanel Orientation="Vertical" Spacing="2">
+                <TextBlock x:Name="HeaderTitle"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource CoalPaperBrush}"
+                           Text="Preset Gallery" />
+                <TextBlock x:Name="HeaderSubtitle"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+
+        <!-- Body — GridView of preset tiles. Empty-state TextBlock shows when ItemsSource is empty. -->
+        <Grid Grid.Row="1" Padding="12">
+            <GridView x:Name="PresetGrid"
+                      IsItemClickEnabled="False"
+                      SelectionMode="None"
+                      Background="Transparent">
+                <GridView.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalCardBrush}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="10"
+                                Width="180"
+                                Height="180">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Tile title -->
+                                <TextBlock Grid.Row="0"
+                                           Text="{Binding Name}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource CoalPaperBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,0,0,6" />
+
+                                <!-- Thumbnail / gradient swatch -->
+                                <Border Grid.Row="1"
+                                        Background="{Binding ThumbnailBrush}"
+                                        CornerRadius="3"
+                                        Margin="0,0,0,8">
+                                    <TextBlock Text="{Binding ThumbnailLabel}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="9"
+                                               Foreground="{StaticResource CoalPaperBrush}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Opacity="0.85" />
+                                </Border>
+
+                                <!-- Apply / Drop button -->
+                                <Button Grid.Row="2"
+                                        Content="{Binding ButtonLabel}"
+                                        Tag="{Binding Preset}"
+                                        Click="OnApplyClicked"
+                                        HorizontalAlignment="Stretch"
+                                        Background="{StaticResource EmberShadowBrush}"
+                                        Foreground="{StaticResource CoalPaperBrush}"
+                                        BorderBrush="{StaticResource Ember200Brush}"
+                                        BorderThickness="1" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </GridView.ItemTemplate>
+            </GridView>
+
+            <!-- Empty-state hint — shown when no presets are available. -->
+            <TextBlock x:Name="EmptyHint"
+                       Visibility="Collapsed"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       MaxWidth="360" />
+        </Grid>
+
+        <!-- Footer — Close button + status. -->
+        <Border Grid.Row="2"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="16,8,16,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           x:Name="StatusText"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           VerticalAlignment="Center" />
+                <Button Grid.Column="1"
+                        Content="Close"
+                        Click="OnCloseClicked"
+                        MinWidth="80" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

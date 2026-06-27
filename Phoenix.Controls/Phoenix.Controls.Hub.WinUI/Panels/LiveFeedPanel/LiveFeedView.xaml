@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.LiveFeedPanel.LiveFeedView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.LiveFeedPanel"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Live Feed panel"
+    AutomationProperties.HelpText="Recent Twitch events — chat, subscriptions, raids, redemptions, and visual triggers. Use the filter chips in the header to narrow the feed.">
+
+    <Border Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource Radius3Corner}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <hdr:PanelHeader Grid.Row="0"
+                             Eyebrow="01"
+                             TitleKey="panel.livefeed.title"
+                             Title="Live Feed">
+                <hdr:PanelHeader.RightContent>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <!-- HUB-UX P1 — filter chips are ToggleButtons so Tab
+                             focuses them and Space / Enter toggle them
+                             without the bare Border + KeyDown shim. IsChecked
+                             OneWay-binds to the VM so SelectFoo() updates flow
+                             into the chip state; Click reaches into the VM
+                             via the named handlers below. -->
+                        <ToggleButton x:Name="ChipAll"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsAllSelected, Mode=OneWay}"
+                                      Click="OnChipAllClick">
+                            <TextBlock x:Name="ChipAllLabel" />
+                        </ToggleButton>
+                        <!--  CHAT chip retired — LiveFeedSource never
+                             emits Kind=Chat (every chat line would flood the
+                             curated feed; chat lives in the Chat panel via
+                             IChatSource). Keeping the chip just to filter to
+                             an unreachable kind was a dead UI surface. The
+                             LiveFeedFilter.Chat enum value stays — it's part
+                             of the shared Records.cs contract. -->
+                        <ToggleButton x:Name="ChipSubs"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsSubsSelected, Mode=OneWay}"
+                                      Click="OnChipSubsClick">
+                            <TextBlock x:Name="ChipSubsLabel" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="ChipRaids"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsRaidsSelected, Mode=OneWay}"
+                                      Click="OnChipRaidsClick">
+                            <TextBlock x:Name="ChipRaidsLabel" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="ChipVisual"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsVisualSelected, Mode=OneWay}"
+                                      Click="OnChipVisualClick">
+                            <TextBlock x:Name="ChipVisualLabel" />
+                        </ToggleButton>
+                        <!--  REDEEM + FOLLOW chips — LiveFeedSource
+                             already classifies these kinds from StreamEvent
+                             logs; the panel just lacked the controls to filter
+                             to them. Sit between VISUAL and the pop-out
+                             divider so the chip row matches the LiveFeedKind
+                             order in Records.cs. -->
+                        <ToggleButton x:Name="ChipRedeem"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsRedeemSelected, Mode=OneWay}"
+                                      Click="OnChipRedeemClick">
+                            <TextBlock x:Name="ChipRedeemLabel" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="ChipFollow"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsFollowSelected, Mode=OneWay}"
+                                      Click="OnChipFollowClick">
+                            <TextBlock x:Name="ChipFollowLabel" />
+                        </ToggleButton>
+                        <!-- B3 (audit 2026-05-24) — Errors filter chip.
+                             Mutually exclusive with the other chips; when
+                             selected the feed surfaces ONLY GlobalLogger
+                             CriticalError entries. -->
+                        <ToggleButton x:Name="ChipErrors"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsErrorsSelected, Mode=OneWay}"
+                                      Click="OnChipErrorsClick">
+                            <TextBlock x:Name="ChipErrorsLabel" />
+                        </ToggleButton>
+                        <Border Width="1" Background="{StaticResource CoalDividerBrush}" Margin="6,2" />
+                        <!-- C5 (audit 2026-05-24) — Clear feed button. Text-
+                             only label (PhoenixIcons.xaml is out of this
+                             sprint's edit scope, so no dedicated trash
+                             glyph). Click clears the panel buffer; new
+                             rows continue arriving via the existing
+                             source/log subscriptions. -->
+                        <Button x:Name="ClearButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnClearClick">
+                            <TextBlock x:Name="ClearLabel"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       VerticalAlignment="Center" />
+                        </Button>
+                        <Border Width="1" Background="{StaticResource CoalDividerBrush}" Margin="6,2" />
+                        <Button x:Name="PopOutButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnPopOutClick">
+                            <!-- Hub UI sweep 2026-05-22 — added "pop-out" label
+                                 next to the icon (matches SystemLog pattern).
+                                 Pre-fix the panel exposed an icon-only button
+                                 that Majo's 0.10.6 report called out as
+                                 unlabeled. Tooltip + AutomationProperties.Name +
+                                 label text flow from
+                                 LiveFeedView.ApplyLocalizedStrings via Localizer.T(). -->
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                <PathIcon Data="{StaticResource PhoenixIcon_PopOut}"
+                                          Width="{StaticResource IconSizeS}"
+                                          Height="{StaticResource IconSizeS}"
+                                          Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                <TextBlock x:Name="PopOutLabel"
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </hdr:PanelHeader.RightContent>
+            </hdr:PanelHeader>
+
+            <Grid Grid.Row="1">
+                <!-- Empty-state placeholder. Visible only when no rows have
+                     landed yet (HUB-UX P1 — match ChatView's
+                     ConnectionHintText pattern for first-launch quiet). The
+                     row count flips it off the moment the first event
+                     arrives; subsequent filter-driven empty views keep the
+                     placeholder hidden so the operator doesn't think the
+                     feed went dark. -->
+                <TextBlock x:Name="EmptyStateText"
+                           Visibility="{x:Bind ViewModel.EmptyStateVisibility, Mode=OneWay}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Padding="24"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="12"
+                           FontStyle="Italic"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           IsHitTestVisible="False"
+                           AutomationProperties.LiveSetting="Polite" />
+
+                <ScrollViewer x:Name="FeedScrollViewer"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto">
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Rows, Mode=OneWay}"
+                               AutomationProperties.LiveSetting="Polite"
+                               AutomationProperties.Name="Live event feed">
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:LiveFeedRowVm">
+                            <Border BorderBrush="{StaticResource CoalRaisedBrush}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="{StaticResource PanelRowPadding}"
+                                    RightTapped="OnRowRightTapped">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="62" />
+                                        <ColumnDefinition Width="18" />
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               Text="{x:Bind TimestampText}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1"
+                                               FontSize="14"
+                                               TextAlignment="Center"
+                                               Foreground="{x:Bind IconBrush, Mode=OneWay}"
+                                               Text="{x:Bind Icon}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2"
+                                               FontFamily="{StaticResource SansFont}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                               Text="{x:Bind Who}"
+                                               ToolTipService.ToolTip="{x:Bind Who}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="3"
+                                               FontFamily="{StaticResource SansFont}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               Margin="8,0,0,0"
+                                               Text="{x:Bind Detail}"
+                                               ToolTipService.ToolTip="{x:Bind Detail}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

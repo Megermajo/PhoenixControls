@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Visualist WinUI 3 regression audit 2026-05-31 (Area 3 P0) — ShapeEditor port.
+    The pre-T15 WinForms shell shipped a modal ShapeEditor
+    (Phoenix.Controls.Visualist/Controls/ShapeEditor.cs, ~743 LOC) that authored
+    the `Vertices` JSON list on Mask.Polygon / Mask.Bezier nodes. The WinUI
+    rewrite dropped it entirely, severing all vertex editing. This dialog
+    restores it faithfully as a ContentDialog.
+
+    Reached from the graph node right-click flyout's "Edit Shape…" item
+    (WidgetGraphCanvas.HookNodeContextFlyout) on a Mask.Polygon / Mask.Bezier
+    node. Coordinate space is normalised 0..1 to match the kernel contract; the
+    vertex canvas paints at 600×400 for screen but every drag clamps the
+    underlying vertex coords to the unit square.
+
+    Bezier mode is auto-detected from the node title — Mask.Bezier exposes the
+    Cp1/Cp2 handle rows + on-canvas handles for the selected vertex; Mask.Polygon
+    hides them.
+
+    Visualist-local per feedback_visualist_architect_chrome_independence.md —
+    no Shared lift. Chrome treatment mirrors CurveEditorDialog: Coal* / Ember* /
+    Brass* tokens, eyebrow header + brass hairline, mono font for the numeric
+    coordinate readouts.
+-->
+<ContentDialog
+    x:Class="Phoenix.Controls.Visualist.WinUI.Dialogs.ShapeEditorDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Edit Shape"
+    Background="{StaticResource CoalShellBrush}"
+    BorderBrush="{StaticResource CoalCardBrush}"
+    BorderThickness="1"
+    CornerRadius="6"
+    PrimaryButtonText="OK"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary">
+
+    <ContentDialog.Resources>
+        <!-- R43 — the default ContentDialog caps (ContentDialogMaxWidth ≈ 548,
+             MaxHeight ≈ 756) clipped this ~850px-wide editor. Override them so
+             the dialog can host the vertex canvas + the right column; the inner
+             ScrollViewer keeps it usable at 125/150% DPI on small screens. -->
+        <x:Double x:Key="ContentDialogMaxWidth">980</x:Double>
+        <x:Double x:Key="ContentDialogMaxHeight">820</x:Double>
+        <Style x:Key="ShapeDialogEyebrow" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="180" />
+            <Setter Property="Foreground" Value="{StaticResource EmberPrimaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style x:Key="ShapeDialogFieldLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="80" />
+            <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+            <Setter Property="Margin" Value="0,8,0,2" />
+        </Style>
+        <Style x:Key="ShapeCoordLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Foreground" Value="{StaticResource CoalMutedTextBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Width" Value="38" />
+        </Style>
+        <Style x:Key="ShapeCoordBox" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Width" Value="120" />
+            <Setter Property="MinHeight" Value="28" />
+        </Style>
+        <Style x:Key="ShapeDialogHint" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Foreground" Value="{StaticResource CoalMutedTextBrush}" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <!-- R43 — scroll fallback so the dialog stays usable when the content
+         exceeds the screen at high DPI. -->
+    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollMode="Auto"
+                  VerticalScrollMode="Auto">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- eyebrow header -->
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,8">
+            <TextBlock x:Name="EyebrowText" Text="VISUALIST · SHAPE" Style="{StaticResource ShapeDialogEyebrow}" />
+            <TextBlock x:Name="SubtitleText"
+                       FontFamily="{StaticResource SansFont}"
+                       FontSize="13"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       Text="Author the mask vertices. Click empty space to add, drag a vertex to move." />
+        </StackPanel>
+
+        <Rectangle Grid.Row="1" Fill="{StaticResource BrassGradientBrush}" />
+
+        <Grid Grid.Row="2" Margin="0,10,0,0" ColumnSpacing="14">
+            <Grid.ColumnDefinitions>
+                <!-- R51 — the vertex canvas column now stretches (was Auto with a
+                     hard 600px canvas) so the editor scales with the dialog
+                     width instead of being pinned to one size. -->
+                <ColumnDefinition Width="*" MinWidth="420" />
+                <ColumnDefinition Width="220" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ── left: vertex canvas ── -->
+            <StackPanel Grid.Column="0" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <CheckBox x:Name="ClosedToggle"
+                              Content="Closed path"
+                              FontFamily="{StaticResource SansFont}"
+                              FontSize="12"
+                              Checked="OnClosedToggled"
+                              Unchecked="OnClosedToggled" />
+                    <TextBlock x:Name="VertexCountText"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource CoalMutedTextBrush}"
+                               Text="0 vertices" />
+                </StackPanel>
+
+                <!-- R51 — the canvas fills this frame (width stretches with the
+                     dialog, fixed 440px height); the code-behind drives
+                     ShapeSurface.Width/Height from the frame's size so the
+                     normalised-coord painting re-lays out on resize. -->
+                <Border x:Name="ShapeSurfaceFrame"
+                        Height="440"
+                        HorizontalAlignment="Stretch"
+                        MinWidth="420"
+                        Background="{StaticResource CoalShellBrush}"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        SizeChanged="OnSurfaceFrameSizeChanged">
+                    <Canvas x:Name="ShapeSurface"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            SizeChanged="OnSurfaceSizeChanged"
+                            PointerPressed="OnSurfacePointerPressed"
+                            PointerMoved="OnSurfacePointerMoved"
+                            PointerReleased="OnSurfacePointerReleased"
+                            RightTapped="OnSurfaceRightTapped" />
+                </Border>
+            </StackPanel>
+
+            <!-- ── right: numeric + actions ── -->
+            <StackPanel Grid.Column="1" Spacing="2">
+                <TextBlock x:Name="SelectedVertexLabel" Text="SELECTED VERTEX" Style="{StaticResource ShapeDialogFieldLabel}" />
+
+                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                    <TextBlock Text="X" Style="{StaticResource ShapeCoordLabel}" />
+                    <TextBox x:Name="XBox" Style="{StaticResource ShapeCoordBox}"
+                             KeyDown="OnCoordKeyDown" LostFocus="OnCoordLostFocus" Tag="x" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                    <TextBlock Text="Y" Style="{StaticResource ShapeCoordLabel}" />
+                    <TextBox x:Name="YBox" Style="{StaticResource ShapeCoordBox}"
+                             KeyDown="OnCoordKeyDown" LostFocus="OnCoordLostFocus" Tag="y" />
+                </StackPanel>
+
+                <StackPanel x:Name="BezierHandlePanel">
+                    <TextBlock x:Name="BezierHandlesLabel" Text="BEZIER HANDLES" Style="{StaticResource ShapeDialogFieldLabel}" />
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                        <TextBlock Text="Cp1 X" Style="{StaticResource ShapeCoordLabel}" />
+                        <TextBox x:Name="Cp1XBox" Style="{StaticResource ShapeCoordBox}"
+                                 KeyDown="OnCoordKeyDown" LostFocus="OnCoordLostFocus" Tag="cp1x" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                        <TextBlock Text="Cp1 Y" Style="{StaticResource ShapeCoordLabel}" />
+                        <TextBox x:Name="Cp1YBox" Style="{StaticResource ShapeCoordBox}"
+                                 KeyDown="OnCoordKeyDown" LostFocus="OnCoordLostFocus" Tag="cp1y" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                        <TextBlock Text="Cp2 X" Style="{StaticResource ShapeCoordLabel}" />
+                        <TextBox x:Name="Cp2XBox" Style="{StaticResource ShapeCoordBox}"
+                                 KeyDown="OnCoordKeyDown" LostFocus="OnCoordLostFocus" Tag="cp2x" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                        <TextBlock Text="Cp2 Y" Style="{StaticResource ShapeCoordLabel}" />
+                        <TextBox x:Name="Cp2YBox" Style="{StaticResource ShapeCoordBox}"
+                                 KeyDown="OnCoordKeyDown" LostFocus="OnCoordLostFocus" Tag="cp2y" />
+                    </StackPanel>
+                </StackPanel>
+
+                <TextBlock x:Name="ActionsLabel" Text="ACTIONS" Style="{StaticResource ShapeDialogFieldLabel}" />
+                <Button x:Name="AddVertexButton"
+                        Content="Add Vertex"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,2,0,0"
+                        Click="OnAddVertexClick" />
+                <Button x:Name="DeleteVertexButton"
+                        Content="Delete Vertex"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,4,0,0"
+                        Foreground="{StaticResource ErrBrush}"
+                        BorderBrush="{StaticResource ErrBrush}"
+                        Background="Transparent"
+                        BorderThickness="1"
+                        IsEnabled="False"
+                        Click="OnDeleteVertexClick" />
+                <Button x:Name="AnimateVertexButton"
+                        Content="Animate Vertex"
+                        HorizontalAlignment="Stretch"
+                        Margin="0,4,0,0"
+                        IsEnabled="False"
+                        Click="OnAnimateVertexClick" />
+
+                <TextBlock x:Name="HintText"
+                           Style="{StaticResource ShapeDialogHint}"
+                           Text="Ctrl+Z / Ctrl+Y undo-redo · Del removes the selected vertex (min 2)." />
+            </StackPanel>
+        </Grid>
+    </Grid>
+    </ScrollViewer>
+</ContentDialog>

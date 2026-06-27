@@ -1,0 +1,669 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Architect Databank Browser pane. Bound to DatabankBrowserViewModel via
+    DataContext: sidebar table list (left), header strip + scrollable row
+    grid (centre), filter box + display-path caption framing the data.
+    Closes the "Databank tab is a literal blank" P0 from the 2026-05-07
+    review; the toolbar row + inline cell-edit close the "missing detailed
+    functions to edit post-patch" follow-up.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Databank.DatabankBrowserView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:cv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters">
+
+    <UserControl.Resources>
+        <cv:BoolToVisibilityConverter x:Key="BoolVis" />
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ── Table sidebar ───────────────────────────────────────────── -->
+        <!-- System and User sections are rendered as two independent
+             ListViews (rather than one grouped ListView) so single-select
+             selection routes cleanly to DatabankBrowserViewModel.SelectedTable
+             without WinUI's grouped-ListView SelectedItems quirks. -->
+        <Border Grid.Column="0"
+                Background="{StaticResource CoalSurfaceBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,0,1,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0"
+                        Padding="12,8,12,8"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="0,0,0,1">
+                    <TextBlock Style="{StaticResource EyebrowTextStyle}"
+                               Text="TABLES" />
+                </Border>
+
+                <!-- Table-list filter — narrows BOTH groups by substring on
+                     the table name. Distinct from the row-grid filter below
+                     so users can scope the sidebar without disturbing their
+                     row search. -->
+                <Border Grid.Row="1"
+                        Padding="12,4,12,6"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="0,0,0,1">
+                    <TextBox PlaceholderText="filter tables…"
+                             Text="{Binding TableListFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             FontFamily="{StaticResource MonoFont}"
+                             FontSize="11" />
+                </Border>
+
+                <ScrollViewer Grid.Row="2"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Padding="0,4,0,4">
+                    <StackPanel Spacing="2">
+                        <!-- SYSTEM group -->
+                        <Border Padding="12,4,12,2"
+                                Visibility="{Binding HasSystemTables, Converter={StaticResource BoolVis}}">
+                            <TextBlock Text="SYSTEM"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="9"
+                                       FontWeight="SemiBold"
+                                       CharacterSpacing="180"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                        </Border>
+                        <ListView x:Name="SystemTableList"
+                                  Background="Transparent"
+                                  BorderThickness="0"
+                                  ItemsSource="{Binding SystemTables}"
+                                  SelectionMode="Single"
+                                  SelectionChanged="OnTableSelectionChanged"
+                                  CanDragItems="True"
+                                  DragItemsStarting="OnTableDragStarting"
+                                  RightTapped="OnTableListRightTapped">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="Padding" Value="12,4" />
+                                    <Setter Property="MinHeight" Value="0" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- 🔒 lock glyph (Segoe Fluent Icons U+E72E) — visual
+                                             confirmation that this table is read-only. -->
+                                        <FontIcon Grid.Column="0"
+                                                  FontFamily="Segoe Fluent Icons"
+                                                  Glyph="&#xE72E;"
+                                                  FontSize="11"
+                                                  Margin="0,0,6,0"
+                                                  Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Name}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="12"
+                                                   Opacity="0.55"
+                                                   Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding RowCount}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Opacity="0.55"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <!-- USER group -->
+                        <Border Padding="12,8,12,2">
+                            <TextBlock Text="USER"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="9"
+                                       FontWeight="SemiBold"
+                                       CharacterSpacing="180"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                        </Border>
+                        <ListView x:Name="UserTableList"
+                                  Background="Transparent"
+                                  BorderThickness="0"
+                                  ItemsSource="{Binding UserTables}"
+                                  SelectionMode="Single"
+                                  SelectionChanged="OnTableSelectionChanged"
+                                  CanDragItems="True"
+                                  DragItemsStarting="OnTableDragStarting"
+                                  RightTapped="OnTableListRightTapped">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="Padding" Value="12,4" />
+                                    <Setter Property="MinHeight" Value="0" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding Name}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding RowCount}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Bottom of sidebar: Open / Delete / Export toolbar +
+                     the standalone `+ Table` button. Open just focuses the
+                     row grid (single-click already selects); Delete drops
+                     the user table; Export writes a CSV. All three round-
+                     trip through DB.cs via IRelationalSource and disable
+                     against system tables. -->
+                <StackPanel Grid.Row="3">
+                    <Border Padding="12,6,12,6"
+                            BorderBrush="{StaticResource CoalCardBrush}"
+                            BorderThickness="0,1,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="OpenTableButton"
+                                    Grid.Column="0"
+                                    Margin="0,0,4,0"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    Click="OnOpenTableClick"
+                                    IsEnabled="{Binding HasSelectedTable}"
+                                    ToolTipService.ToolTip="Focus the selected table in the row grid">
+                                <TextBlock Text="Open"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11" />
+                            </Button>
+                            <Button x:Name="DeleteTableButton"
+                                    Grid.Column="1"
+                                    Margin="0,0,4,0"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    Click="OnDeleteTableClick"
+                                    IsEnabled="{Binding CanMutateSelectedTable}"
+                                    ToolTipService.ToolTip="Drop the selected user table">
+                                <TextBlock Text="Delete"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11" />
+                            </Button>
+                            <Button x:Name="ExportTableButton"
+                                    Grid.Column="2"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    Click="OnExportTableClick"
+                                    IsEnabled="{Binding HasSelectedTable}"
+                                    ToolTipService.ToolTip="Export the selected table to CSV">
+                                <TextBlock Text="Export"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11" />
+                            </Button>
+                        </Grid>
+                    </Border>
+                    <Border Padding="12,4,12,10"
+                            BorderBrush="{StaticResource CoalCardBrush}"
+                            BorderThickness="0,1,0,0">
+                        <Button x:Name="NewTableButton"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"
+                                Click="OnNewTableClick"
+                                ToolTipService.ToolTip="Create a new user table">
+                            <TextBlock Text="+ Table"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11" />
+                        </Button>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ── Table contents ──────────────────────────────────────────── -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <!-- Header band -->
+                <RowDefinition Height="Auto" />
+                <!-- Toolbar -->
+                <RowDefinition Height="Auto" />
+                <!-- Filter (rows) -->
+                <RowDefinition Height="Auto" />
+                <!-- Error InfoBar (auto-collapses) -->
+                <RowDefinition Height="Auto" />
+                <!-- Column header strip + scrollable row grid -->
+                <RowDefinition Height="*" />
+                <!-- Footer (paging + path) -->
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Empty-state overlay — visible only when SelectedTable == null,
+                 covers the centre pane so the user gets a clear "pick a table"
+                 affordance instead of a half-rendered empty grid. The toolbar +
+                 filter row stay disabled by their own gates so clicks pass
+                 through cleanly when the overlay collapses. -->
+            <Grid Grid.Row="0" Grid.RowSpan="6"
+                  Background="{StaticResource CoalShellBrush}"
+                  Visibility="{Binding IsEmptyState, Converter={StaticResource BoolVis}}"
+                  Canvas.ZIndex="10">
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="6">
+                    <TextBlock Text="No table selected"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="16"
+                               HorizontalAlignment="Center"
+                               Foreground="{StaticResource CoalPaperBrush}" />
+                    <TextBlock Text="Pick a table from the sidebar or use + Table."
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="11"
+                               Opacity="0.65"
+                               HorizontalAlignment="Center"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Header band: table name + row/col aggregate -->
+            <Border Grid.Row="0"
+                    Padding="14,10,14,8"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,0,0,1">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding SelectedTable.Name, FallbackValue=—, TargetNullValue=—}"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="16"
+                               Foreground="{StaticResource CoalPaperBrush}" />
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding SelectedTableHeader}"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                </StackPanel>
+            </Border>
+
+            <!-- Toolbar row: + Row | + Column | Delete Row | (spacer) | Refresh -->
+            <Border Grid.Row="1"
+                    Padding="14,6,14,6"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,0,0,1">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                        <Button x:Name="NewRowButton"
+                                Click="OnNewRowClick"
+                                IsEnabled="{Binding CanMutateSelectedTable}"
+                                ToolTipService.ToolTip="Insert a blank row (uses type-aware seed defaults)">
+                            <TextBlock Text="+ Row"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11" />
+                        </Button>
+                        <Button x:Name="NewColumnButton"
+                                Click="OnNewColumnClick"
+                                IsEnabled="{Binding CanMutateSelectedTable}"
+                                ToolTipService.ToolTip="Add a column to this table">
+                            <TextBlock Text="+ Column"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11" />
+                        </Button>
+                        <Button x:Name="DeleteRowButton"
+                                Click="OnDeleteRowClick"
+                                ToolTipService.ToolTip="Delete the selected row(s) — Ctrl/Shift-click to multi-select">
+                            <TextBlock Text="Delete Row(s)"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11" />
+                        </Button>
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            x:Name="RefreshButton"
+                            Click="OnRefreshClick"
+                            ToolTipService.ToolTip="Re-read the table list and current rows from disk">
+                        <TextBlock Text="↻ Refresh"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11" />
+                    </Button>
+                </Grid>
+            </Border>
+
+            <!-- Filter row (rows only — sidebar has its own filter) -->
+            <Border Grid.Row="2"
+                    Padding="14,6,14,6"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,0,0,1">
+                <TextBox PlaceholderText="filter rows…"
+                         Text="{Binding Filter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="{StaticResource MonoFont}"
+                         FontSize="11" />
+            </Border>
+
+            <!-- Error banner — collapses to zero height when HasError is false.
+                 Cleared on the next successful op so stale errors don't linger
+                 past the user's recovery. -->
+            <InfoBar Grid.Row="3"
+                     IsOpen="{Binding HasError, Mode=OneWay}"
+                     Severity="Error"
+                     IsClosable="True"
+                     CloseButtonClick="OnInfoBarCloseClick"
+                     Title="Databank error"
+                     Message="{Binding LastErrorMessage}" />
+
+            <!-- Column header strip + scrollable row grid -->
+            <Grid Grid.Row="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <ScrollViewer Grid.Row="0"
+                              x:Name="HeaderScroll"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled"
+                              HorizontalScrollMode="Enabled"
+                              VerticalScrollMode="Disabled">
+                    <!-- rowid identity column is rendered as a fixed leftmost
+                         column OUTSIDE the dynamic VisibleColumns ItemsControl so
+                         it stays read-only and never enters the editable / sort /
+                         seed / mutate paths (VisibleColumns feeds +Row defaults and
+                         column ops). Its width (70) matches the per-row rowid cell
+                         so the header strip and the row grid stay column-aligned. -->
+                    <StackPanel Orientation="Horizontal">
+                    <Border Width="70"
+                            Padding="8,6"
+                            BorderBrush="{StaticResource CoalCardBrush}"
+                            BorderThickness="0,0,1,1">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="rowid"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                            <TextBlock Text="INTEGER"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                        </StackPanel>
+                    </Border>
+                    <ItemsControl ItemsSource="{Binding VisibleColumns}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <!-- Header is a click-to-sort target. The
+                                     handler reads Tag (the ColumnInfo) and
+                                     forwards SortByColumnAsync to the VM —
+                                     ORDER BY runs in SQLite so the page is
+                                     the correctly-ordered window, not just
+                                     an in-memory shuffle of the current page.
+
+                                      (P1-A18 / P1-A19): the header
+                                     is also a drag source and a right-click
+                                     target. Dragging it onto the canvas
+                                     opens a Get / Set / Increment / FindRow
+                                     / GetColumn picker pre-bound to this
+                                     column; right-clicking opens the same
+                                     menu in-place. Both gestures share the
+                                     payload + menu builder. -->
+                                <Border Width="160"
+                                        Padding="8,6"
+                                        BorderBrush="{StaticResource CoalCardBrush}"
+                                        BorderThickness="0,0,1,1"
+                                        Tag="{Binding}"
+                                        Tapped="OnColumnHeaderTapped"
+                                        CanDrag="True"
+                                        DragStarting="OnColumnHeaderDragStarting"
+                                        RightTapped="OnColumnHeaderRightTapped">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Spacing="2">
+                                            <TextBlock Text="{Binding Name}"
+                                                       FontFamily="{StaticResource MonoFont}"
+                                                       FontSize="11"
+                                                       Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                                            <TextBlock Text="{Binding SqlType}"
+                                                       FontFamily="{StaticResource MonoFont}"
+                                                       FontSize="9"
+                                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                        </StackPanel>
+                                        <!-- Sort-direction glyph — populated in
+                                             code-behind via Loaded handler so the
+                                             template can compare its Binding.Name
+                                             against the VM's SortColumn. Visible
+                                             only on the currently-sorted column. -->
+                                        <TextBlock x:Name="SortIndicator"
+                                                   Grid.Column="1"
+                                                   VerticalAlignment="Center"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource EmberPrimaryBrush}"
+                                                   Text=""
+                                                   Tag="{Binding}"
+                                                   Loaded="OnSortIndicatorLoaded" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <ScrollViewer Grid.Row="1"
+                              x:Name="RowScroll"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Enabled"
+                              VerticalScrollMode="Enabled"
+                              ViewChanged="OnRowScrollViewChanged">
+                    <ListView x:Name="RowList"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              SelectionMode="Extended"
+                              SelectionChanged="OnRowSelectionChanged"
+                              ItemsSource="{Binding VisibleRows}">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                <!-- rowid identity cell — read-only display of the
+                                     SQLite rowid, leftmost. Width matches the header
+                                     so columns line up under the header strip. -->
+                                <Border Width="70"
+                                        Padding="8,4"
+                                        BorderBrush="{StaticResource CoalCardBrush}"
+                                        BorderThickness="0,0,1,1">
+                                    <TextBlock Text="{Binding RowId}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                </Border>
+                                <ItemsControl ItemsSource="{Binding Cells}" Tag="{Binding}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="160"
+                                                    Padding="8,4"
+                                                    BorderBrush="{StaticResource CoalCardBrush}"
+                                                    BorderThickness="0,0,1,1">
+                                                <!-- Inline type-aware cell editing — pre-fix every double-tap
+                                                     popped a modal ContentDialog with a generic TextBox regardless
+                                                     of column SqlType (Architect UX review P0-4). The cell VM
+                                                     exposes pre-composed ShowXxxEditor flags (IsEditing × Editor)
+                                                     so each overlay binds to a single bool, keeping XAML simple. -->
+                                                <Grid>
+                                                    <TextBlock Text="{Binding Value, FallbackValue=—, TargetNullValue=—}"
+                                                               FontFamily="{StaticResource MonoFont}"
+                                                               FontSize="11"
+                                                               Foreground="{StaticResource CoalBodyTextBrush}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               DoubleTapped="OnCellDoubleTapped"
+                                                               Tag="{Binding}"
+                                                               Visibility="{Binding ShowReadOnly, Converter={StaticResource BoolVis}}" />
+                                                    <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             FontFamily="{StaticResource MonoFont}"
+                                                             FontSize="11"
+                                                             Padding="2,0"
+                                                             Tag="{Binding}"
+                                                             KeyDown="OnCellEditKeyDown"
+                                                             LostFocus="OnCellEditLostFocus"
+                                                             Visibility="{Binding ShowTextEditor, Converter={StaticResource BoolVis}}" />
+                                                    <CheckBox IsChecked="{Binding BoolValue, Mode=OneWay}"
+                                                              Margin="0"
+                                                              Padding="0"
+                                                              Tag="{Binding}"
+                                                              Click="OnCellBoolToggled"
+                                                              Visibility="{Binding ShowBoolEditor, Converter={StaticResource BoolVis}}" />
+                                                    <!-- INTEGER / REAL editors are plain TextBoxes with a numeric
+                                                         InputScope rather than NumberBox — NumberBox's `Value` is
+                                                         a double which would require a string↔double converter that
+                                                         doesn't ship in-house and breaks empty / null round-trip.
+                                                         The Editor flag still drives type-aware behaviour because
+                                                         the commit handlers in code-behind validate parse before
+                                                         calling UpdateCellAsync. -->
+                                                    <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             FontFamily="{StaticResource MonoFont}"
+                                                             FontSize="11"
+                                                             Padding="2,0"
+                                                             InputScope="Number"
+                                                             Tag="{Binding}"
+                                                             KeyDown="OnCellEditKeyDown"
+                                                             LostFocus="OnCellEditLostFocus"
+                                                             Visibility="{Binding ShowIntegerEditor, Converter={StaticResource BoolVis}}" />
+                                                    <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             FontFamily="{StaticResource MonoFont}"
+                                                             FontSize="11"
+                                                             Padding="2,0"
+                                                             InputScope="Number"
+                                                             Tag="{Binding}"
+                                                             KeyDown="OnCellEditKeyDown"
+                                                             LostFocus="OnCellEditLostFocus"
+                                                             Visibility="{Binding ShowRealEditor, Converter={StaticResource BoolVis}}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </ScrollViewer>
+
+                <!--  No-matches message — overlays the rows
+                     area (same grid cell) when a filter is active but the page
+                     has no matching rows, so an empty grid reads as "filtered to
+                     nothing" rather than broken / still loading. -->
+                <TextBlock Grid.Row="1"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           IsHitTestVisible="False"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="12"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           Text="{Binding NoMatchesText}"
+                           Visibility="{Binding HasNoFilterMatches, Converter={StaticResource BoolVis}}" />
+            </Grid>
+
+            <!-- Footer: paging controls + row-count + backing-store path
+                 + load indicator. The paging buttons step through the
+                 500-row windows the VM exposes via GoToNextPageAsync /
+                 GoToPreviousPageAsync; click-disabled when at the page edges. -->
+            <Border Grid.Row="5"
+                    Padding="14,6,14,8"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,1,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="PrevPageButton"
+                            Grid.Column="0"
+                            Margin="0,0,4,0"
+                            Padding="6,2"
+                            MinWidth="0"
+                            IsEnabled="{Binding CanPagePrev}"
+                            Click="OnPrevPageClick"
+                            ToolTipService.ToolTip="Previous page">
+                        <TextBlock Text="←" FontFamily="{StaticResource MonoFont}" FontSize="11" />
+                    </Button>
+                    <Button x:Name="NextPageButton"
+                            Grid.Column="1"
+                            Margin="0,0,8,0"
+                            Padding="6,2"
+                            MinWidth="0"
+                            IsEnabled="{Binding CanPageNext}"
+                            Click="OnNextPageClick"
+                            ToolTipService.ToolTip="Next page">
+                        <TextBlock Text="→" FontFamily="{StaticResource MonoFont}" FontSize="11" />
+                    </Button>
+                    <TextBlock Grid.Column="2"
+                               VerticalAlignment="Center"
+                               Text="{Binding PageFooterText}"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                    <TextBlock Grid.Column="3"
+                               VerticalAlignment="Center"
+                               Margin="12,0,0,0"
+                               Text="{Binding DisplayPath}"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                    <TextBlock x:Name="LoadingHint"
+                               Grid.Column="4"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource EmberPrimaryBrush}"
+                               Text="loading…"
+                               Visibility="Collapsed" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

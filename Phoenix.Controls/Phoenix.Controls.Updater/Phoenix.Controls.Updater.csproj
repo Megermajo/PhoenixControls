@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Phoenix.Controls.Updater — console executable (auto-update bootstrapper).
+
+    The .exe handles Track 8 + legacy flows:
+      a. Stops the running suite (Hub/Architect/Visualist, WinForms + WinUI).
+      b. Verifies the .phxupdate archive (SHA-256 + Authenticode).
+      c. Atomically swaps the install root (rename-aside backup + extract).
+      d. Optionally per-file verifies via the archive's manifest.json.
+      e. Writes last-update-result.json so the next Hub launch surfaces it.
+      f. Relaunches Hub (WinUI preferred, WinForms fallback).
+
+    The Hub-side periodic poller (6 h cadence by default) that talks to the
+    GitHub Releases API and hands a verified archive off to the .exe in
+    update mode lives in Phoenix.Controls.Hub/Core/UpdateChecker.cs — Track 4
+    (Hub.WinUI services) wires it into the chrome status surface.
+
+    Self-contained on purpose — no Phoenix.Controls.Shared reference, BCL
+    only. Hub copies the build output into its own bin folder so
+    Phoenix.Controls.Updater.exe ships next to Phoenix.Controls.Hub.exe.
+    Suite-wide version comes from Phoenix.Controls/Directory.Build.props.
+
+    The legacy `git fetch + dotnet build` flow was retired in the 0.6.2
+    cleanup — the runner refuses that mode now and points the user at the
+    new update / Releases-mode flows. The CLI parser still accepts the
+    legacy argv shape for back-compat with the test suite.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Phoenix.Controls.Updater</RootNamespace>
+    <AssemblyName>Phoenix.Controls.Updater</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Lets Phoenix.Controls.Tests reach the internal Download/resume seams
+      added for Unit 31 (audit/near-reality-test-candidates-2026-05-22.md).
+      Specifically the HttpClient slot, DownloadAsync entry point, and the
+      ResumeMeta read/write helpers — covered by
+      Phoenix.Controls.Tests/UpdateRunnerDownloadResumeTests.cs.
+    -->
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+  </ItemGroup>
+
+</Project>

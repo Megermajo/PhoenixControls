@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.HubWorkspaceView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Phoenix.Controls.Hub.WinUI.Controls">
+
+    <!-- Hub's workspace — the four panels (LiveFeed, Chat, Script, SystemLog)
+         plus the status strip and hint strip. Lifted out of MainWindow.xaml
+         so MainPaneRegion can swap between this and the Architect / Visualist
+         MainView UserControls when the user clicks pillar tabs (TODO.md P0 #3). -->
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- Status strip region -->
+            <RowDefinition Height="Auto" />   <!-- Hint strip -->
+            <RowDefinition Height="*" />      <!-- Four-pane main grid -->
+        </Grid.RowDefinitions>
+
+        <ContentControl x:Name="StatusStripRegion"
+                        Grid.Row="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch" />
+
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource CoalRaisedBrush}"
+                BorderThickness="0,0,0,1"
+                Background="{StaticResource CoalSurfaceBrush}"
+                Padding="14,4">
+            <TextBlock x:Name="HintStripText"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="10"
+                       CharacterSpacing="50"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+        </Border>
+
+        <Grid Grid.Row="2">
+
+            <!-- HUB-UX-D2 — discreet hex-pattern overlay on top of the flat
+                 coal background. Renders below the phoenix watermark and the
+                 panel grid so the four panels' card surfaces continue to read
+                 as the foreground; the hex grid is texture, not chrome. NOT
+                 Mica / Acrylic — the spec calls for a stroke-only flat
+                 overlay so the dark coal stays opaque. -->
+            <controls:HexPatternOverlay HexRadius="28"
+                                        IsHitTestVisible="False" />
+
+            <!-- Perf-review M21: DecodePixelWidth caps the decoded bitmap to
+                 the 600 DIP display size — at 1.8% opacity this watermark
+                 was paying the full PNG decode cost despite being nearly
+                 invisible. Redesign R3 — phoenix-mark held at the floor of
+                 perceptible (0.018 from the prior 0.025) so it reads as
+                 paper-grain, not chrome. -->
+            <Image Opacity="0.018"
+                   Stretch="Uniform"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Width="600"
+                   IsHitTestVisible="False">
+                <Image.Source>
+                    <BitmapImage UriSource="ms-appx:///Assets/phoenix-mark.png" DecodePixelWidth="1200" />
+                </Image.Source>
+            </Image>
+
+            <!-- Outer wrap uses 14px frame; inner gutters use the shared
+                 PanelGutter token so every Hub panel separator stays in
+                 lockstep (TODO 2026-05-07 P1 — outer/inner asymmetry).
+                 ColumnSpacing/RowSpacing on the inner Grid replace the
+                 hand-tuned 5px Margin per region. Uniform 14 px frame
+                 per Design_Orders §6 rhythm (top was previously 10). -->
+            <Grid Margin="14"
+                  ColumnSpacing="{StaticResource PanelGutter}"
+                  RowSpacing="{StaticResource PanelGutter}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.3*" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- TabIndex orders Tab traversal left-to-right top-to-bottom in the
+                     visual scan order (LiveFeed → Chat → SystemLog → Script) rather
+                     than the document order (LiveFeed → SystemLog → Chat → Script). -->
+                <ContentControl x:Name="LiveFeedRegion" x:FieldModifier="public"
+                                Grid.Column="0"
+                                Grid.Row="0" Grid.RowSpan="2"
+                                TabIndex="0"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+
+                <ContentControl x:Name="ChatRegion" x:FieldModifier="public"
+                                Grid.Column="1"
+                                Grid.Row="0"
+                                TabIndex="1"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+
+                <ContentControl x:Name="SystemLogRegion" x:FieldModifier="public"
+                                Grid.Column="0"
+                                Grid.Row="2"
+                                TabIndex="2"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+
+                <ContentControl x:Name="ScriptRegion" x:FieldModifier="public"
+                                Grid.Column="1"
+                                Grid.Row="1" Grid.RowSpan="2"
+                                TabIndex="3"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch" />
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

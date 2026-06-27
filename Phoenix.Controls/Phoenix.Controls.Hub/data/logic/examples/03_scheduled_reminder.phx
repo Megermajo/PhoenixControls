@@ -1,0 +1,7 @@
+# Script — Generated from "scheduled_reminder"
+# Exported: 2026-06-24 14:24
+
+on_interval(900):
+    # [Twitch.SendChat]
+    twitch.send_chat(text.format("[Tip] {A}", array.get("Drop a follow if you enjoy the stream,Use !discord to join us between streams,Lurkers are loved — thanks for the company,Type !commands to see what the bot can do", math.random(0, array.length("Drop a follow if you enjoy the stream,Use !discord to join us between streams,Lurkers are loved — thanks for the company,Type !commands to see what the bot can do"))), ""))
+

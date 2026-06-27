@@ -1,0 +1,539 @@
+{
+  "Name": "starter_command",
+  "Nodes": [
+    {
+      "Id": "699c8b38-4769-4053-a63b-a48c234da454",
+      "Title": "Twitch.SendChat",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1457,
+        "Y": 83
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7077677,
+      "Sockets": [
+        {
+          "Id": "4e07c134-73bf-4fc6-b4e9-68cdcf2832c1",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "fa83e9a5-75b2-411b-a541-4ff9f8282037",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4678fccb-b2d2-44f8-87d6-888e1f94817f",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Message": "Hello chat!"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "df69036b-486b-4242-9a18-5eab1e2b6ded",
+      "Title": "Twitch.ChatMessage",
+      "Category": "Events",
+      "Location": {
+        "IsEmpty": false,
+        "X": 250,
+        "Y": 76
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 302
+      },
+      "HeaderColor": -14513374,
+      "Sockets": [
+        {
+          "Id": "faf36954-e1ae-4b0f-bdb9-09bb7205b375",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "28f27431-f7e7-4a99-951b-ec214567f3fb",
+          "Name": "Message",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "8238c416-2761-44d6-9e5c-df5b28b24abf",
+          "Name": "User",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": "Packed 7-element array [name, is_mod, is_sub, is_vip, is_broadcaster, color_hex, sub_months]. Feed through Array.Get or Array.Unpack to read individual fields."
+        },
+        {
+          "Id": "b07d5cf6-c7ff-4b3e-ad2a-41fe616db8dd",
+          "Name": "IsCommand",
+          "Type": 1,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": "True if the message started with ! and matched the Commands filter on this node."
+        },
+        {
+          "Id": "f676f7d2-2bb7-452d-ab93-08d8871ab903",
+          "Name": "Command",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": "Matched alias with the leading ! stripped. Empty when the message wasn\u0027t a command."
+        },
+        {
+          "Id": "a5844730-ab20-48c8-b05f-91012f064974",
+          "Name": "Args",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 140
+          },
+          "IsPlaceholder": false,
+          "Description": "Words after the command, as a list. Iterate with Flow.ForEach or pull individual ones with Array.Get."
+        },
+        {
+          "Id": "51e70ad9-374b-47d0-af03-85326239356f",
+          "Name": "IsMod",
+          "Type": 1,
+          "DataType": 6,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 162
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4d879bf4-4d8b-4721-abc2-b26e7cf04e99",
+          "Name": "IsSub",
+          "Type": 1,
+          "DataType": 6,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 184
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "30080862-0684-4287-88eb-43c08b38c700",
+          "Name": "IsBroadcaster",
+          "Type": 1,
+          "DataType": 6,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 206
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c42fca41-bc60-420d-ac15-d3f88b9f8f1a",
+          "Name": "IsVip",
+          "Type": 1,
+          "DataType": 6,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 228
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "9ea20b06-bf55-4904-9d15-f9cf1ec30255",
+          "Name": "SubMonths",
+          "Type": 1,
+          "DataType": 6,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 250
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "40d91a41-7789-4532-b5d5-9463ff6af898",
+          "Name": "ColorHex",
+          "Type": 1,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 272
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Commands": "!hi"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "0995990d-4e0f-4670-8215-30f5a0fab4bc",
+      "Title": "Text.Builder",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1064,
+        "Y": 186
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 126
+      },
+      "HeaderColor": -16744320,
+      "Sockets": [
+        {
+          "Id": "785b95d5-f0d6-4459-80fa-f4aa5a61b4c7",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "0ba58dd0-d9a7-4e8b-854a-1a46f25cde7c",
+          "Name": "Arg1",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "2fc0f2de-d552-41ed-b797-a7540132af6a",
+          "Name": "Arg2",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "bb9cafd4-d664-4541-9929-a0d26e134713",
+          "Name": "Arg3",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4076e174-9d09-46bb-a8c0-abc6a4cb851b",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "Hello {Arg1}, welcome!"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "24d305bb-f5ad-4336-b3a6-c390b6c6759c",
+      "Title": "Array.Get",
+      "Category": "Collections",
+      "Location": {
+        "IsEmpty": false,
+        "X": 597,
+        "Y": 217
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7650029,
+      "Sockets": [
+        {
+          "Id": "3fe50a62-9ad4-4b39-8a8e-bfa2e4e87f38",
+          "Name": "List",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "580111b5-1a84-44cc-b2a3-bab3d10e5ca9",
+          "Name": "Index",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "53457bf9-feb1-46f0-9e84-e96fb50c6981",
+          "Name": "Value",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Index": "0"
+      },
+      "Description": ""
+    }
+  ],
+  "Links": [
+    {
+      "Id": "70667e9a-0f03-4a83-9dc2-4d59ac0d5744",
+      "FromNodeId": "df69036b-486b-4242-9a18-5eab1e2b6ded",
+      "FromSocketId": "faf36954-e1ae-4b0f-bdb9-09bb7205b375",
+      "ToNodeId": "699c8b38-4769-4053-a63b-a48c234da454",
+      "ToSocketId": "4e07c134-73bf-4fc6-b4e9-68cdcf2832c1"
+    },
+    {
+      "Id": "b1f7f259-459e-4806-8e92-4ba6f762de8f",
+      "FromNodeId": "0995990d-4e0f-4670-8215-30f5a0fab4bc",
+      "FromSocketId": "4076e174-9d09-46bb-a8c0-abc6a4cb851b",
+      "ToNodeId": "699c8b38-4769-4053-a63b-a48c234da454",
+      "ToSocketId": "fa83e9a5-75b2-411b-a541-4ff9f8282037"
+    },
+    {
+      "Id": "58b8392d-02f2-4907-a104-5fdcf7eda743",
+      "FromNodeId": "df69036b-486b-4242-9a18-5eab1e2b6ded",
+      "FromSocketId": "8238c416-2761-44d6-9e5c-df5b28b24abf",
+      "ToNodeId": "24d305bb-f5ad-4336-b3a6-c390b6c6759c",
+      "ToSocketId": "3fe50a62-9ad4-4b39-8a8e-bfa2e4e87f38"
+    },
+    {
+      "Id": "0d523f38-f25d-437b-ace3-ebcbc5778a5e",
+      "FromNodeId": "24d305bb-f5ad-4336-b3a6-c390b6c6759c",
+      "FromSocketId": "53457bf9-feb1-46f0-9e84-e96fb50c6981",
+      "ToNodeId": "0995990d-4e0f-4670-8215-30f5a0fab4bc",
+      "ToSocketId": "785b95d5-f0d6-4459-80fa-f4aa5a61b4c7"
+    }
+  ],
+  "Frames": [
+    {
+      "Id": "38583681-c796-4785-b063-d90613559ed4",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 592,
+          "Y": 172
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 592,
+        "Y": 172,
+        "Width": 240,
+        "Height": 160,
+        "Left": 592,
+        "Top": 172,
+        "Right": 832,
+        "Bottom": 332,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "591a45c0-b8af-4672-a818-35a035daa1d6",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 1033,
+          "Y": 153
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 1033,
+        "Y": 153,
+        "Width": 240,
+        "Height": 160,
+        "Left": 1033,
+        "Top": 153,
+        "Right": 1273,
+        "Bottom": 313,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "63234441-0b69-4434-ba05-6688f4cbcd44",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 1468,
+          "Y": -35
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 1468,
+        "Y": -35,
+        "Width": 240,
+        "Height": 160,
+        "Left": 1468,
+        "Top": -35,
+        "Right": 1708,
+        "Bottom": 125,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    }
+  ],
+  "Bookmarks": [],
+  "Macros": [],
+  "Processes": [],
+  "Variables": [],
+  "ViewOffsetX": -417,
+  "ViewOffsetY": 260,
+  "ViewZoom": 1.0263163,
+  "_schemaVersion": 1
+}

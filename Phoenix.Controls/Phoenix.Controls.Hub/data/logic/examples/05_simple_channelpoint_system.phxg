@@ -1,0 +1,1061 @@
+{
+  "Name": "New Logic Graph",
+  "Nodes": [
+    {
+      "Id": "78cd0c18-db47-4496-a61e-d97220c28a81",
+      "Title": "Schedule.Recurring",
+      "Category": "Events",
+      "Location": {
+        "IsEmpty": false,
+        "X": 177,
+        "Y": 443
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -9868951,
+      "Sockets": [
+        {
+          "Id": "932109c5-e783-403f-89eb-e84b3c63f0cb",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "555821c2-5275-4bb4-800a-f794719af059",
+          "Name": "Count",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "IntervalSeconds": "300",
+        "MaxCount": "0"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "Title": "Flow.ForEach",
+      "Category": "Flow Control",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1051,
+        "Y": 441
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 104
+      },
+      "HeaderColor": -29696,
+      "Sockets": [
+        {
+          "Id": "d8754bca-9838-4e36-88a6-a95d3122b037",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "6c2f7f9b-a056-401d-aec0-a6371eef0598",
+          "Name": "List",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": "List to walk through. Wire from Array.Make, Array.Literal, DB.GetColumn, etc."
+        },
+        {
+          "Id": "0d1d651d-3f04-4b96-b751-641d8b9615f8",
+          "Name": "Loop Body",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": "Fires once per item in List with the current value on Item. Chain your per-item work here."
+        },
+        {
+          "Id": "082eaacb-8db5-492d-b0f0-4ac2bec6bb20",
+          "Name": "Item",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": "Current item for this iteration. Only valid inside the Loop Body branch \u2014 empty before the loop starts and after Done."
+        },
+        {
+          "Id": "14435cc4-b7a5-4a2d-b2e2-1d96557ae7bd",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "b47e11ff-8bf1-46ac-a091-076e0cf6e2e4",
+      "Title": "Twitch.GetViewers",
+      "Category": "Twitch Data",
+      "Location": {
+        "IsEmpty": false,
+        "X": 555,
+        "Y": 445
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -10206811,
+      "Sockets": [
+        {
+          "Id": "e9bf5a9d-d8e8-486c-8e7f-a5a3501d0312",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "376d6c1c-4f49-46a3-bfe2-d4eaec53105b",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a01650f7-147a-445f-85b7-caa05cd5d26b",
+          "Name": "Viewers",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "5c113b70-bbcd-41a9-aa1a-9933a602b5fa",
+      "Title": "DB.FindRow",
+      "Category": "Databank",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1625,
+        "Y": 427
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 126
+      },
+      "HeaderColor": -10496,
+      "Sockets": [
+        {
+          "Id": "51ce8a92-1c2a-4bcc-9965-2251df5b11fc",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c1374707-e550-4037-8e4b-9af4bf06547b",
+          "Name": "TableName",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c1534e64-960c-4528-8579-50d542621787",
+          "Name": "Column",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "613237e5-9c48-48fe-b1fb-18a2ab0f82db",
+          "Name": "Value",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "8a374eae-d727-497c-a965-ca91992f378f",
+          "Name": "Found",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "2b244cdd-aee6-4898-8d65-1d27d252ed9c",
+          "Name": "NotFound",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a61005ed-ed69-4da7-9753-28e172be8fc2",
+          "Name": "RowId",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "TableName": "User_Points",
+        "Column": "name",
+        "Value": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "af73116a-b094-4e07-b4ea-0d53d03e2cc3",
+      "Title": "DB.Increment",
+      "Category": "Databank",
+      "Location": {
+        "IsEmpty": false,
+        "X": 2236,
+        "Y": 168
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 148
+      },
+      "HeaderColor": -10496,
+      "Sockets": [
+        {
+          "Id": "7e9f97f8-5d40-4d9a-8ae6-921d3efa8318",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "524fc6f7-64bd-491e-bbf1-cd3804907155",
+          "Name": "TableName",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "12c914fb-cbcf-4ca5-8ff6-02d92e5d3be9",
+          "Name": "RowId",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "8084df02-8c65-41ea-9693-2e8f95947d08",
+          "Name": "Column",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "741fb707-9210-45e2-b03c-787c6da7d824",
+          "Name": "Amount",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "9d4d5be1-35ac-45f6-a7a6-e893488e46c6",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "d367ff5d-c885-4986-b158-b2873cc16514",
+          "Name": "NewValue",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "TableName": "User_Points",
+        "RowId": "",
+        "Column": "currency",
+        "Amount": "50"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "b60aa04d-17e4-4ebf-a72f-1320ae053c65",
+      "Title": "DB.InsertRow",
+      "Category": "Databank",
+      "Location": {
+        "IsEmpty": false,
+        "X": 2080,
+        "Y": 657
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 126
+      },
+      "HeaderColor": -10496,
+      "Sockets": [
+        {
+          "Id": "77611e04-96e8-4090-927e-2effc0f2af17",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "67e461cd-b133-483b-8b52-2591f32d43a2",
+          "Name": "TableName",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "2a029594-9191-45c3-850d-41c94a7589a3",
+          "Name": "Column",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "97b1c10e-7f5e-44f6-9b7c-ecaff3abec00",
+          "Name": "Value",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "ea3056b3-4657-45fa-ad90-9fbc8aafa7a2",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "11c08782-74bf-4fbc-bcd3-d2b4c561ba19",
+          "Name": "NewRowId",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "TableName": "User_Points",
+        "Column": "name",
+        "Value": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "759e779c-cc97-4aa1-993b-5da1c62bf959",
+      "Title": "DB.SetCell",
+      "Category": "Databank",
+      "Location": {
+        "IsEmpty": false,
+        "X": 2487,
+        "Y": 643
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 148
+      },
+      "HeaderColor": -10496,
+      "Sockets": [
+        {
+          "Id": "f4f1ee67-9a82-4d6d-96ca-c16c1fba7483",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "7758c24a-80af-4cef-b188-37d964e1428b",
+          "Name": "TableName",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a81f83c2-6aee-4fc4-bc9a-7b2ff6eae4ca",
+          "Name": "RowId",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4101ae12-db55-4493-9625-e137d5eff3d5",
+          "Name": "Column",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "404fac39-203e-4ef8-b8f1-af0d45bfd8b6",
+          "Name": "Value",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "7a367897-37b0-4188-baf0-aef968effc4f",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "TableName": "User_Points",
+        "RowId": "",
+        "Column": "currency",
+        "Value": "50"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "cee546fd-ff88-4127-b3e1-748579883755",
+      "Title": "Array.Length",
+      "Category": "Collections",
+      "Location": {
+        "IsEmpty": false,
+        "X": 766,
+        "Y": 919
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 60
+      },
+      "HeaderColor": -7650029,
+      "Sockets": [
+        {
+          "Id": "a4e16b86-1f65-4004-8247-38cca2f7feb4",
+          "Name": "List",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "f4c681aa-31ec-456e-814b-aa573035087e",
+          "Name": "Count",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "fae0603d-0410-46c2-8254-82ecbbcec1de",
+      "Title": "Text.Builder",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1391,
+        "Y": 1047
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 126
+      },
+      "HeaderColor": -16744320,
+      "Sockets": [
+        {
+          "Id": "ac3f2af1-c07d-437e-942c-2d741318571d",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "b1a3436a-fc36-4a7a-ac06-fab4e6997feb",
+          "Name": "Arg1",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "408a27c7-55f5-457e-b362-dcf8d9d5c8aa",
+          "Name": "Arg2",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "e859950f-2e7b-4925-8f9a-27a45f990df5",
+          "Name": "Arg3",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "84175f2f-5986-4303-ae12-f126080c256b",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "Channelpoints were added for {Arg1} users"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "a361f03a-6bf5-4b07-b04a-99f1f38adb3d",
+      "Title": "Convert.ToString",
+      "Category": "Convert",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1065,
+        "Y": 1006
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 60
+      },
+      "HeaderColor": -16741493,
+      "Sockets": [
+        {
+          "Id": "136f231c-00a4-4973-87d6-459ce3d38bfd",
+          "Name": "In",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -2318081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "5af35c84-3356-440c-8620-939d4e19458e",
+          "Name": "Out",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Default": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "eba842d2-673c-4c40-af3c-5f72cc2e7f1d",
+      "Title": "System.Log",
+      "Category": "System",
+      "Location": {
+        "IsEmpty": false,
+        "X": 2008,
+        "Y": 937
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 104
+      },
+      "HeaderColor": -9868951,
+      "Sockets": [
+        {
+          "Id": "7007a6bf-8b27-4585-aa42-aa68a643a257",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c00ebb79-77f8-4db9-ae1f-e9c09803e28e",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "0c8986f4-5893-4e9d-b6d9-593d122a1282",
+          "Name": "Level",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "488ab11a-dee0-4412-bc2b-23dc3d5c0669",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Level": "LogicExecution"
+      },
+      "Description": ""
+    }
+  ],
+  "Links": [
+    {
+      "Id": "ed4ef736-3886-4323-abd2-1098d57b31e5",
+      "FromNodeId": "78cd0c18-db47-4496-a61e-d97220c28a81",
+      "FromSocketId": "932109c5-e783-403f-89eb-e84b3c63f0cb",
+      "ToNodeId": "b47e11ff-8bf1-46ac-a091-076e0cf6e2e4",
+      "ToSocketId": "e9bf5a9d-d8e8-486c-8e7f-a5a3501d0312"
+    },
+    {
+      "Id": "9a94f662-e083-4fe2-99dd-bc3f6ebda63c",
+      "FromNodeId": "b47e11ff-8bf1-46ac-a091-076e0cf6e2e4",
+      "FromSocketId": "376d6c1c-4f49-46a3-bfe2-d4eaec53105b",
+      "ToNodeId": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "ToSocketId": "d8754bca-9838-4e36-88a6-a95d3122b037"
+    },
+    {
+      "Id": "7e7172f9-6f9d-4851-9611-1413e3cd018f",
+      "FromNodeId": "b47e11ff-8bf1-46ac-a091-076e0cf6e2e4",
+      "FromSocketId": "a01650f7-147a-445f-85b7-caa05cd5d26b",
+      "ToNodeId": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "ToSocketId": "6c2f7f9b-a056-401d-aec0-a6371eef0598"
+    },
+    {
+      "Id": "35ee79ce-975d-4133-a713-307a70bb72dd",
+      "FromNodeId": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "FromSocketId": "0d1d651d-3f04-4b96-b751-641d8b9615f8",
+      "ToNodeId": "5c113b70-bbcd-41a9-aa1a-9933a602b5fa",
+      "ToSocketId": "51ce8a92-1c2a-4bcc-9965-2251df5b11fc"
+    },
+    {
+      "Id": "f61045e0-8496-4575-8d88-dee947ce8282",
+      "FromNodeId": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "FromSocketId": "082eaacb-8db5-492d-b0f0-4ac2bec6bb20",
+      "ToNodeId": "5c113b70-bbcd-41a9-aa1a-9933a602b5fa",
+      "ToSocketId": "613237e5-9c48-48fe-b1fb-18a2ab0f82db"
+    },
+    {
+      "Id": "e93f749d-2500-452a-8337-5e8426aa62db",
+      "FromNodeId": "5c113b70-bbcd-41a9-aa1a-9933a602b5fa",
+      "FromSocketId": "8a374eae-d727-497c-a965-ca91992f378f",
+      "ToNodeId": "af73116a-b094-4e07-b4ea-0d53d03e2cc3",
+      "ToSocketId": "7e9f97f8-5d40-4d9a-8ae6-921d3efa8318"
+    },
+    {
+      "Id": "9262dcd9-ffb9-4cc8-a754-3d03bef133e6",
+      "FromNodeId": "5c113b70-bbcd-41a9-aa1a-9933a602b5fa",
+      "FromSocketId": "a61005ed-ed69-4da7-9753-28e172be8fc2",
+      "ToNodeId": "af73116a-b094-4e07-b4ea-0d53d03e2cc3",
+      "ToSocketId": "12c914fb-cbcf-4ca5-8ff6-02d92e5d3be9"
+    },
+    {
+      "Id": "5e2ece44-d4b7-4c22-8b67-1a589c3e4091",
+      "FromNodeId": "5c113b70-bbcd-41a9-aa1a-9933a602b5fa",
+      "FromSocketId": "2b244cdd-aee6-4898-8d65-1d27d252ed9c",
+      "ToNodeId": "b60aa04d-17e4-4ebf-a72f-1320ae053c65",
+      "ToSocketId": "77611e04-96e8-4090-927e-2effc0f2af17"
+    },
+    {
+      "Id": "ca62d4ea-79e8-4219-969d-3e3908fe7552",
+      "FromNodeId": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "FromSocketId": "082eaacb-8db5-492d-b0f0-4ac2bec6bb20",
+      "ToNodeId": "b60aa04d-17e4-4ebf-a72f-1320ae053c65",
+      "ToSocketId": "97b1c10e-7f5e-44f6-9b7c-ecaff3abec00"
+    },
+    {
+      "Id": "e2ace227-e4ad-45fe-92f2-cf5d14fed8dd",
+      "FromNodeId": "b60aa04d-17e4-4ebf-a72f-1320ae053c65",
+      "FromSocketId": "ea3056b3-4657-45fa-ad90-9fbc8aafa7a2",
+      "ToNodeId": "759e779c-cc97-4aa1-993b-5da1c62bf959",
+      "ToSocketId": "f4f1ee67-9a82-4d6d-96ca-c16c1fba7483"
+    },
+    {
+      "Id": "c0bc1903-fffd-4f88-9a91-8b87575b61f2",
+      "FromNodeId": "b60aa04d-17e4-4ebf-a72f-1320ae053c65",
+      "FromSocketId": "11c08782-74bf-4fbc-bcd3-d2b4c561ba19",
+      "ToNodeId": "759e779c-cc97-4aa1-993b-5da1c62bf959",
+      "ToSocketId": "a81f83c2-6aee-4fc4-bc9a-7b2ff6eae4ca"
+    },
+    {
+      "Id": "67031624-19b2-45a7-99d6-14e452682ab8",
+      "FromNodeId": "b47e11ff-8bf1-46ac-a091-076e0cf6e2e4",
+      "FromSocketId": "a01650f7-147a-445f-85b7-caa05cd5d26b",
+      "ToNodeId": "cee546fd-ff88-4127-b3e1-748579883755",
+      "ToSocketId": "a4e16b86-1f65-4004-8247-38cca2f7feb4"
+    },
+    {
+      "Id": "09c5b1d5-b812-4094-a105-97d4e727941d",
+      "FromNodeId": "cee546fd-ff88-4127-b3e1-748579883755",
+      "FromSocketId": "f4c681aa-31ec-456e-814b-aa573035087e",
+      "ToNodeId": "a361f03a-6bf5-4b07-b04a-99f1f38adb3d",
+      "ToSocketId": "136f231c-00a4-4973-87d6-459ce3d38bfd"
+    },
+    {
+      "Id": "c5f92dc1-db5a-44f6-b06a-4109a2cb35d9",
+      "FromNodeId": "a361f03a-6bf5-4b07-b04a-99f1f38adb3d",
+      "FromSocketId": "5af35c84-3356-440c-8620-939d4e19458e",
+      "ToNodeId": "fae0603d-0410-46c2-8254-82ecbbcec1de",
+      "ToSocketId": "b1a3436a-fc36-4a7a-ac06-fab4e6997feb"
+    },
+    {
+      "Id": "dd9d0291-18db-4482-bc0d-185374a1e855",
+      "FromNodeId": "a17a6632-5a66-429d-bc8e-51f5c451743a",
+      "FromSocketId": "14435cc4-b7a5-4a2d-b2e2-1d96557ae7bd",
+      "ToNodeId": "eba842d2-673c-4c40-af3c-5f72cc2e7f1d",
+      "ToSocketId": "7007a6bf-8b27-4585-aa42-aa68a643a257"
+    },
+    {
+      "Id": "36bd9b01-348d-4bee-9f21-93af8177dd97",
+      "FromNodeId": "fae0603d-0410-46c2-8254-82ecbbcec1de",
+      "FromSocketId": "84175f2f-5986-4303-ae12-f126080c256b",
+      "ToNodeId": "eba842d2-673c-4c40-af3c-5f72cc2e7f1d",
+      "ToSocketId": "c00ebb79-77f8-4db9-ae1f-e9c09803e28e"
+    }
+  ],
+  "Frames": [],
+  "Bookmarks": [],
+  "Macros": [],
+  "Processes": [],
+  "Variables": [],
+  "ViewOffsetX": -61,
+  "ViewOffsetY": 4,
+  "ViewZoom": 0.6372616,
+  "_schemaVersion": 1
+}

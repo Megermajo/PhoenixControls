@@ -1,0 +1,16 @@
+# Script — Generated from "raid_alert"
+# Exported: 2026-06-24 14:22
+
+on_event(Twitch.Raid):
+    # [Logic.If]
+    if {user.viewers} >= "10":
+        # [Twitch.Shoutout]
+        twitch.shoutout({user.name})
+        # [Visual.Trigger]
+        visual.trigger_queued("main", "00000000-0000-0000-0000-000000000001", "big_raid")
+        # [Twitch.SendChat]
+        twitch.send_chat(text.format("HUGE raid by {A} with {B} viewers!", {user.name}, convert.to_string({user.viewers})))
+    else:
+        # [Twitch.SendChat]
+        twitch.send_chat(text.format("Thanks for the raid {A}!", {user.name}, ""))
+

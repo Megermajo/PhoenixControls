@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Phoenix.Controls.Shared.WinUI</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    This library is the foundation Track 1 ships:
+      - Themes/PhoenixDark.xaml — a ResourceDictionary the WinUI 3 app
+        projects (Hub.WinUI / Architect.WinUI / Visualist.WinUI / future
+        Viewer.WinUI) merge into their MergedDictionaries at runtime.
+      - Contracts/*.cs — interfaces + records consumed by all tracks.
+
+    Deliberately NOT a WinUI 3 library — it ships no compiled XAML types
+    and no PRI resources. Keeping it free of Microsoft.WindowsAppSDK lets
+    it build cleanly on a stand-alone .NET SDK without Visual Studio's
+    UWP/MSIX MSBuild tasks. Tracks 2/5/7 (the actual WinUI 3 exes) will
+    bring in WindowsAppSDK in their own csprojs.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Themes\PhoenixDark.xaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Packaged brand fonts (0.10.0 foundation). Any .ttf / .otf
+         dropped into Assets/Fonts/ ships as Content so the WinUI
+         exes can resolve `ms-appx:///Assets/Fonts/<file>.ttf#<Family>`
+         URIs from PhoenixDark.xaml's FontFamily resources. The folder
+         README names the canonical filenames + source URLs + OFL
+         license requirement; the FontFamily fallback chain renders
+         the suite identically if the TTFs are absent. README.md is
+         documentation, kept out of the shipped payload. -->
+    <Content Include="Assets\Fonts\**\*.ttf;Assets\Fonts\**\*.otf;Assets\Fonts\**\*.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

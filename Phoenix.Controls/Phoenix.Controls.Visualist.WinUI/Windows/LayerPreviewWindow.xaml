@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Phoenix.Controls.Visualist.WinUI.Hosting.LayerPreviewWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- LayerPreviewWindow — top-level popout hosting either a full-layer
+         LayerPreviewPanel or a single-widget WidgetSinglePreviewPanel. The host
+         control is added to PreviewHost in code-behind so the same window class
+         serves both modes (chosen by the constructor's widgetId). A floating
+         resizable window lets authors size the preview to the layer's own aspect
+         and keep the editor visible alongside. Esc closes. -->
+    <Grid x:Name="PreviewHost" Background="{StaticResource CoalShellBrush}" />
+</Window>

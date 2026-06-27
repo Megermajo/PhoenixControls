@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0"
+          xmlns="urn:schemas-microsoft-com:asm.v1"
+          xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+  <assemblyIdentity version="1.0.0.0" name="Phoenix.Controls.Hub.WinUI.app"/>
+
+  <!--
+    Per-monitor-V2 DPI awareness. Without this declaration the WinUI 3
+    process comes up as DPI-unaware on Windows 10/11 desktop hosts, which
+    means the DWM bitmap-stretches the entire window on any monitor with
+    >100% scaling. Every text element gets rasterised at 100% then up-
+    scaled by the DWM, producing the "low resolution everywhere" blur
+    Majo reported on QHD displays (worse on QHD than 1080p because the
+    upscale factor is larger).
+
+    PerMonitorV2 is the only mode that makes WinUI 3 re-rasterise text at
+    the monitor's actual pixel density AND propagate DPI changes through
+    the visual tree on monitor moves (mixed-DPI setups). PerMonitor is
+    listed as the downlevel fallback for Windows 8.1 / pre-1607 hosts
+    that don't recognise the V2 token (those hosts will then handle DPI
+    changes at the top-level window only, which is still vastly better
+    than unaware).
+
+    See [feedback_stable_over_minimal] — root fix not just for #1 but for
+    every text-readability complaint app-wide.
+  -->
+  <asmv3:application>
+    <asmv3:windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+
+  <!--
+    Standard non-elevated execution level. Without an explicit
+    requestedExecutionLevel some shells (older Explorer hooks, AV
+    interposers) treat the exe as legacy and force a UAC check on
+    first launch. asInvoker / uiAccess=false is the WinUI 3 default
+    and matches what the template ships.
+  -->
+  <asmv3:trustInfo>
+    <asmv3:security>
+      <asmv3:requestedPrivileges>
+        <asmv3:requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </asmv3:requestedPrivileges>
+    </asmv3:security>
+  </asmv3:trustInfo>
+
+  <!--
+    Declare compatibility with Windows 10 and Windows 11 so the OS
+    surfaces modern APIs (System.Environment.OSVersion etc.) instead
+    of the Win8.1 compatibility shim. GUIDs are the documented
+    well-known supportedOS IDs.
+  -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 11 inherits Win10 id; no separate id needed. -->
+    </application>
+  </compatibility>
+</assembly>

@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Visualist sibling window (Lane E — Visualist WinUI regression restore,
+    2026-05-31).
+
+    Restores the pre-T15 MainForm menu chrome (MainForm.cs BuildMenu) that
+    the WinUI rewrite dropped:
+        File   — New Layer / Open / Save / Save As / Import Media / Recent /
+                 Close Window
+        Edit   — Undo / Redo
+        View   — Media Library
+        Window — New Visualist Window + open-sibling switcher
+    The bar routes every action through the hosted MainView's public command
+    surface so a sibling window is no longer a dead-end for file / undo /
+    media operations.
+
+    Menu parity note: the WinForms File menu ended with "Exit (Alt+F4)" which
+    closed the entire MDI shell. Sibling windows are NOT top-level app windows
+    (the Hub.MainWindow embedded MainView is), so this last item is replaced
+    with "Close Window (Ctrl+W)" — it closes only this sibling, leaving the
+    rest of the suite running. (Lane N audit-fix 2026-06-08: New Layer +
+    Import Media were missing from the Lane E restore and are added back here.)
+
+    Per feedback_visualist_architect_chrome_independence.md the chrome is
+    Visualist-local — the MenuBar + brushes are authored here rather than
+    lifted to Shared, and Architect's ArchitectWindowChrome primitive is
+    intentionally NOT referenced (only mirrored in spirit / copied, not
+    imported). Recent is a MenuFlyoutSubItem rebuilt on Opening; Window is
+    rebuilt on Opening from VisualistWindowRegistry.
+-->
+<Window
+    x:Class="Phoenix.Controls.Visualist.WinUI.Hosting.VisualistSiblingWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{StaticResource CoalShellBrush}"
+          AutomationProperties.Name="Visualist Sibling Window">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="24" />
+        </Grid.RowDefinitions>
+
+        <!-- Menu strip — File / Edit / View / Window. Visualist-local chrome
+             (no Architect primitives). KeyboardAccelerators on the leaf items
+             give the sibling the same chords the embedded HubChrome carries;
+             Ctrl+Z / Ctrl+Y are ALSO mirrored window-wide via code-behind
+             KeyboardAccelerators so undo/redo fire before any menu is opened. -->
+        <Border Grid.Row="0"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,0,0,1">
+            <MenuBar Background="Transparent"
+                     VerticalAlignment="Center"
+                     Padding="6,0,0,0"
+                     AutomationProperties.Name="Visualist Menu">
+                <MenuBarItem x:Name="MenuFile" Title="File">
+                    <!-- New Layer — restored to parity with the pre-T15 MainForm
+                         File menu (was dropped in the Lane E rewrite). Routes to
+                         MainView.NewLayer() (Hub token visualist.file.newLayer),
+                         the same entry point the embedded HubChrome dispatches. -->
+                    <MenuFlyoutItem x:Name="MenuFileNew" Text="New Layer" Click="OnFileNewClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="N" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem x:Name="MenuFileOpen" Text="Open Layer…" Click="OnFileOpenClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="O" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem x:Name="MenuFileSave" Text="Save" Click="OnFileSaveClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="S" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="MenuFileSaveAs" Text="Save As…" Click="OnFileSaveAsClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control,Shift" Key="S" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <!-- Import Media — restored to parity with the pre-T15
+                         MainForm File menu (was dropped in the Lane E rewrite).
+                         Routes to MainView.ImportMediaAsync() (Hub token
+                         visualist.file.importMedia), the same fast-import path
+                         the embedded HubChrome dispatches; layerSource is null
+                         for siblings but the import does not depend on it. -->
+                    <MenuFlyoutItem x:Name="MenuFileImportMedia" Text="Import Media…" Click="OnFileImportMediaClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="I" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <!-- Recent — children rebuilt on Opening from
+                         Services.RecentFiles (parity with the pre-T15
+                         MainForm DropDownOpening rebuild). -->
+                    <MenuFlyoutSubItem x:Name="MenuFileRecent" Text="Recent" />
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutItem x:Name="MenuFileClose" Text="Close Window" Click="OnFileCloseClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="W" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                </MenuBarItem>
+
+                <MenuBarItem x:Name="MenuEdit" Title="Edit">
+                    <MenuFlyoutItem x:Name="MenuEditUndo" Text="Undo" Click="OnEditUndoClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="Z" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutItem x:Name="MenuEditRedo" Text="Redo" Click="OnEditRedoClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="Y" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                </MenuBarItem>
+
+                <MenuBarItem x:Name="MenuView" Title="View">
+                    <MenuFlyoutItem x:Name="MenuViewMediaLibrary" Text="Media Library" Click="OnViewMediaLibraryClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="M" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                </MenuBarItem>
+
+                <!-- Window — New spawns a sibling; "Switch To" is rebuilt on
+                     Opening from VisualistWindowRegistry (parity with the
+                     pre-T15 MainForm RebuildWindowsMenu over MdiChildren). -->
+                <MenuBarItem x:Name="MenuWindow" Title="Window">
+                    <MenuFlyoutItem x:Name="MenuWindowNew" Text="New Visualist Window" Click="OnWindowNewClicked">
+                        <MenuFlyoutItem.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control,Shift" Key="N" />
+                        </MenuFlyoutItem.KeyboardAccelerators>
+                    </MenuFlyoutItem>
+                    <MenuFlyoutSeparator />
+                    <MenuFlyoutSubItem x:Name="MenuWindowSwitch" Text="Switch To" />
+                </MenuBarItem>
+            </MenuBar>
+        </Border>
+
+        <!-- Hosted MainView fills the body. -->
+        <Grid x:Name="RootGrid" Grid.Row="1" />
+
+        <!-- Status strip — 24 px parity with the Architect sibling window. -->
+        <Border Grid.Row="2"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0"
+                AutomationProperties.Name="Status Strip">
+            <TextBlock x:Name="StatusLeft"
+                       VerticalAlignment="Center"
+                       Margin="10,0,0,0"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11"
+                       Foreground="{StaticResource CoalPrimaryTextBrush}"
+                       Text="Ready" />
+        </Border>
+    </Grid>
+</Window>

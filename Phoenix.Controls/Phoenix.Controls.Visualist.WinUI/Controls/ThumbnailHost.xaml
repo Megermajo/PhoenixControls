@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Controls.ThumbnailHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Sprint A — Visualist live preview thumbnail host. Sits inside the
+        body of a WidgetGraphNodeView (Fusion-style "the node IS the image"
+        per feedback_visualist_architect_chrome_independence.md — Architect
+        deliberately has no analogue). Renders one of:
+
+          PreviewKind.Image    → bitmap into PreviewImage
+          PreviewKind.Color    → solid swatch via PreviewSwatch
+          PreviewKind.Empty    → host collapsed (the wrapping Border sets
+                                  Visibility from the consumer side)
+          PreviewKind.Unloaded → neutral placeholder rectangle + Hint text
+          PreviewKind.Error    → red-muted background + Hint text + tooltip
+
+        Layout is a Grid with overlapping children so SetSnapshot only
+        toggles Visibility per kind — no relayout per frame.
+
+        Brushes come from Phoenix.Controls.Shared.WinUI/Themes/PhoenixDark.xaml
+        via StaticResource. No hex literals. Sized by the host node view
+        (default 96x54 — widget-aspect 16:9) via MinHeight/MaxHeight.
+    -->
+    <Grid
+        x:Name="HostGrid"
+        Background="{StaticResource CoalCardBrush}">
+
+        <!-- Neutral placeholder (Empty / Unloaded fallback). Subtle
+             Coal-on-Coal rectangle so a node whose template opted into a
+             preview but has nothing to render keeps a stable footprint
+             rather than flashing transparent. -->
+        <Rectangle
+            x:Name="PlaceholderRect"
+            Fill="{StaticResource CoalSurfaceBrush}"
+            Stroke="{StaticResource CoalMutedTextBrush}"
+            StrokeThickness="0.5"
+            RadiusX="2"
+            RadiusY="2" />
+
+        <!-- Bitmap surface for PreviewKind.Image. Stretch=Uniform so the
+             aspect ratio of the loaded bitmap is preserved inside the
+             thumbnail rect; letterboxing falls back on the PlaceholderRect
+             underneath. -->
+        <Image
+            x:Name="PreviewImage"
+            Stretch="Uniform"
+            Visibility="Collapsed" />
+
+        <!-- Solid colour swatch for PreviewKind.Color. -->
+        <Rectangle
+            x:Name="PreviewSwatch"
+            RadiusX="2"
+            RadiusY="2"
+            Visibility="Collapsed" />
+
+        <!-- Hint text overlay (Unloaded / Error). Uses MonoFont +
+             secondary-text colour so it reads as "design-time
+             diagnostic" rather than user content. -->
+        <TextBlock
+            x:Name="PreviewHint"
+            FontFamily="{StaticResource MonoFont}"
+            FontSize="9"
+            TextTrimming="CharacterEllipsis"
+            TextWrapping="NoWrap"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Foreground="{StaticResource CoalSecondaryTextBrush}"
+            Visibility="Collapsed" />
+    </Grid>
+</UserControl>

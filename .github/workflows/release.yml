@@ -1,0 +1,173 @@
+name: Release
+
+# Public release pipeline for github.com/Megermajo/PhoenixControls.
+#
+# Triggered by pushing a version tag matching `v*` (e.g. `v1.0.2606271` — the
+# public scheme is {MAJOR}.{MINOR}.{YYMMDD}{n}, kept System.Version-parseable so
+# the in-app updater can compare releases). Builds the suite in Release config
+# with -p:PublicRelease=true, which:
+#   * defines PUBLIC_RELEASE, so UpdateChecker targets this public repo (a local
+#     build without the flag stays inert — no live update fetch in dev);
+#   * stamps "— RELEASE" in the Hub title bar (AssemblyConfigurationAttribute).
+#
+# Publishes a GitHub Release with two zip pairs:
+#   * Versioned  — phoenix-controls-<version>.zip + .sha256 (the in-app updater
+#     downloads the latest tag's asset and SHA-verifies it).
+#   * Stable-named — phoenix-controls.zip + .sha256, so the installer's
+#     always-latest URL (releases/latest/download/phoenix-controls.zip) resolves.
+# Both zips are identical bytes — only the asset name differs.
+#
+# Code signing (SignPath Foundation) is wired into this workflow in a later
+# phase; the first public release ships unsigned.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compute version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(.+)$') {
+            Write-Error "Tag '$tag' does not match v<version> (e.g. v1.0.2606271)"
+            exit 1
+          }
+          $version = $matches[1]
+          # The version must stay System.Version-parseable so the in-app updater
+          # can compare it. {MAJOR}.{MINOR}.{YYMMDD}{n} satisfies that (3 numeric
+          # parts). Reject anything else early so a bad tag fails the build, not
+          # the updater silently.
+          $null = [version]$version
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Restore
+        run: dotnet restore Phoenix.Controls/Phoenix.Controls.sln -p:Platform=x64
+
+      - name: Build
+        # -c Release      -> AssemblyConfigurationAttribute "Release" -> "— RELEASE" stamp.
+        # -p:Platform=x64 -> required for Hub.WinUI's WindowsAppSDKSelfContained.
+        # -p:PublicRelease=true -> defines PUBLIC_RELEASE -> public updater active.
+        run: dotnet build Phoenix.Controls/Phoenix.Controls.sln -c Release -p:Platform=x64 -p:PublicRelease=true --no-restore
+
+      - name: Stage runtime payload
+        shell: pwsh
+        run: |
+          $dist = "dist/phoenix-controls"
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+
+          # Only Hub.WinUI produces a standalone exe; Architect.WinUI and
+          # Visualist.WinUI are libraries whose DLLs are already pulled into
+          # Hub.WinUI's bin via ProjectReferences. Viewer is WinForms
+          # (net8.0-windows); Updater is net8.0.
+          $hubBinPath = "Phoenix.Controls/Phoenix.Controls.Hub.WinUI/bin/x64/Release/net8.0-windows10.0.19041.0"
+          if (-not (Test-Path $hubBinPath)) {
+            throw "Hub.WinUI bin path missing: $hubBinPath — Platform/Configuration drift?"
+          }
+
+          $apps = @(
+            @{ Src = $hubBinPath;                                                            Dst = "Hub" },
+            @{ Src = "Phoenix.Controls/Phoenix.Controls.Viewer/bin/Release/net8.0-windows";  Dst = "Viewer" },
+            @{ Src = "Phoenix.Controls/Phoenix.Controls.Updater/bin/Release/net8.0";         Dst = "Updater" }
+          )
+
+          foreach ($app in $apps) {
+            if (-not (Test-Path $app.Src)) {
+              Write-Error "Missing build output: $($app.Src)"
+              exit 1
+            }
+            $target = Join-Path $dist $app.Dst
+            New-Item -ItemType Directory -Path $target -Force | Out-Null
+            Copy-Item -Path (Join-Path $app.Src '*') -Destination $target -Recurse -Force
+          }
+
+          Copy-Item -Path "CreateShortcuts.ps1" -Destination $dist -Force
+
+      - name: Build installer (Inno Setup)
+        id: installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+
+          # Bundle the staged payload into ONE self-contained installer. The .iss
+          # solid-compresses dist/phoenix-controls into the .exe — no install-time
+          # download, no redist (Hub.WinUI is WindowsAppSDKSelfContained, so the
+          # WindowsAppRuntime DLLs ride inside the Hub\ payload). OutputBaseFilename
+          # is PhoenixControls-Setup so the README's latest/download URL resolves.
+          $payload = Join-Path $env:GITHUB_WORKSPACE "dist/phoenix-controls"
+          & $iscc "/DPayloadRoot=$payload" "installer/PhoenixControls.iss"
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed ($LASTEXITCODE)" }
+
+          $setup = "installer/Output/PhoenixControls-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer not produced at $setup" }
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $setup).Hash.ToLower()
+          "$hash  PhoenixControls-Setup.exe" | Out-File -FilePath "$setup.sha256" -Encoding ascii -NoNewline
+
+          "setup=$setup"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "setupSha=$setup.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Zip payload
+        id: zip
+        shell: pwsh
+        run: |
+          $version = "${{ steps.ver.outputs.version }}"
+          $zipName = "phoenix-controls-$version.zip"
+          $shaName = "$zipName.sha256"
+
+          if (Test-Path $zipName) { Remove-Item $zipName }
+          Compress-Archive -Path "dist/phoenix-controls" -DestinationPath $zipName -CompressionLevel Optimal
+
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $zipName).Hash.ToLower()
+          "$hash  $zipName" | Out-File -FilePath $shaName -Encoding ascii -NoNewline
+
+          # Stable-named copies for the installer's always-latest URL.
+          $stableZip = "phoenix-controls.zip"
+          $stableSha = "$stableZip.sha256"
+          Copy-Item -Path $zipName -Destination $stableZip -Force
+          "$hash  $stableZip" | Out-File -FilePath $stableSha -Encoding ascii -NoNewline
+
+          "zip=$zipName"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha=$shaName"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "stableZip=$stableZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "stableSha=$stableSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Phoenix Controls ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.zip.outputs.zip }}
+            ${{ steps.zip.outputs.sha }}
+            ${{ steps.zip.outputs.stableZip }}
+            ${{ steps.zip.outputs.stableSha }}
+            ${{ steps.installer.outputs.setup }}
+            ${{ steps.installer.outputs.setupSha }}

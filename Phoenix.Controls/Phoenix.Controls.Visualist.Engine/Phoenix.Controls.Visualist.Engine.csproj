@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- QC53-bugs — dropped <InternalsVisibleTo Include="Phoenix.Controls.Visualist" />:
+       the WinForms Visualist shell was retired in T15 and no longer exists
+       in the solution (only Phoenix.Controls.Visualist.Engine + .WinUI ship). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+    <InternalsVisibleTo Include="Phoenix.Controls.Visualist.WinUI" />
+  </ItemGroup>
+
+</Project>

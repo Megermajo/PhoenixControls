@@ -1,0 +1,22 @@
+# Script — Generated from "New Logic Graph"
+# Exported: 2026-06-24 14:38
+
+on_chat:
+    if {user.command} == "ticket":
+        # [DB.FindRow]
+        # [Array.Unpack]
+        $twitch_user_968f23 = array.make({user.name}, {user.is_mod}, {user.is_sub}, {user.is_vip}, {user.is_broadcaster}, {user.color_hex}, {user.sub_months})
+        global._unpack_25a1c1_0 = array.get({$twitch_user_968f23}, 0)
+        db.find_row(GiveawayTickets, Username, {global._unpack_25a1c1_0}, "global._rid_41ddb3")
+        if global._rid_41ddb3 != "":
+            # [Logic.If]
+            global._pre_13d907_a = convert.to_int(db.get_cell(GiveawayTickets, global._rid_41ddb3, Tickets))
+            if {global._pre_13d907_a} >= 2:
+                # [Giveaway.Ticket]
+                giveaway.ticket(, true, {global._unpack_25a1c1_0}, 1, viewer, "_gw_07bbad")
+                # [Twitch.SendChat]
+                twitch.send_chat(text.format("{0} got themselve a ticket and now has {1}.", {global._unpack_25a1c1_0}, convert.to_string(""), ""))
+            else:
+                # [Twitch.SendChat]
+                twitch.send_chat(text.format("{0} already has the max amount of tickets.", {global._unpack_25a1c1_0}, "", ""))
+

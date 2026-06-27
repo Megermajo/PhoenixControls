@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Slim Logic-side inspector. Per feedback_node_ui_inline_sockets.md the
+    node body owns socket-value editing — the inspector renders only the
+    static reference text (eyebrow + title + description) so the panel
+    stays out of the muscle-memory editing path.
+
+    Pre-0.10.0 the inspector hosted an arbitrary Fields list; 0.10.0
+    collapses that to Description only. Multi-selection / wire selection
+    routes through DisplayTitle and continues to use Description for the
+    "what kind of thing am I looking at" caption.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.LogicInspector"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:cv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters">
+
+    <UserControl.Resources>
+        <cv:BoolToVisibilityConverter x:Key="BoolVis" />
+    </UserControl.Resources>
+
+    <!-- MaxWidth caps the inspector at 320px so the "slim panel" invariant
+         (feedback_node_ui_inline_sockets.md) holds regardless of whatever
+         host splitter sets the column width.
+
+         MinHeight gives the body visible presence even with no selection.
+         Pre-fix the empty-state TextBlock auto-sized the panel down to
+         ~16-30 px of text, which combined with the chevron strip made
+         the expanded inspector look identical to the rolled-up state
+         (Majo 2026-05-24: "inspector is hidden by default"). 280 px is
+         enough to surface the empty hint centred with breathing room AND
+         to give a single-row selection a stable layout cell; when the
+         body is rolled up via the chevron,
+         InspectorRegion.Visibility=Collapsed in MainView elides the
+         whole LogicInspector subtree so this MinHeight only applies to
+         the expanded state. -->
+    <Grid MaxWidth="320" MinHeight="280">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header (eyebrow + display name). 0.11.6 hotfix — Visibility binds
+             to HasSelection so the entire header (padding + bottom border)
+             disappears when nothing is selected. Pre-fix this Border rendered
+             empty (Eyebrow / DisplayTitle = "") but still paid 16 px of
+             vertical padding + a 1-px bottom edge, which Majo's 0.11.5 audit
+             flagged as a "horizontal scaling bar" stuck to the top of the
+             panel. With the MainView chevron strip already labelling the
+             section as "INSPECTOR", the empty-state header had no signal
+             value — it was pure chrome the user couldn't dismiss. -->
+        <Border Grid.Row="0"
+                Padding="12,8,12,8"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,0,0,1"
+                Visibility="{Binding HasSelection, Converter={StaticResource BoolVis}}">
+            <StackPanel Spacing="2">
+                <TextBlock Text="{Binding Eyebrow}"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="10"
+                           FontWeight="SemiBold"
+                           CharacterSpacing="180"
+                           Foreground="{StaticResource EmberPrimaryBrush}" />
+                <TextBlock Text="{Binding DisplayTitle}"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="14"
+                           CharacterSpacing="40"
+                           Foreground="{StaticResource CoalPaperBrush}" />
+            </StackPanel>
+        </Border>
+
+        <!-- Body: the resolved description (Node.Description override → template
+             fallback). The inspector intentionally hosts nothing else; per-socket
+             editing lives on the node body. -->
+        <ScrollViewer Grid.Row="1"
+                      Padding="12,10,12,10"
+                      VerticalScrollBarVisibility="Auto"
+                      Visibility="{Binding HasSelection, Converter={StaticResource BoolVis}}">
+            <TextBlock Text="{Binding Description}"
+                       FontSize="12"
+                       Foreground="{StaticResource CoalBodyTextBrush}"
+                       TextWrapping="Wrap"
+                       LineHeight="18" />
+        </ScrollViewer>
+
+        <!-- Empty state — shows when nothing is selected. -->
+        <TextBlock Grid.Row="1"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Margin="16,0,16,0"
+                   FontSize="12"
+                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                   TextAlignment="Center"
+                   TextWrapping="Wrap"
+                   Text="Select a node or wire to inspect."
+                   Visibility="{Binding HasSelection, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+    </Grid>
+</UserControl>

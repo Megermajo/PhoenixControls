@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Detached editor window for a macro or process sub-graph. Reuses the
+    shared ArchitectWindowChrome primitive (gold TitleAccentBar + custom
+    caption buttons) so the editor reads as part of Architect's window
+    family rather than a one-off DialogBox-style host. Per the 0.10.0
+    multi-window spec the chrome is "slightly different sizing" — the
+    macro/process eyebrow + breadcrumb + reveal-call-site button live in
+    the chrome's left/right caption slots; the dirty InfoBar + canvas
+    live below.
+
+    Per feedback_visualist_architect_chrome_independence.md the chrome
+    primitive is Architect-local (ArchitectWindowChrome) — Visualist's
+    sub-graph analogue will be authored separately.
+-->
+<Window
+    x:Class="Phoenix.Controls.Architect.WinUI.Canvas.SubGraphWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:canvas="using:Phoenix.Controls.Architect.WinUI.Canvas"
+    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls">
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <controls:ArchitectWindowChrome x:Name="Chrome" Grid.Row="0">
+            <!-- Left slot — eyebrow + dirty dot + breadcrumb (Parent.phxg › Macro: X). -->
+            <controls:ArchitectWindowChrome.LeftCaptionContent>
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock x:Name="EyebrowText"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               CharacterSpacing="180"
+                               Foreground="{StaticResource EmberPrimaryBrush}"
+                               Text="MACRO EDITOR" />
+                    <!-- 0.10.0 (arch-ux-state #10) — discoverability hint that the
+                         dashed "+ variable" / "+ input" / "+ output" sockets on
+                         Macro.Entry/Exit are drop targets for wires. Stays in
+                         the chrome header so users can find the eyebrow even
+                         before they hover the placeholder pins. -->
+                    <TextBlock x:Name="PlaceholderHint"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Text="• Drop a wire on “+ variable” to add a parameter"
+                               Margin="6,0,0,0"
+                               TextTrimming="CharacterEllipsis" />
+                    <Ellipse x:Name="DirtyMarker"
+                             Width="6"
+                             Height="6"
+                             Fill="{StaticResource StatusYellowBrush}"
+                             Visibility="Collapsed"
+                             VerticalAlignment="Center" />
+                    <TextBlock x:Name="BreadcrumbParent"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="220" />
+                    <TextBlock x:Name="BreadcrumbSeparator"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Text="›" />
+                    <TextBlock x:Name="TitleDisplay"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="14"
+                               CharacterSpacing="40"
+                               Foreground="{StaticResource CoalPaperBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="320" />
+                </StackPanel>
+            </controls:ArchitectWindowChrome.LeftCaptionContent>
+
+            <!-- Right slot — reveal-call-site button. B18 (audit/
+                 winui-regressions-2026-05-24): the handler is live —
+                 OnRevealCallSiteClicked walks the parent graph for the
+                 first Macro.Call (or Process.Spawn) referencing this
+                 sub-graph's id and drives the parent canvas through
+                 LogicCanvasViewModel.RequestRevealNode →
+                 LogicCanvasView.RevealNodeFromShell, which selects the
+                 call-site, FrameSelections to centre it, and FlashNode
+                 pulses the highlight. -->
+            <controls:ArchitectWindowChrome.RightCaptionContent>
+                <Button x:Name="RevealCallSiteButton"
+                        Background="Transparent"
+                        BorderBrush="{StaticResource CoalHoverBrush}"
+                        BorderThickness="1"
+                        Padding="8,2,8,2"
+                        Margin="0,0,4,0"
+                        Foreground="{StaticResource CoalBodyTextBrush}"
+                        FontFamily="{StaticResource SansFont}"
+                        FontSize="10"
+                        CharacterSpacing="120"
+                        ToolTipService.ToolTip="Reveal call sites in the parent graph"
+                        AutomationProperties.Name="Reveal call site"
+                        Click="OnRevealCallSiteClicked"
+                        Content="REVEAL CALLERS" />
+            </controls:ArchitectWindowChrome.RightCaptionContent>
+        </controls:ArchitectWindowChrome>
+
+        <InfoBar x:Name="DirtyInfoBar"
+                 Grid.Row="1"
+                 Severity="Warning"
+                 Title="Unsaved changes"
+                 Message="Save changes before closing?"
+                 IsOpen="False"
+                 IsClosable="True">
+            <InfoBar.ActionButton>
+                <Button x:Name="DirtySaveButton"
+                        Content="Save" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
+        <!-- 0.11.x polish — body splits into canvas + docked inspector
+             (parity with MainView / ArchitectSiblingWindow). Pre-polish
+             the SubGraphWindow had no inspector at all; selecting a node
+             in a macro / process required opening a process-wide floating
+             inspector. Defaults open per
+             AppConfig.ArchitectInspectorVisible. -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="InspectorColumn" Width="0" MinWidth="0" MaxWidth="500" />
+            </Grid.ColumnDefinitions>
+
+            <canvas:LogicCanvasView x:Name="Canvas" Grid.Column="0" />
+
+            <Grid Grid.Column="1"
+                  Canvas.ZIndex="2"
+                  Background="{x:Null}"
+                  VerticalAlignment="Top"
+                  AutomationProperties.Name="Inspector">
+                <Border x:Name="InspectorCardRoot"
+                        Background="{StaticResource CoalSurfaceBrush}"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="1,0,0,1">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0"
+                                Padding="6,5,6,5"
+                                BorderBrush="{StaticResource CoalCardBrush}"
+                                BorderThickness="0,0,0,1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="INSPECTOR"
+                                           VerticalAlignment="Center"
+                                           Margin="6,0,0,0"
+                                           FontFamily="{StaticResource DisplayFont}"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           CharacterSpacing="180"
+                                           Foreground="{StaticResource CoalPaperBrush}" />
+                                <Button x:Name="InspectorChevronButton"
+                                        Grid.Column="1"
+                                        Width="32"
+                                        Height="26"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Foreground="{StaticResource CoalPaperBrush}"
+                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                        FontSize="14"
+                                        ToolTipService.ToolTip="Roll up Inspector"
+                                        AutomationProperties.Name="Roll up Inspector"
+                                        Content="&#xE70D;"
+                                        Click="OnInspectorChevronClicked" />
+                            </Grid>
+                        </Border>
+
+                        <ContentControl x:Name="InspectorRegion"
+                                        Grid.Row="1"
+                                        VerticalAlignment="Top"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        VerticalContentAlignment="Stretch" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

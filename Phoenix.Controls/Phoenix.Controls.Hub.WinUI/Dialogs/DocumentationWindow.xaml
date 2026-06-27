@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Sprint D — in-app Hub Documentation window. Replaces the pre-existing
+    Tools → Documentation handler that did Process.Start of the GitHub README.
+    Two-pane layout:
+      Left  — category list (distinct categories from HubFeatureRegistry).
+      Right — feature list + selected-feature detail (title / description /
+              where-to-find), rendered live from the registry.
+
+    Chrome is theme-driven (Coal / Ember tokens from PhoenixDark.xaml,
+    PanelHeaderGradientBrush from HubBrushes.xaml). Sized ~960×620 so the
+    longer "Behind the Scenes" descriptions don't clip on first open.
+-->
+<Window
+    x:Class="Phoenix.Controls.Hub.WinUI.Dialogs.DocumentationWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header strip — mirrors Hub's panel-header gradient so the
+             documentation window reads as part of the suite, not a stray
+             modal. The drag region (SetTitleBar) lives on this Border so
+             the user can drag the window from anywhere on the header. -->
+        <Border x:Name="HeaderBar"
+                Grid.Row="0"
+                Background="{StaticResource PanelHeaderGradientBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="20,10,20,10">
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="EyebrowText"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           CharacterSpacing="220"
+                           Foreground="{StaticResource Ember200Brush}" />
+                <TextBlock x:Name="HeadingText"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="22"
+                           CharacterSpacing="160"
+                           Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                <TextBlock x:Name="SubheadingText"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="11"
+                           Foreground="{StaticResource CoalMutedTextBrush}"
+                           TextWrapping="Wrap"
+                           Margin="0,2,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- Body — three columns: category list, feature list, detail pane. -->
+        <Grid Grid.Row="1" Padding="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="280" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left column — categories. ListView so single-select and
+                 SelectionChanged routing stay trivial. -->
+            <Border Grid.Column="0"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalDividerBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid RowSpacing="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0"
+                               x:Name="CategoriesHeader"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               CharacterSpacing="200"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Padding="16,14,16,8" />
+                    <ListView x:Name="CategoryList"
+                              Grid.Row="1"
+                              SelectionMode="Single"
+                              SelectionChanged="OnCategorySelectionChanged"
+                              Background="Transparent"
+                              Foreground="{StaticResource CoalPaperBrush}">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,2">
+                                    <Rectangle Width="3" Height="14"
+                                               Fill="{StaticResource EmberPrimaryBrush}"
+                                               VerticalAlignment="Center" />
+                                    <StackPanel Spacing="0">
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontFamily="{StaticResource SansFont}"
+                                                   FontSize="13"
+                                                   Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                                        <TextBlock Text="{Binding CountLabel}"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="9"
+                                                   CharacterSpacing="80"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <!-- Middle column — features in selected category. -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalDividerBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid RowSpacing="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0"
+                               x:Name="FeaturesHeader"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               CharacterSpacing="200"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Padding="16,14,16,8" />
+                    <ListView x:Name="FeatureList"
+                              Grid.Row="1"
+                              SelectionMode="Single"
+                              SelectionChanged="OnFeatureSelectionChanged"
+                              Background="Transparent"
+                              Foreground="{StaticResource CoalPaperBrush}">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Spacing="2" Margin="0,4,0,4">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontFamily="{StaticResource SansFont}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                               TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Category}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="9"
+                                               CharacterSpacing="100"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <!-- Right column — detail pane (description + where-to-find). -->
+            <Border Grid.Column="2"
+                    Background="{StaticResource CoalShellBrush}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Padding="24,18,24,18">
+                    <StackPanel x:Name="DetailPanel" Spacing="10">
+                        <TextBlock x:Name="DetailCategoryText"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10"
+                                   CharacterSpacing="200"
+                                   Foreground="{StaticResource Ember200Brush}" />
+                        <TextBlock x:Name="DetailTitleText"
+                                   FontFamily="{StaticResource DisplayFont}"
+                                   FontSize="22"
+                                   CharacterSpacing="120"
+                                   Foreground="{StaticResource CoalPaperBrush}"
+                                   TextWrapping="Wrap" />
+                        <Border Height="2"
+                                CornerRadius="1"
+                                Background="{StaticResource EmberPrimaryBrush}"
+                                HorizontalAlignment="Left"
+                                Width="56"
+                                Margin="0,0,0,6" />
+                        <TextBlock x:Name="DetailDescriptionHeader"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10"
+                                   CharacterSpacing="180"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   Margin="0,4,0,0" />
+                        <TextBlock x:Name="DetailDescriptionText"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="13"
+                                   LineHeight="20"
+                                   Foreground="{StaticResource CoalBodyTextBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="DetailWhereHeader"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10"
+                                   CharacterSpacing="180"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   Margin="0,10,0,0" />
+                        <Border Background="{StaticResource CoalCardBrush}"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3"
+                                Padding="12,8">
+                            <TextBlock x:Name="DetailWhereText"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="12"
+                                       Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

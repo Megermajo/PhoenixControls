@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.MainView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls"
+    xmlns:prim="using:Microsoft.UI.Xaml.Controls.Primitives">
+
+    <!-- Sprint E — pillar-local focus-visual implicit Styles. Merged here
+         (rather than in Hub.WinUI's App.xaml) so Architect's overrides
+         win for its own subtree and the file stays Architect-owned per
+         feedback_visualist_architect_chrome_independence.md. -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Phoenix.Controls.Architect.WinUI/Themes/FocusVisuals.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalShellBrush}"
+          AutomationProperties.Name="Architect Shell">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="24" />
+        </Grid.RowDefinitions>
+
+        <!-- Canvas.ZIndex floors chrome / pillar tabs above any body content
+             that may overflow its grid slot. 0.10.8 readability sweep #5 —
+             Majo reported the header reading as "layered UNDER the canvas/
+             nodes", which can happen when the canvas's RenderTransform pans
+             a node's visual outside its column slot. WinUI's Grid does not
+             auto-clip its children, so a translated node's visual can leak
+             upward into the chrome row's pixel rectangle. Setting an
+             explicit Canvas.ZIndex on the chrome row forces it to paint
+             after every body element regardless of source order or
+             transform overflow. -->
+        <controls:ArchitectChrome
+            x:Name="Chrome"
+            Grid.Row="0"
+            Canvas.ZIndex="100"
+            AutomationProperties.Name="Architect Chrome"
+            FileName="hello.phxg" />
+
+        <controls:TopTabBar
+            x:Name="TopTabs"
+            Grid.Row="1"
+            Canvas.ZIndex="100"
+            AutomationProperties.Name="Pillar Tabs" />
+
+        <!-- Non-blocking failure surface for .phxg load errors. Surfaces the
+             corrupt-file diagnostic the user otherwise only saw as a one-line
+             entry in the System Log panel (TODO 2026-05-07 round 1 P2 —
+             Silent failure on corrupt .phxg). Per
+             feedback_no_modal_dialogs_for_repeatable_rejections.md this is
+             an InfoBar, not a modal. IsClosable lets the user dismiss the
+             warning without losing context. -->
+        <StackPanel Grid.Row="2" Spacing="2">
+            <!--  The recovery ActionButton is shown only while
+                 survivors exist (StartAutosaveAndScanForSurvivors sets its
+                 Visibility); clicking it opens the per-entry Recover / Discard
+                 dialog. For plain corrupt-file load errors the button stays
+                 Collapsed so the InfoBar reads as a pure notice. -->
+            <InfoBar x:Name="LoadErrorInfoBar"
+                     IsOpen="False"
+                     IsClosable="True"
+                     Severity="Error">
+                <InfoBar.ActionButton>
+                    <Button x:Name="AutosaveRecoverButton"
+                            Content="Recover…"
+                            Visibility="Collapsed"
+                            Click="OnAutosaveRecoverClicked" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+
+            <!-- 0.10.0 — Live-debug bus-drop notice. Auto-promotes from the
+                 8×8 BusStatusDot in the status strip into a top-row InfoBar
+                 with a Retry button when the user has live-debug active
+                 AND the bus isn't Connected (Disconnected or Reconnecting).
+                 Hides as soon as Connected returns or live-debug toggles
+                 off. Code-behind owns the visibility binding (see
+                 OnViewModelPropertyChanged) so the InfoBar tracks
+                 ArchitectViewModel.BusLiveDebugDropVisible without an
+                 INotifyPropertyChanged converter. -->
+            <InfoBar x:Name="LiveDebugDropInfoBar"
+                     IsOpen="False"
+                     IsClosable="False"
+                     Severity="Warning"
+                     Title="Live debug — bus disconnected"
+                     Message="Architect can't reach Hub's bus while live-debug is on. Node-pulse traces will resume once the connection is restored.">
+                <InfoBar.ActionButton>
+                    <Button x:Name="LiveDebugRetryButton"
+                            Content="Retry"
+                            Click="OnLiveDebugRetryClicked" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+        </StackPanel>
+
+        <Grid Grid.Row="3">
+            <!-- 0.10.0 (arch-ux-state #4) — column layout has an explicit
+                 splitter strip between Rail/Canvas (RailSplitter); the
+                 Canvas/Inspector splitter was removed 2026-05-24 per
+                 Majo's "vertical scale bar shall be removed completely"
+                 call. RailSplitter sets ProtectedCursor=SizeWestEast on
+                 hover and forwards DragDelta to MainView code-behind,
+                 which mutates RailColumn.Width inside the same
+                 MinWidth/MaxWidth envelope the column declares. Width is
+                 persisted through ConfigManager. Inspector width is
+                 fixed at the persisted ArchitectInspectorColumnWidth and
+                 toggled visible/rolled-up by the chevron header only.
+
+                  #10 — RailColumn.MinWidth dropped to 32 px so
+                 the chevron-collapse toggle can shrink the rail to a
+                 thin strip.
+
+                 arch-ux-polish — the Inspector dock is back. 
+                 #10 moved it to a floating window; this restores it as a
+                 slim docked column pinned to the right edge (Majo:
+                 "Inspector should be a small panel on the right not
+                 being a pop-out window. It should be fixed on the top
+                 right edge"). The column lives at its persisted width
+                 when ArchitectInspectorVisible is true and collapses to
+                 a 32 px chevron strip otherwise. The floating
+                 InspectorWindow stays in the codebase as an opt-in
+                 surface but is no longer the default.
+                 MinWidth=240 / MaxWidth=500 envelopes the slim-panel
+                 invariant (LogicInspector caps at MaxWidth=320 internally). -->
+            <!-- 2026-05-24 — InspectorSplitterCol removed entirely per
+                 Majo's call ("vertical scale bar shall be removed
+                 completely"). The chevron toggle on the inspector card
+                 is the only visibility control now; inspector width is
+                 fixed at the persisted ArchitectInspectorColumnWidth and
+                 is no longer user-resizable via splitter drag. -->
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="RailColumn"      Width="220" MinWidth="32" MaxWidth="360" />
+                <ColumnDefinition x:Name="RailSplitterCol" Width="6" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="InspectorColumn" Width="0" MinWidth="0" MaxWidth="500" />
+            </Grid.ColumnDefinitions>
+
+            <!-- LeftRail rendered last via Canvas.ZIndex so its right edge can
+                 never be overpainted by canvas children that drift toward
+                 negative world-x (TODO 2026-05-07 P0 #1). The CanvasPaneHost
+                 below also clips its content to the column for defence in
+                 depth. -->
+            <controls:LeftRail x:Name="Rail" Grid.Column="0" Canvas.ZIndex="2"
+                               AutomationProperties.Name="Left Rail" />
+
+            <!-- Rail / canvas column splitter — 6 px strip. SizeWestEast cursor
+                 on hover via CursorThumb's ProtectedCursor toggle. -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalDividerBrush}"
+                    Opacity="0.35" />
+            <controls:CursorThumb x:Name="RailSplitter"
+                                  Grid.Column="1"
+                                  Orientation="Horizontal"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Stretch"
+                                  Canvas.ZIndex="3"
+                                  IsTabStop="True"
+                                  UseSystemFocusVisuals="True"
+                                  AutomationProperties.Name="Rail splitter"
+                                  DragDelta="OnRailSplitterDragDelta"
+                                  KeyDown="OnRailSplitterKeyDown" />
+
+            <!-- Canvas spans columns 2..3 so the right (inspector) column
+                 overlays only the inspector card — when the inspector is
+                 rolled up to chevron-strip width, the canvas shows
+                 through underneath. ZIndex=1 keeps the canvas below the
+                 inspector overlay (Canvas.ZIndex on the right column's
+                 Grid is set higher), but above the LeftRail's edge (rail
+                 uses ZIndex=2 and lives in column 0 only, so no overlap
+                 conflict). 2026-05-24 — ColumnSpan dropped 3→2 after the
+                 InspectorSplitterCol column was removed. The right
+                 border is gone now that the right column floats over
+                 the canvas — its inspector card carries its own surface
+                 fill. -->
+            <Border x:Name="CanvasPaneHost"
+                    Grid.Column="2"
+                    Grid.ColumnSpan="2"
+                    Canvas.ZIndex="1"
+                    Background="{StaticResource CoalShellBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0"
+                    AutomationProperties.Name="Logic Canvas"
+                    SizeChanged="OnCanvasPaneHostSizeChanged">
+                <ContentControl x:Name="MainPaneRegion"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch">
+                    <!-- Replaced by SetCanvasViews / MainView ctor's
+                         MainPaneRegion.Content = _logicCanvasView assignment
+                         before the user sees it. The LogicCanvasView itself
+                         owns the new Welcome card (arch-ux-state #7) which
+                         shows when LoadedFilePath==null and no nodes exist. -->
+                    <Grid Background="{StaticResource CoalShellBrush}" />
+                </ContentControl>
+            </Border>
+
+            <!-- 2026-05-24 — Canvas/inspector splitter REMOVED entirely.
+                 The 0.11.7 attempt at shortening the divider to the card
+                 height did not satisfy Majo's "shall be removed
+                 completely" call on the audit; the chevron toggle now
+                 owns visibility and width stays fixed at the persisted
+                 ArchitectInspectorColumnWidth. No splitter Border, no
+                 CursorThumb, no resize-drag affordance — the canvas
+                 meets the inspector card directly. -->
+
+            <!-- Right column: 0.11.5 canvas-polish r3 — the column now only
+                 takes the vertical space its content (chevron header +
+                 inspector card) actually needs. The roll-up chevron
+                 header is the size-control affordance: click to hide
+                 the inspector body (only the chevron strip remains),
+                 click again to restore. The right column itself floats
+                 over the canvas (which spans cols 2..3) via
+                 Canvas.ZIndex=2; VerticalAlignment="Top" keeps the
+                 column sized to its content so the canvas shows
+                 through below it. -->
+            <Grid Grid.Column="3"
+                  Canvas.ZIndex="2"
+                  Background="{x:Null}"
+                  VerticalAlignment="Top"
+                  AutomationProperties.Name="Inspector">
+                <Border x:Name="InspectorCardRoot"
+                        Background="{StaticResource CoalSurfaceBrush}"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="1,0,0,1">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Roll-up chevron header. Click toggles
+                             ArchitectInspectorVisible; glyph swaps between
+                             E70D (ChevronDownMed, body visible) and E70E
+                             (ChevronUpMed, body collapsed). The chevron
+                             strip always paints so the user has a target to
+                             re-expand the inspector after a roll-up.
+                             0.11.6 hotfix — title FontSize bumped 10→14 and
+                             chevron glyph 11→14 so the strip reads as a
+                             proper section header instead of a 10-px sliver
+                             Majo's 0.11.5 audit called out as "too small".
+                             Foreground promoted to CoalPaperBrush (primary)
+                             for the same reason — secondary-text grey at
+                             10 px washed straight into the background. -->
+                        <Border Grid.Row="0"
+                                Padding="6,5,6,5"
+                                BorderBrush="{StaticResource CoalCardBrush}"
+                                BorderThickness="0,0,0,1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="INSPECTOR"
+                                           VerticalAlignment="Center"
+                                           Margin="6,0,0,0"
+                                           FontFamily="{StaticResource DisplayFont}"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           CharacterSpacing="180"
+                                           Foreground="{StaticResource CoalPaperBrush}" />
+                                <Button x:Name="InspectorChevronButton"
+                                        Grid.Column="1"
+                                        Width="32"
+                                        Height="26"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Foreground="{StaticResource CoalPaperBrush}"
+                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                        FontSize="14"
+                                        ToolTipService.ToolTip="Roll up Inspector"
+                                        AutomationProperties.Name="Roll up Inspector"
+                                        Content="&#xE70D;"
+                                        Click="OnInspectorChevronClicked" />
+                            </Grid>
+                        </Border>
+
+                        <!-- Inspector content host. Hidden when rolled up; the
+                             chevron strip above stays visible so the user can
+                             expand back. -->
+                        <ContentControl x:Name="InspectorRegion"
+                                        Grid.Row="1"
+                                        VerticalAlignment="Top"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch"
+                                        VerticalContentAlignment="Stretch" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Status bar — 24px 3-zone strip per pre-T15 StatusBar parity:
+             Left = general status (Ready / Saved / Error),
+             Center = per-pillar context,
+             Right = node/link counts. Traffic light dot before left zone text. -->
+        <Border Grid.Row="4"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0"
+                AutomationProperties.Name="Status Strip">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- [S9-413/414] Left status zone. StatusLeftGlyph is an optional
+                     icon-font glyph (Collapsed by default) the baseline
+                     StatusZone.Glyph supported; SetStatus's glyph overload sets
+                     its Text + Foreground. The whole StackPanel is the hover
+                     hit-target for the left-zone tooltip resolver (see
+                     MainView.xaml.cs ZoneAt / SetStatusZoneTooltip). -->
+                <StackPanel Grid.Column="0"
+                            x:Name="StatusLeftZone"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="10,0,0,0"
+                            Spacing="6">
+                    <Ellipse x:Name="StatusLight"
+                             Width="10"
+                             Height="10"
+                             Fill="{StaticResource CoalDividerBrush}"
+                             Stroke="{StaticResource CoalCardBrush}"
+                             StrokeThickness="1"
+                             VerticalAlignment="Center" />
+                    <TextBlock x:Name="StatusLeftGlyph"
+                               VerticalAlignment="Center"
+                               FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               FontSize="12"
+                               TextWrapping="NoWrap"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Visibility="Collapsed" />
+                    <TextBlock x:Name="StatusLeft"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalPrimaryTextBrush}"
+                               Text="Ready" />
+                </StackPanel>
+
+                <!-- [S9-413/414] Center status zone. Glyph slot + text wrapped
+                     in a StackPanel so the center zone can carry a glyph
+                     (SetCenterZoneGlyph) and a hover tooltip the same way the
+                     left zone does. -->
+                <StackPanel Grid.Column="1"
+                            x:Name="StatusCenterZone"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="6">
+                    <TextBlock x:Name="StatusCenterGlyph"
+                               VerticalAlignment="Center"
+                               FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               FontSize="12"
+                               TextWrapping="NoWrap"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Visibility="Collapsed" />
+                    <TextBlock x:Name="StatusCenter"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Margin="0,0,12,0"
+                            Spacing="10">
+                    <!-- Bus-connection dot (Architect ↔ Hub IPC bus on :18081).
+                         Green when ArchitectBusClient is connected, red otherwise.
+                         Tooltip surfaces the underlying state so a streamer
+                         debugging a missing live-debug-trace doesn't have to
+                         dig through the System Log. -->
+                    <!--  Live zoom-% badge so the user
+                         has a reference at extreme zoom (0.25×–4×). Updated from
+                         the canvas VM's Zoom via OnCanvasVmPropertyChanged. -->
+                    <TextBlock x:Name="ZoomBadge"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               ToolTipService.ToolTip="Canvas zoom (Ctrl+Wheel to zoom · Home to fit)"
+                               Text="100%" />
+                    <Ellipse x:Name="BusStatusDot"
+                             Width="8" Height="8"
+                             Fill="{StaticResource StatusRedBrush}"
+                             Stroke="{StaticResource CoalCardBrush}"
+                             StrokeThickness="1"
+                             VerticalAlignment="Center"
+                             ToolTipService.ToolTip="Hub bus disconnected" />
+                    <TextBlock x:Name="StatusRight"
+                               VerticalAlignment="Center"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

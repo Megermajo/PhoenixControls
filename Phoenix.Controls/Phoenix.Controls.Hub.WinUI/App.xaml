@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Application
+    x:Class="Phoenix.Controls.Hub.WinUI.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
+    <!--  The whole suite is dark-mode-first. Pin the app-wide
+         ApplicationTheme to Dark so every window, dialog, popup, and menu
+         flyout (all three pillars run in this one process) resolves its
+         system-sourced brushes from the DARK Fluent dictionary regardless of
+         the OS light/dark setting. Without this the theme was pinned
+         surface-by-surface (RequestedTheme="Dark" scattered across dialogs +
+         the MenuFlyoutPresenter styles in PhoenixDark.xaml); any surface that
+         missed the pin fell back to the OS theme and, under an OS *light*
+         theme, rendered light Fluent chrome behind dark-tuned custom brushes
+         = unreadable text on "some, not all" surfaces. Locking here kills the
+         whole class at the root. High-contrast accessibility is unaffected —
+         WinUI's high-contrast resources still take precedence when the OS HC
+         theme is active, and each pillar's HighContrastWatcher still falls
+         back to the system title bar. The per-surface pins remain as harmless
+         belt-and-suspenders for popups in separate visual roots. -->
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <ResourceDictionary Source="ms-appx:///Themes/PhoenixDark.xaml" />
+<!-- PhoenixIcons.xaml re-merged for two converging needs: the 0.10.0
+                     foundation panel-header call sites (Chat / LiveFeed /
+                     Script / SystemLog pop-out buttons + SystemLog "log folder"
+                     affordance), AND the chat-roles sweep where
+                     RoleColorBrush.ResolveGeometryByKey reads
+                     PhoenixIcon_ChatRole* path-mini-language strings out of
+                     Application.Resources at runtime and parses them via
+                     XamlReader. Must merge AFTER PhoenixDark.xaml so the icon
+                     resources sit above the theme tokens in the resource-
+                     lookup chain. The icon pack stays linked into each pillar
+                     csproj independently so Architect / Visualist can opt in
+                     without forcing Hub's merge order on them. -->
+                <ResourceDictionary Source="ms-appx:///Themes/PhoenixIcons.xaml" />
+                <!-- Hub-local compound brushes (gradients shared between
+                     HubChrome and PanelHeader, Hub UX sweep). Must merge
+                     AFTER PhoenixDark.xaml. -->
+                <ResourceDictionary Source="ms-appx:///Themes/HubBrushes.xaml" />
+                <!-- Sprint E — implicit Styles that override the default
+                     Fluent FocusVisualPrimaryBrush / FocusVisualSecondaryBrush
+                     so a Tab arrival reads as ember-on-coal across Hub
+                     chrome, dialogs, and panels. Must merge AFTER
+                     PhoenixDark.xaml so its StaticResource lookups for
+                     EmberPrimaryBrush / CoalCardBrush resolve. -->
+                <ResourceDictionary Source="ms-appx:///Themes/FocusVisuals.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+</Application>

@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Canvas.WidgetView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- R1 (enter-widget restore) — a double-tap on the widget BODY enters its
+         node editor (parity with the pre-WinUI WidgetEditorForm double-click).
+         The footer name label owns its own double-tap (rename) and the inline
+         geometry pills own single-tap edits, so OnWidgetBodyDoubleTapped guards
+         against those before raising EnterRequested. ToolTip advertises the
+         gesture (the name footer's tooltip still reads "Double-click to rename"). -->
+    <Border
+        x:Name="WidgetFrame"
+        BorderThickness="1"
+        BorderBrush="{StaticResource CoalMutedTextBrush}"
+        Background="{StaticResource CoalOverlay33Brush}"
+        DoubleTapped="OnWidgetBodyDoubleTapped"
+        ToolTipService.ToolTip="Double-click to edit this widget's triggers">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <!--  (P1-U1) — inline value-pill row. UE-Blueprints / Architect
+                     MiddleAttributeRowTemplate shape, copied (not lifted) into Visualist
+                     per feedback_visualist_architect_chrome_independence.md. Sits above the
+                     name footer so a quick glance at the widget body surfaces x/y/w/h/preset
+                     instead of forcing a trip to the right-pane inspector. Auto-height so
+                     the row collapses cleanly on very small widgets where MinWidth still
+                     forces a full pill render. -->
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!--
+                ThumbnailHost — reserved seam for future per-widget live-preview
+                thumbnails (Fusion-style). Track 7 only ships a static label /
+                gradient fallback; a follow-up turn will swap the inner content
+                here for an actual rendered preview when the compositor pipeline
+                is ready. Per feedback_visualist_architect_chrome_independence.md
+                this is a Visualist-specific affordance; Architect has no analogue.
+            -->
+            <ContentPresenter
+                Grid.Row="0"
+                x:Name="ThumbnailHost"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch" />
+
+            <!-- Live-preview overlay (Lane C / Area 5 P1 — canvas widget live
+                 preview restore). LayerCanvasView's WidgetCanvasPreviewer crops
+                 this widget's rect out of the hidden-WebView2 Hub overlay frame
+                 and pushes it here as a SoftwareBitmapSource. Sits above the
+                 thumbnail/gradient stub at a semi-transparent opacity so the
+                 author still reads the widget's footprint + name underneath the
+                 live render. Collapsed (and the stub shows through) whenever the
+                 previewer is off, the layer is unsaved, or a crop fails — the
+                 labeled-rectangle fallback is never removed. Per
+                 feedback_visualist_architect_chrome_independence this overlay is
+                 Visualist-only; Architect has no analogue. -->
+            <Image
+                Grid.Row="0"
+                x:Name="LivePreviewImage"
+                Visibility="Collapsed"
+                Opacity="0.85"
+                Stretch="Fill"
+                IsHitTestVisible="False"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch" />
+
+            <!--  (P1-U1) — inline value-pill strip. Five pills:
+                 x / y / w / h / preset. Each is a Border with read-only TextBlock + edit
+                 TextBox, swapped via Visibility flips driven from code-behind. Click → edit
+                 → Enter or focus-loss commits, Esc rolls back to the baseline snapshot
+                 captured at edit-start. Mirrors Architect's MiddleAttributeRowTemplate
+                 shape (NodeView.xaml:236-328) — copied per the per-pillar chrome rule.
+                 Pill chrome (BgPillBrush + BorderPillBrush + AccentValueBrush) comes from
+                 the shared theme dictionary (PhoenixDark.xaml); paint code, however, is
+                 duplicated here rather than lifted into a shared helper. -->
+            <Border
+                x:Name="PillStrip"
+                Grid.Row="1"
+                Tag="editpill"
+                Padding="4,2,4,2"
+                Background="{StaticResource CoalOverlay50Brush}"
+                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                BorderThickness="0,1,0,0">
+                <Grid ColumnSpacing="3">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="2*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- X pill -->
+                    <Border Grid.Column="0"
+                            Background="{StaticResource BgPillBrush}"
+                            BorderBrush="{StaticResource BorderPillBrush}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="3,0"
+                            ToolTipService.ToolTip="x (px)">
+                        <Grid>
+                            <TextBlock x:Name="PillXText"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource AccentValueBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Tapped="OnPillXTapped" />
+                            <!-- IsTabStop=False (P3 polish) — pill edits commit via
+                                 Enter/Esc/blur only; keeping the box out of the Tab chain
+                                 stops an accidental Tab from yanking focus mid-edit and
+                                 silently dropping the typed-but-uncommitted value. -->
+                            <TextBox x:Name="PillXBox"
+                                     Visibility="Collapsed"
+                                     IsTabStop="False"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="9"
+                                     MinWidth="20"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPaperBrush}"
+                                     BorderBrush="{StaticResource Ember200Brush}"
+                                     BorderThickness="1"
+                                     Padding="2,0"
+                                     KeyDown="OnPillXKeyDown"
+                                     LostFocus="OnPillXLostFocus" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Y pill -->
+                    <Border Grid.Column="1"
+                            Background="{StaticResource BgPillBrush}"
+                            BorderBrush="{StaticResource BorderPillBrush}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="3,0"
+                            ToolTipService.ToolTip="y (px)">
+                        <Grid>
+                            <TextBlock x:Name="PillYText"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource AccentValueBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Tapped="OnPillYTapped" />
+                            <!-- IsTabStop=False — see PillXBox. -->
+                            <TextBox x:Name="PillYBox"
+                                     Visibility="Collapsed"
+                                     IsTabStop="False"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="9"
+                                     MinWidth="20"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPaperBrush}"
+                                     BorderBrush="{StaticResource Ember200Brush}"
+                                     BorderThickness="1"
+                                     Padding="2,0"
+                                     KeyDown="OnPillYKeyDown"
+                                     LostFocus="OnPillYLostFocus" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Width pill -->
+                    <Border Grid.Column="2"
+                            Background="{StaticResource BgPillBrush}"
+                            BorderBrush="{StaticResource BorderPillBrush}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="3,0"
+                            ToolTipService.ToolTip="width (px)">
+                        <Grid>
+                            <TextBlock x:Name="PillWText"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource AccentValueBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Tapped="OnPillWTapped" />
+                            <!-- IsTabStop=False — see PillXBox. -->
+                            <TextBox x:Name="PillWBox"
+                                     Visibility="Collapsed"
+                                     IsTabStop="False"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="9"
+                                     MinWidth="20"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPaperBrush}"
+                                     BorderBrush="{StaticResource Ember200Brush}"
+                                     BorderThickness="1"
+                                     Padding="2,0"
+                                     KeyDown="OnPillWKeyDown"
+                                     LostFocus="OnPillWLostFocus" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Height pill -->
+                    <Border Grid.Column="3"
+                            Background="{StaticResource BgPillBrush}"
+                            BorderBrush="{StaticResource BorderPillBrush}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="3,0"
+                            ToolTipService.ToolTip="height (px)">
+                        <Grid>
+                            <TextBlock x:Name="PillHText"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="9"
+                                       Foreground="{StaticResource AccentValueBrush}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Tapped="OnPillHTapped" />
+                            <!-- IsTabStop=False — see PillXBox. -->
+                            <TextBox x:Name="PillHBox"
+                                     Visibility="Collapsed"
+                                     IsTabStop="False"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="9"
+                                     MinWidth="20"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPaperBrush}"
+                                     BorderBrush="{StaticResource Ember200Brush}"
+                                     BorderThickness="1"
+                                     Padding="2,0"
+                                     KeyDown="OnPillHKeyDown"
+                                     LostFocus="OnPillHLostFocus" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Preset pill — opens a Flyout list rather than free-typing. The flyout
+                         is constructed in code-behind so the enum list stays in sync with
+                         the LayerWidget.Preset domain (including the (none) entry). Mirrors
+                         the bool-glyph branch of Architect's MiddleAttributeRowTemplate in
+                         spirit (no free-form text, click commits a choice), even though
+                         the chrome is a pill rather than a glyph. -->
+                    <Border Grid.Column="4"
+                            Background="{StaticResource BgPillBrush}"
+                            BorderBrush="{StaticResource BorderPillBrush}"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="3,0"
+                            ToolTipService.ToolTip="preset">
+                        <TextBlock x:Name="PillPresetText"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="9"
+                                   Foreground="{StaticResource AccentValueBrush}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Tapped="OnPillPresetTapped" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- Footer — widget name in mono small. Read-only label + hidden
+                 inline TextBox editor (Area 1 P0 rename restore). Double-tap the
+                 label swaps to the box; Enter / focus-loss-with-change commits
+                 (PushUndo before, MarkDirty after via the LayerCanvasView name
+                 callback), Esc / focus-loss-without-change reverts. Mirrors the
+                 SwapPill / RestorePill mechanics used by the x/y/w/h pills above. -->
+            <Border
+                Grid.Row="2"
+                Tag="editpill"
+                Padding="6,2"
+                Background="{StaticResource CoalOverlay50Brush}"
+                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                BorderThickness="0,1,0,0">
+                <Grid>
+                    <TextBlock
+                        x:Name="WidgetNameLabel"
+                        FontFamily="{StaticResource MonoFont}"
+                        FontSize="9"
+                        Foreground="{StaticResource CoalBodyTextBrush}"
+                        TextTrimming="CharacterEllipsis"
+                        ToolTipService.ToolTip="Double-click to rename"
+                        Text="(widget)"
+                        DoubleTapped="OnWidgetNameDoubleTapped" />
+                    <!-- IsTabStop=False — see PillXBox. Rename commits via
+                         Enter/Esc/blur; staying out of the Tab chain keeps focus on
+                         the box until the user explicitly commits or cancels. -->
+                    <TextBox
+                        x:Name="WidgetNameBox"
+                        Visibility="Collapsed"
+                        IsTabStop="False"
+                        FontFamily="{StaticResource MonoFont}"
+                        FontSize="9"
+                        MinWidth="40"
+                        Background="{StaticResource CoalShellBrush}"
+                        Foreground="{StaticResource CoalPaperBrush}"
+                        BorderBrush="{StaticResource Ember200Brush}"
+                        BorderThickness="1"
+                        Padding="2,0"
+                        KeyDown="OnWidgetNameKeyDown"
+                        LostFocus="OnWidgetNameLostFocus" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

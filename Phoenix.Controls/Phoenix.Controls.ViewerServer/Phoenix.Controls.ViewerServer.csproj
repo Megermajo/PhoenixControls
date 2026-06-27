@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Phoenix.Controls.ViewerServer</RootNamespace>
+    <AssemblyName>Phoenix.Controls.ViewerServer</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ViewerServerPINIntegrationTests reaches the internal PinManager seam. -->
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+  </ItemGroup>
+
+</Project>

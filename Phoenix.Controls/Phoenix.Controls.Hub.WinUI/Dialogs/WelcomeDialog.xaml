@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="Phoenix.Controls.Hub.WinUI.Dialogs.WelcomeDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:dialogs="using:Phoenix.Controls.Hub.WinUI.Dialogs"
+    xmlns:hubctl="using:Phoenix.Controls.Hub.WinUI.Controls"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnSkipClick"
+    Background="{StaticResource CoalSurfaceBrush}"
+    RequestedTheme="Dark">
+
+    <ContentDialog.Resources>
+        <!-- Local-only styles. Welcome* prefix makes the locality explicit so
+             a future reviewer doesn't grep for "EyebrowText" expecting to
+             find a shared token (TODO 2026-05-07 P1 — theme-key shadowing). -->
+        <Style x:Key="WelcomeEyebrowText" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource Ember200Brush}" />
+            <Setter Property="CharacterSpacing" Value="180" />
+        </Style>
+        <Style x:Key="WelcomeBodyText" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource CoalBodyTextBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <Grid Width="640" MaxHeight="540">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Spacing="6" Padding="0,4,0,12">
+            <TextBlock x:Name="EyebrowText" Style="{StaticResource WelcomeEyebrowText}" />
+            <TextBlock x:Name="HeadingText"
+                       FontFamily="{StaticResource DisplayFont}"
+                       FontSize="20"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource CoalPaperBrush}" />
+            <TextBlock x:Name="IntroBodyText" Style="{StaticResource WelcomeBodyText}" />
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Height="1"
+                Margin="0,0,0,8"
+                Background="{StaticResource CoalDividerBrush}" />
+
+        <ScrollViewer Grid.Row="2"
+                      HorizontalScrollMode="Disabled"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+            <Grid>
+                <ItemsRepeater x:Name="SamplesList"
+                               ItemsSource="{x:Bind Samples, Mode=OneWay}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Orientation="Vertical" Spacing="6" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="dialogs:SampleGraphRowVm">
+                            <Border Background="{StaticResource CoalRaisedBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Padding="14,10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="2">
+                                        <TextBlock FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="13"
+                                                   Foreground="{StaticResource CoalPaperBrush}"
+                                                   Text="{x:Bind FileName}" />
+                                        <TextBlock FontFamily="{StaticResource SansFont}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   Text="{x:Bind RelativePath}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Content="{x:Bind UseThisLabel}"
+                                            Style="{StaticResource EmberPrimaryButtonStyle}"
+                                            Tag="{x:Bind FullPath}"
+                                            Click="OnUseSampleClick" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
+                <!-- Empty state — shown when no .phxg files in data/logic/examples/. -->
+                <StackPanel x:Name="EmptyState"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Top"
+                            Margin="0,40,0,0"
+                            Spacing="6">
+                    <TextBlock x:Name="EmptyStateTitle"
+                               Style="{StaticResource WelcomeEyebrowText}"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               HorizontalAlignment="Center" />
+                    <TextBlock x:Name="EmptyStateBody"
+                               Style="{StaticResource WelcomeBodyText}"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               MaxWidth="400" />
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+
+        <!-- Discrete support hint, shown once at first run. Phoenix Controls is
+             free; the Ko-fi chrome button is a quiet way to back development. -->
+        <StackPanel Grid.Row="3" Spacing="10" Margin="0,12,0,0">
+            <Border Height="1" Background="{StaticResource CoalDividerBrush}" />
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="SupportCaptionText"
+                           Grid.Column="0"
+                           VerticalAlignment="Center"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           Text="Free to use — supporting development is optional and always appreciated." />
+                <hubctl:KofiSupportButton Grid.Column="1" VerticalAlignment="Center" />
+            </Grid>
+        </StackPanel>
+    </Grid>
+</ContentDialog>

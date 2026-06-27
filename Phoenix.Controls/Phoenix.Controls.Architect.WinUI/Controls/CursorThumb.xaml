@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.CursorThumb"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:prim="using:Microsoft.UI.Xaml.Controls.Primitives"
+    Background="Transparent">
+    <!-- Thin wrapper around the WinUI primitive Thumb so we can override the
+         system cursor on pointer-enter — WinUI 3's Thumb / GridSplitter does
+         not expose a Cursor property, so a horizontal-splitter Thumb leaves
+         the cursor as the default arrow and the affordance reads "this is
+         clickable" rather than "this is draggable". Setting CoreCursor via
+         ProtectedCursor (available on UIElement post-1.5) lifts that out. -->
+    <prim:Thumb x:Name="InnerThumb"
+                Background="Transparent"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                IsTabStop="True"
+                UseSystemFocusVisuals="True" />
+</UserControl>

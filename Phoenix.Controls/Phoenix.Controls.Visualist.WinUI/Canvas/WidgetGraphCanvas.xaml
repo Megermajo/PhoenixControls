@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Canvas.WidgetGraphCanvas"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Visualist.WinUI.Canvas">
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <!--  — thin header strip exposes the snap toggle in the
+                 canvas chrome (CHANGELOG 0.9.10 promised it but no header
+                 existed). The RMB flyout in OnHostRightTapped flips the same
+                 SnapEnabled state, so both paths stay coherent. -->
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!--  — canvas header strip. Holds the grid-snap toggle today;
+             additional canvas-scope controls can land here without disturbing
+             the WorldCanvas tree below. -->
+        <Border
+            Grid.Row="0"
+            Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,0,1"
+            Padding="8,2,8,2"
+            MinHeight="28">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <CheckBox
+                    x:Name="SnapToggle"
+                    MinWidth="0"
+                    MinHeight="0"
+                    Padding="6,0,0,0"
+                    FontSize="11"
+                    FontFamily="{StaticResource MonoFont}"
+                    Foreground="{StaticResource CoalSecondaryTextBrush}" />
+            </StackPanel>
+        </Border>
+
+        <Grid x:Name="HostGrid" Grid.Row="1"
+              AllowDrop="True" DragOver="OnMediaDragOver" Drop="OnMediaDrop">
+            <Grid.Background>
+                <RadialGradientBrush Center="0.5,0.5" RadiusX="0.6" RadiusY="0.6">
+                    <!-- Visualist canvas backdrop gradient — kept inline per
+                         Design_Orders §8 (per-pillar paint code, not lifted to
+                         Shared brushes). Stop 0 is EmberPrimary (#E5A24E) at
+                         ~6% alpha; stop 1 is CoalShell (#0B0907) at 0% alpha
+                         (transparent fade-out). Mirrors the rationale in
+                         feedback_visualist_architect_chrome_independence. -->
+                    <GradientStop Offset="0.0" Color="#0FE5A24E" />
+                    <GradientStop Offset="0.7" Color="#000B0907" />
+                </RadialGradientBrush>
+            </Grid.Background>
+
+            <!-- Pan/zoom surface — the inner Canvas uses absolute Canvas.Left /
+                 Canvas.Top positioning for nodes; the parent Grid carries the
+                 CompositeTransform so pan/zoom is uniform across nodes and (in
+                 sprint B) the wire overlay. Mirrors Architect.WinUI's
+                 LogicCanvasView/ViewSurface/ViewTransform pattern. -->
+            <Grid x:Name="ViewSurface" RenderTransformOrigin="0,0">
+                <Grid.RenderTransform>
+                    <CompositeTransform x:Name="WorldTransform"
+                                        ScaleX="1.0" ScaleY="1.0"
+                                        TranslateX="0" TranslateY="0" />
+                </Grid.RenderTransform>
+
+                <!-- [QC18-S7-followup] Dotted-grid backdrop. Sits BELOW
+                     WorldCanvas + LinkLayer so node bodies and wires render
+                     on top. Code-behind repaints the dot set on
+                     IsSnapEnabled toggle, pan / zoom, and viewport resize.
+                     IsHitTestVisible=False so pointer events fall through. -->
+                <Canvas x:Name="GridDots" Width="4000" Height="4000" IsHitTestVisible="False" />
+
+                <Canvas x:Name="WorldCanvas" Width="4000" Height="4000" />
+
+                <!-- Link layer overlays the node canvas so wires render on top
+                     of node bodies. Held in the same transform tree so pan/zoom
+                     keeps wires and nodes in lockstep. The temp wire (sprint B
+                     wire-drop preview) lives here too as a single Path swapped
+                     in for the duration of the drag. -->
+                <Canvas x:Name="LinkLayer" Width="4000" Height="4000" IsHitTestVisible="False" />
+            </Grid>
+
+            <!-- Empty-state hint — overlays the canvas when no nodes are loaded. -->
+            <!-- R48 — onboarding copy advertising the gestures that actually
+                 work (right-click spawn, F search, drag-from-Media). -->
+            <TextBlock
+                x:Name="EmptyHint"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                MaxWidth="420"
+                TextWrapping="Wrap"
+                TextAlignment="Center"
+                FontFamily="{StaticResource MonoFont}"
+                FontSize="12"
+                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                Visibility="Collapsed" />
+
+            <!-- Context-aware hotkey cheatsheet — bottom-left, sibling of
+                 the LayerCanvasView overlay. The widget-graph vocabulary is
+                 distinct from the layer canvas's so the catalog ships
+                 graph-specific entries (zoom, snap, wire-drag). Open/closed
+                 state persists via AppConfig.VisualistHotkeyCheatsheetExpanded
+                 (one flag — both surfaces honour the same expanded state). -->
+            <local:HotkeyCheatsheet x:Name="HotkeyCheatsheetOverlay"
+                                    x:FieldModifier="public" />
+        </Grid>
+    </Grid>
+</UserControl>

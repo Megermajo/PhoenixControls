@@ -1,0 +1,243 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Phoenix.Controls.Hub.WinUI</RootNamespace>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!--
+      Explicit app.manifest declaring PerMonitorV2 DPI awareness. Without
+      this the WinUI 3 process runs as DPI-unaware on >100%-scaled
+      monitors and Windows bitmap-stretches the whole window, making
+      every text element fuzzy app-wide (worse on QHD than 1080p
+      because the upscale factor is larger). The SDK-default generated
+      manifest at obj/.../Manifests/app.manifest carries only
+      WinAppSDK activatable-class entries with no windowsSettings, so
+      we declare them here and the SDK merges its activatable classes
+      into our manifest at build time. See app.manifest for the
+      detailed rationale.
+    -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseRidGraph>true</UseRidGraph>
+    <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!--
+      Sprint H — Phoenix.Controls.Tests now ProjectReferences this exe.
+      Tests build AnyCPU, which makes the WindowsAppSDK packaging path
+      (Microsoft.Build.Msix.Packaging.targets:1036) trip with "Packaged
+      .NET applications with an app host exe cannot be ProcessorArchitecture
+      neutral." The flag below tells the SDK that a neutral package with an
+      app host is acceptable for our scenario. The release pipeline still
+      builds with `-p:Platform=x64`, so production output is unaffected;
+      this only relaxes the gate during Dev `dotnet build` runs where Tests
+      drags Hub.WinUI in transitively.
+    -->
+    <AllowNeutralPackageWithAppHost>true</AllowNeutralPackageWithAppHost>
+  </PropertyGroup>
+
+  <!--
+    Self-contained WinUI 3 deployment. Bundles the Windows App Runtime DLLs
+    (Microsoft.WindowsAppRuntime.*, Microsoft.UI.Xaml.*) directly into
+    bin/x64/<Configuration>/<TFM>/ instead of relying on a framework + DDLM
+    pair registered on the user's machine. Streamers run a wide mix of
+    Windows builds with partially-installed / GC'd DDLMs (the framework can
+    be present at the right version yet still trip the "requires Windows
+    App Runtime 1.5 (>= X)" modal because no matching DDLM is registered).
+    Self-contained removes the entire dependency surface — Hub.WinUI
+    launches on a vanilla Win10/11 box without any runtime install step,
+    at the cost of ~30MB extra in the bin output. Post-single-HUB collapse
+    Architect.WinUI / Visualist.WinUI are libraries and inherit the bundled
+    runtime through Hub's bin tree; only this exe needs the flag.
+
+    Forward-ported from master 0.9.5 (b4a4888) — the original fix landed
+    directly on master per "DEV does not use the release pipeline" and
+    never made it to Dev, so release/0.9.6 (built from Dev) silently
+    regressed the runtime-required modal.
+
+    Conditional on Platform=x64 because SelfContained.targets rejects
+    AnyCPU outright with "The platform 'AnyCPU' is not supported for Self
+    Contained mode." The release pipeline (BUILD_SUITE.bat,
+    installer/build-local.ps1, .github/workflows/release.yml) explicitly
+    sets -p:Platform=x64 so it picks up the bundling; day-to-day Dev
+    `dotnet build` runs AnyCPU and skips it without erroring.
+  -->
+  <PropertyGroup Condition="'$(Platform)' == 'x64'">
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+    <ProjectReference Include="..\Phoenix.Controls.Shared.WinUI\Phoenix.Controls.Shared.WinUI.csproj" />
+    <!--
+      Track 4 — bridge to existing WinForms Hub runtime. Services/ wraps
+      Bus / HUDServer / WS / ScriptManager / ScriptRegistry
+      (Phoenix.Controls.Hub). The Shared reference above already covers the
+      sub-services in Phoenix.Controls.Shared (GlobalLogger, DB,
+      ConfigManager, ChatMessage, BusMessage). Track 2
+      owns the rest of this csproj (WinUI 3 exe shape, WindowsAppSDK, theme
+      Page link); Track 4 only added the line below.
+    -->
+    <ProjectReference Include="..\Phoenix.Controls.Hub\Phoenix.Controls.Hub.csproj" />
+    <!--
+      Single-HUB collapse (TODO.md P0 #3). Architect.WinUI and
+      Visualist.WinUI flipped from WinExe to library; Hub embeds their
+      MainView UserControls on pillar-tab click. The pillar separation
+      invariant is preserved by *reference graph* — Architect / Visualist
+      still don't reference Hub; Hub references them.
+    -->
+    <ProjectReference Include="..\Phoenix.Controls.Architect.WinUI\Phoenix.Controls.Architect.WinUI.csproj" />
+    <ProjectReference Include="..\Phoenix.Controls.Visualist.WinUI\Phoenix.Controls.Visualist.WinUI.csproj" />
+    <!--
+      QC27-01 — v2 ViewerServer + WebViewer bundle. The server is a code
+      dependency (HubBootstrapper constructs + starts it). The WebViewer
+      project ships only static content under dist/; we reference it with
+      OutputItemType="Content" so its Linked "ViewerAssets/..." tree lands
+      under this exe's bin without taking a code reference on the empty
+      content-only .dll.
+    -->
+    <ProjectReference Include="..\Phoenix.Controls.ViewerServer\Phoenix.Controls.ViewerServer.csproj" />
+    <ProjectReference Include="..\Phoenix.Controls.WebViewer\Phoenix.Controls.WebViewer.csproj"
+                      OutputItemType="Content"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!--
+      In-app HTML documentation bundle. The offline doc pages (Node Reference
+      shell + renderer, tokens, README, Changelog) ship to bin/Docs/ and are
+      served to DocViewerWindow's WebView2 through the phoenix.docs virtual-host
+      mapping. CopyToOutputDirectory keeps them next to the exe so the viewer
+      resolves them with no network.
+    -->
+    <Content Include="Docs\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!--
+    Track 1 ships PhoenixDark.xaml as loose Content under Shared.WinUI (no
+    PRI, since Shared.WinUI is deliberately a plain net8.0-windows lib).
+    To merge it as a ResourceDictionary in this WinUI 3 app we link the
+    file as a Page so it lands in this assembly's PRI under
+    ms-appx:///Themes/PhoenixDark.xaml. Each WinUI 3 exe in the suite
+    does the same — duplication is intentional, one PRI per app.
+  -->
+  <ItemGroup>
+    <Page Include="..\Phoenix.Controls.Shared.WinUI\Themes\PhoenixDark.xaml" Link="Themes\PhoenixDark.xaml" />
+    <Page Include="..\Phoenix.Controls.Shared.WinUI\Themes\PhoenixIcons.xaml" Link="Themes\PhoenixIcons.xaml" />
+  </ItemGroup>
+
+  <!--
+    Packaged brand fonts (0.10.0 foundation). Same linked-asset pattern
+    the Theme Pages above use, applied to Content: any TTF dropped into
+    Shared.WinUI/Assets/Fonts/ lands in Hub.WinUI's PRI under
+    `ms-appx:///Assets/Fonts/<file>.ttf`, which is exactly the URI the
+    FontFamily resources in PhoenixDark.xaml use. Architect.WinUI /
+    Visualist.WinUI are libraries (single-HUB-host model) and inherit
+    through Hub's PRI — no per-library linking needed.
+
+    The folder ships with only README.md in this commit; the FontFamily
+    fallback chain (Segoe UI Variable / Cascadia Code / Georgia / etc.)
+    renders the suite identically until Majo drops the canonical TTFs
+    in. See Shared.WinUI/Assets/Fonts/README.md for filenames + sources.
+  -->
+  <ItemGroup>
+    <Content Include="..\Phoenix.Controls.Shared.WinUI\Assets\Fonts\**\*.ttf;..\Phoenix.Controls.Shared.WinUI\Assets\Fonts\**\*.otf;..\Phoenix.Controls.Shared.WinUI\Assets\Fonts\**\*.txt"
+             Link="Assets\Fonts\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!--
+    Sprint E (focus-visual sweep). Hub owns its own
+    Themes\FocusVisuals.xaml; the .NET SDK auto-discovers it as a <Page>
+    via the implicit Page glob, so no explicit ItemGroup is needed. App.xaml
+    merges it after PhoenixDark.xaml — StaticResource lookups for
+    EmberPrimaryBrush / CoalCardBrush walk the parent dictionary stack at
+    parse time. Per feedback_visualist_architect_chrome_independence.md, Hub
+    keeps its own copy so its chrome / dialog / panel surfaces can diverge
+    from the editor pillars later without dragging them with it.
+  -->
+
+  <!--
+    0.10.0 redesign R2 — extern alias on Microsoft.WinUI so the chrome
+    access-key Run.TextDecorations underline compiles. `TextDecorations`
+    is projected as `Windows.UI.Text.TextDecorations` in BOTH
+    Microsoft.WinUI.dll (the WinUI 3 typing) and Microsoft.Windows.SDK.NET.dll
+    (the CsWinRT projection of WinRT), so any unqualified reference trips
+    CS0433. The Target below tags the resolved Microsoft.WinUI reference
+    with both `global` (keeps the implicit namespace lookup working for the
+    rest of the project) and `winui` (an extern alias HubChrome.xaml.cs can
+    use to disambiguate the enum). The implicit Microsoft.WinUI reference
+    is pulled via the WindowsAppSDK package — we can't add a manual
+    <Reference Include="Microsoft.WinUI"> with HintPath because the package
+    layout varies per RID; modifying the resolved ReferencePath post
+    `ResolveAssemblyReferences` is the canonical mid-SDK pattern.
+  -->
+  <Target Name="AddWinUIAlias" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Condition="'%(FileName)' == 'Microsoft.WinUI'">
+        <Aliases>global,winui</Aliases>
+      </ReferencePath>
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Sprint H — NETSDK1152 lighter workaround so Phoenix.Controls.Tests can
+    take a ProjectReference on this exe (needed to unit-test
+    DocumentationWindow, ReadOnlyPhxWindow, App.xaml.cs dispatch logic).
+
+    Background: this csproj's `<Content Include="Assets\**\*">` glob picks up
+    `Assets/phoenix-mark.png` (the suite brand mark). Architect.WinUI — which
+    we reference as a library for the pillar-tab embedding — *also* ships its
+    own copy of `Assets/phoenix-mark.png` via its own
+    `<Content Include="Assets\**\*">` glob. Both files land in this exe's bin
+    under the same relative path `Assets\phoenix-mark.png`.
+
+    For a standalone build the conflict resolver never fires (it's gated
+    behind `_HandleFileConflictsForPublish` which only runs when a consumer
+    triggers `ComputeFilesToPublish` transitively). But when Tests
+    ProjectReferences this exe, the WindowsAppSDK Packaging targets pull in
+    `__GetPublishItems` → `ComputeFilesToPublish`, then the SDK's
+    `_HandleFileConflictsForPublish` runs `CheckForDuplicateItemMetadata` on
+    `ResolvedFileToPublish` keyed by `RelativePath` and trips NETSDK1152.
+
+    Fix: dedupe `ResolvedFileToPublish` by `RelativePath`, keeping this
+    exe's own copy (matching `$(MSBuildProjectDirectory)`) and dropping
+    referenced-library duplicates. Runs BeforeTargets matching the conflict
+    check's AfterTargets so the dedupe wins. Branding stays intact — this
+    exe's own Assets/phoenix-mark.png still copies to bin (verified by the
+    Sprint H bin-listing check).
+
+    Heavier alternative (sibling Hub.WinUI.Shared library) was explicitly
+    deferred — see TODO.md Sprint H entry. This Target is the lighter
+    workaround the sprint authorized.
+  -->
+  <Target Name="DeduplicatePhoenixBrandAssets"
+          AfterTargets="ComputeFilesToPublish"
+          BeforeTargets="_HandleFileConflictsForPublish">
+    <ItemGroup>
+      <!--
+        Keep this exe's own Assets\phoenix-mark.png; drop any duplicate
+        sourced from a referenced library project (Architect.WinUI's copy).
+        Filter by RelativePath==Assets\phoenix-mark.png AND source path NOT
+        under this project's directory.
+      -->
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="'%(RelativePath)' == 'Assets\phoenix-mark.png' And !$([System.String]::new('%(FullPath)').StartsWith('$(MSBuildProjectDirectory)'))" />
+    </ItemGroup>
+  </Target>
+
+</Project>

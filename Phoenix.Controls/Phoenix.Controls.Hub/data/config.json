@@ -1,0 +1,7 @@
+{
+  "StreamerBotUrl": "ws://127.0.0.1:8080/",
+  "HUDServerPort": 18080,
+  "LogicDirectory": "data/logic",
+  "LayoutDirectory": "data/layout",
+  "AutoStart": true
+}

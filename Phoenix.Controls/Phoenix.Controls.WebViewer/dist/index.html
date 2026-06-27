@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- P1-23: tell OBS Browser Source to render with an alpha-aware
+       compositor so the dashboard chrome can sit over a stream without
+       an opaque dark backdrop. The meta hint is OBS-specific (CEF custom
+       schema) and a no-op in regular browsers, so the remote-viewer
+       dashboard styling is unaffected — it still inherits the opaque
+       background from panels.css. If a future OBS build starts honoring
+       this in a way that bleeds into the dashboard, gate it via a route
+       (/v/{ch}/obs) and a build-time substitution. -->
+  <meta name="browser-type" content="transparent" />
+  <title>Phoenix Controls — Viewer</title>
+  <link rel="icon" type="image/png" href="assets/phoenix-mark.png" />
+  <link rel="stylesheet" href="styles/tokens.css" />
+  <link rel="stylesheet" href="styles/chrome.css" />
+  <link rel="stylesheet" href="styles/panels.css" />
+  <link rel="stylesheet" href="styles/pair.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="scripts/app.js"></script>
+</body>
+</html>

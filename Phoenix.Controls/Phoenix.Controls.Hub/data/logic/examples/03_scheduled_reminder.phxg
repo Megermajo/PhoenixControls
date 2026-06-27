@@ -1,0 +1,588 @@
+{
+  "Name": "scheduled_reminder",
+  "Nodes": [
+    {
+      "Id": "547bea8d-d3f1-4012-bbce-ef9a44a524d9",
+      "Title": "Schedule.Recurring",
+      "Category": "Events",
+      "Location": {
+        "IsEmpty": false,
+        "X": -107,
+        "Y": 78
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 112
+      },
+      "HeaderColor": -9868951,
+      "Sockets": [
+        {
+          "Id": "f1ae1077-f553-43e8-aece-e09b7fda1e92",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "ecb4ba24-8728-449b-9b8f-1bd7bf3a69b0",
+          "Name": "Count",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "IntervalSeconds": "900",
+        "MaxCount": "0"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "62e884a1-9cde-46c4-b6c8-089ffd43e66a",
+      "Title": "Array.Literal",
+      "Category": "Collections",
+      "Location": {
+        "IsEmpty": false,
+        "X": -75,
+        "Y": 318
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 520,
+        "Height": 72
+      },
+      "HeaderColor": -7650029,
+      "Sockets": [
+        {
+          "Id": "2202f9e7-e8e2-43de-9b22-8d61c5bfc7a6",
+          "Name": "Array",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 506,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Items": "Drop a follow if you enjoy the stream, Use !discord to join us between streams, Lurkers are loved \u2014 thanks for the company, Type !commands to see what the bot can do"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "0506650e-7e21-4762-a4f3-a4f3168b883b",
+      "Title": "Array.Get",
+      "Category": "Collections",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1250,
+        "Y": 237
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7650029,
+      "Sockets": [
+        {
+          "Id": "574af7f0-7762-4462-9150-aaf52786438a",
+          "Name": "List",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "6d28a38a-7bad-491f-846e-85a6f468c29d",
+          "Name": "Index",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "f465cef4-9625-4c93-ba44-3c34a967c195",
+          "Name": "Value",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Index": "0"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "3b39e90f-8a8b-48d5-9c73-1f4ebedd0f25",
+      "Title": "Math.Random",
+      "Category": "Math",
+      "Location": {
+        "IsEmpty": false,
+        "X": 916,
+        "Y": 460
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7114533,
+      "Sockets": [
+        {
+          "Id": "beb6d77b-5c1d-4f5c-9bb3-07dbf42fe959",
+          "Name": "Min",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "2020147b-4e1e-411d-8f54-3ccddae501cf",
+          "Name": "Max",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "016b10f4-82ad-482b-beb5-5bc6d7e0b475",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Min": "0",
+        "Max": "100"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "a7eb0d5a-da51-42c5-97cb-c7f058bb16cf",
+      "Title": "Array.Length",
+      "Category": "Collections",
+      "Location": {
+        "IsEmpty": false,
+        "X": 557,
+        "Y": 486
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 60
+      },
+      "HeaderColor": -7650029,
+      "Sockets": [
+        {
+          "Id": "2bd2a308-00f3-43c6-8e14-c2fdb8628534",
+          "Name": "List",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4bfb4265-a4c5-4e03-a7f2-12653064d479",
+          "Name": "Count",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "6e5bec5b-326e-483a-af6a-fa83ddf67146",
+      "Title": "Text.Format",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1707,
+        "Y": 187
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 272,
+        "Height": 148
+      },
+      "HeaderColor": -16744320,
+      "Sockets": [
+        {
+          "Id": "c4180703-b989-4c24-a78e-ab08e751d33a",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a525e0f6-45a1-4b20-a241-2a95a354c13e",
+          "Name": "A",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "168056db-617c-4fb4-a246-943a9de52d84",
+          "Name": "B",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "d6c2a929-61bb-4e86-bb5f-77e4b139ce80",
+          "Name": "C",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "3a909ae3-b8fc-40ac-bc47-90e56670f783",
+          "Name": "D",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "7ca97adc-ecf3-4eb5-84ce-dedf177d4319",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 258,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "\u0022[Tip] {A}\u0022",
+        "A": "",
+        "B": "",
+        "C": "",
+        "D": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "1aff75bd-b99e-470b-ba71-8cc84ac6b89d",
+      "Title": "Twitch.SendChat",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 2025,
+        "Y": 47
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7077677,
+      "Sockets": [
+        {
+          "Id": "0ec07f89-abeb-4bfd-a0b2-d40523e69be8",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "0988f6ab-a8e3-48d5-8a8b-836dcb7e90ac",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "f08556e2-968b-46c7-9b8f-8cae087675e8",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Message": "Hello chat!"
+      },
+      "Description": ""
+    }
+  ],
+  "Links": [
+    {
+      "Id": "471c10c4-caba-4e63-a19f-1b1c630eb2ad",
+      "FromNodeId": "62e884a1-9cde-46c4-b6c8-089ffd43e66a",
+      "FromSocketId": "2202f9e7-e8e2-43de-9b22-8d61c5bfc7a6",
+      "ToNodeId": "a7eb0d5a-da51-42c5-97cb-c7f058bb16cf",
+      "ToSocketId": "2bd2a308-00f3-43c6-8e14-c2fdb8628534"
+    },
+    {
+      "Id": "6ce9101c-4078-4a18-9612-3a3d83b319fd",
+      "FromNodeId": "a7eb0d5a-da51-42c5-97cb-c7f058bb16cf",
+      "FromSocketId": "4bfb4265-a4c5-4e03-a7f2-12653064d479",
+      "ToNodeId": "3b39e90f-8a8b-48d5-9c73-1f4ebedd0f25",
+      "ToSocketId": "2020147b-4e1e-411d-8f54-3ccddae501cf"
+    },
+    {
+      "Id": "1966bc7c-8dd4-45c5-84af-d12a244226b0",
+      "FromNodeId": "62e884a1-9cde-46c4-b6c8-089ffd43e66a",
+      "FromSocketId": "2202f9e7-e8e2-43de-9b22-8d61c5bfc7a6",
+      "ToNodeId": "0506650e-7e21-4762-a4f3-a4f3168b883b",
+      "ToSocketId": "574af7f0-7762-4462-9150-aaf52786438a"
+    },
+    {
+      "Id": "a75ed7cf-5472-44c2-b0e6-3ebcf68bde30",
+      "FromNodeId": "3b39e90f-8a8b-48d5-9c73-1f4ebedd0f25",
+      "FromSocketId": "016b10f4-82ad-482b-beb5-5bc6d7e0b475",
+      "ToNodeId": "0506650e-7e21-4762-a4f3-a4f3168b883b",
+      "ToSocketId": "6d28a38a-7bad-491f-846e-85a6f468c29d"
+    },
+    {
+      "Id": "68743e47-743c-415b-b0a7-468f04e0a5f1",
+      "FromNodeId": "547bea8d-d3f1-4012-bbce-ef9a44a524d9",
+      "FromSocketId": "f1ae1077-f553-43e8-aece-e09b7fda1e92",
+      "ToNodeId": "1aff75bd-b99e-470b-ba71-8cc84ac6b89d",
+      "ToSocketId": "0ec07f89-abeb-4bfd-a0b2-d40523e69be8"
+    },
+    {
+      "Id": "4e22854f-681c-4f06-8e6a-57256f700d89",
+      "FromNodeId": "0506650e-7e21-4762-a4f3-a4f3168b883b",
+      "FromSocketId": "f465cef4-9625-4c93-ba44-3c34a967c195",
+      "ToNodeId": "6e5bec5b-326e-483a-af6a-fa83ddf67146",
+      "ToSocketId": "a525e0f6-45a1-4b20-a241-2a95a354c13e"
+    },
+    {
+      "Id": "4be91b85-1acb-4b25-a918-4e8d4185c500",
+      "FromNodeId": "6e5bec5b-326e-483a-af6a-fa83ddf67146",
+      "FromSocketId": "7ca97adc-ecf3-4eb5-84ce-dedf177d4319",
+      "ToNodeId": "1aff75bd-b99e-470b-ba71-8cc84ac6b89d",
+      "ToSocketId": "0988f6ab-a8e3-48d5-8a8b-836dcb7e90ac"
+    }
+  ],
+  "Frames": [
+    {
+      "Id": "378ff53d-3aaa-49a8-a4e1-7aa589ba40dc",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": -132,
+          "Y": 277
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": -132,
+        "Y": 277,
+        "Width": 240,
+        "Height": 160,
+        "Left": -132,
+        "Top": 277,
+        "Right": 108,
+        "Bottom": 437,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "ad246f0a-ec39-41b0-835a-f98f0a9d2aa3",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 872,
+          "Y": 416
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 872,
+        "Y": 416,
+        "Width": 240,
+        "Height": 160,
+        "Left": 872,
+        "Top": 416,
+        "Right": 1112,
+        "Bottom": 576,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "c83b59c5-2f3b-499f-b894-974dbdbde5ba",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 1522,
+          "Y": 184
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 1522,
+        "Y": 184,
+        "Width": 240,
+        "Height": 160,
+        "Left": 1522,
+        "Top": 184,
+        "Right": 1762,
+        "Bottom": 344,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    }
+  ],
+  "Bookmarks": [],
+  "Macros": [],
+  "Processes": [],
+  "Variables": [],
+  "ViewOffsetX": 141,
+  "ViewOffsetY": 155,
+  "ViewZoom": 0.90909094,
+  "_schemaVersion": 1
+}

@@ -1,0 +1,234 @@
+/* Phoenix Controls Viewer — panel chrome (header + per-panel layout). */
+
+.panel {
+  background: var(--coal-1);
+  border: 1px solid var(--coal-4);
+  border-radius: var(--r-3);
+  box-shadow: var(--sh-emboss);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--coal-3);
+  background: var(--coal-1);
+}
+.panel-header .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--coal-7);
+  letter-spacing: 0.12em;
+}
+.panel-header .title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--coal-9);
+}
+.panel-header .right {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--coal-7);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── Live Event Feed ──────────────────────────────────────────────── */
+.livefeed-row {
+  display: grid;
+  grid-template-columns: 76px 64px 110px 1fr;
+  padding: 5px 14px;
+  gap: 8px;
+  border-bottom: 1px solid var(--coal-2);
+  font-size: 12px;
+  align-items: baseline;
+}
+.livefeed-row .time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--coal-7);
+}
+.livefeed-row .kind {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: var(--coal-3);
+  color: var(--coal-9);
+  font-family: var(--font-mono);
+  width: max-content;
+}
+.livefeed-row .kind.sub    { background: var(--ember-700); color: var(--ember-100); }
+.livefeed-row .kind.raid   { background: var(--err);       color: var(--coal-0); }
+.livefeed-row .kind.redeem { background: var(--info);      color: var(--coal-0); }
+.livefeed-row .kind.visual { background: var(--role-vip);  color: var(--coal-0); }
+.livefeed-row .kind.follow { background: var(--ok);        color: var(--coal-0); }
+.livefeed-row .who    { color: var(--ember-200); font-weight: 600; }
+.livefeed-row .detail { color: var(--coal-9); }
+
+/* ── Chat ─────────────────────────────────────────────────────────── */
+.chat-row {
+  display: flex;
+  gap: 8px;
+  padding: 5px 14px;
+  align-items: baseline;
+}
+.chat-row .badge {
+  width: 18px; height: 14px;
+  font-size: 9px; font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  color: var(--coal-0);
+}
+.chat-row .badge.empty { background: transparent; color: transparent; }
+.chat-row .badge.broadcaster { background: var(--role-broadcaster); }
+.chat-row .badge.mod         { background: var(--role-mod); }
+.chat-row .badge.vip         { background: var(--role-vip); }
+.chat-row .badge.sub         { background: var(--role-sub); }
+.chat-row .badge.bot         { background: var(--ember-400); }
+.chat-row .who { color: var(--ember-200); font-weight: 600; font-size: 12px; flex-shrink: 0; }
+.chat-row .body { color: var(--coal-9); font-size: 12px; }
+
+.chat-sendrow {
+  border-top: 1px solid var(--coal-3);
+  padding: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.chat-sendrow .lock {
+  flex: 1;
+  background: var(--coal-1);
+  border: 1px solid var(--coal-3);
+  border-radius: 3px;
+  padding: 6px 10px;
+  color: var(--coal-6);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: not-allowed;
+}
+.chat-sendrow button[disabled] {
+  background: var(--coal-2);
+  border: 1px solid var(--coal-3);
+  border-radius: 3px;
+  color: var(--coal-6);
+  padding: 0 12px;
+  height: 28px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: not-allowed;
+}
+
+/* ── Scripts ──────────────────────────────────────────────────────── */
+.scripts-headerrow,
+.scripts-row {
+  display: grid;
+  grid-template-columns: 26px 1.6fr 90px 70px 70px 60px;
+  padding: 6px 14px;
+  gap: 8px;
+  align-items: center;
+}
+.scripts-headerrow {
+  border-bottom: 1px solid var(--coal-3);
+  background: var(--coal-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--coal-7);
+}
+.scripts-row {
+  border-bottom: 1px solid var(--coal-2);
+  font-size: 12px;
+}
+.scripts-row.disabled { opacity: 0.45; }
+.scripts-row .toggle {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  background: var(--coal-5);
+  border: 1px solid var(--coal-4);
+  position: relative;
+}
+.scripts-row.disabled .toggle { background: var(--coal-3); }
+.scripts-row .toggle::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: var(--coal-7);
+  border-radius: 1px;
+}
+.scripts-row.disabled .toggle::after { display: none; }
+.scripts-row .name { font-family: var(--font-mono); color: var(--coal-9); }
+.scripts-row .state { display: flex; align-items: center; gap: 6px; font-size: 11px; text-transform: lowercase; }
+.scripts-row .state .swatch {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+}
+.scripts-row .state.idle    { color: var(--coal-7); }
+.scripts-row .state.idle .swatch    { background: var(--coal-7); }
+.scripts-row .state.running { color: var(--ok); }
+.scripts-row .state.running .swatch { background: var(--ok); animation: phx-pulse 1s ease-in-out infinite; }
+.scripts-row .state.errored { color: var(--err); }
+.scripts-row .state.errored .swatch { background: var(--err); }
+.scripts-row .state.queued  { color: var(--warn); }
+.scripts-row .state.queued .swatch  { background: var(--warn); }
+.scripts-row .num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--coal-8);
+}
+
+/* ── System log ───────────────────────────────────────────────────── */
+.syslog-row {
+  display: grid;
+  grid-template-columns: 76px 60px 110px 1fr;
+  padding: 4px 14px;
+  gap: 8px;
+  border-bottom: 1px solid var(--coal-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  align-items: baseline;
+}
+.syslog-row .time   { color: var(--coal-7); }
+.syslog-row .level {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+.syslog-row .level.debug { color: var(--coal-7); }
+.syslog-row .level.info  { color: var(--info); }
+.syslog-row .level.warn  { color: var(--warn); }
+.syslog-row .level.error { color: var(--err); }
+.syslog-row .source { color: var(--ember-200); }
+.syslog-row .msg    { color: var(--coal-9); white-space: pre-wrap; }
+
+.panel-empty {
+  padding: 16px 18px;
+  font-size: 11px;
+  color: var(--coal-7);
+  font-family: var(--font-mono);
+}

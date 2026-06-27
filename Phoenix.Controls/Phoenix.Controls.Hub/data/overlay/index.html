@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Phoenix HUD</title>
+    <!-- QC28-05: styles live in overlay.css (self-hosted) so the future
+         Content-Security-Policy header (`default-src 'self'`) won't trip
+         on an inline <style> block. Same goes for compositor.js below —
+         loaded by src, never inlined or injected dynamically. -->
+    <link rel="stylesheet" href="/overlay.css">
+</head>
+<body>
+    <div id="stage">
+        <canvas id="layer"></canvas>
+    </div>
+    <div id="status">connecting…</div>
+    <script src="/compositor.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Left rail — Variables / Processes / Macros stack + search hint footer.
+    Sample items are populated in code-behind; Track 6 will replace each
+    section's ItemsSource with bindings to live graph data.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.LeftRail"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Architect.WinUI.Controls">
+
+    <Border Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,1,0">
+        <!-- Macros section absorbs the leftover vertical space (was an empty
+             row 3 — TODO 2026-05-07 P1 #4 "rail wastes vertical space").
+             AllowGrow=true unlocks RailSection's MaxHeight=220 cap on this
+             section only so growth actually flows; Variables / Processes
+             keep the cap because their item lists are usually short.
+
+              #10 — Row 0 is now the rail chrome header: hosts the
+             collapse-chevron toggle (which the host MainView /
+             ArchitectSiblingWindow drives to shrink RailColumn 220→32 and
+             back) and the "Show Inspector" toggle (which the host hooks to
+             pop the LogicInspector into its own floating window). The
+             chrome row sits above the existing Variables / Processes /
+             Macros sections so it stays glanceable even after a
+             section's items overflow. -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Rail chrome header — just the rail-collapse chevron + title.
+                 0.11.5 canvas-polish r3 removed the "Inspector ▸" toggle
+                 from this header per Majo's "hide/display toggle should be
+                 on top of the inspector (roll it up/down) and not part of
+                 the left panel" feedback. The roll-up affordance now lives
+                 on the inspector card itself (MainView.xaml's column-4
+                 InspectorChevronButton). The InspectorToggleRequested
+                 event on this control is preserved (it's still wired for
+                 the ArchitectSiblingWindow floating-inspector hook) but no
+                 longer has a visible source — external callers can fire it
+                 programmatically without breaking. -->
+            <Border x:Name="RailHeader"
+                    Grid.Row="0"
+                    Padding="6,4,4,4"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,0,0,1">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button x:Name="ChevronToggleButton"
+                            Grid.Column="0"
+                            Width="28"
+                            Height="24"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Foreground="{StaticResource CoalPaperBrush}"
+                            FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                            FontSize="11"
+                            ToolTipService.ToolTip="Collapse rail (chevron)"
+                            AutomationProperties.Name="Collapse rail"
+                            Content="&#xE76B;"
+                            Click="OnChevronToggleClicked" />
+
+                    <TextBlock x:Name="RailHeaderTitle"
+                               Grid.Column="1"
+                               VerticalAlignment="Center"
+                               Margin="6,0,0,0"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="12"
+                               CharacterSpacing="80"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Text="LIBRARY" />
+                </Grid>
+            </Border>
+
+            <local:RailSection x:Name="VariablesSection"
+                               Grid.Row="1"
+                               Title="Variables"
+                               ShowScope="True" />
+
+            <local:RailSection x:Name="ProcessesSection"
+                               Grid.Row="2"
+                               Title="Processes"
+                               Hint="long-running · async" />
+
+            <local:RailSection x:Name="MacrosSection"
+                               Grid.Row="3"
+                               Title="Macros"
+                               Hint="reusable subgraphs"
+                               AllowGrow="True" />
+
+            <!-- Hotkey-footer (redesign R6 "Architect rail / inspector /
+                 hotkey-footer paint refresh"). Routes through the canonical
+                 EyebrowTextStyle so the rail's bottom hint matches the
+                 eyebrow chrome used elsewhere in the suite (inspector
+                 eyebrows, timeline header, Visualist trigger header). The
+                 mono font from the prior pass was reading too "raw data";
+                 the eyebrow style is the standing convention for muted
+                 sectional hints. -->
+            <Border Grid.Row="4"
+                    Padding="10,8,10,8"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,1,0,0">
+                <!--  Footer glyph reads Ctrl+F (not bare F) — 
+                     rebinds bare F to "Frame Selection" on the canvas, so the
+                     rail-search hint must already match the post-rebind reality
+                     to avoid pointing at the wrong action. -->
+                <TextBlock Style="{StaticResource EyebrowTextStyle}"
+                           Text="Ctrl+F  SEARCH  ·  RMB  SPAWN" />
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

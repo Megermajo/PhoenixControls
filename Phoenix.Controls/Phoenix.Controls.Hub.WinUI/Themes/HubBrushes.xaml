@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Hub-local compound brushes.
+
+    Tokens here are compositions of the canonical palette in
+    Phoenix.Controls.Shared.WinUI/Themes/PhoenixDark.xaml — gradients,
+    multi-stop fills, etc. — that are Hub-specific and don't need to
+    live in the cross-pillar dictionary (see
+    feedback_visualist_architect_chrome_independence.md). Architect and
+    Visualist define their own equivalents.
+
+    Must merge AFTER PhoenixDark.xaml so its StaticResource lookups
+    resolve. Wired into App.xaml.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Shared header gradient: top-to-bottom warm-coal → coal-raised.
+        Previously inlined in HubChrome.xaml (main bar) and
+        PanelHeader.xaml (each panel) with literal hex values; pulling
+        it into a single token keeps the two surfaces in sync if the
+        coal ramp ever shifts.
+
+        Iteration history:
+          0.10.5  #1B1713 → #14110D  (~2 luminance steps above shell;
+                                       blended into the hex workspace).
+          0.10.6  #241F1A → #1A1612  (Majo: still reads as transparent —
+                                       too close to surrounding chrome).
+          0.10.8  #332B22 → #1E1915  (NOW). Bumped the top stop a full
+                                       ~12 luminance steps above shell
+                                       #0B0907 so the header reads as
+                                       actual chrome, not a tonal whisper.
+                                       Top sits warm-side of CoalHover
+                                       #2C251D so a Hub button hover state
+                                       still feels brighter than the
+                                       resting header. Bottom stays in
+                                       the CoalRaised family so the seam
+                                       to the panel body (CoalSurface
+                                       #14110D) stays subtle.
+    -->
+    <LinearGradientBrush x:Key="PanelHeaderGradientBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Offset="0.0" Color="#332B22" />
+        <GradientStop Offset="1.0" Color="#1E1915" />
+    </LinearGradientBrush>
+
+    <!--
+        Warm hairline at the bottom of each PanelHeader. The default
+        CoalDividerBrush is almost invisible against the gradient above;
+        this token gives the seam between header and body the same warm
+        temperature as the rest of the brand chrome. EmberDeep at ~33%
+        alpha (#55C8822B; bumped from 20%/#33 in 0.10.8 so the seam reads
+        as a clear accent edge on the widened gradient) so it pops
+        against the lighter header top without going neon.
+    -->
+    <SolidColorBrush x:Key="PanelHeaderAccentBrush" Color="#55C8822B" />
+
+    <!--
+        HubChrome row-height tokens — Hub UI sweep P2 row-height tokenisation.
+        Hub-local because HubChrome.xaml is the only consumer; Architect and
+        Visualist author their own chrome per the per-pillar chrome rule.
+        Values mirror the original inline literals (3 / 30 / 34) so the
+        visual outcome stays bit-identical:
+          - HubChromeBrassRowHeight   (3)  brass hairline.
+          - HubChromeMainRowHeight    (30) mark + wordmark + menus + drag + filename + caption reserve.
+          - HubChromePillarRowHeight  (34) pillar tab strip.
+    -->
+    <GridLength x:Key="HubChromeBrassRowHeight">3</GridLength>
+    <GridLength x:Key="HubChromeMainRowHeight">30</GridLength>
+    <GridLength x:Key="HubChromePillarRowHeight">34</GridLength>
+
+</ResourceDictionary>

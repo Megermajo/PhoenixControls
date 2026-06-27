@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Single-HUB collapse (TODO.md P0 #3) — Architect.WinUI is now a library
+    consumed by Hub.WinUI's pillar-tab navigation, not a standalone exe.
+    Dropped: <OutputType>WinExe</OutputType>, <ApplicationIcon>,
+    <RuntimeIdentifiers>, <WindowsPackageType>, <EnableMsixTooling>. The
+    PRI for the linked PhoenixDark theme + this assembly's XAML pages is
+    still produced via UseWinUI=true; Hub.WinUI's exe build merges it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Phoenix.Controls.Architect.WinUI</RootNamespace>
+    <!-- UseRidGraph=true keeps the WinAppSDK's transitive win10-* RID list
+         valid under .NET 9 SDK; without it the legacy win10-arm /
+         win10-x64-aot etc. entries trigger NETSDK1083. -->
+    <UseRidGraph>true</UseRidGraph>
+    <EnableMsixTooling>true</EnableMsixTooling>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.*" />
+    <!--
+      [perf/win2d-immediate-canvas] Win2D (Direct2D wrapper) backs the
+      immediate-mode canvas renderer (LogicCanvasView.Win2D.cs) — the permanent
+      fix for the large-graph death-freeze. 1.2.x is the WinAppSDK-1.5 line
+      (1.3+ requires WinAppSDK 1.6); pinned to stay in lockstep with the
+      Microsoft.WindowsAppSDK 1.5.* reference above. The package is referenced
+      from this library and flows transitively into Hub.WinUI's exe output.
+    -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Phoenix.Controls.Shared\Phoenix.Controls.Shared.csproj" />
+    <ProjectReference Include="..\Phoenix.Controls.Shared.WinUI\Phoenix.Controls.Shared.WinUI.csproj" />
+    <!--
+      T12 (parity-plan G3) — bridge to the WinForms Architect project for the canonical
+      NodeRegistry, GraphSerializer, ExporterRegistry and ScriptExporter. Mirrors the
+      Hub.WinUI → Phoenix.Controls.Hub bridge already in place. Coupling is short-lived:
+      T15 (WinForms retirement) deletes the WinForms project entirely; until then this
+      lets Architect.WinUI round-trip .phxg → .phx without re-implementing the exporter.
+    -->
+    <ProjectReference Include="..\Phoenix.Controls.Architect\Phoenix.Controls.Architect.csproj" />
+  </ItemGroup>
+
+  <!--
+    Link Track 1's canonical PhoenixDark.xaml as a Page so it compiles into
+    Architect.WinUI's PRI and is reachable via ms-appx:///Themes/PhoenixDark.xaml.
+    Track 1's Shared.WinUI is intentionally a plain library (no PRI), so each
+    consuming WinUI exe links the source-of-truth XAML rather than referencing it.
+  -->
+  <ItemGroup>
+    <Page Include="..\Phoenix.Controls.Shared.WinUI\Themes\PhoenixDark.xaml">
+      <Link>Themes\PhoenixDark.xaml</Link>
+    </Page>
+    <Page Include="..\Phoenix.Controls.Shared.WinUI\Themes\PhoenixIcons.xaml">
+      <Link>Themes\PhoenixIcons.xaml</Link>
+    </Page>
+    <!--
+      Sprint E (focus-visual sweep). Architect owns Themes\FocusVisuals.xaml;
+      the .NET SDK auto-discovers it via the implicit <Page> glob, so no
+      explicit Include is needed here. MainView merges it at
+      UserControl.Resources rather than at App-level so Architect's overrides
+      win inside its own subtree (per
+      feedback_visualist_architect_chrome_independence.md).
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <!--
+       DPAPI-backed at-rest protection for AppConfig secrets.
+      Required because ProtectedData ships out-of-band from the .NET 8 BCL on
+      net8.0-windows; without this reference DpapiSecretStore fails to compile.
+    -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- BugFixVerificationTests references ScriptEngine.SplitListWithEscape (internal). -->
+    <InternalsVisibleTo Include="Phoenix.Controls.Tests" />
+  </ItemGroup>
+
+  <!--
+    Localization bundles — one JSON per language, flat dotted keys covering the whole suite.
+    Single canonical source here in Shared; each consumer (Hub/Architect/Visualist) inherits
+    via ProjectReference, so every exe's bin/{config}/net8.0-windows/lang/ ends up populated
+    without per-project duplication. en.json is the canonical/fallback bundle.
+  -->
+  <ItemGroup>
+    <Content Include="lang\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>lang\%(Filename)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
+</Project>

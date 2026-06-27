@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Controls.LayerRail"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:Phoenix.Controls.Visualist.WinUI.Models"
+    xmlns:converters="using:Phoenix.Controls.Visualist.WinUI.Controls.Converters">
+
+    <UserControl.Resources>
+        <converters:LayerActiveToBrushConverter x:Key="LayerActiveToBrush" />
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border
+            Grid.Row="0"
+            Padding="12,10,12,6"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,0,1">
+            <TextBlock
+                Style="{StaticResource EyebrowTextStyle}"
+                Text="LAYERS" />
+        </Border>
+
+        <!-- ScrollViewer-around-ListView wrapper dropped — ListView already
+             scrolls its own viewport; the outer ScrollViewer would surface
+             a double scrollbar the moment a LayerListItem grew past the
+             rail height (TODO 2026-05-07 P3). -->
+        <!-- Finding #22 — empty-state hint. Row 1 hosts BOTH the ListView and a
+             muted centered hint; the hint is overlaid on the ListView and toggled
+             by Visibility from code-behind (see LayerRail.xaml.cs), mirroring
+             MediaLibraryPanel's EmptyHint pattern. The rail Grid keeps its
+             CoalSurfaceBrush Background so the row stays painted when empty. -->
+        <ListView
+            x:Name="LayersList"
+            Grid.Row="1"
+            ItemsSource="{Binding Layers}"
+            SelectedItem="{Binding SelectedLayerItem, Mode=TwoWay}"
+            Background="Transparent"
+            BorderThickness="0"
+            SelectionMode="Single">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin"  Value="0" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="MinHeight" Value="0" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:LayerListItem">
+                        <Border
+                            Padding="12,8"
+                            BorderBrush="{StaticResource CoalRaisedBrush}"
+                            BorderThickness="0,0,0,1">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <!-- Sprint K — Fill drives off LayerListItem.Active
+                                         (INotifyPropertyChanged) so the dot reflects whether at
+                                         least one OBS browser source is currently connected to
+                                         this layer's HUD WS. Pre-Sprint-K it was hardcoded
+                                         OkBrush regardless of presence. -->
+                                    <Ellipse
+                                        Width="6" Height="6"
+                                        Fill="{x:Bind Active, Mode=OneWay, Converter={StaticResource LayerActiveToBrush}}" />
+                                    <TextBlock
+                                        Style="{StaticResource MonoBodyTextStyle}"
+                                        FontSize="12"
+                                        Text="{x:Bind FileName}" />
+                                </StackPanel>
+                                <TextBlock
+                                    Style="{StaticResource MonoSmallTextStyle}"
+                                    Margin="12,2,0,0">
+                                    <Run Text="{x:Bind Width}" />
+                                    <Run Text="×" />
+                                    <Run Text="{x:Bind Height}" />
+                                    <Run Text="  ·  " />
+                                    <Run Text="{x:Bind Fps}" />
+                                    <Run Text=" fps" />
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+        </ListView>
+
+        <TextBlock
+            x:Name="EmptyHint"
+            Grid.Row="1"
+            Visibility="Collapsed"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            TextAlignment="Center"
+            TextWrapping="Wrap"
+            MaxWidth="200"
+            FontSize="11"
+            Foreground="{StaticResource CoalMutedTextBrush}"
+            Text="No layers yet — File → New Layer to start" />
+    </Grid>
+</UserControl>

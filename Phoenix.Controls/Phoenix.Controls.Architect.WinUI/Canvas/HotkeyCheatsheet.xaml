@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Architect canvas hotkey cheatsheet overlay. Anchored to the bottom-left
+    of the canvas Grid (HostRoot child in LogicCanvasView), so it appears
+    in every Architect surface that hosts a LogicCanvasView — main
+    pillar tab, SubGraphWindow, ArchitectSiblingWindow.
+
+    Two visual modes driven by the in-widget toggle button (no global
+    keyboard chord — F1 is already taken by the per-node documentation /
+    full KeyboardShortcutsDialog fallback):
+
+      • Expanded — chip header + section header + entry rows.
+      • Collapsed — chip-only ("Hotkeys" badge), preserving the toggle
+        button as the click target to re-expand.
+
+    Per feedback_visualist_architect_chrome_independence.md the Visualist
+    analogue is a separate XAML in Visualist.WinUI, not a shared control —
+    visually consistent today, free to diverge as each pillar's UX evolves.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Canvas.HotkeyCheatsheet"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    HorizontalAlignment="Left"
+    VerticalAlignment="Bottom"
+    Margin="12,0,0,12"
+    IsTabStop="False">
+
+    <UserControl.Resources>
+        <Style x:Key="CheatsheetEyebrow" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+            <Setter Property="FontSize" Value="9" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="220" />
+            <Setter Property="Foreground" Value="{StaticResource EmberPrimaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="CheatsheetContextLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="120" />
+            <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="CheatsheetCombo" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource CoalPaperBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+        </Style>
+
+        <Style x:Key="CheatsheetDescription" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource CoalBodyTextBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <!-- Chip toggle button — bare, square-ish, hover-lifted. Stays compact
+             so the collapsed state is a 24×24 px footprint and the expanded
+             header gains a "—" / "+" glyph at the right edge. -->
+        <Style x:Key="CheatsheetToggleButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="6,2,6,2" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+    </UserControl.Resources>
+
+    <Border x:Name="OuterBorder"
+            Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="1"
+            CornerRadius="6"
+            Padding="0"
+            MinWidth="0">
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Header strip — eyebrow + context label + toggle.
+                 Click anywhere on the strip toggles expand/collapse. -->
+            <Border x:Name="HeaderStrip"
+                    Grid.Row="0"
+                    Background="Transparent"
+                    Padding="10,5,4,5"
+                    PointerEntered="OnHeaderPointerEntered"
+                    PointerExited="OnHeaderPointerExited"
+                    Tapped="OnHeaderTapped">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="HOTKEYS"
+                                   Style="{StaticResource CheatsheetEyebrow}" />
+                        <TextBlock x:Name="ContextLabel"
+                                   Text="CANVAS"
+                                   Style="{StaticResource CheatsheetContextLabel}" />
+                    </StackPanel>
+
+                    <Button x:Name="ToggleButton"
+                            Grid.Column="2"
+                            Style="{StaticResource CheatsheetToggleButton}"
+                            Content="—"
+                            AutomationProperties.Name="Collapse hotkey cheatsheet"
+                            ToolTipService.ToolTip="Collapse"
+                            Click="OnToggleClicked" />
+                </Grid>
+            </Border>
+
+            <!-- Brass hairline between header and body (mirrors the modal
+                 reference's wordmark accent). -->
+            <Rectangle x:Name="BodyHairline"
+                       Grid.Row="1"
+                       Height="1"
+                       Fill="{StaticResource BrassGradientBrush}"
+                       Visibility="Visible" />
+
+            <!-- Body — populated from code-behind based on context. -->
+            <Border x:Name="BodyBorder"
+                    Grid.Row="2"
+                    Padding="10,8,10,10"
+                    Visibility="Visible">
+                <Grid x:Name="EntryGrid">
+                    <Grid.ColumnDefinitions>
+                        <!-- Chord column — fixed wide enough for the longest
+                             realistic chord ("Ctrl+Shift+Z" / "Arrow keys") -->
+                        <ColumnDefinition Width="Auto" MinWidth="110" />
+                        <ColumnDefinition Width="Auto" MinWidth="180" />
+                    </Grid.ColumnDefinitions>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

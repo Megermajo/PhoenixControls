@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Controls.PillarTab"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    IsTabStop="True"
+    UseSystemFocusVisuals="True"
+    FocusVisualPrimaryBrush="{StaticResource EmberPrimaryBrush}"
+    FocusVisualSecondaryBrush="{StaticResource CoalCardBrush}"
+    KeyDown="OnRootKeyDown">
+
+    <Border x:Name="Root"
+            Height="30"
+            Padding="10,0,14,0"
+            CornerRadius="4,4,0,0"
+            VerticalAlignment="Bottom"
+            BorderThickness="0"
+            PointerEntered="OnPointerEntered"
+            PointerExited="OnPointerExited"
+            PointerPressed="OnPointerPressed">
+        <!-- Per-tab SolidColorBrush state — chrome.jsx "transition: background
+             120 ms, color 120 ms" idiom. The static theme brushes resolve to
+             frozen instances shared across the dictionary, so we own a per-
+             tab copy of Background / BorderBrush / Foreground here and run
+             ColorAnimation against their Color properties on each state
+             change. Initial colors mirror the inactive defaults — code-behind
+             flips them as the tab is hovered, clicked, or marked Active. -->
+        <Border.Background>
+            <SolidColorBrush x:Name="RootBackgroundBrush" Color="Transparent" />
+        </Border.Background>
+        <Border.BorderBrush>
+            <SolidColorBrush x:Name="RootBorderBrush" Color="Transparent" />
+        </Border.BorderBrush>
+
+        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <Border x:Name="SigilBox"
+                    Width="18" Height="18"
+                    CornerRadius="2"
+                    BorderThickness="1"
+                    BorderBrush="{StaticResource CoalDividerSubtleBrush}">
+                <TextBlock x:Name="SigilGlyph"
+                           Text="H"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource CoalPaperBrush}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center" />
+            </Border>
+            <TextBlock x:Name="LabelText"
+                       Text="HUB"
+                       FontFamily="{StaticResource DisplayFont}"
+                       FontSize="14"
+                       CharacterSpacing="80"
+                       VerticalAlignment="Center">
+                <TextBlock.Foreground>
+                    <!-- Local brush kept because it's Color-animated by code-behind
+                         on PointerOver / Active state changes (ColorAnimation can't
+                         target frozen theme-dictionary brushes). Initial value mirrors
+                         CoalSecondaryTextBrush per Design_Orders §2 — the canonical
+                         coal-secondary text tier (#9C8A72). -->
+                    <SolidColorBrush x:Name="LabelForegroundBrush" Color="#9C8A72" />
+                </TextBlock.Foreground>
+            </TextBlock>
+        </StackPanel>
+    </Border>
+</UserControl>

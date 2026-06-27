@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  B14 (audit/winui-regressions-2026-05-24) — custom mouse-anchored tooltip
+  primitive. Pre-T15 Architect rendered a rich title + glyph + body tooltip
+  on socket / node / pill hover; post-T15 fell back to plain ToolTipService,
+  losing the iconography and the mouse-anchored placement Design_Orders §4.9
+  called out.
+
+  Implementation: a UserControl that wraps a Microsoft.UI.Xaml.Controls.Primitives.Popup,
+  rendering a Border with CoalRaisedBrush background, CoalDividerBrush 1px
+  outline, drop shadow, and a two-row TextBlock stack (Title bold 12pt +
+  Body regular 10pt). Optional 16x16 FontIcon glyph to the left of the title.
+
+  The Show / Hide entry points are on the code-behind — XAML here just lays
+  out the visual shell that the popup hosts.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.TooltipPopup"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="Transparent"
+    IsHitTestVisible="False">
+    <Border x:Name="ShellBorder"
+            Background="{StaticResource CoalRaisedBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="10,8,10,8"
+            MaxWidth="320">
+        <Border.Shadow>
+            <ThemeShadow />
+        </Border.Shadow>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Optional 16x16 glyph (FontIcon). Collapsed when no glyph is supplied. -->
+            <FontIcon x:Name="GlyphIcon"
+                      Grid.Row="0"
+                      Grid.Column="0"
+                      Width="16"
+                      Height="16"
+                      Margin="0,0,6,0"
+                      FontSize="12"
+                      Foreground="{StaticResource CoalPaperBrush}"
+                      VerticalAlignment="Center"
+                      Visibility="Collapsed" />
+
+            <TextBlock x:Name="TitleText"
+                       Grid.Row="0"
+                       Grid.Column="1"
+                       FontSize="12"
+                       FontWeight="SemiBold"
+                       Foreground="{StaticResource CoalPaperBrush}"
+                       TextWrapping="Wrap" />
+
+            <TextBlock x:Name="BodyText"
+                       Grid.Row="1"
+                       Grid.Column="1"
+                       Margin="0,4,0,0"
+                       FontSize="10"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed" />
+        </Grid>
+    </Border>
+</UserControl>

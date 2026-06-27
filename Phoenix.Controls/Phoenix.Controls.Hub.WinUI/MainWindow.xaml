@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Phoenix.Controls.Hub.WinUI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Phoenix.Controls.Hub.WinUI.Controls">
+
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- HubChrome (3+30+34=67) -->
+            <RowDefinition Height="*" />      <!-- Pillar workspace region -->
+        </Grid.RowDefinitions>
+
+        <controls:HubChrome x:Name="ChromeBar" Grid.Row="0" />
+
+        <!-- Single-HUB collapse (TODO.md P0 #3): MainPaneRegion swaps
+             between the Hub workspace (status strip + 4 panels) and the
+             embedded Architect / Visualist views as the user clicks the
+             pillar tabs. Hub workspace is wired in code-behind from
+             SetPanels via HubWorkspaceView; pillar views are constructed
+             lazily on first activation. -->
+        <ContentControl x:Name="MainPaneRegion"
+                        Grid.Row="1"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch" />
+    </Grid>
+</Window>

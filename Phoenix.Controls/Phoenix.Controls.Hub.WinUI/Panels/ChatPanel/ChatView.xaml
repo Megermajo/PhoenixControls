@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.ChatPanel.ChatView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.ChatPanel"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Chat panel"
+    AutomationProperties.HelpText="Twitch chat messages colored by role (Broadcaster, Moderator, VIP, Subscriber, Regular). Type in the composer at the bottom and press Enter or Send to message the channel as the configured bot account.">
+
+    <Border Background="{StaticResource CoalSurfaceBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource Radius3Corner}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <hdr:PanelHeader Grid.Row="0"
+                             Eyebrow="02"
+                             TitleKey="panel.chat.title"
+                             Title="Chat">
+                <hdr:PanelHeader.RightContent>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <!-- Counter shows messages-buffered / ring-capacity ("0 / 2000").
+                             ToolTip spells out the semantics so the bare fraction isn't
+                             ambiguous; the chip itself stays compact to fit the header. -->
+                        <TextBlock FontFamily="{StaticResource MonoFont}"
+                                   FontSize="10"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   ToolTipService.ToolTip="Messages buffered / ring-buffer capacity"
+                                   Text="{x:Bind ViewModel.CountText, Mode=OneWay}" />
+                        <Border Width="1" Background="{StaticResource CoalDividerBrush}" Margin="2,2" />
+                        <Button x:Name="PopOutButton"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="6,2"
+                                Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                Click="OnPopOutClick">
+                            <!-- Hub UI sweep 2026-05-22 — added "pop-out"
+                                 label next to the icon (matches SystemLog
+                                 pattern). Tooltip + AutomationProperties.Name
+                                 + label text flow from
+                                 ChatView.ApplyLocalizedStrings via Localizer.T. -->
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                <PathIcon Data="{StaticResource PhoenixIcon_PopOut}"
+                                          Width="{StaticResource IconSizeS}"
+                                          Height="{StaticResource IconSizeS}"
+                                          Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                <TextBlock x:Name="PopOutLabel"
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </hdr:PanelHeader.RightContent>
+            </hdr:PanelHeader>
+
+            <ScrollViewer Grid.Row="1"
+                          x:Name="ChatScrollViewer"
+                          HorizontalScrollMode="Disabled"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
+                          ViewChanged="OnChatScrollViewChanged"
+                          Padding="0,4,0,4">
+                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Rows, Mode=OneWay}"
+                               AutomationProperties.LiveSetting="Polite"
+                               AutomationProperties.Name="Chat messages">
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:ChatRowVm">
+                            <Grid Padding="14,5,14,5" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <!-- Timestamp (mono-value, Phase A token) -->
+                                    <ColumnDefinition Width="Auto" />
+                                    <!-- Role-glyph badge (always rendered — every role
+                                         permutation resolves to a non-null geometry) -->
+                                    <ColumnDefinition Width="16" />
+                                    <!-- Username (role-colored) -->
+                                    <ColumnDefinition Width="Auto" />
+                                    <!-- Body -->
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
+                                           Style="{StaticResource MonoValueStyle}"
+                                           VerticalAlignment="Center"
+                                           Text="{x:Bind Timestamp}" />
+
+                                <PathIcon Grid.Column="1"
+                                          Width="14" Height="14"
+                                          VerticalAlignment="Center"
+                                          HorizontalAlignment="Center"
+                                          Foreground="{x:Bind BadgeBrush, Mode=OneWay}"
+                                          ToolTipService.ToolTip="{x:Bind BadgeLabel}"
+                                          AutomationProperties.Name="{x:Bind BadgeLabel}"
+                                          local:ChatBadgeData.SafeData="{x:Bind BadgeGeometry}" />
+
+                                <TextBlock Grid.Column="2"
+                                           VerticalAlignment="Center"
+                                           Foreground="{x:Bind UsernameBrush, Mode=OneWay}"
+                                           FontWeight="SemiBold"
+                                           FontSize="12"
+                                           Text="{x:Bind Username}" />
+
+                                <TextBlock Grid.Column="3"
+                                           Margin="6,0,0,0"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           Text="{x:Bind Body}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </ScrollViewer>
+
+            <Border Grid.Row="2"
+                    BorderBrush="{StaticResource CoalDividerBrush}"
+                    BorderThickness="0,1,0,0"
+                    Padding="8">
+                <Grid RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <!-- Reconnection hint, only visible when status != Connected -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Composer row -->
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource WarnBrush}"
+                               Text="{x:Bind ViewModel.ConnectionHintText, Mode=OneWay}"
+                               Visibility="{x:Bind ViewModel.ConnectionHintVisibility, Mode=OneWay}"
+                               AutomationProperties.LiveSetting="Polite" />
+
+                    <Grid Grid.Row="1" ColumnSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- PlaceholderText set from code-behind via Localizer.T() in hub-ui-sweep localization batch.
+                             Background bumped from CoalShellBrush (workspace base) to CoalCardBrush so the
+                             input target reads as a discrete card against the panel's CoalSurfaceBrush body —
+                             pre-fix the TextBox blended into the workspace background and the SEND button
+                             appeared orphaned. -->
+                        <TextBox Grid.Column="0"
+                                 x:Name="DraftBox"
+                                 Background="{StaticResource CoalCardBrush}"
+                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                 BorderThickness="1"
+                                 FontFamily="{StaticResource SansFont}"
+                                 FontSize="12"
+                                 IsEnabled="{x:Bind ViewModel.IsConnected, Mode=OneWay}"
+                                 KeyDown="OnDraftKeyDown"
+                                 Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <!-- Content set from code-behind via Localizer.T() in hub-ui-sweep localization batch.
+                             Opacity dims when disconnected — the explicit Background="EmberShadow"
+                             override above suppresses WinUI's default Disabled visual state, so the
+                             button stays ember-colored even when IsEnabled flips false. Binding
+                             Opacity directly via IsConnected restores the disabled affordance.
+                             (Hub UI sweep 2026-05-22.) -->
+                        <Button x:Name="SendButton"
+                                Grid.Column="1"
+                                Background="{StaticResource EmberShadowBrush}"
+                                Foreground="{StaticResource CoalShellBrush}"
+                                BorderBrush="{StaticResource EmberDeepBrush}"
+                                BorderThickness="1"
+                                FontFamily="{StaticResource SansFont}"
+                                FontSize="11"
+                                FontWeight="SemiBold"
+                                CharacterSpacing="20"
+                                Padding="14,6"
+                                IsEnabled="{x:Bind ViewModel.IsConnected, Mode=OneWay}"
+                                Opacity="{x:Bind ViewModel.SendButtonOpacity, Mode=OneWay}"
+                                Click="OnSendClick" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

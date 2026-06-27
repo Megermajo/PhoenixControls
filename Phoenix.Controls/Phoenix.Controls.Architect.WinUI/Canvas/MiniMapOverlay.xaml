@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Canvas.MiniMapOverlay"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Architect.WinUI.Canvas"
+    Width="200" Height="140"
+    HorizontalAlignment="Right"
+    VerticalAlignment="Bottom"
+    Margin="0,0,12,12">
+
+    <!--
+         — Mini-map / overview navigator.
+
+        Compact 200×140 DIP panel anchored to the bottom-right of the canvas
+        host (LogicCanvasView.HostRoot). Renders every NodeViewModel +
+        FrameViewModel as a scaled rect (category-coloured via
+        NodeViewModel.HeaderColor; frames as semi-transparent fills behind
+        nodes). A translucent gold-bordered viewport rectangle on top tracks
+        the visible canvas region; click-to-jump centres the canvas viewport
+        on the clicked minimap point, and dragging the viewport rect pans
+        continuously.
+
+        Paint code lives in Architect.WinUI per
+        feedback_visualist_architect_chrome_independence.md — no shared
+        Phoenix.Controls.Shared/UI/ module. Visualist will get its own
+        minimap when / if needed; copying the code is the deliberate rule.
+    -->
+    <!--
+        PointerPressed / Moved / Released / Canceled / CaptureLost on the
+        root grid mark routed pointer events as handled so they never
+        bubble out of the minimap subtree into the underlying
+        LogicCanvasView.HostRoot. Pre-fix a click on the bare MapSurface
+        (anywhere not covered by the ViewportRect, which already sets
+        e.Handled) would bubble up to HostRoot.PointerPressed and start a
+        canvas marquee — combined with the Tapped-driven CenterRequested
+        jump, the canvas mid-state race wedged Architect into an
+        unrecoverable freeze (Majo, 2026-05-24: "clicking on the map to
+        jump the app froze and had to be closed via external help"). The
+        existing OnMapSurfaceTapped + OnViewportPointer* handlers still
+        run — Tapped is a gesture computed from the underlying pointer
+        events and fires regardless of whether PointerPressed was marked
+        handled.
+    -->
+    <Grid x:Name="HostBorder"
+          Background="{StaticResource CoalSurfaceBrush}"
+          BorderBrush="{StaticResource CoalDividerBrush}"
+          BorderThickness="1"
+          CornerRadius="3"
+          PointerPressed="OnMinimapPointerPressed"
+          PointerMoved="OnMinimapPointerMoved"
+          PointerReleased="OnMinimapPointerReleased"
+          PointerCanceled="OnMinimapPointerReleased"
+          PointerCaptureLost="OnMinimapPointerReleased">
+
+        <!-- 0.11.x polish — Majo retired the "MAP" header strip + in-overlay
+             × button. The minimap is now a chrome-less thumbnail panel; the
+             View → Minimap toggle (also 's chord) still controls
+             visibility from outside the overlay so users have the same
+             affordance, just without the on-overlay clutter. -->
+
+        <!-- Map surface — fills the panel. Tapped → centre the viewport on
+             the clicked canvas-space coordinate; pointer pressed on the
+             ViewportRect → start drag-pan. -->
+        <Canvas x:Name="MapSurface"
+                Background="Transparent"
+                Tapped="OnMapSurfaceTapped">
+            <!-- FrameLayer renders behind NodeLayer so frame fills don't
+                 obscure node category dots. -->
+            <Canvas x:Name="FrameLayer" />
+            <Canvas x:Name="NodeLayer" />
+            <!-- Viewport rectangle — translucent gold border + faint fill,
+                 driven by host canvas pan/zoom + viewport size. Pointer
+                 events drive the drag-pan gesture. -->
+            <Rectangle x:Name="ViewportRect"
+                       Stroke="{StaticResource SelectionBrush}"
+                       StrokeThickness="1.5"
+                       Fill="{StaticResource SelectionDimBrush}"
+                       IsHitTestVisible="True"
+                       PointerPressed="OnViewportPointerPressed"
+                       PointerMoved="OnViewportPointerMoved"
+                       PointerReleased="OnViewportPointerReleased"
+                       PointerCanceled="OnViewportPointerReleased"
+                       PointerCaptureLost="OnViewportPointerReleased" />
+        </Canvas>
+    </Grid>
+</UserControl>

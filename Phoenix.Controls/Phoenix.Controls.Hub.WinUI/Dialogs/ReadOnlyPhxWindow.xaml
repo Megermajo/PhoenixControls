@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Phoenix.Controls.Hub.WinUI.Dialogs.ReadOnlyPhxWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="RootGrid"
+          Background="{StaticResource CoalSurfaceBrush}"
+          Loaded="OnRootLoaded">
+        <!-- Sprint F read-only .phx viewer. See ReadOnlyPhxWindow.xaml.cs for the
+             full rationale; .phx files are generated runtime scripts that must
+             never be edited by hand, so this window locks its TextBox to
+             IsReadOnly. -->
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Generated-output banner. Ember-on-coal so it reads as a warning. -->
+        <Border Grid.Row="0"
+                Background="{StaticResource CoalCardBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,12,16,12">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Spacing="4">
+                    <TextBlock x:Name="BannerTitle"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="11"
+                               CharacterSpacing="160"
+                               Foreground="{StaticResource Ember200Brush}"
+                               Text="GENERATED FILE — READ ONLY" />
+                    <TextBlock x:Name="BannerBody"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Foreground="{StaticResource CoalBodyTextBrush}"
+                               Text="This .phx is generated from its matching .phxg graph. Hand-edits will be overwritten on the next Architect save. Edit the graph instead." />
+                    <TextBlock x:Name="SiblingGraphPath"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               TextWrapping="NoWrap"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               Visibility="Collapsed" />
+                </StackPanel>
+
+                <Button x:Name="OpenGraphButton"
+                        Grid.Column="1"
+                        VerticalAlignment="Top"
+                        Content="Open graph in Architect"
+                        Visibility="Collapsed"
+                        Click="OnOpenGraphClicked" />
+            </Grid>
+        </Border>
+
+        <!-- File-path strip. Shows which file is open. -->
+        <Border Grid.Row="1"
+                Background="{StaticResource CoalShellBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="16,6,16,6">
+            <TextBlock x:Name="FilePathText"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="10"
+                       TextWrapping="NoWrap"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+        </Border>
+
+        <!-- Body: read-only TextBox. IsReadOnly blocks paste/cut/keypress
+             at the WinUI TextBox level; the user cannot type. Mono font and
+             NoWrap so the indented Pythonic .phx source reads as authored.
+             ScrollViewer attached properties drive horizontal + vertical
+             scrolling for long lines / long files. -->
+        <TextBox x:Name="BodyText"
+                 Grid.Row="2"
+                 Margin="16,12,16,12"
+                 IsReadOnly="True"
+                 AcceptsReturn="True"
+                 IsSpellCheckEnabled="False"
+                 TextWrapping="NoWrap"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 FontFamily="{StaticResource MonoFont}"
+                 FontSize="12"
+                 Background="{StaticResource CoalShellBrush}"
+                 Foreground="{StaticResource CoalPaperBrush}"
+                 BorderBrush="{StaticResource CoalDividerBrush}"
+                 BorderThickness="1" />
+
+        <!-- Footer toolbar: Copy + Close. Copy uses DataPackage / Clipboard.SetContent. -->
+        <Border Grid.Row="3"
+                Background="{StaticResource CoalSurfaceBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="16,10,16,10">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="CopyFeedbackText"
+                           Grid.Column="0"
+                           VerticalAlignment="Center"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           Text="" />
+
+                <Button x:Name="CopyButton"
+                        Grid.Column="1"
+                        Content="Copy to clipboard"
+                        Click="OnCopyClicked" />
+                <Button x:Name="CloseButton"
+                        Grid.Column="2"
+                        Content="Close"
+                        Click="OnCloseClicked" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

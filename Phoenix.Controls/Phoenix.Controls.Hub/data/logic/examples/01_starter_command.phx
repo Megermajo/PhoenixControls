@@ -1,0 +1,8 @@
+# Script — Generated from "starter_command"
+# Exported: 2026-06-24 14:20
+
+on_chat:
+    if {user.command} == "hi":
+        # [Twitch.SendChat]
+        twitch.send_chat(text.format("Hello {0}, welcome!", "", "", ""))
+

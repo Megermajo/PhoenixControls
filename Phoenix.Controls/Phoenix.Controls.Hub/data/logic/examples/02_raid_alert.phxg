@@ -1,0 +1,915 @@
+{
+  "Name": "raid_alert",
+  "Nodes": [
+    {
+      "Id": "21245792-0a07-4886-9043-fe21cb522a31",
+      "Title": "Twitch.Raid",
+      "Category": "Events",
+      "Location": {
+        "IsEmpty": false,
+        "X": 60,
+        "Y": 80
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 104
+      },
+      "HeaderColor": -14513374,
+      "Sockets": [
+        {
+          "Id": "42402503-144d-4fa9-8efb-314da3df8750",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "3e6e3ca0-5be6-42cd-a2e1-174c63761a5f",
+          "Name": "User",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4b91291a-ef25-4a2b-bc46-a25ce8335cb3",
+          "Name": "Viewers",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "66ba1517-7ef3-40da-b56e-b179bc88873c",
+      "Title": "Text.Format",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 926,
+        "Y": 745
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 389,
+        "Height": 148
+      },
+      "HeaderColor": -16744320,
+      "Sockets": [
+        {
+          "Id": "aeb92160-98ea-480e-9d8c-9480c139cd04",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "31d2ea7f-646b-4732-8250-98cadb4f9322",
+          "Name": "A",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c3b419fc-e275-4455-b7f2-85d83e2f80b9",
+          "Name": "B",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "626f5ccc-9090-4ceb-8c5a-b7aadb9de21e",
+          "Name": "C",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "4dd5537c-7a8d-4ded-b68c-0eedd23d0927",
+          "Name": "D",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "9ac8a346-f6cd-4c2e-ab26-4a6e7e7dda24",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 375,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "\u0022Thanks for the raid {A}!\u0022",
+        "A": "",
+        "B": "",
+        "C": "",
+        "D": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "5b1aa0bb-b39b-4c38-951d-d5eb20112607",
+      "Title": "Twitch.SendChat",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 2228,
+        "Y": -93
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7077677,
+      "Sockets": [
+        {
+          "Id": "124a7cb0-5625-46e6-ae10-cc1ff0644ab0",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a8afa06e-0e5f-406d-b519-0d31b5357376",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "d83a176a-fabd-43ca-98a1-c6d487709f44",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Message": "Hello chat!"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "0ed8ee19-2706-4e34-92e2-85297b863102",
+      "Title": "Logic.If",
+      "Category": "Flow Control",
+      "Location": {
+        "IsEmpty": false,
+        "X": 407,
+        "Y": -62
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 116
+      },
+      "HeaderColor": -12490271,
+      "Sockets": [
+        {
+          "Id": "957c4cb3-1244-4ff0-b0d9-42bd73a0c546",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a3aae12b-d82a-4e6e-987e-6bd239c6310f",
+          "Name": "A",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": "Left side of the comparison. Wildcard \u2014 once you wire either A or B, the other pin matches its type."
+        },
+        {
+          "Id": "7c495cbe-498d-4072-bd41-8a090982160f",
+          "Name": "B",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": "Right side of the comparison. Wildcard \u2014 once you wire either A or B, the other pin matches its type."
+        },
+        {
+          "Id": "a90e7a4d-c000-469d-b431-65f25151c32d",
+          "Name": "True",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "e04e8bb5-9bf0-4ed9-8e89-e59c986004c1",
+          "Name": "False",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Operator": "\u003E=",
+        "B": "\u002210\u0022"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "5d4b28fe-a9cd-46d3-8f36-a0c12ee673a9",
+      "Title": "Twitch.SendChat",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1357,
+        "Y": 695
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7077677,
+      "Sockets": [
+        {
+          "Id": "1fee42ec-d8cb-48e1-af22-b717d52490db",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "34cc5750-2d7d-4a63-94ce-8fe2c742d9a3",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "94178b31-8062-47da-a9f9-3b5545bc5854",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Message": "Hello chat!"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "c6040608-dbda-43cf-be2f-57c16d72db50",
+      "Title": "Text.Format",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1708,
+        "Y": 77
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 466,
+        "Height": 148
+      },
+      "HeaderColor": -16744320,
+      "Sockets": [
+        {
+          "Id": "bab4dc54-b6e5-46ac-a085-ea091ad50e06",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "b8904433-5073-4530-8466-6315eb87c033",
+          "Name": "A",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "07b32130-a64a-4bf8-8ba3-b377a95c5c6e",
+          "Name": "B",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "ae1a0981-b50b-4956-9c90-1855fe308adb",
+          "Name": "C",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c3d34838-2a43-4b3e-b698-cd00dabd167e",
+          "Name": "D",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "efd2e516-17d9-4267-a5c8-f84fcdad9e79",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 452,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "\u0022HUGE raid by {A} with {B} viewers!\u0022",
+        "A": "",
+        "B": "",
+        "C": "",
+        "D": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "25bb3e6a-d76a-47a0-97ff-762e14c61797",
+      "Title": "Convert.ToString",
+      "Category": "Convert",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1150,
+        "Y": 154
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 72
+      },
+      "HeaderColor": -16741493,
+      "Sockets": [
+        {
+          "Id": "bbcca15f-080a-4d6a-922f-fa93e6ef3ff0",
+          "Name": "In",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -2318081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "99cfc884-6fef-4fbe-aeef-dbfbebe8e7a7",
+          "Name": "Out",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Default": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "2a98589c-c7ab-4c09-9d1d-515d51a2687c",
+      "Title": "Twitch.Shoutout",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1208,
+        "Y": -220
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7077677,
+      "Sockets": [
+        {
+          "Id": "fa85d92f-3511-4d1b-9e30-e6f5eebbb400",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "09fadb64-84c3-4e9f-96ec-1c59a0c5db22",
+          "Name": "User",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "91a2f7f4-eba1-4a7b-9329-e4a9dec29ee7",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "b727ee22-3638-4b56-8ca8-f6ba74522c7e",
+      "Title": "Visual.Trigger",
+      "Category": "Visuals",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1611,
+        "Y": -258
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 396,
+        "Height": 104
+      },
+      "HeaderColor": -7667573,
+      "Sockets": [
+        {
+          "Id": "d729d00e-965a-45df-9eaf-eea3eb14fc5c",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "ffb682ee-2ed9-46ae-8c04-ed5497b0fc11",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "70414e44-ad65-4ec5-8622-3ce722704c3d",
+          "Name": "Args",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "5743d4c9-f832-47ae-ab8a-b6eb21c64510",
+          "Name": "\u002B variable",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": true,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "LayerID": "\u0022main\u0022",
+        "WidgetID": "\u002200000000-0000-0000-0000-000000000001\u0022",
+        "TriggerName": "\u0022big_raid\u0022"
+      },
+      "Description": ""
+    }
+  ],
+  "Links": [
+    {
+      "Id": "c397c5a8-0ff7-405d-b5f7-2e9452d1e948",
+      "FromNodeId": "21245792-0a07-4886-9043-fe21cb522a31",
+      "FromSocketId": "42402503-144d-4fa9-8efb-314da3df8750",
+      "ToNodeId": "0ed8ee19-2706-4e34-92e2-85297b863102",
+      "ToSocketId": "957c4cb3-1244-4ff0-b0d9-42bd73a0c546"
+    },
+    {
+      "Id": "17384248-da4f-47a2-9e2f-2c8ccb09aaeb",
+      "FromNodeId": "21245792-0a07-4886-9043-fe21cb522a31",
+      "FromSocketId": "4b91291a-ef25-4a2b-bc46-a25ce8335cb3",
+      "ToNodeId": "0ed8ee19-2706-4e34-92e2-85297b863102",
+      "ToSocketId": "a3aae12b-d82a-4e6e-987e-6bd239c6310f"
+    },
+    {
+      "Id": "2facded0-91b3-482d-8397-b112ad9a8fe5",
+      "FromNodeId": "0ed8ee19-2706-4e34-92e2-85297b863102",
+      "FromSocketId": "a90e7a4d-c000-469d-b431-65f25151c32d",
+      "ToNodeId": "2a98589c-c7ab-4c09-9d1d-515d51a2687c",
+      "ToSocketId": "fa85d92f-3511-4d1b-9e30-e6f5eebbb400"
+    },
+    {
+      "Id": "48264e37-332b-42f7-80c0-f97897260264",
+      "FromNodeId": "21245792-0a07-4886-9043-fe21cb522a31",
+      "FromSocketId": "3e6e3ca0-5be6-42cd-a2e1-174c63761a5f",
+      "ToNodeId": "2a98589c-c7ab-4c09-9d1d-515d51a2687c",
+      "ToSocketId": "09fadb64-84c3-4e9f-96ec-1c59a0c5db22"
+    },
+    {
+      "Id": "c0b6472c-b855-471d-9ce3-d0d944cc177e",
+      "FromNodeId": "2a98589c-c7ab-4c09-9d1d-515d51a2687c",
+      "FromSocketId": "91a2f7f4-eba1-4a7b-9329-e4a9dec29ee7",
+      "ToNodeId": "b727ee22-3638-4b56-8ca8-f6ba74522c7e",
+      "ToSocketId": "d729d00e-965a-45df-9eaf-eea3eb14fc5c"
+    },
+    {
+      "Id": "d8517290-ccf1-4aec-a317-cf4f79ef409c",
+      "FromNodeId": "b727ee22-3638-4b56-8ca8-f6ba74522c7e",
+      "FromSocketId": "ffb682ee-2ed9-46ae-8c04-ed5497b0fc11",
+      "ToNodeId": "5b1aa0bb-b39b-4c38-951d-d5eb20112607",
+      "ToSocketId": "124a7cb0-5625-46e6-ae10-cc1ff0644ab0"
+    },
+    {
+      "Id": "7e83f5d3-2b98-42f2-8f99-a48b2e022818",
+      "FromNodeId": "21245792-0a07-4886-9043-fe21cb522a31",
+      "FromSocketId": "3e6e3ca0-5be6-42cd-a2e1-174c63761a5f",
+      "ToNodeId": "c6040608-dbda-43cf-be2f-57c16d72db50",
+      "ToSocketId": "b8904433-5073-4530-8466-6315eb87c033"
+    },
+    {
+      "Id": "7e8dca67-96b7-4769-bcc0-da01e61cd78b",
+      "FromNodeId": "21245792-0a07-4886-9043-fe21cb522a31",
+      "FromSocketId": "4b91291a-ef25-4a2b-bc46-a25ce8335cb3",
+      "ToNodeId": "25bb3e6a-d76a-47a0-97ff-762e14c61797",
+      "ToSocketId": "bbcca15f-080a-4d6a-922f-fa93e6ef3ff0"
+    },
+    {
+      "Id": "277d54d9-cd04-4c52-9194-ef7aad81620b",
+      "FromNodeId": "25bb3e6a-d76a-47a0-97ff-762e14c61797",
+      "FromSocketId": "99cfc884-6fef-4fbe-aeef-dbfbebe8e7a7",
+      "ToNodeId": "c6040608-dbda-43cf-be2f-57c16d72db50",
+      "ToSocketId": "07b32130-a64a-4bf8-8ba3-b377a95c5c6e"
+    },
+    {
+      "Id": "d3c3489f-fa3c-44c0-911d-828203ec3399",
+      "FromNodeId": "c6040608-dbda-43cf-be2f-57c16d72db50",
+      "FromSocketId": "efd2e516-17d9-4267-a5c8-f84fcdad9e79",
+      "ToNodeId": "5b1aa0bb-b39b-4c38-951d-d5eb20112607",
+      "ToSocketId": "a8afa06e-0e5f-406d-b519-0d31b5357376"
+    },
+    {
+      "Id": "8bd16924-881d-48e0-961d-4d8bcca09322",
+      "FromNodeId": "0ed8ee19-2706-4e34-92e2-85297b863102",
+      "FromSocketId": "e04e8bb5-9bf0-4ed9-8e89-e59c986004c1",
+      "ToNodeId": "5d4b28fe-a9cd-46d3-8f36-a0c12ee673a9",
+      "ToSocketId": "1fee42ec-d8cb-48e1-af22-b717d52490db"
+    },
+    {
+      "Id": "7181c04d-65e4-4d6d-b321-b886595d1aca",
+      "FromNodeId": "21245792-0a07-4886-9043-fe21cb522a31",
+      "FromSocketId": "3e6e3ca0-5be6-42cd-a2e1-174c63761a5f",
+      "ToNodeId": "66ba1517-7ef3-40da-b56e-b179bc88873c",
+      "ToSocketId": "31d2ea7f-646b-4732-8250-98cadb4f9322"
+    },
+    {
+      "Id": "b313aab9-b837-4e24-a58a-cdc5df086aff",
+      "FromNodeId": "66ba1517-7ef3-40da-b56e-b179bc88873c",
+      "FromSocketId": "9ac8a346-f6cd-4c2e-ab26-4a6e7e7dda24",
+      "ToNodeId": "5d4b28fe-a9cd-46d3-8f36-a0c12ee673a9",
+      "ToSocketId": "34cc5750-2d7d-4a63-94ce-8fe2c742d9a3"
+    }
+  ],
+  "Frames": [
+    {
+      "Id": "2ce9a46b-0583-4539-8c27-3dddc10d5c81",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 345,
+          "Y": -217
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 345,
+        "Y": -217,
+        "Width": 240,
+        "Height": 160,
+        "Left": 345,
+        "Top": -217,
+        "Right": 585,
+        "Bottom": -57,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "e2c24976-d4ef-41f0-a52c-75b8e94d0f29",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 755,
+          "Y": 136
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 755,
+        "Y": 136,
+        "Width": 240,
+        "Height": 160,
+        "Left": 755,
+        "Top": 136,
+        "Right": 995,
+        "Bottom": 296,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "b84b43fd-cc77-4f09-bb7f-978b0da3083a",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 1280,
+          "Y": -304
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 1280,
+        "Y": -304,
+        "Width": 240,
+        "Height": 160,
+        "Left": 1280,
+        "Top": -304,
+        "Right": 1520,
+        "Bottom": -144,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    },
+    {
+      "Id": "2fa18ba0-4327-4fee-b692-ce58fa87320f",
+      "Label": "Comment",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": 971,
+          "Y": 630
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 240,
+          "Height": 160
+        },
+        "X": 971,
+        "Y": 630,
+        "Width": 240,
+        "Height": 160,
+        "Left": 971,
+        "Top": 630,
+        "Right": 1211,
+        "Bottom": 790,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    }
+  ],
+  "Bookmarks": [],
+  "Macros": [],
+  "Processes": [],
+  "Variables": [],
+  "ViewOffsetX": -23,
+  "ViewOffsetY": 229,
+  "ViewZoom": 0.6999999,
+  "_schemaVersion": 1
+}

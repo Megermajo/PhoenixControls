@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <!-- This project ships only static content; no .dll output. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- CS2008: this project ships only static content; the empty .dll
+         produced by the SDK is intentionally unreferenced. -->
+    <NoWarn>$(NoWarn);CS2008</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The bundle ships under "ViewerAssets/" inside any consumer's bin so
+      ViewerServer.AssetsRoot resolves at runtime to the right tree. The
+      consumer (Hub.WinUI per Track 4 — or the legacy WinForms Hub if a
+      transitional shim wires it up) ProjectReferences this csproj with
+      OutputItemType="Content" + ReferenceOutputAssembly="false", which
+      copies these files into its bin without taking a code dependency.
+    -->
+    <Content Include="dist\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>ViewerAssets\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

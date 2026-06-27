@@ -1,0 +1,39 @@
+/* overlay.css — extracted from index.html so the future server-side
+   Content-Security-Policy header (`default-src 'self'`) can be added
+   without an inline-style violation. Loaded by index.html via
+   <link rel="stylesheet" href="/overlay.css">.
+
+   CSP-READY: this file is self-hosted; no inline styles remain on the
+   overlay page. The header lives in HUDServer.cs and is intentionally
+   owned by a separate agent — DO NOT add it from compositor / overlay
+   work; the response-header path is the HUDServer agent's scope. */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: transparent;
+    font-family: 'Segoe UI', sans-serif;
+}
+
+#stage {
+    position: absolute; left: 0; top: 0;
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+}
+
+canvas#layer {
+    background: transparent;
+    image-rendering: auto;
+}
+
+/* The status badge is for debug-only inspection. Hidden by default
+   so it never bleeds into OBS browser sources or Visualist preview
+   panes — compositor.js flips it visible when ?debug=1 is in the URL. */
+#status {
+    position: fixed; bottom: 6px; right: 8px;
+    font-size: 11px; color: #888;
+    font-family: monospace;
+    pointer-events: none;
+    display: none;
+}

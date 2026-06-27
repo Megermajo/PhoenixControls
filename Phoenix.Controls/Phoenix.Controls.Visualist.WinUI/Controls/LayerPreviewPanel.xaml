@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Visualist.WinUI.Controls.LayerPreviewPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls">
+
+    <!-- LayerPreviewPanel — design-time WebView2 host for the full layer overlay.
+         WinUI re-architecture of the pre-T15 WinForms LayerPreviewPanel. The same
+         compositor.js path OBS uses, so what shows here is what OBS sees. The
+         placeholder TextBlock covers the WebView2 until a saved layer is loaded /
+         the WebView2 core finishes init. -->
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <controls:WebView2
+            x:Name="PreviewWeb"
+            Visibility="Collapsed"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch" />
+        <TextBlock
+            x:Name="Placeholder"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            TextAlignment="Center"
+            TextWrapping="Wrap"
+            Margin="24"
+            Foreground="{StaticResource CoalSecondaryTextBrush}"
+            Text="Save the layer first to preview." />
+    </Grid>
+</UserControl>

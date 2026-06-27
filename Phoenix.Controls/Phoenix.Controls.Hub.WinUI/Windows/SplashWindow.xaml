@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="Phoenix.Controls.Hub.WinUI.Windows.SplashWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid x:Name="SplashRoot" Background="{StaticResource CoalShellBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Ember radial wash. WinUI 3 lacks RadialGradientBrush in some
+             SDK revs; a centered LinearGradientBrush approximates the
+             warm vignette without an extra dependency. Gradient stops live
+             in PhoenixDark.xaml as SplashGradientBrush — coal-raised →
+             deep-coal → coal-shell. -->
+        <Rectangle Grid.RowSpan="4"
+                   IsHitTestVisible="False"
+                   Fill="{StaticResource SplashGradientBrush}" />
+
+        <!-- Phoenix mark + wordmark cluster -->
+        <StackPanel Grid.Row="0"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="14">
+
+            <!-- Perf-review M21: DecodePixelWidth caps the decoded bitmap to
+                 the splash's 220 DIP display size. -->
+            <Image x:Name="PhoenixMark"
+                   Width="220" Height="220"
+                   Stretch="Uniform"
+                   Opacity="0">
+                <Image.Source>
+                    <BitmapImage UriSource="ms-appx:///Assets/phoenix-mark.png" DecodePixelWidth="440" />
+                </Image.Source>
+                <Image.RenderTransform>
+                    <TranslateTransform x:Name="PhoenixTransform" Y="40" />
+                </Image.RenderTransform>
+            </Image>
+
+            <StackPanel HorizontalAlignment="Center" Spacing="-2">
+                <TextBlock Text="PHOENIX"
+                           FontSize="38"
+                           FontFamily="{StaticResource DisplayFont}"
+                           Foreground="{StaticResource CoalPaperBrush}"
+                           CharacterSpacing="220"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="CONTROLS"
+                           FontSize="18"
+                           FontFamily="{StaticResource DisplayFont}"
+                           Foreground="{StaticResource Ember200Brush}"
+                           CharacterSpacing="360"
+                           HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <!-- IGNITING… eyebrow — redesign R4. Sits below the wordmark
+                 cluster as a quiet status line that reinforces the boot
+                 narrative ("the phoenix is rising"). Localized via
+                 splash.boot. -->
+            <TextBlock x:Name="BootEyebrow"
+                       Style="{StaticResource EyebrowTextStyle}"
+                       HorizontalAlignment="Center"
+                       Margin="0,8,0,0"
+                       Foreground="{StaticResource EmberPrimaryBrush}"
+                       Text="IGNITING…" />
+        </StackPanel>
+
+        <!-- Progress bar — 92 %-width (redesign R4 / chrome.jsx "phx-fill"). -->
+        <Grid Grid.Row="1"
+              HorizontalAlignment="Stretch"
+              Margin="20,40,20,0">
+            <Border Background="{StaticResource CoalRaisedBrush}"
+                    Height="3"
+                    CornerRadius="2"
+                    HorizontalAlignment="Stretch" />
+            <Border x:Name="ProgressFill"
+                    Height="3"
+                    CornerRadius="2"
+                    HorizontalAlignment="Left"
+                    Width="0">
+                <Border.Background>
+                    <!-- Horizontal ember sweep on the progress fill. Stops mirror
+                         existing chrome tokens — kept inline because GradientStop
+                         wants a Color, not a Brush, and the theme dictionary only
+                         exposes the Brush forms for these values. -->
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop Offset="0.0" Color="#A6661A" /> <!-- = EmberShadowBrush -->
+                        <GradientStop Offset="1.0" Color="#F2C77F" /> <!-- = Ember200Brush -->
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+        </Grid>
+
+        <!-- Status / version row -->
+        <Grid Grid.Row="2" Margin="0,12,0,0" HorizontalAlignment="Stretch">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText"
+                       Grid.Column="0"
+                       Text="BINDING IPC BUS · 18081"
+                       FontSize="10"
+                       FontFamily="{StaticResource MonoFont}"
+                       CharacterSpacing="100"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       HorizontalAlignment="Left"
+                       Margin="40,0,0,0" />
+            <TextBlock x:Name="VersionText"
+                       Grid.Column="1"
+                       Text="v0.0.0"
+                       FontSize="10"
+                       FontFamily="{StaticResource MonoFont}"
+                       CharacterSpacing="100"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       HorizontalAlignment="Right"
+                       Margin="0,0,40,0" />
+        </Grid>
+
+        <!-- Footer -->
+        <TextBlock Grid.Row="3"
+                   Text="FORGED FOR STREAMERS · 2026"
+                   FontSize="10"
+                   FontFamily="{StaticResource MonoFont}"
+                   CharacterSpacing="180"
+                   Foreground="{StaticResource CoalMutedTextBrush}"
+                   HorizontalAlignment="Center"
+                   Margin="0,18,0,18" />
+
+        <!-- Boot-failure overlay. Shown via SplashWindow.ShowError(...) when
+             HubBootstrapper.BootAsync throws — replaces the progress UI with
+             an error description + Close button so the user sees what went
+             wrong instead of staring at a frozen splash forever
+             (TODO 2026-05-07 round 2 P0 #2). -->
+        <Border x:Name="ErrorOverlay"
+                Grid.RowSpan="4"
+                Background="{StaticResource CoalOverlayHighBrush}"
+                Padding="40,40,40,28"
+                Visibility="Collapsed">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" MaxWidth="420">
+                <TextBlock x:Name="ErrorHeading"
+                           Text="BOOT FAILED"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="22"
+                           CharacterSpacing="220"
+                           Foreground="{StaticResource ErrBrush}"
+                           HorizontalAlignment="Center" />
+                <TextBlock x:Name="ErrorReasonLead"
+                           Text="Phoenix Controls couldn't start. Reason:"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="11"
+                           Foreground="{StaticResource CoalBodyTextBrush}"
+                           HorizontalAlignment="Center" />
+                <Border BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="1"
+                        Padding="12,8"
+                        CornerRadius="2"
+                        Background="{StaticResource CoalSurfaceBrush}">
+                    <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="ErrorMessage"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11"
+                                   TextWrapping="WrapWholeWords"
+                                   Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                    </ScrollViewer>
+                </Border>
+                <TextBlock x:Name="ErrorLogHint"
+                           Text="Hub log:  %AppData%/PhoenixControls/Hub/"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           HorizontalAlignment="Center" />
+                <Button x:Name="CloseButton"
+                        Content="Close"
+                        HorizontalAlignment="Center"
+                        Margin="0,4,0,0"
+                        MinWidth="120"
+                        Click="OnCloseClick" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

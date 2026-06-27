@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Controls.PopOutChrome"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Controls"
+    HorizontalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch">
+
+    <!-- Pop-out title-bar chrome (0.10.8). Pre-fix the pop-out used the
+         system OS caption; Majo flagged it as "default App-header instead
+         of the custom ones." Now the pop-out paints a slim coal drag-bar
+         with the Phoenix mark + window title on the left, a transparent
+         drag region in the middle (wired into Window.SetTitleBar so the
+         OS owns window-drag), and the custom TrafficLightButton trio on
+         the right — the same buttons MainWindow's HubChrome uses, so a
+         pop-out reads as a child of the same window family. The system
+         caption is suppressed by PopOutWindowFactory via
+         OverlappedPresenter.SetBorderAndTitleBar(true, false).
+
+         Layout: row 0 is exactly 30 px tall (matches the
+         TrafficLightButton's intrinsic 38×30 footprint so the buttons
+         paint at their designed size — earlier draft put a single 30-px
+         outer Height plus an Auto hairline row inside, which squeezed
+         the buttons into 29 px). Row 1 is a 1-px hairline accent so the
+         seam to the panel content below reads continuous with the
+         PanelHeader bottom seam. -->
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Height="30">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />     <!-- DragRegion: mark + title + spacer -->
+                <ColumnDefinition Width="Auto" />  <!-- traffic lights -->
+            </Grid.ColumnDefinitions>
+            <Grid.Background>
+                <StaticResource ResourceKey="PanelHeaderGradientBrush" />
+            </Grid.Background>
+
+            <!-- DragRegion — Window.SetTitleBar(DragRegion) in code-behind
+                 hands this whole strip back to the OS so window-drag /
+                 double-click-maximize / right-click-system-menu hit-testing
+                 work without us re-implementing them. Including the mark
+                 and title inside the drag rect means the entire left half
+                 of the chrome bar is draggable, not just the empty
+                 spacer between them and the traffic lights. The mark
+                 and title aren't interactive so losing pointer input on
+                 them to the title-bar hit-tester costs nothing.
+                 Background MUST be hit-test-visible (Transparent works;
+                 null doesn't) — otherwise SetTitleBar's hit-test ignores
+                 the rect. -->
+            <Grid x:Name="DragRegion" x:FieldModifier="public" Grid.Column="0" Background="Transparent">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Phoenix mark — DecodePixelWidth lets WinUI decode at
+                     the display size instead of holding the full PNG. -->
+                <Image Grid.Column="0"
+                       Width="16"
+                       Height="16"
+                       Stretch="Uniform"
+                       Margin="10,0,0,0"
+                       VerticalAlignment="Center">
+                    <Image.Source>
+                        <BitmapImage UriSource="ms-appx:///Assets/phoenix-mark.png" DecodePixelWidth="32" />
+                    </Image.Source>
+                </Image>
+
+                <!-- Title text (set in code-behind). Matches HubChrome's
+                     display-font brand wordmark in tone but smaller so
+                     the chrome stays slim. -->
+                <TextBlock x:Name="TitleText"
+                           Grid.Column="1"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="11"
+                           CharacterSpacing="100"
+                           Foreground="{StaticResource CoalBodyTextBrush}" />
+            </Grid>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <local:TrafficLightButton x:Name="MinButton" Kind="Minimize" />
+                <local:TrafficLightButton x:Name="MaxButton" Kind="MaximizeRestore" />
+                <local:TrafficLightButton x:Name="CloseButton" Kind="Close" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Hairline accent separating chrome from panel content. Same
+             PanelHeaderAccentBrush PanelHeader uses for its bottom seam,
+             so the pop-out reads visually continuous with the panel
+             header that lives directly below. -->
+        <Border Grid.Row="1"
+                Height="1"
+                Background="{StaticResource PanelHeaderAccentBrush}" />
+    </Grid>
+</UserControl>

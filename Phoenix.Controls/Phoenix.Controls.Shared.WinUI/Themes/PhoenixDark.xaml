@@ -1,0 +1,1135 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Phoenix Controls — canonical dark theme (Forged & Physical).
+    Values sourced verbatim from redesign-plan/design/project/tokens.css.
+    Owned by Track 1 (Foundation). All other tracks consume via {StaticResource}.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================================
+         Forged scrollbars (redesign R1 — port of tokens.css
+         ::-webkit-scrollbar to the WinUI 3 ScrollBar theme).
+
+         WinUI 3's default ScrollBar template is theme-resource-driven —
+         every brush the template draws (track fill, thumb fill, pressed
+         tint, arrow glyph, panning indicator) reads from a named
+         ThemeResource key. Overriding those keys inside a Default theme
+         dictionary repaints every ScrollBar in the app (Hub workspace,
+         Architect canvas scroll regions, Visualist canvas, dialog
+         ScrollViewers, ListView vertical scrollbars …) without having
+         to write a full Template or attach a Style to each consumer.
+
+         Mapping:
+           Track            coal-1 (#14110D)
+           Thumb (rest)     coal-5 → coal-3 vertical gradient
+           Thumb (hover)    ember-500 → ember-600 vertical gradient
+           Thumb (pressed)  ember-600 (solid)
+           Arrows           coal-7/coal-9 tier so they fade on the track
+                            but read on hover.
+         ============================================================ -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+            <!-- Thumb — gradient brushes mirror the redesign's vertical
+                 linear-gradient on ::-webkit-scrollbar-thumb. -->
+            <LinearGradientBrush x:Key="ScrollBarThumbFill" StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Offset="0.0" Color="#3A3127" />
+                <GradientStop Offset="1.0" Color="#221C16" />
+            </LinearGradientBrush>
+            <LinearGradientBrush x:Key="ScrollBarThumbFillPointerOver" StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Offset="0.0" Color="#A6661A" />
+                <GradientStop Offset="1.0" Color="#7A4710" />
+            </LinearGradientBrush>
+            <SolidColorBrush x:Key="ScrollBarThumbFillPressed"  Color="#7A4710" />
+            <SolidColorBrush x:Key="ScrollBarThumbFillDisabled" Color="Transparent" />
+
+            <!-- Track — flat coal-1 across every state so the thumb gradient
+                 carries the read; the redesign keeps the rail quiet. -->
+            <SolidColorBrush x:Key="ScrollBarTrackFill"            Color="#14110D" />
+            <SolidColorBrush x:Key="ScrollBarTrackFillPointerOver" Color="#14110D" />
+            <SolidColorBrush x:Key="ScrollBarTrackFillPressed"     Color="#14110D" />
+            <SolidColorBrush x:Key="ScrollBarTrackFillDisabled"    Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarTrackStroke"            Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarTrackStrokePointerOver" Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarTrackStrokePressed"     Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarTrackStrokeDisabled"    Color="Transparent" />
+
+            <!-- Mini / panning indicator — used when the ScrollBar is in
+                 its collapsed (touch / mouse-near-edge) state. Keep on
+                 the coal-3 → coal-5 tier so the resting bar reads as a
+                 faint inlay rather than a bright stripe. -->
+            <SolidColorBrush x:Key="ScrollBarPanningBackground"      Color="#14110D" />
+            <SolidColorBrush x:Key="ScrollBarPanningThumbBackground" Color="#3A3127" />
+            <SolidColorBrush x:Key="ScrollBarBackground"            Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBackgroundPointerOver" Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBackgroundPressed"     Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBackgroundDisabled"    Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBorderBrush"            Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBorderBrushPointerOver" Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBorderBrushPressed"     Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarBorderBrushDisabled"    Color="Transparent" />
+
+            <!-- Arrows — the small line-button glyphs at each end of the
+                 ScrollBar. Quiet on the track, lit on hover, pressed
+                 inverts to coal-0 on the bright ember thumb. -->
+            <SolidColorBrush x:Key="ScrollBarButtonArrowForeground"            Color="#9C8A72" />
+            <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundPointerOver" Color="#E6DDD0" />
+            <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundPressed"     Color="#0B0907" />
+            <SolidColorBrush x:Key="ScrollBarButtonArrowForegroundDisabled"    Color="#4A3F32" />
+            <SolidColorBrush x:Key="ScrollBarButtonBackground"             Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarButtonBackgroundPointerOver"  Color="#1B1713" />
+            <SolidColorBrush x:Key="ScrollBarButtonBackgroundPressed"      Color="#A6661A" />
+            <SolidColorBrush x:Key="ScrollBarButtonBackgroundDisabled"     Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarButtonBorderBrush"            Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarButtonBorderBrushPointerOver" Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarButtonBorderBrushPressed"     Color="Transparent" />
+            <SolidColorBrush x:Key="ScrollBarButtonBorderBrushDisabled"    Color="Transparent" />
+
+            <SolidColorBrush x:Key="ScrollBarForeground" Color="#9C8A72" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <!-- ============================================================
+         Ember (brass / amber)
+         ============================================================ -->
+    <!-- Light-brass tints from tokens.css ember-50 / ember-100. Added for the
+         Giveaway page light-brass washes (toggle fill, picker default-badge
+         ground); the pre-existing ladder started at Ember200. -->
+    <SolidColorBrush x:Key="Ember50Brush"          Color="#FFFFF4E0" />
+    <SolidColorBrush x:Key="Ember100Brush"         Color="#FFFBE3B8" />
+    <SolidColorBrush x:Key="Ember200Brush"         Color="#F2C77F" />
+    <SolidColorBrush x:Key="EmberPrimaryBrush"     Color="#E5A24E" />
+    <SolidColorBrush x:Key="EmberDeepBrush"        Color="#C8822B" />
+    <SolidColorBrush x:Key="EmberShadowBrush"      Color="#A6661A" />
+    <SolidColorBrush x:Key="Ember600Brush"         Color="#7A4710" />
+    <SolidColorBrush x:Key="Ember700Brush"         Color="#4A2A08" />
+
+    <!-- ============================================================
+         Coal (forged charcoal)
+         ============================================================ -->
+    <SolidColorBrush x:Key="CoalShellBrush"          Color="#0B0907" />
+    <SolidColorBrush x:Key="CoalSurfaceBrush"        Color="#14110D" />
+    <SolidColorBrush x:Key="CoalRaisedBrush"         Color="#1B1713" />
+    <SolidColorBrush x:Key="CoalCardBrush"           Color="#221C16" />
+    <SolidColorBrush x:Key="CoalHoverBrush"          Color="#2C251D" />
+    <SolidColorBrush x:Key="CoalDividerBrush"        Color="#3A3127" />
+    <!-- CoalMutedText (QC26-01) — raised from #4A3F32 to #9E968B so disabled
+         foregrounds (CoalSecondaryButton.Disabled, LiveFeedChip.Disabled) pass
+         WCAG-AA on the coal mid-surfaces they actually sit on. Measured ratios
+         against the host surfaces: CoalCard #221C16 -> 5.77:1, CoalHover
+         #2C251D -> 5.17:1, CoalSurface #14110D -> 6.44:1 (all >= 4.5:1).
+         #4A3F32 sat at 1.64 / 1.47 / 1.84 — illegible. -->
+    <SolidColorBrush x:Key="CoalMutedTextBrush"      Color="#9E968B" />
+    <!-- Secondary bumped 2026-05-14 from #6B5C4A (~3.6:1 — fails WCAG AA
+         4.5 for body text) to #9C8A72 (~5.0:1 — comfortable AA). Used
+         pervasively for eyebrows, version stamp, hint text, settings
+         field labels, status sub-strings, list-row metadata — none of
+         it was readable at the old value. Hierarchy preserved between
+         Muted < Secondary < Body < Primary. -->
+    <SolidColorBrush x:Key="CoalSecondaryTextBrush"  Color="#9C8A72" />
+    <SolidColorBrush x:Key="CoalBodyTextBrush"       Color="#A89683" />
+    <SolidColorBrush x:Key="CoalPrimaryTextBrush"    Color="#E6DDD0" />
+    <SolidColorBrush x:Key="CoalPaperBrush"          Color="#F5EFE3" />
+
+    <!-- Semi-transparent overlay tokens (TODO 2026-05-07 P1 — replace
+         hardcoded #66/#80 ARGB literals scattered through Visualist /
+         Hub chrome). 0x55 (~33%) and 0x80 (50%). -->
+    <SolidColorBrush x:Key="CoalOverlay33Brush" Color="#550B0907" />
+    <SolidColorBrush x:Key="CoalOverlay50Brush" Color="#800B0907" />
+    <!-- Boot-error scrim (~0.90 alpha) — full-attention block behind the
+         splash error overlay.  Renamed from CoalOverlayHigh
+         to CoalOverlayHighBrush to match the dict's *Brush suffix convention
+         (see Title bar/caption block below at line ~265). The 20-, 33-, 50-
+         tier siblings above already carry the suffix; CoalOverlayHigh was
+         the lone outlier. SplashWindow.xaml's ErrorOverlay (#E60B0907) is
+         the canonical consumer — the alpha was bumped from 0xE0 (~0.88) to
+         0xE6 (~0.90) so the token IS the literal the splash already ships,
+         making the StaticResource swap bit-identical. The CoalOverlayBrush
+         token (~0.72 alpha, intended for modal scrims) was removed in the
+         same pass — content dialogs use the framework's
+         SmokeFillColorDefaultBrush rather than a custom scrim, so the
+         token had no live or imminent consumer. -->
+    <SolidColorBrush x:Key="CoalOverlayHighBrush" Color="#E60B0907" />
+    <!-- Hairline divider used between chrome regions where CoalDivider would
+         be too heavy (e.g. PillarTab outer border, MenuBar↔drag-region seam).
+          Tinted off pure-black to match Design_Orders §1
+         "borders, never black" — same coal hue family as CoalCardBrush
+         (#221C16), just at 40% alpha so it reads as a soft warm hairline. -->
+    <SolidColorBrush x:Key="CoalDividerSubtleBrush" Color="#66221C16" />
+
+    <!-- CoalFallbackBrush — the canonical "I tried to resolve a theme key
+         and it wasn't merged" brush for runtime code paths. Sits on the
+         coal-divider tier so a missing token reads as a quiet placeholder
+         (panel still renders, the unstyled cell is visible enough to debug
+         in dev) rather than a jarring system-grey or transparent void.
+         Routed by SystemLogRowVm, LiveFeedRowVm, ScriptRowVm fallback
+         paths (HUB-UX P2 — token-coverage audit). -->
+    <SolidColorBrush x:Key="CoalFallbackBrush" Color="#3A3127" />
+
+    <!-- SplashGradientBrush — vertical coal wash behind the splash window
+         (top→bottom darkening). Composed of CoalRaisedBrush (#1B1713) →
+         intermediate deep-coal (#0F0C09, between CoalRaised and CoalShell)
+         → CoalShellBrush (#0B0907). Tokenized so the splash chrome stops
+         leaking hex literals; consumer is SplashWindow.xaml. GradientStops
+         need raw Color values, so the inline hex stops mirror the Brush
+         tokens above rather than referencing them. -->
+    <LinearGradientBrush x:Key="SplashGradientBrush" StartPoint="0.5,0.0" EndPoint="0.5,1.0">
+        <GradientStop Offset="0.00" Color="#1B1713" /> <!-- = CoalRaisedBrush -->
+        <GradientStop Offset="0.55" Color="#0F0C09" /> <!-- deep coal, between CoalRaised and CoalShell -->
+        <GradientStop Offset="1.00" Color="#0B0907" /> <!-- = CoalShellBrush -->
+    </LinearGradientBrush>
+
+    <!-- ============================================================
+         Status (quiet, never neon)
+         ============================================================ -->
+    <SolidColorBrush x:Key="OkBrush"     Color="#6FA46B" />
+    <SolidColorBrush x:Key="WarnBrush"   Color="#E0A23A" />
+    <SolidColorBrush x:Key="ErrBrush"    Color="#C9533C" />
+    <SolidColorBrush x:Key="InfoBrush"   Color="#6F94B0" />
+
+    <!-- Traffic-light StatusGreen/Yellow/Red tokens (Design_Orders §2 Accents
+         + §4.6 Status dots) live in the §2 vocabulary block below at lines
+         ~205-207 (#FF5AC878 / #FFE6C85A / #FFE66464).  consumers
+         (ScriptStatusDot, ScriptRowVm) bind those keys directly — do not
+         redeclare here or the WinUI XAML compiler hits a duplicate-key
+         silent-exit-1 in any project that merges this dictionary.
+         Only the §4.6 hairline-border token lives here since it has no
+         counterpart in the §2 block. -->
+    <SolidColorBrush x:Key="StatusDotBorderBrush" Color="#4D000000" />
+
+    <!-- ============================================================
+         Design_Orders §2 vocabulary — UE-Blueprints neutral dark.
+         Parallel to the Forged & Physical Coal/Ember palette above:
+         each consumer picks the one that matches its intent.
+         Selection / AccentValue / StatusGreen-Yellow-Red are the
+         disambiguators — Ember is warm chrome accent, Selection is
+         the cool gold the spec calls for on marquee / wire-select /
+         node-select halos. Added 2026-05-14 (UI review wave A).
+         ============================================================ -->
+    <SolidColorBrush x:Key="BgDeepBrush"        Color="#FF1E1E1E" />
+    <SolidColorBrush x:Key="BgPanelBrush"       Color="#FF28282C" />
+    <SolidColorBrush x:Key="BgPillBrush"        Color="#FF1C1C1E" />
+    <SolidColorBrush x:Key="BorderSoftBrush"    Color="#FF46464C" />
+    <SolidColorBrush x:Key="BorderPillBrush"    Color="#FF55555F" />
+    <SolidColorBrush x:Key="DividerDotBrush"    Color="#FF3C3C46" />
+    <SolidColorBrush x:Key="TextPrimaryBrush"   Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="TextStrongBrush"    Color="#FFE6E6EB" />
+    <SolidColorBrush x:Key="TextLabelBrush"     Color="#FFCDCDD7" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#FFAAAAB9" />
+    <SolidColorBrush x:Key="AccentValueBrush"   Color="#FFE6DC96" />
+    <SolidColorBrush x:Key="StatusGreenBrush"   Color="#FF5AC878" />
+    <SolidColorBrush x:Key="StatusYellowBrush"  Color="#FFE6C85A" />
+    <SolidColorBrush x:Key="StatusRedBrush"     Color="#FFE66464" />
+    <!--  ScriptPanel errored-row tint — 6% alpha against StatusRed
+         (#E66464). Consumed by ScriptRowVm.ResolveErrorRowTintBrush (). -->
+    <SolidColorBrush x:Key="StatusRedTintBrush" Color="#0FE66464" />
+    <SolidColorBrush x:Key="SelectionBrush"     Color="#FFFFD700" />
+    <!-- Effect tokens (alpha-translucent). -->
+    <SolidColorBrush x:Key="ShadowSoftBrush"    Color="#78000000" />
+    <SolidColorBrush x:Key="HeaderHighlightBrush" Color="#3CFFFFFF" />
+    <SolidColorBrush x:Key="HeaderShadowBrush"  Color="#50000000" />
+    <!-- Selection halo at 30% alpha for primary buttons (§5.5). -->
+    <SolidColorBrush x:Key="SelectionDimBrush"   Color="#4DFFD700" />
+
+    <!-- Architect node-focus ring (0.10.0 a11y P2) — paler ember-amber so
+         the WinUI focus visual reads distinct from the solid gold
+         SelectionBrush halo on a selected node. Focus = thin outline
+         affordance (keyboard navigation tracker); Selection = 2px gold
+         border (semantic "this is the active item"). -->
+    <SolidColorBrush x:Key="NodeFocusRingBrush"  Color="#FFFFC850" />
+
+    <!-- Architect socket-pin colors (0.10.0 theme P2) — used by the
+         LeftRail variable swatches (and any other UI that needs to
+         mirror the canvas pin palette without taking a dependency on
+         SocketPalette.cs). The canvas itself still hits SocketPalette
+         which keeps its own const string set; these are the
+         theme-dictionary form for XAML-side consumers. Values match
+         SocketPalette.cs verbatim. -->
+    <SolidColorBrush x:Key="PinIntColorBrush"     Color="#FF7FBED1" />
+    <SolidColorBrush x:Key="PinBoolColorBrush"    Color="#FF9CC97A" />
+
+    <!-- Var-chain hover halos (0.10.0 theme P2) — Architect right-click →
+         Trace / Pin lights up writers + readers of a variable across the
+         canvas. Cool blue for writers (Var.Set / Public.Set / SetScriptVar),
+         warm amber for readers (Var.Get / Public.Get / inline pill tokens).
+         Pre-T15 these lived as code-private brushes in NodeView.xaml.cs;
+         lifting them to the theme dictionary lets future Var-chain UI
+         surfaces (Variables rail, autocomplete picker) consume the same
+         palette without re-deriving the hue. -->
+    <SolidColorBrush x:Key="VarChainWriterBrush" Color="#FF78C8FF" />
+    <SolidColorBrush x:Key="VarChainReaderBrush" Color="#FFFFB450" />
+
+    <!-- ============================================================
+         Chat role colors — keyed by the precedence ladder
+         Broadcaster > Mod > VIP > Sub > Regular. The Phoenix
+         ChatPanel is a functional surface (not a Twitch-mirror), so
+         the color encoding is role-categorical at a glance — see
+         feedback_chat_role_coloring.md for the why. The legacy
+         unprefixed Role*Brush keys were renamed to ChatRole*Brush
+         to make the resolver intent self-evident at the call site.
+         ============================================================ -->
+    <SolidColorBrush x:Key="ChatRoleBroadcasterBrush" Color="#F2C77F" />
+    <SolidColorBrush x:Key="ChatRoleModBrush"         Color="#6FA46B" />
+    <SolidColorBrush x:Key="ChatRoleVipBrush"         Color="#C893BC" />
+    <SolidColorBrush x:Key="ChatRoleSubBrush"         Color="#9C8AC4" />
+    <SolidColorBrush x:Key="ChatRoleRegularBrush"     Color="#9C8A72" />
+
+    <!-- ============================================================
+         Brushed brass — chrome top edge gradient.
+         Used by every pillar's chrome strip.
+         #E5A24E (top) -> #C8822B (mid) -> #A6661A (bottom).
+          The legacy unsuffixed `BrassGradient` alias was retired
+         in R5 — every consumer (HubChrome.xaml, ArchitectChrome.xaml,
+         ArchitectWindowChrome.xaml) was migrated to the *Brush-suffixed
+         key so the dict reads uniformly with `EmberPrimaryBrush`, etc.
+         New consumers MUST bind `BrassGradientBrush`.
+         ============================================================ -->
+    <LinearGradientBrush x:Key="BrassGradientBrush" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Offset="0.0" Color="#E5A24E" />
+        <GradientStop Offset="0.5" Color="#C8822B" />
+        <GradientStop Offset="1.0" Color="#A6661A" />
+    </LinearGradientBrush>
+
+    <!-- Pillar-tab letterhead gradients (0.10.0 theme P2) — used by every
+         pillar chrome bar to paint the 18×18 "H" / "A" / "V" letterhead
+         square that sits left of the pillar label. Each pillar's identity
+         gradient is shared across chromes so a HUB tab in Architect's band,
+         a HUB tab in Visualist's band, and the Hub's own band all render
+         the same navy gradient (consistent identity across pillars). The
+         ARCHITECT letterhead consumes BrassGradientBrush directly rather
+         than duplicating it under a second alias.
+           ChromePillarHubGradient        — HUB (navy / "nerve system")
+           ChromePillarVisualistGradient  — VISUALIST (violet / "compositor") -->
+    <LinearGradientBrush x:Key="ChromePillarHubGradient" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Offset="0.0" Color="#1F3357" />
+        <GradientStop Offset="1.0" Color="#142243" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ChromePillarVisualistGradient" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Offset="0.0" Color="#3A1F4E" />
+        <GradientStop Offset="1.0" Color="#23133A" />
+    </LinearGradientBrush>
+
+    <!-- ============================================================
+         Type — packaged TTF first, system-font fallback chain after.
+
+         The `ms-appx:///Assets/Fonts/<file>.ttf#<Family>` URI resolves
+         against each WinUI exe's PRI; when the packaged TTF is present
+         WinUI uses it, otherwise the comma-separated chain walks
+         forward to the next family. See
+         [Assets/Fonts/README.md](../Assets/Fonts/README.md) for the
+         canonical filenames and OFL license requirements.
+
+         The 0.10.0 foundation lands the FontFamily entries with the
+         ms-appx prefix already wired so that dropping the TTFs into
+         Assets/Fonts/ later is a pure-content change — no XAML edit
+         needed. Until the TTFs are dropped in, the system-font chain
+         (Trajan Pro / Cinzel / Georgia for DisplayFont, Segoe UI
+         Variable / Segoe UI for SansFont, Cascadia Code / Consolas
+         for MonoFont) produces the same visual output the suite had
+         before this scaffold was added.
+         ============================================================ -->
+    <x:String x:Key="DisplayFont">ms-appx:///Assets/Fonts/CormorantGaramond-Regular.ttf#Cormorant Garamond, Cormorant Garamond, Trajan Pro, Cinzel, Georgia, serif</x:String>
+    <x:String x:Key="SansFont">ms-appx:///Assets/Fonts/Inter-Regular.ttf#Inter, Inter, Segoe UI Variable, Segoe UI, sans-serif</x:String>
+    <x:String x:Key="MonoFont">ms-appx:///Assets/Fonts/JetBrainsMono-Regular.ttf#JetBrains Mono, JetBrains Mono, Cascadia Code, Consolas, monospace</x:String>
+
+    <!-- ============================================================
+         Numeric tokens — radii + chrome heights
+         ============================================================ -->
+    <x:Double x:Key="Radius1">2</x:Double>
+    <x:Double x:Key="Radius2">4</x:Double>
+    <x:Double x:Key="Radius3">6</x:Double>
+    <x:Double x:Key="Radius4">10</x:Double>
+
+    <x:Double x:Key="ChromeBrassHairlineHeight">3</x:Double>
+    <x:Double x:Key="ChromeMainBarHeight">30</x:Double>
+    <x:Double x:Key="ChromePillarTabsHeight">34</x:Double>
+
+    <!-- CornerRadius variants for direct binding to Border.CornerRadius. -->
+    <CornerRadius x:Key="Radius1Corner">2</CornerRadius>
+    <CornerRadius x:Key="Radius2Corner">4</CornerRadius>
+    <CornerRadius x:Key="Radius3Corner">6</CornerRadius>
+    <CornerRadius x:Key="Radius4Corner">10</CornerRadius>
+
+    <!-- Shared inter-panel gutter (TODO 2026-05-07 P1 — HubWorkspaceView
+         used a mix of 5 / 14 px inner margins; centralise so every Hub
+         panel separator stays in lockstep). -->
+    <Thickness x:Key="PanelGutterThickness">6</Thickness>
+    <x:Double  x:Key="PanelGutter">6</x:Double>
+    <!--  PanelGutterTight (4px compact rail inset) removed in R5 —
+         design-system.jsx 0.9.6 proposed it but no rail consumer was ever
+         wired and the cadence the Hub actually shipped (6px PanelGutter /
+         12px PanelHeaderPadding inner) made the half-step token redundant.
+         Re-add as needed when a rail row actually asks for it. -->
+
+
+    <!-- ============================================================
+         Padding tokens — panel rows + panel header (0.10.0 foundation).
+         PanelRowPadding mirrors LiveFeed's "14,7" row inset, which is
+         the most common row cadence across Chat / Scripts / LiveFeed.
+         PanelHeaderPadding mirrors PanelHeader.xaml's "14,10,14,8"
+         (asymmetric — top edge has more breathing room than bottom).
+         Both are Thickness so they bind directly to Border.Padding.
+         ============================================================ -->
+    <Thickness x:Key="PanelRowPadding">14,7</Thickness>
+    <Thickness x:Key="PanelHeaderPadding">14,10,14,8</Thickness>
+
+    <!-- ============================================================
+         Icon sizes — 3-step scale (S / M / L) for PathIcon, FontIcon,
+         and any chrome icon affordance. Aligned with:
+           S (12) — inline header buttons, pop-out / folder glyphs,
+                    panel-header right-content.
+           M (16) — menu items, status-strip glyphs, dialog primary
+                    actions.
+           L (20) — pillar-tab sigils, hero affordances, splash dialog
+                    iconography. Larger than 20 should be authored as
+                    inline x:Double overrides on the specific control.
+         ============================================================ -->
+    <x:Double x:Key="IconSizeS">12</x:Double>
+    <x:Double x:Key="IconSizeM">16</x:Double>
+    <x:Double x:Key="IconSizeL">20</x:Double>
+
+    <!-- ============================================================
+         4-step type-scale — Caption / Body / Subtitle / Title.
+         These compose existing FontFamily + Brush tokens so consumers
+         can swap `Style="{StaticResource BodyTextStyle}"` for the four
+         most common copy tiers without re-deriving the size + family
+         + foreground triple at every call-site. Per Design_Orders §3
+         (Typography hierarchy is small): two or three font sizes max
+         per surface — these four cover the whole suite.
+
+           Caption     — 11 px Sans, Secondary    : hints, eyebrows, metadata
+           Body        — 13 px Sans, Body          : default copy, lists, fields
+           Subtitle    — 15 px Sans SemiBold, Primary : section sub-heads, dialog body
+           Title       — 18 px Display, Primary    : panel hero titles, dialog headers
+
+         Pillar-specific surfaces (Architect inline node body labels,
+         Visualist mono pin labels) continue to author their own
+         FontFamily / Size triples per the per-pillar chrome rule —
+         this scale is the shared default, not a forced lift.
+         ============================================================ -->
+    <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+    </Style>
+
+    <Style x:Key="BodyTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource CoalBodyTextBrush}" />
+    </Style>
+
+    <Style x:Key="SubtitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="15" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource CoalPrimaryTextBrush}" />
+    </Style>
+
+    <Style x:Key="TitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"       Value="{StaticResource DisplayFont}" />
+        <Setter Property="FontSize"         Value="18" />
+        <Setter Property="CharacterSpacing" Value="40" />
+        <Setter Property="Foreground"       Value="{StaticResource CoalPrimaryTextBrush}" />
+    </Style>
+
+    <!-- ============================================================
+         Design_Orders §3 typography styles (0.10.0 theme P2).
+
+         The four *TextStyle entries above are the Forged & Physical
+         redesign-track scale (Display / Sans / large hero copy). The §3
+         styles below cover the UE-Blueprints-style "node body / dialog /
+         canvas chrome" hierarchy the project's per-pillar paint code
+         reaches for (titles 9.5pt bold, body 8pt, mono value 8.25pt,
+         frame label 10pt bold, etc.). Sizes match the spec in
+         Design_Orders.md §3 verbatim; foregrounds map onto the existing
+         TextPrimary / TextLabel / TextSecondary / AccentValue token tier
+         so the styles compose with the rest of the theme dictionary
+         instead of introducing parallel brushes.
+
+         Naming is the §3 names without a redundant "Text" suffix:
+         TitleStyle / SubtitleStyle / BodyLabelStyle / CaptionStyle /
+         MonoValueStyle / FrameLabelStyle — paired with the existing
+         CaptionTextStyle / BodyTextStyle / SubtitleTextStyle /
+         TitleTextStyle which keep the redesign scale. Two scales, two
+         naming conventions, no overlap.
+         ============================================================ -->
+    <Style x:Key="TitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="9.5" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style x:Key="SubtitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="7.5" />
+        <Setter Property="FontStyle"  Value="Italic" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+    </Style>
+
+    <Style x:Key="BodyLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="8" />
+        <Setter Property="Foreground" Value="{StaticResource TextLabelBrush}" />
+    </Style>
+
+    <Style x:Key="CaptionStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="7.5" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+    </Style>
+
+    <!-- NOTE: MonoValueStyle is defined further down this dict (Hub Chat
+         timestamps, 10pt CoalSecondaryText) and is intentionally NOT
+         redefined here — XAML resource dictionaries reject duplicate
+         keys. The Design_Orders §3 mono-value tier (Consolas 8.25pt
+         AccentValue) lives under MonoPillStyle below so the canvas
+         inline-pill consumer has its own slot without renaming the
+         existing Hub binding. -->
+    <Style x:Key="MonoPillStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize"   Value="8.25" />
+        <Setter Property="Foreground" Value="{StaticResource AccentValueBrush}" />
+    </Style>
+
+    <Style x:Key="FrameLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="10" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <!-- ============================================================
+         Effects — physical, deep.
+         WinUI 3 has limited DropShadow support; consumers wire these
+         via CompositionShadow / ThemeShadow in code-behind. The keys
+         here exist so that downstream tracks can resolve a single
+         source of truth for shadow color + offsets.
+
+         PanelEmbossShadow — the descriptor for the subtle 2px engraved
+         shadow that sits under every brand surface (Hub panels, splash
+         card, Welcome dialog body). Consumers read the four *Color /
+         *Opacity / *BlurRadius / *OffsetY tokens below and assemble a
+         CompositionDropShadow in code-behind. The four tokens together
+         ARE the PanelEmbossShadow descriptor — there is no single XAML
+         resource that encodes them as a unit because WinUI 3 has no
+         markup type that takes all four properties.
+         ============================================================ -->
+    <Color x:Key="PanelEmbossShadowColor">#000000</Color>
+    <x:Double x:Key="PanelEmbossShadowOpacity">0.4</x:Double>
+    <x:Double x:Key="PanelEmbossShadowBlurRadius">2</x:Double>
+    <x:Double x:Key="PanelEmbossShadowOffsetY">1</x:Double>
+
+    <Color x:Key="CardShadowColor">#000000</Color>
+    <x:Double x:Key="CardShadowOpacity">0.5</x:Double>
+    <x:Double x:Key="CardShadowBlurRadius">24</x:Double>
+    <x:Double x:Key="CardShadowOffsetY">8</x:Double>
+
+    <!-- ============================================================
+         Shared text + control styles (token-derived only — no
+         per-pillar paint). Visualist's InspectorPanel / LayerRail /
+         MainView reference these by key; without these definitions
+         StaticResource lookups throw at runtime when those views are
+         constructed and the panels fail to render. They live here
+         (alongside the typography tokens) rather than in a per-pillar
+         dict because they're pure compositions of the existing
+         FontFamily / Brush / Size keys above — no chrome paint code.
+         ============================================================ -->
+
+    <!-- Small, dimmed, slightly tracked-out caps used as section eyebrows
+         ("INSPECTOR", "LAYER", "WIDGET", etc.). -->
+    <Style x:Key="EyebrowTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"       Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"         Value="10" />
+        <Setter Property="FontWeight"       Value="SemiBold" />
+        <Setter Property="CharacterSpacing" Value="160" />
+        <Setter Property="Foreground"       Value="{StaticResource CoalSecondaryTextBrush}" />
+    </Style>
+
+    <!-- Hero eyebrow — the larger, brass-tinted variant used on hero
+         surfaces (splash "IGNITING…", Welcome dialog "PHOENIX CONTROLS",
+         pillar identity strips). Sits above HDisplayTextStyle as the
+         small "marker" line over a serif display title. Tracked out
+         further than the standard EyebrowTextStyle so it reads as a
+         deliberate decorative band, not a section header. -->
+    <Style x:Key="HEyebrowTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"       Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"         Value="12" />
+        <Setter Property="FontWeight"       Value="SemiBold" />
+        <Setter Property="CharacterSpacing" Value="280" />
+        <Setter Property="Foreground"       Value="{StaticResource EmberPrimaryBrush}" />
+    </Style>
+
+    <!-- Hero display — the serif heading used on hero / splash / Welcome
+         surfaces. Pairs with HEyebrowTextStyle as the line directly
+         below the eyebrow. Larger than TitleTextStyle (the everyday
+         panel-hero title) because it carries brand weight, not chrome
+         affordance. -->
+    <Style x:Key="HDisplayTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"       Value="{StaticResource DisplayFont}" />
+        <Setter Property="FontSize"         Value="32" />
+        <Setter Property="FontWeight"       Value="SemiBold" />
+        <Setter Property="CharacterSpacing" Value="20" />
+        <Setter Property="Foreground"       Value="{StaticResource CoalPaperBrush}" />
+    </Style>
+
+    <!-- Compact monospace label — used for property names ("name",
+         "x", "y", "width", …) rendered next to inline editors. -->
+    <Style x:Key="MonoSmallTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"  Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize"    Value="11" />
+        <Setter Property="Foreground"  Value="{StaticResource CoalBodyTextBrush}" />
+    </Style>
+
+    <!-- Slightly larger monospace body text used for layer / widget
+         names in lists. -->
+    <Style x:Key="MonoBodyTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"  Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize"    Value="13" />
+        <Setter Property="Foreground"  Value="{StaticResource CoalPrimaryTextBrush}" />
+    </Style>
+
+    <!-- Mono-value column style — timestamps, durations, counters that
+         sit next to text rows. Slightly dimmer than MonoSmallTextStyle so
+         the value reads as secondary metadata, not as the primary row
+         identity. Used by Hub Chat's timestamp column (Phase A token). -->
+    <Style x:Key="MonoValueStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily"  Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize"    Value="10" />
+        <Setter Property="Foreground"  Value="{StaticResource CoalSecondaryTextBrush}" />
+    </Style>
+
+    <!-- Sub-tab toggle button used in Visualist's MainView for
+         Layer-Canvas vs Widget-Editor swap. Quiet by default; the
+         Ember accent only shows on hover/checked so the active tab
+         reads as the brass underline rather than a filled chip. -->
+    <Style x:Key="SubTabButtonStyle" TargetType="ToggleButton">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+        <Setter Property="BorderBrush"     Value="Transparent" />
+        <Setter Property="Foreground"      Value="{StaticResource CoalSecondaryTextBrush}" />
+        <Setter Property="FontFamily"      Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"        Value="12" />
+        <Setter Property="Padding"         Value="14,8" />
+        <Setter Property="MinWidth"        Value="0" />
+        <Setter Property="Height"          Value="34" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="UseSystemFocusVisuals"      Value="False" />
+        <!-- Without an explicit ControlTemplate the ToggleButton fell back to
+             default WinUI 3 chrome (system-blue fill on Checked, grey hover), so
+             the active Layer-Canvas / Widget-Editor sub-tab was visually
+             indistinguishable. Mirror TriggerTabButtonStyle's coal+ember
+             underline template (TemplateBindings inherit this style's FontSize /
+             Height / Padding). -->
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="RootBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter
+                            x:Name="ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                            Foreground="{TemplateBinding Foreground}"
+                            FontFamily="{TemplateBinding FontFamily}"
+                            FontSize="{TemplateBinding FontSize}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalHoverBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalBodyTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalPrimaryTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalMutedTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="CheckStates">
+                                <VisualState x:Name="Unchecked" />
+                                <VisualState x:Name="Checked">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="BorderBrush">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource EmberDeepBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalPrimaryTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Indeterminate" />
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Ember-shadow CTA button (TODO 2026-05-07 P1 — Welcome dialog "Use
+         this" sample-graph buttons rendered with no hover/pressed feedback;
+         the same paint applies to any future Hub primary action.) Background
+         is the ember-shadow → ember-deep gradient feel; hover/pressed shifts
+         the foreground/background. Uses a full ButtonBase template with
+         visual states so PointerOver / Pressed actually animate.-->
+    <Style x:Key="EmberPrimaryButtonStyle" TargetType="Button">
+        <Setter Property="Background"      Value="{StaticResource EmberShadowBrush}" />
+        <Setter Property="Foreground"      Value="{StaticResource CoalShellBrush}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource EmberDeepBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="FontFamily"      Value="{StaticResource SansFont}" />
+        <Setter Property="FontWeight"      Value="SemiBold" />
+        <Setter Property="FontSize"        Value="11" />
+        <Setter Property="CharacterSpacing" Value="80" />
+        <Setter Property="Padding"         Value="14,4" />
+        <Setter Property="MinWidth"        Value="0" />
+        <Setter Property="MinHeight"       Value="0" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="RootBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="2"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          FontFamily="{TemplateBinding FontFamily}"
+                                          FontWeight="{TemplateBinding FontWeight}"
+                                          FontSize="{TemplateBinding FontSize}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource EmberDeepBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource EmberPrimaryBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalMutedTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Cancel / Close button paint — paired with EmberPrimaryButtonStyle.
+         design-system.jsx 0.9.6 NEW_TOKENS: "Coal-3 fill, coal-5 border,
+         no brass." Mirror EmberPrimaryButtonStyle's full ControlTemplate
+         + visual states so Pressed / PointerOver / Disabled animate
+         consistently with the primary button. -->
+    <Style x:Key="CoalSecondaryButtonStyle" TargetType="Button">
+        <Setter Property="Background"      Value="{StaticResource CoalCardBrush}" />
+        <Setter Property="Foreground"      Value="{StaticResource CoalBodyTextBrush}" />
+        <Setter Property="BorderBrush"     Value="{StaticResource CoalDividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="FontFamily"      Value="{StaticResource SansFont}" />
+        <Setter Property="FontWeight"      Value="SemiBold" />
+        <Setter Property="FontSize"        Value="11" />
+        <Setter Property="CharacterSpacing" Value="80" />
+        <Setter Property="Padding"         Value="14,4" />
+        <Setter Property="MinWidth"        Value="0" />
+        <Setter Property="MinHeight"       Value="0" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="RootBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="2"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          FontFamily="{TemplateBinding FontFamily}"
+                                          FontWeight="{TemplateBinding FontWeight}"
+                                          FontSize="{TemplateBinding FontSize}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalHoverBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalPrimaryTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalSurfaceBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalMutedTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         In-chrome menu paint (redesign R2 / chrome.jsx — MenuItem).
+         ============================================================ -->
+    <Style x:Key="ChromeMenuFlyoutPresenterStyle" TargetType="MenuFlyoutPresenter">
+        <!--  Force the dark theme so the menu parts NOT covered by the
+             explicit setters below (accelerator-hint text, sub-item chevrons, and the
+             hover / pressed / disabled visual states) resolve their system brushes from
+             the DARK theme dictionary. A menu flyout mounts in a popup (a separate visual
+             root) that does NOT inherit the app theme, so under an OS *light* theme those
+             parts rendered as dark/near-invisible text on the dark Coal card (Majo: "menu
+             texts switch with light/dark mode and become unreadable"). RequestedTheme
+             cascades to the whole presenter subtree, fixing every MenuFlyoutItem at once. -->
+        <Setter Property="RequestedTheme"    Value="Dark" />
+        <Setter Property="Background"        Value="{StaticResource CoalRaisedBrush}" />
+        <Setter Property="BorderBrush"       Value="{StaticResource CoalDividerBrush}" />
+        <Setter Property="BorderThickness"   Value="1" />
+        <Setter Property="CornerRadius"      Value="{StaticResource Radius2Corner}" />
+        <Setter Property="MinWidth"          Value="220" />
+        <Setter Property="Padding"           Value="4" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+    </Style>
+
+    <Style x:Key="ChromeMenuBarItemStyle" TargetType="MenuBarItem">
+        <!--  Dark theme so the bar item's hover / pressed / selected
+             visual-state brushes (system-sourced, not overridden below) read correctly
+             on the always-dark chrome regardless of the OS light/dark setting. -->
+        <Setter Property="RequestedTheme" Value="Dark" />
+        <Setter Property="Foreground" Value="{StaticResource CoalBodyTextBrush}" />
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"   Value="12" />
+        <Setter Property="Padding"    Value="10,4" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+    </Style>
+
+    <Style x:Key="ChromeMenuFlyoutItemStyle" TargetType="MenuFlyoutItem">
+        <Setter Property="Foreground"        Value="{StaticResource CoalPrimaryTextBrush}" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+        <Setter Property="Padding"           Value="10,5" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+    </Style>
+
+    <Style x:Key="ChromeToggleMenuFlyoutItemStyle" TargetType="ToggleMenuFlyoutItem">
+        <Setter Property="Foreground"        Value="{StaticResource CoalPrimaryTextBrush}" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+        <Setter Property="Padding"           Value="10,5" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+    </Style>
+
+    <!-- ============================================================
+         0.10.0 redesign R6 — implicit MenuFlyout paint.
+
+         The Chrome*MenuFlyout* styles above are explicit-keyed and used
+         by HubChrome's MenuBar via a UserControl-scoped implicit
+         subtree style (BasedOn=ChromeMenuFlyoutPresenterStyle). Outside
+         the chrome bar — RMB context menus on the Architect canvas,
+         Visualist canvas, LeftRail, NodeView, etc. — MenuFlyouts use
+         the WinUI 3 default chrome (system-grey card) which doesn't
+         match the forged identity.
+
+         These implicit styles (no x:Key, by TargetType) repaint every
+         MenuFlyout in the app onto the coal-3 card surface with the
+         existing eyebrow / body cadence. HubChrome's UserControl-scoped
+         override takes precedence inside the chrome bar, so the menus
+         that already opt into ChromeMenuFlyoutPresenterStyle stay on
+         CoalRaisedBrush.
+
+         Centralising here means a new MenuFlyout anywhere in the app
+         picks up the dark-card paint with zero per-call-site config —
+         the spawn-palette RMB menu in LogicCanvasView.Menus.cs is the
+         primary consumer; rail / pill / link / frame menus pick it up
+         transitively because they construct bare MenuFlyout instances.
+         ============================================================ -->
+    <Style TargetType="MenuFlyoutPresenter">
+        <!--  See ChromeMenuFlyoutPresenterStyle above — force dark so the
+             app-wide RMB context menus (canvas / rail / pill / link / frame) keep their
+             system-sourced text + visual-state brushes readable under an OS light theme. -->
+        <Setter Property="RequestedTheme"    Value="Dark" />
+        <Setter Property="Background"        Value="{StaticResource CoalCardBrush}" />
+        <Setter Property="BorderBrush"       Value="{StaticResource CoalDividerBrush}" />
+        <Setter Property="BorderThickness"   Value="1" />
+        <Setter Property="CornerRadius"      Value="{StaticResource Radius2Corner}" />
+        <Setter Property="MinWidth"          Value="220" />
+        <Setter Property="Padding"           Value="4" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+    </Style>
+
+    <Style TargetType="MenuFlyoutItem">
+        <Setter Property="Foreground"        Value="{StaticResource CoalPrimaryTextBrush}" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+        <Setter Property="Padding"           Value="10,5" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+    </Style>
+
+    <Style TargetType="ToggleMenuFlyoutItem">
+        <Setter Property="Foreground"        Value="{StaticResource CoalPrimaryTextBrush}" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+        <Setter Property="Padding"           Value="10,5" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+    </Style>
+
+    <Style TargetType="MenuFlyoutSubItem">
+        <Setter Property="Foreground"        Value="{StaticResource CoalPrimaryTextBrush}" />
+        <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"          Value="12" />
+        <Setter Property="Padding"           Value="10,5" />
+        <Setter Property="UseSystemFocusVisuals" Value="False" />
+    </Style>
+
+    <!-- LiveFeed filter chip — the small "ALL / CHAT / SUBS / RAIDS / VISUAL"
+         pills in the LiveFeed header. Migrated from a bare Border + Tapped
+         to a full ToggleButton (HUB-UX P1 — accessibility): Tab focuses the
+         chip, Space / Enter toggles it, the VisualStateManager paints the
+         hover / pressed / checked states consistently with the rest of the
+         Hub chrome. PointerOver inside Checked stays ember (the toggle is
+         already lit); Disabled fades to the same muted text tier the rest
+         of the suite uses. -->
+    <Style x:Key="LiveFeedChipStyle" TargetType="ToggleButton">
+        <Setter Property="Background"      Value="{StaticResource CoalCardBrush}" />
+        <Setter Property="Foreground"      Value="{StaticResource CoalBodyTextBrush}" />
+        <Setter Property="BorderBrush"     Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="FontFamily"      Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"        Value="10" />
+        <Setter Property="FontWeight"      Value="SemiBold" />
+        <Setter Property="CharacterSpacing" Value="80" />
+        <Setter Property="Padding"         Value="8,3" />
+        <Setter Property="MinWidth"        Value="0" />
+        <Setter Property="MinHeight"       Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="UseSystemFocusVisuals"      Value="True" />
+        <Setter Property="FocusVisualPrimaryBrush"    Value="{StaticResource EmberPrimaryBrush}" />
+        <Setter Property="FocusVisualSecondaryBrush"  Value="{StaticResource CoalCardBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="ChipBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="2"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter x:Name="ContentPresenter"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          FontFamily="{TemplateBinding FontFamily}"
+                                          FontWeight="{TemplateBinding FontWeight}"
+                                          FontSize="{TemplateBinding FontSize}"
+                                          CharacterSpacing="{TemplateBinding CharacterSpacing}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ChipBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalHoverBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ChipBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalMutedTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="CheckStates">
+                                <VisualState x:Name="Unchecked" />
+                                <VisualState x:Name="Checked">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ChipBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource EmberShadowBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalShellBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Indeterminate" />
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Visualist trigger-tab toggle (Widget Editor's per-trigger row).
+         Same UE-Blueprints-flavoured "underline on checked" idiom as
+         SubTabButtonStyle, but with a full ToggleButton ControlTemplate so
+         the visual states (PointerOver/Pressed/Checked) actually render in
+         coal+ember. Without the template, default WinUI 3 chrome paints
+         system-blue on checked / light-grey hover. -->
+    <Style x:Key="TriggerTabButtonStyle" TargetType="ToggleButton">
+        <Setter Property="Background"      Value="Transparent" />
+        <Setter Property="BorderBrush"     Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+        <Setter Property="Foreground"      Value="{StaticResource CoalSecondaryTextBrush}" />
+        <Setter Property="FontFamily"      Value="{StaticResource SansFont}" />
+        <Setter Property="FontSize"        Value="11" />
+        <Setter Property="Padding"         Value="10,4" />
+        <Setter Property="MinWidth"        Value="0" />
+        <Setter Property="MinHeight"       Value="0" />
+        <Setter Property="Height"          Value="26" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment"   Value="Center" />
+        <Setter Property="UseSystemFocusVisuals"      Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="RootBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter
+                            x:Name="ContentPresenter"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                            Foreground="{TemplateBinding Foreground}"
+                            FontFamily="{TemplateBinding FontFamily}"
+                            FontSize="{TemplateBinding FontSize}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalHoverBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalBodyTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalPrimaryTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalMutedTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="CheckStates">
+                                <VisualState x:Name="Unchecked" />
+                                <VisualState x:Name="Checked">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="BorderBrush">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource EmberDeepBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalPrimaryTextBrush}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Indeterminate" />
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

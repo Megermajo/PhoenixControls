@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Shared top-level-window chrome primitive for Architect (sibling-graph
+    windows + SubGraphWindow). Owns the custom caption: gold TitleAccentBar,
+    drag region, and 46×32 Segoe-Fluent min/max/close buttons. Two
+    ContentPresenter slots let callers compose either a file menu
+    (sibling-graph window) or a breadcrumb header (SubGraphWindow) without
+    duplicating caption code.
+
+    Per feedback_visualist_architect_chrome_independence.md this primitive
+    lives in Architect.WinUI only — Visualist's analogue will be authored
+    separately even if it ends up visually similar.
+
+    Glyph choices match the redesign brief (TODO.md Architect P1 — custom
+    chrome): E921 minimize, E922 maximize, E923 restore, E8BB close. The
+    font is the standard Segoe Fluent Icons fallback chain already used
+    elsewhere in Architect — IconFontResolver picks up MDL2 fallback for
+    Win10 hosts that don't have Fluent installed.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.ArchitectWindowChrome"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <UserControl.Resources>
+        <!-- 46×32 caption button per the redesign brief. Custom template
+             so we can paint our own hover background (caption buttons sit
+             on the CoalRaisedBrush bar, default WinUI Button styles bleed
+             a light accent through that doesn't read on the dark caption).
+             E8BB Close gets a separate brush so the standard red close
+             hover applies via the CloseButtonStyle below. -->
+        <Style x:Key="CaptionButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Foreground" Value="{StaticResource CoalPaperBrush}" />
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="UseSystemFocusVisuals" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="Root" Background="{TemplateBinding Background}">
+                            <ContentPresenter
+                                Foreground="{TemplateBinding Foreground}"
+                                FontFamily="{TemplateBinding FontFamily}"
+                                FontSize="{TemplateBinding FontSize}"
+                                Content="{TemplateBinding Content}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Background">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalHoverBrush}" />
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Background">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{StaticResource CoalDividerBrush}" />
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity"
+                                                             To="0.5" Duration="0" />
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Close button uses the standard red-hover convention. -->
+        <Style x:Key="CloseCaptionButtonStyle" TargetType="Button" BasedOn="{StaticResource CaptionButtonStyle}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="Root" Background="{TemplateBinding Background}">
+                            <ContentPresenter
+                                Foreground="{TemplateBinding Foreground}"
+                                FontFamily="{TemplateBinding FontFamily}"
+                                FontSize="{TemplateBinding FontSize}"
+                                Content="{TemplateBinding Content}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Background">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource StatusRedBrush}" />
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Root" Storyboard.TargetProperty="Background">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource CoalDividerBrush}" />
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="2" />
+            <RowDefinition x:Name="SecondaryRow" Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Caption row: 32 px tall. Drag region centred, optional left
+             content (file-name stack / breadcrumb), pinned caption buttons
+             on the right.
+
+             [S9-402/406] CaptionBarRoot is named so the code-behind can swap
+             its Background between an active (CoalRaisedBrush) and inactive
+             (CoalSurfaceBrush — a touch dimmer) brush on window
+             Activated/Deactivated, mirroring the WinForms baseline's
+             BgTitleActive / BgTitleInactive swap. -->
+        <Border x:Name="CaptionBarRoot"
+                Grid.Row="0"
+                Background="{StaticResource CoalRaisedBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Left slot — sibling window puts file-name + path + version
+                     here; SubGraphWindow puts a breadcrumb here. Driven by the
+                     LeftCaptionContent DependencyProperty so XAML consumers
+                     can use the property-element form
+                     <ArchitectWindowChrome.LeftCaptionContent>...</...>. -->
+                <ContentPresenter x:Name="LeftCaptionSlot"
+                                  Grid.Column="0"
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Left"
+                                  Margin="12,0,0,0" />
+
+                <!-- Drag region — MainWindow assigns this to
+                     Window.SetTitleBar() so the caption row drags the
+                     window even though we're past ExtendsContentIntoTitleBar.
+                     Background must be a hit-testable brush (Transparent
+                     works in WinUI 3).
+
+                     [S9-403/407] DoubleTapped toggles maximize/restore — the
+                     standard Windows title-bar affordance the WinForms baseline
+                     had (CaptionBar.OnMouseDoubleClick). WinUI's SetTitleBar
+                     handles OS-level drag but does NOT synthesize the
+                     double-click-maximize gesture, so we wire it explicitly. -->
+                <Border x:Name="DragRegion"
+                        x:FieldModifier="public"
+                        Grid.Column="1"
+                        Background="Transparent"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        DoubleTapped="OnDragRegionDoubleTapped" />
+
+                <!-- Right slot — optional, sibling window uses this for
+                     reveal-call-site buttons; driven by RightCaptionContent DP. -->
+                <ContentPresenter x:Name="RightCaptionSlot"
+                                  Grid.Column="2"
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Right"
+                                  Margin="0,0,8,0" />
+
+                <!-- Caption buttons — 46×32 each per the spec. -->
+                <StackPanel Grid.Column="3"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Stretch">
+                    <Button x:Name="MinimizeButton"
+                            Style="{StaticResource CaptionButtonStyle}"
+                            ToolTipService.ToolTip="Minimize"
+                            AutomationProperties.Name="Minimize"
+                            Click="OnMinimizeClicked"
+                            Content="&#xE921;" />
+                    <Button x:Name="MaximizeButton"
+                            Style="{StaticResource CaptionButtonStyle}"
+                            ToolTipService.ToolTip="Maximize"
+                            AutomationProperties.Name="Maximize"
+                            Click="OnMaximizeClicked"
+                            Content="&#xE922;" />
+                    <Button x:Name="CloseButton"
+                            Style="{StaticResource CloseCaptionButtonStyle}"
+                            ToolTipService.ToolTip="Close"
+                            AutomationProperties.Name="Close"
+                            Click="OnCloseClicked"
+                            Content="&#xE8BB;" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Gold TitleAccentBar — 2px brass hairline below the caption.
+             Same BrassGradientBrush as ArchitectChrome / HubChrome use so the
+             three pillars read as one suite.
+
+             [S9-402/406] Named so the code-behind dims the accent to a soft
+             border brush when the window loses focus, mirroring the baseline's
+             "2px gold → 1px BorderSoft" swap. The Row height stays 2px; we swap
+             the Fill (and the perceived weight) rather than re-layout. -->
+        <Rectangle x:Name="TitleAccentBar"
+                   Grid.Row="1"
+                   Fill="{StaticResource BrassGradientBrush}" />
+
+        <!-- Secondary row — sibling windows put their File/Edit/View/Help
+             MenuBar here via the SecondaryContent DP; SubGraphWindow leaves
+             this empty (Auto-height collapses the row). -->
+        <ContentPresenter x:Name="SecondarySlot"
+                          Grid.Row="2" />
+    </Grid>
+</UserControl>

@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Ko-fi "Chrome Compact" support button (design: "Ko-Fi Chrome Compact").
+
+    A small monospace chrome control sized for footers / titlebars: Ko-fi cup
+    mark + label + a NE arrow, on a coal gradient that warms to an ember-edged
+    glow on hover. Deliberately discrete — Phoenix Controls is not commercial;
+    this is a quiet "you can support me" hint, not a sales CTA.
+
+    The label text comes from the Button's Content (set + localized in code-
+    behind via RootButton.Content) and is rendered by the template's
+    ContentPresenter, so it stays in the template namescope and can still be
+    restyled on hover by the VisualStateManager. The cup is four static <Path>
+    glyphs inside a Viewbox (Data as literal strings — never PathIcon.Data
+    reparenting, per project_chat_badge_geometry_crash). Brushes map to
+    PhoenixDark.xaml tokens.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Controls.KofiSupportButton"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    RequestedTheme="Dark">
+
+    <UserControl.Resources>
+        <!-- coal-3 -> coal-2 (resting) / coal-4 -> coal-3 (hover) -->
+        <LinearGradientBrush x:Key="KofiChromeBg" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Offset="0" Color="#221C16" />
+            <GradientStop Offset="1" Color="#1B1713" />
+        </LinearGradientBrush>
+        <LinearGradientBrush x:Key="KofiChromeBgHover" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Offset="0" Color="#2C251D" />
+            <GradientStop Offset="1" Color="#221C16" />
+        </LinearGradientBrush>
+    </UserControl.Resources>
+
+    <Button x:Name="RootButton"
+            Click="OnClick"
+            Content="Support my work"
+            Background="{StaticResource KofiChromeBg}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
+            BorderThickness="1"
+            Foreground="{StaticResource CoalPrimaryTextBrush}"
+            Padding="8,0"
+            Height="22"
+            MinWidth="0"
+            MinHeight="0"
+            HorizontalAlignment="Left">
+        <Button.Template>
+            <ControlTemplate TargetType="Button">
+                <Border x:Name="RootBorder"
+                        Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="3"
+                        Padding="{TemplateBinding Padding}"
+                        RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="PressShift" />
+                    </Border.RenderTransform>
+
+                    <VisualStateManager.VisualStateGroups>
+                        <VisualStateGroup x:Name="CommonStates">
+                            <VisualState x:Name="Normal" />
+                            <VisualState x:Name="PointerOver">
+                                <VisualState.Setters>
+                                    <Setter Target="RootBorder.Background" Value="{StaticResource KofiChromeBgHover}" />
+                                    <Setter Target="RootBorder.BorderBrush" Value="{StaticResource EmberShadowBrush}" />
+                                    <Setter Target="LabelPresenter.Foreground" Value="{StaticResource CoalPaperBrush}" />
+                                    <Setter Target="ArrowGlyph.BorderBrush" Value="{StaticResource CoalPaperBrush}" />
+                                    <Setter Target="ArrowGlyph.Opacity" Value="1" />
+                                </VisualState.Setters>
+                            </VisualState>
+                            <VisualState x:Name="Pressed">
+                                <VisualState.Setters>
+                                    <Setter Target="RootBorder.Background" Value="{StaticResource KofiChromeBgHover}" />
+                                    <Setter Target="RootBorder.BorderBrush" Value="{StaticResource EmberShadowBrush}" />
+                                    <Setter Target="PressShift.Y" Value="1" />
+                                </VisualState.Setters>
+                            </VisualState>
+                            <VisualState x:Name="Disabled">
+                                <VisualState.Setters>
+                                    <Setter Target="RootBorder.Opacity" Value="0.5" />
+                                </VisualState.Setters>
+                            </VisualState>
+                        </VisualStateGroup>
+                    </VisualStateManager.VisualStateGroups>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+                        <!-- Ko-fi cup mark (tone: light — orange cup) -->
+                        <Viewbox Width="14" Height="11.3" VerticalAlignment="Center" Stretch="Uniform">
+                            <Grid Width="241" Height="194">
+                                <Path Fill="#F5EFE3"
+                                      Data="M174.568 17.9772C160.927 16.6151 151.38 16.1589 114.552 16.1589C90.908 16.1589 70.9008 16.387 54.7644 18.4334C33.3949 21.164 15.2058 37.5285 15.2058 67.7674C15.2058 98.0066 16.796 121.422 29.0741 142.107C42.9425 165.751 66.1302 178.707 96.1412 178.707H103.414C140.242 178.707 160.25 159.156 170.253 143.698C174.574 136.874 177.754 130.058 179.801 123.234C205.947 120.96 225.27 99.3624 225.27 72.9941V69.3577C225.27 40.9432 206.631 21.164 174.574 17.9772H174.568Z" />
+                                <Path Fill="#202020"
+                                      Data="M32.2469 67.9899C32.2469 97.3168 34.0654 116.184 43.6127 133.689C54.5225 153.924 74.3018 161.653 96.8117 161.653H103.857C133.411 161.653 147.736 147.329 155.693 134.829C159.558 128.462 162.966 121.417 164.784 112.547L166.147 106.864H174.332C192.521 106.864 208.208 92.09 208.208 73.2166V69.8082C208.208 48.6669 195.024 37.5228 172.058 34.7987C159.102 33.6646 151.372 33.2084 114.538 33.2084C89.7602 33.2084 72.0272 33.4364 58.6152 35.4828C39.7483 38.2134 32.2407 48.8951 32.2407 67.9899Z" />
+                                <Path Fill="#F5EFE3"
+                                      Data="M166.158 83.6801C166.158 86.4107 168.204 88.4572 171.841 88.4572C183.435 88.4572 189.802 81.8619 189.802 70.9523C189.802 60.0427 183.435 53.2195 171.841 53.2195C168.204 53.2195 166.158 55.2657 166.158 57.9963V83.6866V83.6801Z" />
+                                <Path Fill="#FF5A16"
+                                      Data="M54.5321 82.3198C54.5321 95.732 62.0332 107.326 71.5807 116.424C77.9478 122.562 87.9515 128.93 94.7685 133.022C96.8147 134.157 98.8611 134.841 101.136 134.841C103.866 134.841 106.134 134.157 107.959 133.022C114.782 128.93 124.779 122.562 130.919 116.424C140.694 107.332 148.195 95.7383 148.195 82.3198C148.195 67.7673 137.286 54.8115 121.599 54.8115C112.28 54.8115 105.912 59.5882 101.136 66.1772C96.8147 59.582 90.2259 54.8115 80.9001 54.8115C64.9855 54.8115 54.5256 67.7673 54.5256 82.3198Z" />
+                            </Grid>
+                        </Viewbox>
+
+                        <ContentPresenter x:Name="LabelPresenter"
+                                          Content="{TemplateBinding Content}"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          FontFamily="{StaticResource MonoFont}"
+                                          FontSize="11"
+                                          FontWeight="Medium"
+                                          CharacterSpacing="40"
+                                          VerticalAlignment="Center" />
+
+                        <!-- NE arrow: CSS 8px box with top+right border, rotated 45deg. -->
+                        <Border x:Name="ArrowGlyph"
+                                Width="7"
+                                Height="7"
+                                BorderBrush="{StaticResource CoalPrimaryTextBrush}"
+                                BorderThickness="0,1.5,1.5,0"
+                                Opacity="0.7"
+                                Margin="2,0,0,0"
+                                VerticalAlignment="Center"
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform>
+                                <RotateTransform Angle="45" />
+                            </Border.RenderTransform>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </ControlTemplate>
+        </Button.Template>
+    </Button>
+</UserControl>

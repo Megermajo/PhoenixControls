@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Controls.TrafficLightButton"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Width="38" Height="30"
+    IsTabStop="True"
+    UseSystemFocusVisuals="True"
+    FocusVisualPrimaryBrush="{StaticResource EmberPrimaryBrush}"
+    FocusVisualSecondaryBrush="{StaticResource CoalCardBrush}"
+    KeyDown="OnRootKeyDown">
+
+    <!-- Custom min / max / close — chrome.jsx TrafficLight: 38 x 30 with the
+         glyph centered, hover bg coal-hover for min/max and err-brush for
+         close. The HoverBrush dependency property is set per-instance in
+         HubChrome.xaml so the close button picks up the red hover paint
+         while the other two stay coal. Glyph geometry mirrors the SVG
+         paths in chrome.jsx. -->
+    <Border x:Name="Root"
+            Background="Transparent"
+            PointerEntered="OnPointerEntered"
+            PointerExited="OnPointerExited"
+            PointerPressed="OnPointerPressed"
+            PointerReleased="OnPointerReleased">
+        <Path x:Name="Glyph"
+              Stroke="{StaticResource CoalBodyTextBrush}"
+              StrokeThickness="1.2"
+              StrokeStartLineCap="Square"
+              StrokeEndLineCap="Square"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Center"
+              Width="10" Height="10"
+              Stretch="None" />
+    </Border>
+</UserControl>

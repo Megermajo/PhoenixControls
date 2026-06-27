@@ -1,0 +1,859 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- IsTabStop=True surfaces nodes to the WinUI keyboard-navigation tree so
+     screen readers / WCAG-driven traversal can iterate them (Architect UX
+     review P0-9). The canvas-side spawn-palette/QuickKey behaviour on Tab
+     is unchanged — those handle at the HostRoot level before focus traversal
+     gets a chance to move into a node. -->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Canvas.NodeView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:conv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters"
+    xmlns:canvas="using:Phoenix.Controls.Architect.WinUI.Canvas"
+    IsTabStop="True"
+    UseSystemFocusVisuals="True"
+    FocusVisualPrimaryBrush="{StaticResource NodeFocusRingBrush}"
+    FocusVisualSecondaryBrush="Transparent"
+    KeyboardAcceleratorPlacementMode="Hidden"
+    UseLayoutRounding="True"
+    AutomationProperties.Name="{Binding AccessibleName}">
+
+    <!-- S29 (P0-A5 / P1-A21): F2 enters rename mode. The handler inspects
+         the currently-focused element so a focused socket-label TextBlock
+         renames its socket (P1-A21), while node-body focus renames the
+         title (P0-A5). Double-tap remains the mouse-driven entry point on
+         both surfaces. -->
+    <UserControl.KeyboardAccelerators>
+        <KeyboardAccelerator Key="F2" Invoked="OnF2RenameAccelerator" />
+    </UserControl.KeyboardAccelerators>
+
+    <UserControl.Resources>
+        <conv:HexStringToBrushConverter x:Key="HexBrush" />
+        <conv:BoolToVisibilityConverter x:Key="BoolVis" />
+        <conv:DropStateToBrushConverter x:Key="DropHaloBrush" />
+        <conv:DropStateToVisibilityConverter x:Key="DropHaloVis" />
+        <conv:PinDashArrayConverter x:Key="PinDash" />
+        <conv:FallbackPillBorderBrushConverter x:Key="FallbackPillBorder" />
+
+        <!-- Required-but-empty halo brush — yellow ring around inputs that
+             the NodeTemplate marks RequiredInputs but currently have no
+             link attached. Fixed warm-amber so the rule-of-three with the
+             green / red drop-target halos stays a clear traffic-light. -->
+        <SolidColorBrush x:Key="PinRequiredHaloBrush" Color="#E0A23A" />
+        <!-- Input socket row: [label][optional inline pill]. The pin chrome
+             that used to live in column 0 is now rendered by NodeView's
+             PinOverlay Canvas (sibling of NodeRoot) so the pin Ellipse can
+             straddle NodeRoot's outer border (50/50 in/out) without being
+             clipped by the rounded-rect mask the Border applies to its
+             content. See NodeView.xaml.cs RebuildPinOverlay for the pin
+             element builder + positioning.
+
+             MinHeight="24" (not fixed Height) so multi-line pill values can
+             grow the row vertically; the per-row Y centre is reported back
+             to NodeViewModel via the SocketRowCenterY measure-pass so the
+             wire anchor + the painted pin stay glued on multi-line rows.
+
+             Left padding bumped 6→16 so the label clears the half-overhang
+             pin (centre x=0, extends to x=+7 inside the body). -->
+        <DataTemplate x:Key="InputRowTemplate">
+            <Grid MinHeight="24" Padding="16,0,8,0" Tag="{Binding}"
+                  Loaded="OnSocketRowLoaded"
+                  SizeChanged="OnSocketRowSizeChanged">
+                <!-- 0.11.x polish — three columns: label / pill / DB-picker
+                     chevron. The chevron column is Auto so it collapses to
+                     zero width when HasDatabankPicker is false (i.e. on
+                     every non-DB.* node), keeping the row layout
+                     unchanged for the existing surface. -->
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- B14 (audit/winui-regressions-2026-05-24) — hover-anchored
+                     TooltipPopup. The plain ToolTipService.ToolTip="{Binding Tooltip}"
+                     binding that used to live here was the post-T15 fallback
+                     after the custom popup primitive was lost; restoring it
+                     puts the rich title + body + cursor-anchored placement
+                     Design_Orders §4.9 specifies back on the row. PointerEntered
+                     starts a 600 ms delay timer, PointerExited cancels it +
+                     hides the popup — handlers live in NodeView.Pins.cs and
+                     read the DataContext (SocketViewModel) directly. -->
+                <Grid Grid.Column="0" Margin="0,0,0,0" VerticalAlignment="Center"
+                      Background="Transparent"
+                      canvas:CanvasInteraction.IsEditAffordance="True"
+                      PointerEntered="OnSocketRowGridPointerEntered"
+                      PointerExited="OnSocketRowGridPointerExited">
+                    <!-- S29 (P1-A21): PointerEntered / PointerExited track the
+                         hovered socket so the UserControl-level F2 accelerator
+                         can rename "alongside double-click". Pointer hover is
+                         the natural target signal — a TextBlock isn't a Control
+                         and never holds keyboard focus, so a focus-driven
+                         signal would require synthesising tab-stops where the
+                         canvas's spawn-palette behaviour already owns Tab. -->
+                    <TextBlock Text="{Binding Label}"
+                               Foreground="{StaticResource TextLabelBrush}"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               DoubleTapped="OnLabelDoubleTapped"
+                               PointerEntered="OnSocketLabelPointerEntered"
+                               PointerExited="OnSocketLabelPointerExited"
+                               Visibility="{Binding IsRenaming, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+                    <TextBox Text="{Binding Label, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             FontFamily="{StaticResource SansFont}"
+                             FontSize="12"
+                             MinWidth="40"
+                             Background="{StaticResource CoalShellBrush}"
+                             Foreground="{StaticResource CoalPaperBrush}"
+                             BorderBrush="{StaticResource Ember200Brush}"
+                             BorderThickness="1"
+                             Padding="2,0"
+                             Loaded="OnInlineEditorLoaded"
+                             KeyDown="OnLabelEditKeyDown"
+                             LostFocus="OnLabelEditLostFocus"
+                             Visibility="{Binding IsRenaming, Converter={StaticResource BoolVis}}" />
+                </Grid>
+
+                <!-- Inline value pill — UE-Blueprints style. Click to edit.
+                     0.10.8 readability sweep: pill is now HorizontalAlignment="Left"
+                     so the value sits IMMEDIATELY after the socket label, the
+                     way Blueprints lays out hardcoded inputs. Pre-fix the pill
+                     was pushed to the right edge of the input column via
+                     Right alignment, which separated the pill from its label
+                     by a long visual gap whenever the column was wide (any
+                     node with both inputs AND outputs sized the input column
+                     to the slack, so the gap was always present). Majo's
+                     0.10.6 audit called this out as item #7 — "input pills
+                     MUST be on the left." Output rows already pin themselves
+                     to the right via OutputRowTemplate's Right-aligned
+                     ItemsControl, so the new layout is:
+                       inputs:  [pin][label][pill ............................]
+                       outputs: [............................ label][pin]
+                     reading like a balanced two-column socket grid.
+
+                     Visibility binds to IsPillVisible (B21) so the pill
+                     renders for every input socket that could carry a literal,
+                     including wired sockets. Pre-B21 the visibility binding
+                     was IsEditablePill, which flipped false the instant a
+                     wire attached — the inline literal disappeared and the
+                     node looked as if it had no design-time state at all.
+                     Post-B21:
+                       • IsPillVisible — true for every named, non-flow,
+                         non-placeholder input. Drives the Border's Visibility.
+                       • Opacity — full when editable, 0.45 when wired
+                         (ghost-pill — informational only, the wired source
+                         wins at export time).
+                       • IsHitTestVisible — bound to IsEditablePill so the
+                         ghost-pill rejects taps. Clicking a wired pill must
+                         not flip it into edit mode; the literal the user
+                         types would be silently overridden by the wired
+                         source so the edit affordance is intentionally
+                         disabled in this state.
+                     PillDisplayText still falls back to "—" when the literal
+                     is empty so the unwired empty pill still reads as
+                     "click to type" (UX review P1-16). -->
+                <!-- BorderBrush flips between BorderPillBrush (normal editable
+                     pill) and the dim CoalDividerBrush (B21 fallback-pill
+                     indicator — pill is editable but the wired upstream wins
+                     at export time; literal is the runtime fallback). The
+                     binding source is IsPillFallback, gated on connectivity +
+                     parent-node template per SocketViewModel.IsFallbackPillNode. -->
+                <Border Grid.Column="1"
+                        Margin="6,2,0,2"
+                        Padding="6,1"
+                        MaxWidth="{Binding PillMaxWidth}"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource BgPillBrush}"
+                        BorderBrush="{Binding IsPillFallback, Converter={StaticResource FallbackPillBorder}}"
+                        BorderThickness="1"
+                        CornerRadius="3"
+                        Tag="{Binding}"
+                        canvas:CanvasInteraction.IsEditAffordance="True"
+                        Opacity="{Binding PillOpacity}"
+                        IsHitTestVisible="{Binding IsEditablePill}"
+                        Visibility="{Binding IsPillVisible, Converter={StaticResource BoolVis}}">
+                    <Grid PointerEntered="OnPillPointerEntered"
+                          PointerExited="OnPillPointerExited">
+                        <!-- MaxWidth binds to PillMaxWidth so multi-line pills (Template /
+                             Script / Payload, or anything containing a newline) cap at 240
+                             while single-line pills (DB.* TableName, MacroName, hardcoded
+                             literals) are uncapped — the pill grows with the node body and
+                             the body grows toward NodeMaxWidth via NodeGeometry.IntrinsicWidth.
+                             Pre-fix the hardcoded MaxWidth=240 cropped DB nodes' long table
+                             names with CharacterEllipsis even though the node body had room. -->
+                        <!-- PillDisplayText returns the live value when set, or "—"
+                             when empty so the click target reads as "type here"
+                             instead of vanishing entirely (UX review P1-16). -->
+                        <TextBlock Text="{Binding PillDisplayText}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource AccentValueBrush}"
+                                   MaxWidth="{Binding PillMaxWidth}"
+                                   TextWrapping="{Binding PillTextWrapping}"
+                                   TextTrimming="{Binding PillTextTrimming}"
+                                   VerticalAlignment="Center"
+                                   Tapped="OnPillTapped"
+                                   Visibility="{Binding IsEditing, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+                        <!-- Single TextBox handles both single-line and multi-line pill edits.
+                             AcceptsReturn / TextWrapping / MaxHeight bind to IsMultilineAttr so
+                             Template / Script / Payload (or any value containing a newline)
+                             grows into a wrapped editor; Enter inserts a newline, Ctrl+Enter
+                             commits — the OnPillEditKeyDown handler does the gating. MaxWidth
+                             tracks the same PillMaxWidth so the editor footprint matches
+                             the read-only pill above. -->
+                        <TextBox Text="{Binding ValuePill, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontFamily="{StaticResource MonoFont}"
+                                 FontSize="11"
+                                 MinWidth="60"
+                                 MaxWidth="{Binding PillMaxWidth}"
+                                 MaxHeight="180"
+                                 Background="{StaticResource CoalShellBrush}"
+                                 Foreground="{StaticResource CoalPaperBrush}"
+                                 BorderBrush="{StaticResource Ember200Brush}"
+                                 BorderThickness="1"
+                                 Padding="2,0"
+                                 AcceptsReturn="{Binding IsMultilineAttr}"
+                                 TextWrapping="{Binding PillTextWrapping}"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 Loaded="OnInlineEditorLoaded"
+                                 KeyDown="OnPillEditKeyDown"
+                                 LostFocus="OnPillEditLostFocus"
+                                 Visibility="{Binding IsEditing, Converter={StaticResource BoolVis}}" />
+                    </Grid>
+                </Border>
+                <!-- 0.11.x polish — Databank picker. ▾ chevron in column 2
+                     next to the pill on DB.* nodes' TableName / Column
+                     sockets opens a MenuFlyout populated from the live
+                     SQLite databank so the user picks instead of typing
+                     (no more typos). Bound visibility = HasDatabankPicker;
+                     OnDatabankPickerClicked queries
+                     DB.GetAllTableNamesAsync / GetSchemaAsync on a
+                     background task and posts items back to the flyout.
+
+                     0.11.x followup — Tag MUST NOT carry the SocketViewModel
+                     here. The canvas-side HitTagFrom walks up from the
+                     pointer's OriginalSource and returns the first Tagged
+                     element it finds; if Tag = SocketViewModel, clicking
+                     the chevron is mis-read as a wire-drop on the input
+                     pin, OnHostPointerPressed captures the pointer for the
+                     drag, and the Button's Click event never fires (Majo:
+                     "chevron doesn't react to clicks"). OnDatabankPickerClicked
+                     reads the SocketViewModel off the Button's DataContext,
+                     not Tag, so the binding is redundant on top of being
+                     the bug. -->
+                <Button Grid.Column="2"
+                        Width="16"
+                        Height="16"
+                        Padding="0"
+                        MinWidth="0"
+                        MinHeight="0"
+                        Margin="2,0,0,0"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Center"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="2"
+                        Foreground="{StaticResource AccentValueBrush}"
+                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                        FontSize="9"
+                        Content="&#xE70D;"
+                        Loaded="OnDatabankPickerLoaded"
+                        AutomationProperties.Name="Pick from databank"
+                        Visibility="{Binding HasDatabankPicker, Converter={StaticResource BoolVis}}"
+                        Click="OnDatabankPickerClicked" />
+            </Grid>
+        </DataTemplate>
+
+        <!-- Middle-attribute row: [Key]    ……    [Pill]   /   [Key]    ……    ☑/☐
+             Design_Orders §5.1 — for every DefaultProperties key with no
+             matching input socket. Without this row template the only place
+             to author ~20 templates' inline state (Bus.OnMessage.EventType,
+             Logic.If.Operator, Schedule.RunAt.DateTime, Var.Set.VariableName,
+             …) was the right-side inspector — the regression
+             feedback_node_ui_inline_sockets.md exists to close. 
+
+             Layout: 3-column Grid — key label (Auto) | dotted spacer (*) |
+             pill/glyph (Auto, right-aligned). MinHeight matches the
+             NodeGeometry.MiddleAttrRowHeight constant so the painted body
+             and the intrinsic-height budget agree. -->
+        <DataTemplate x:Key="MiddleAttributeRowTemplate">
+            <!-- B16 (audit 2026-05-24) — row-level hover tooltip surfaces
+                 "{Key}: {DisplayText}" so middle-attribute rows aren't
+                 silent on hover the way they were pre-fix. The Tooltip
+                 property on MiddleAttributeViewModel re-raises whenever
+                 Value changes, so the popup stays in sync as the user
+                 edits the pill. -->
+            <!-- B14 / B16 — hover-anchored TooltipPopup on middle-attribute
+                 rows. The old ToolTipService.ToolTip="{Binding Tooltip}" was
+                 the post-T15 fallback; OnMiddleAttrRowPointerEntered now arms
+                 the same 600 ms-delay popup pipeline the socket-pin path uses,
+                 with the popup showing "{Key}" / "{DisplayText}" so the row's
+                 inline state surfaces on hover regardless of which middle-
+                 attribute template (bool / pill / multi-line) is rendered. -->
+            <Grid MinHeight="22" Padding="8,1,8,1" Tag="{Binding}"
+                  Background="Transparent"
+                  PointerEntered="OnMiddleAttrRowPointerEntered"
+                  PointerExited="OnMiddleAttrRowPointerExited">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Key label — 12pt sans, same family/size as socket labels so
+                     the two row types read as siblings, not as competing widgets. -->
+                <TextBlock Grid.Column="0"
+                           Text="{Binding Key}"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="12"
+                           Foreground="{StaticResource TextLabelBrush}"
+                           VerticalAlignment="Center" />
+
+                <!-- Dotted spacer between key and pill — Design_Orders §5.1
+                     shows the row as `Key …… [pill]`. A TextBlock with a
+                     dotted run mimics the ASCII art without a custom geometry,
+                     and trimming with CharacterEllipsis lets it shrink under
+                     pressure rather than fight the pill for width. -->
+                <TextBlock Grid.Column="1"
+                           Text="·············································"
+                           Margin="6,0,6,0"
+                           Foreground="{StaticResource CoalDividerBrush}"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           IsHitTestVisible="False" />
+
+                <!-- Boolean toggle glyph — ☑ / ☐ — clickable, no pill chrome.
+                     Mirrors InspectorField.OnBoolHitTapped pattern (consumed
+                     shape, not lifted file: a parallel agent owns
+                     InspectorField.xaml.cs per QC19 sweep). Tapping toggles
+                     MiddleAttributeViewModel.Value via ToggleBool. -->
+                <TextBlock Grid.Column="2"
+                           Text="{Binding BoolGlyph}"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="14"
+                           Foreground="{StaticResource AccentValueBrush}"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Right"
+                           canvas:CanvasInteraction.IsEditAffordance="True"
+                           Tapped="OnMiddleAttrBoolTapped"
+                           Visibility="{Binding IsBool, Converter={StaticResource BoolVis}}" />
+
+                <!-- Pill row (non-bool case) — mirrors the SocketRow pill chrome
+                     so the affordance reads identically: click to edit, "—" for
+                     empty, Enter / focus-loss commits, Esc rolls back to baseline. -->
+                <Border Grid.Column="2"
+                        Margin="0,1,0,1"
+                        Padding="6,1"
+                        MaxWidth="{Binding PillMaxWidth}"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        Background="{StaticResource BgPillBrush}"
+                        BorderBrush="{StaticResource BorderPillBrush}"
+                        BorderThickness="1"
+                        CornerRadius="3"
+                        Tag="{Binding}"
+                        canvas:CanvasInteraction.IsEditAffordance="True"
+                        Visibility="{Binding IsPillRow, Converter={StaticResource BoolVis}}">
+                    <Grid>
+                        <TextBlock Text="{Binding DisplayText}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource AccentValueBrush}"
+                                   MaxWidth="{Binding PillMaxWidth}"
+                                   TextWrapping="{Binding PillTextWrapping}"
+                                   TextTrimming="{Binding PillTextTrimming}"
+                                   VerticalAlignment="Center"
+                                   Tapped="OnMiddleAttrPillTapped"
+                                   Visibility="{Binding IsEditing, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+                        <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 FontFamily="{StaticResource MonoFont}"
+                                 FontSize="11"
+                                 MinWidth="60"
+                                 MaxWidth="{Binding PillMaxWidth}"
+                                 MaxHeight="180"
+                                 Background="{StaticResource CoalShellBrush}"
+                                 Foreground="{StaticResource CoalPaperBrush}"
+                                 BorderBrush="{StaticResource Ember200Brush}"
+                                 BorderThickness="1"
+                                 Padding="2,0"
+                                 AcceptsReturn="{Binding IsMultiline}"
+                                 TextWrapping="{Binding PillTextWrapping}"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 Loaded="OnInlineEditorLoaded"
+                                 KeyDown="OnMiddleAttrPillEditKeyDown"
+                                 LostFocus="OnMiddleAttrPillEditLostFocus"
+                                 Visibility="{Binding IsEditing, Converter={StaticResource BoolVis}}" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Output socket row: [label][pin], right-aligned. MinHeight matches
+             the input template so output rows stay aligned with their input
+             counterpart on the same row index — even when the input row
+             grows tall to fit a wrapped multi-line pill. The leading "*"
+             column was removed: the parent ItemsControl now sits in an Auto
+             column and right-aligns its content to the node body, so each
+             row sizes to (label + pin) and stops there. The old "*" filler
+             was a no-op once the body started auto-sizing per side, and it
+             interfered with Auto-column measurement.
+
+             HorizontalAlignment="Right" pins each row's content to the
+             right edge of its StackPanel slot inside the parent
+             ItemsControl. Without this alignment the ItemsControl sizes
+             itself to its widest output row, and SHORTER output rows
+             render LEFT-justified inside that wider slot — leaving the
+             pin floating in mid-row instead of glued to the node body's
+             right edge. That was the symptom Majo reported as
+             "bubble-anchors not aligning to the right" on macro /
+             custom-function nodes whose outputs have varied label widths
+             (e.g. an "ok" output next to a "result_payload" output).
+             Wires anchor at NodeGeometry.SocketAnchor (body.Right −
+             SocketColumnInset), so once each row right-aligns, every
+             output pin sits on the same X and wires meet their pins. -->
+        <!-- Output socket row: [label]. The pin chrome that used to live in
+             column 1 is now rendered by NodeView's PinOverlay Canvas. Right
+             padding bumped 6→16 so the label clears the half-overhang output
+             pin (centre x=width, extends to x=width-7 inside the body). -->
+        <DataTemplate x:Key="OutputRowTemplate">
+            <Grid MinHeight="24" Padding="8,0,16,0" Tag="{Binding}" HorizontalAlignment="Right"
+                  Loaded="OnSocketRowLoaded"
+                  SizeChanged="OnSocketRowSizeChanged">
+                <!-- B14 — mirrors the input-row hover-anchored TooltipPopup
+                     wiring above; the OutputRowTemplate's label grid shares
+                     the same handler pair so output-side socket labels carry
+                     the same rich popup. -->
+                <Grid Margin="0,0,0,0" VerticalAlignment="Center"
+                      Background="Transparent"
+                      canvas:CanvasInteraction.IsEditAffordance="True"
+                      PointerEntered="OnSocketRowGridPointerEntered"
+                      PointerExited="OnSocketRowGridPointerExited">
+                    <!-- S29 (P1-A21): mirror of the input-row pointer hooks so
+                         output-side socket labels get F2 rename parity. -->
+                    <TextBlock Text="{Binding Label}"
+                               Foreground="{StaticResource TextLabelBrush}"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               HorizontalAlignment="Right"
+                               DoubleTapped="OnLabelDoubleTapped"
+                               PointerEntered="OnSocketLabelPointerEntered"
+                               PointerExited="OnSocketLabelPointerExited"
+                               Visibility="{Binding IsRenaming, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+                    <TextBox Text="{Binding Label, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             FontFamily="{StaticResource SansFont}"
+                             FontSize="12"
+                             MinWidth="40"
+                             Background="{StaticResource CoalShellBrush}"
+                             Foreground="{StaticResource CoalPaperBrush}"
+                             BorderBrush="{StaticResource Ember200Brush}"
+                             BorderThickness="1"
+                             Padding="2,0"
+                             HorizontalAlignment="Right"
+                             Loaded="OnInlineEditorLoaded"
+                             KeyDown="OnLabelEditKeyDown"
+                             LostFocus="OnLabelEditLostFocus"
+                             Visibility="{Binding IsRenaming, Converter={StaticResource BoolVis}}" />
+                </Grid>
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <!-- Layered chrome: drop shadow Border behind, NodeRoot in front. NodeRoot
+         binds Width to the VM's intrinsic Width and lets Height auto-size from
+         its content (so wrapped multi-line pills can grow the body). The shadow
+         binds to NodeRoot.ActualWidth/ActualHeight via ElementName so it tracks
+         whatever WinUI lays the body out as — pre-fix the shadow used the VM's
+         Height which was a fixed 22-px-per-row estimate, and tall multi-line
+         pill nodes had a shadow stub clipped to their first row. -->
+    <Grid HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Border Background="{StaticResource ShadowSoftBrush}"
+                CornerRadius="6"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Width="{Binding ElementName=NodeRoot, Path=ActualWidth}"
+                Height="{Binding ElementName=NodeRoot, Path=ActualHeight}"
+                Visibility="{Binding IsStandardNode, Converter={StaticResource BoolVis}}">
+            <Border.RenderTransform>
+                <TranslateTransform X="2" Y="3" />
+            </Border.RenderTransform>
+        </Border>
+
+        <!-- A1 (audit 2026-05-24) — Flow.Reroute diamond. Renders only when
+             IsReroute=true; mirrors the pre-T15 20×20 diamond passthrough so
+             the "wire knot" idiom Majo named is restored. The Path's 4-point
+             polyline tracks the same outer footprint as the (now collapsed)
+             NodeRoot Border below (20×20) so PinOverlay's anchor math
+             (x=0/20, y=10) lands on the diamond's west and east points.
+             S4-fix: Fill is a FIXED neutral grey (#FF3C3C41, RerouteFillBrush)
+             matching the pre-T15 WinForms reroute body — the reroute is a
+             NEUTRAL passthrough wire-knot, not a type-coded bead. Stroke is
+             selection-driven (RerouteStrokeBrush — Gold when the node is
+             selected, DimGray otherwise) and re-raises from the IsSelected
+             setter, not the wildcard cascade. StrokeThickness=1 keeps the
+             outline crisp at canvas zoom 1.0×. -->
+        <Path Width="20"
+              Height="20"
+              HorizontalAlignment="Left"
+              VerticalAlignment="Top"
+              Fill="{Binding RerouteFillBrush}"
+              Stroke="{Binding RerouteStrokeBrush}"
+              StrokeThickness="1"
+              Data="M 10,0 L 20,10 L 10,20 L 0,10 Z"
+              Visibility="{Binding IsReroute, Converter={StaticResource BoolVis}}" />
+
+        <!-- S4-fix — var-chain outer glow halo. Layered BEHIND NodeRoot (so it
+             reads as a soft halo bleeding out around the body) and inflated 4px
+             on every side via Margin="-4". Width/Height + Background brush
+             (cyan for writers, amber for readers) + Opacity + Visibility are all
+             driven imperatively from NodeView.xaml.cs (ApplyVarChainGlow /
+             ShowVarChainGlow, re-sized on NodeRoot.SizeChanged) so the halo
+             tracks the live intrinsic body size and flips in lockstep with the
+             IsVarChainWriter / IsVarChainReader border cascade. Collapsed +
+             zero-opacity by default; never hit-testable. -->
+        <Border x:Name="VarChainGlow"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="-4"
+                CornerRadius="10"
+                Opacity="0"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
+
+        <Border x:Name="NodeRoot"
+                Background="{StaticResource CoalRaisedBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="1"
+                CornerRadius="6"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Width="{Binding Width}"
+                MinHeight="60"
+                Visibility="{Binding IsStandardNode, Converter={StaticResource BoolVis}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <!-- Header section: 24 (no definer) or 38 (with definer) per
+                         NodeGeometry.HeaderHeight, kept in sync via NodeViewModel.HeaderSectionHeight
+                         so wire anchors match the painted band. -->
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="8" />
+                    <RowDefinition Height="*" />
+                    <!-- Middle-attribute area — collapsed when MiddleAttributes is empty.
+                         The dotted-divider Rectangle + ItemsControl share one Auto-row;
+                         each row paints at NodeGeometry.MiddleAttrRowHeight (22px). -->
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- Header band — vertical gradient (pre-T15 ControlPaint.Light/Dark fade) with
+                     a 1px highlight line + 1px shadow line at the bottom for depth. Title
+                     bound via NodeViewModel.Title (DisplayName → "Add  +", Event.Return → "↩ ...");
+                     italic definer subtitle (EventName / VariableName / Commands / etc.) collapses
+                     when HasDefiner is false. -->
+                <!-- B14 follow-up — the node-title tooltip now uses the dark,
+                     cursor-anchored TooltipPopup (same primitive the socket /
+                     pill / middle-attr hovers use) instead of the plain
+                     ToolTipService.ToolTip binding that rendered in the bare
+                     Windows default style. PointerEntered arms the 600 ms
+                     delay, PointerMoved keeps it glued to the cursor, and
+                     PointerExited cancels + hides — handlers live in
+                     NodeView.Pins.cs and read the NodeViewModel for the
+                     title + NodeTooltip body. -->
+                <Border Grid.Row="0"
+                        CornerRadius="6,6,0,0"
+                        Height="{Binding HeaderSectionHeight}"
+                        Background="{Binding HeaderGradientBrush}"
+                        PointerEntered="OnNodeTitlePointerEntered"
+                        PointerMoved="OnNodeTitlePointerMoved"
+                        PointerExited="OnNodeTitlePointerExited">
+                    <Grid>
+                        <Grid Margin="10,2,10,3">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <!-- Title row — 16×16 FontIcon (per-category, optional)
+                                 left of the Title TextBlock. 0.10.0 UX P2: when
+                                 NodeTemplate.IconGlyph is set, the icon paints in
+                                 column 0 and the title pushes 6 px right; when
+                                 it's empty, the FontIcon collapses (Visibility) and
+                                 the title fills its column normally. -->
+                            <Grid Grid.Row="0" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Grid.Column="0"
+                                          Glyph="{Binding IconGlyph}"
+                                          FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets"
+                                          FontSize="14"
+                                          Width="16"
+                                          Height="16"
+                                          Margin="0,0,6,0"
+                                          Foreground="{StaticResource CoalPaperBrush}"
+                                          VerticalAlignment="Center"
+                                          Visibility="{Binding HasIconGlyph, Converter={StaticResource BoolVis}}" />
+                                <!-- Sans-serif (Inter / Segoe UI Variable Display) header.
+                                     Pre-fix used DisplayFont (Cormorant Garamond serif) at
+                                     12pt SemiBold which lost legibility when the canvas
+                                     RenderTransform zoomed below 1.0× — serif glyph
+                                     details bilinear-downsample into mush, especially on
+                                     short titles. Variable-Display sans hints the
+                                     OS rasterizer toward small-text-optimised glyphs and
+                                     stays crisp at zoom levels the previous serif failed
+                                     at. 13pt Bold gives the same visual weight as the
+                                     prior 12pt SemiBold serif at 1× zoom, and degrades
+                                     gracefully when scaled.
+                                     S29 (P0-A5): TextBlock + TextBox swap so the title
+                                     can be renamed inline — same baseline-snapshot pattern
+                                     as the socket-label rename below. DoubleTapped enters
+                                     edit; Enter commits, Esc rolls back; F2 (wired via the
+                                     UserControl-level KeyboardAccelerator at the foot of
+                                     this file) also enters edit. -->
+                                <Grid Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Title}"
+                                               FontFamily="{StaticResource SansFont}"
+                                               FontSize="13"
+                                               FontWeight="Bold"
+                                               Foreground="{StaticResource CoalPaperBrush}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               DoubleTapped="OnTitleDoubleTapped"
+                                               Visibility="{Binding IsTitleRenaming, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+                                    <TextBox Text="{Binding EditableTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             FontFamily="{StaticResource SansFont}"
+                                             FontSize="13"
+                                             FontWeight="Bold"
+                                             MinWidth="60"
+                                             Background="{StaticResource CoalShellBrush}"
+                                             Foreground="{StaticResource CoalPaperBrush}"
+                                             BorderBrush="{StaticResource Ember200Brush}"
+                                             BorderThickness="1"
+                                             Padding="2,0"
+                                             Loaded="OnInlineEditorLoaded"
+                                             KeyDown="OnTitleEditKeyDown"
+                                             LostFocus="OnTitleEditLostFocus"
+                                             Visibility="{Binding IsTitleRenaming, Converter={StaticResource BoolVis}}" />
+                                </Grid>
+                            </Grid>
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding Definer}"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="10"
+                                       FontStyle="Italic"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       Visibility="{Binding HasDefiner, Converter={StaticResource BoolVis}}" />
+                        </Grid>
+                        <!-- Highlight + shadow lines pinned at the header's
+                             bottom edge — pre-T15 _headerHighlightPen /
+                             _headerShadowPen. Edge-to-edge margins so the
+                             lines span the full header width. -->
+                        <Rectangle VerticalAlignment="Bottom"
+                                   Height="1"
+                                   Margin="0,0,0,1"
+                                   Fill="{StaticResource HeaderHighlightBrush}" />
+                        <Rectangle VerticalAlignment="Bottom"
+                                   Height="1"
+                                   Margin="0"
+                                   Fill="{StaticResource HeaderShadowBrush}" />
+                        <!-- Error badge — small red triangle pinned to the
+                             header's right edge when ErrorReason is set
+                             (Architect UX P1 "Error-state node reason").
+                             The reason string is also appended to NodeTooltip,
+                             so the dark node-title hover popup already surfaces
+                             the explanation; this glyph is the at-a-glance
+                             affordance. The bare ToolTipService.ToolTip binding
+                             that used to live here was a SECOND, default
+                             mouse-bound WinUI tooltip firing on the same node-
+                             hover surface as the custom TooltipPopup — removed
+                             so the node body runs a single tooltip system
+                             (Majo: "default mouse-bound tooltip still enabled,
+                             suspected of causing freezes"). Width / Height
+                             tuned to fit the 24px no-definer header band. -->
+                        <Path HorizontalAlignment="Right"
+                              VerticalAlignment="Center"
+                              Margin="0,0,8,0"
+                              Width="12"
+                              Height="11"
+                              Stretch="Fill"
+                              Data="M 6 0 L 12 11 L 0 11 Z"
+                              Fill="{StaticResource ErrBrush}"
+                              Visibility="{Binding HasErrorReason, Converter={StaticResource BoolVis}}" />
+                    </Grid>
+                </Border>
+
+                <!-- Two-column socket layout. Input column is "*" (gets the
+                     slack), output column is "Auto" (sizes to its widest
+                     output row). Pre-fix both columns were "*" — split 50/50
+                     regardless of content — which squeezed input pills into
+                     ~3-letter wraps even when the output column was empty.
+                     Pair this with NodeGeometry.IntrinsicWidth's per-side max-
+                     sum: the body width budgets `maxInputW + maxOutputW + 16`,
+                     so once the layout pass runs, the Auto output column gets
+                     its true width and the * input column inherits the
+                     remaining ~maxInputW for the pill. -->
+                <Grid Grid.Row="2" Padding="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <ItemsControl x:Name="InputsItemsControl"
+                                  Grid.Column="0"
+                                  ItemsSource="{Binding Inputs}"
+                                  ItemTemplate="{StaticResource InputRowTemplate}" />
+                    <ItemsControl x:Name="OutputsItemsControl"
+                                  Grid.Column="1"
+                                  HorizontalAlignment="Right"
+                                  ItemsSource="{Binding Outputs}"
+                                  ItemTemplate="{StaticResource OutputRowTemplate}" />
+                </Grid>
+
+                <!-- Middle-attribute area — `Key …… [pill]` rows below the
+                     socket grid for every DefaultProperties key without a
+                     matching socket on the node. Hidden when HasMiddleAttributes
+                     is false so nodes with no inline-only state (Math.Add,
+                     Flow.Sequence, the bulk of the catalog) render identically
+                     to pre-QC45. Dotted divider above mirrors Design_Orders
+                     §6 "Section divider: 1px dotted, DividerDot, with 8px
+                     horizontal inset" — rendered as a thin Rectangle for
+                     simplicity since WinUI 3's Rectangle.StrokeDashArray
+                     stays crisp at the canvas zoom transforms. -->
+                <Grid Grid.Row="3"
+                      Padding="0,6,0,4"
+                      Visibility="{Binding HasMiddleAttributes, Converter={StaticResource BoolVis}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <!-- S4-fix — the dotted divider needs a Stroke for
+                         StrokeDashArray to render in WinUI; Fill alone paints a
+                         solid bar and ignores the dash array. Use the neutral-
+                         gray DividerDotBrush (#FF3C3C46, the design-spec dotted-
+                         divider token) as the stroke with a transparent fill so
+                         the "1,2" dash actually produces the dotted effect. -->
+                    <Rectangle Grid.Row="0"
+                               Height="1"
+                               Margin="8,0,8,4"
+                               Fill="Transparent"
+                               Stroke="{StaticResource DividerDotBrush}"
+                               StrokeThickness="1"
+                               StrokeDashArray="1,2" />
+                    <ItemsControl Grid.Row="1"
+                                  ItemsSource="{Binding MiddleAttributes}"
+                                  ItemTemplate="{StaticResource MiddleAttributeRowTemplate}" />
+                </Grid>
+
+                <!-- S4-fix — compact-mode symbol overlay. When the node is in
+                     compact mode AND its template assigns a CompactSymbol
+                     (Math / Logic operators: + − × ÷ % == ≠ > < AND OR ! ?),
+                     paint the glyph large + centred over the body so the
+                     compact node reads as "this is the × operator" at a glance
+                     rather than an undifferentiated small rectangle. Sits
+                     under the dim / flash overlays (declared after this) so
+                     those still wash over it, and is never hit-testable. -->
+                <TextBlock x:Name="CompactSymbolGlyph"
+                           Grid.Row="0" Grid.RowSpan="4"
+                           Text="{Binding CompactSymbol}"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="22"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource CoalPaperBrush}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           IsHitTestVisible="False"
+                           Visibility="{Binding HasCompactSymbol, Converter={StaticResource BoolVis}}" />
+
+                <!-- Picker-mode dim overlay: when LogicCanvasViewModel sets a
+                     sticky var-chain picker, every non-chain node gets a
+                     43%-opacity grey wash so the chain pops globally. NodeView
+                     toggles Visibility via ApplyDim. RowSpan=4 covers the
+                     header + gap + sockets + middle-attrs so the full body
+                     (including QC45 middle-attribute rows) dims, matching
+                     pre-T15 OnPaint's painted-LAST overlay path. -->
+                <Border x:Name="DimOverlay"
+                        Grid.Row="0" Grid.RowSpan="4"
+                        CornerRadius="6"
+                        Background="{StaticResource BgDeepBrush}"
+                        Opacity="0.43"
+                        IsHitTestVisible="False"
+                        Visibility="Collapsed" />
+
+                <!--  Debug-trace flash. Layered as a
+                     saturated-amber body tint OVER the node body, leaving
+                     NodeRoot's own border (selection gold / error red / var-chain
+                     halo) intact — pre-fix the flash REPLACED the border brush,
+                     so a selected executing node lost its gold ring for the
+                     duration of the pulse. Opacity is storyboard-animated
+                     0 → peak → 0 over ~420ms (was an 800ms ramp on a pale tan
+                     #F2C77F that read ~1.2:1 on light bodies). IsHitTestVisible
+                     false so the pulse never eats pointer events. -->
+                <Border x:Name="FlashOverlay"
+                        Grid.Row="0" Grid.RowSpan="4"
+                        CornerRadius="6"
+                        Background="#FFB300"
+                        Opacity="0"
+                        IsHitTestVisible="False" />
+            </Grid>
+        </Border>
+
+        <!-- arch-perf P1-1 (Fix 3) — accent ring overlay. Selection / error /
+             var-chain / compact emphasis used to flip NodeRoot.BorderThickness
+             1↔2, re-measuring the whole body on every toggle (select-all of N =
+             N body re-measures). NodeRoot now stays a constant 1px divider border
+             (paint-only brush); this no-content sibling paints the 2px accent ring
+             on top, sized to NodeRoot via ElementName (same idiom as the drop
+             shadow above) so the body never re-measures. Collapsed by default;
+             brush + visibility driven from ApplyBorder. Never hit-testable —
+             PinOverlay below renders pins ON TOP and must keep the clicks. -->
+        <Border x:Name="AccentRing"
+                BorderThickness="2"
+                CornerRadius="6"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Width="{Binding ElementName=NodeRoot, Path=ActualWidth}"
+                Height="{Binding ElementName=NodeRoot, Path=ActualHeight}"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
+
+        <!-- 0.11.5 canvas-polish r3 — PinOverlay Canvas. Sibling of NodeRoot
+             (NOT a descendant) so pin elements positioned via Canvas.SetLeft
+             at the body's outer edge (x=0 inputs, x=NodeRoot.ActualWidth
+             outputs) can render their FULL 14×14 footprint without being
+             clipped by NodeRoot's rounded-rect mask. Children are mounted
+             in code-behind by NodeView.RebuildPinOverlay; each pin
+             carries Tag=SocketViewModel so LogicCanvasView.Pointer's
+             HitTagFrom walks unchanged. The Canvas itself sets
+             IsHitTestVisible=True so the 24×24 transparent hit-target
+             ellipse (last layer in each pin Grid) catches pointer events.
+             0.11.6 hotfix — Width/Height bound to NodeRoot.ActualWidth/Height
+             so the Canvas reports a real arrange rectangle the same shape
+             as NodeRoot. Pin chrome at Canvas.SetLeft=-7 / Left=width-7
+             still straddles the edge; the explicit footprint just removes
+             the "Canvas measured at 0×0 inside Grid cell" ambiguity. -->
+        <!-- A1 — PinOverlay's footprint must remain meaningful when NodeRoot
+             is collapsed (reroute case). Bind directly to the VM's Width
+             property (NodeGeometry.EffectiveWidth — returns 20 for reroute,
+             intrinsic-content width for standard nodes) and Height (returns
+             20 for reroute, IntrinsicHeight for standard nodes). For
+             standard nodes both values match what NodeRoot lays out as. -->
+        <!-- CRITICAL: PinOverlay must NOT carry a Background. A Canvas with
+             Background="Transparent" becomes a hit target across its ENTIRE
+             footprint, and PinOverlay renders ON TOP of NodeRoot — so a
+             Transparent background swallowed every body/pill click and
+             HitTagFrom resolved it up to the node, i.e. clicking a pill only
+             selected the node (Majo: "selecting the NODE not the bubbles").
+             With NO Background the empty overlay is click-through: body/pill
+             clicks fall to the node content beneath, while the per-pin 24×24
+             hit-target Ellipses (their own Transparent Fill) still catch
+             pointer events for wire-drag. Do not re-add a Background here. -->
+        <Canvas x:Name="PinOverlay"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Width="{Binding Width}"
+                Height="{Binding Height}"
+                IsHitTestVisible="True" />
+    </Grid>
+</UserControl>

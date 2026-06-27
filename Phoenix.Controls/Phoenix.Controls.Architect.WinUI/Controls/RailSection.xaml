@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Mirrors architect.jsx:RailSection() — title row, optional scope dropdown,
+    items list, footer button strip. Used three times in LeftRail
+    (Variables / Processes / Macros).
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Architect.WinUI.Controls.RailSection"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Architect.WinUI.Controls">
+
+    <Border BorderBrush="{StaticResource DividerDotBrush}"
+            BorderThickness="0,0,0,1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <!-- Items row — flipped to * by code-behind when AllowGrow=true
+                     so the section can fill the rail's leftover vertical space. -->
+                <RowDefinition x:Name="ItemsRow" Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Title + hint row -->
+            <StackPanel Grid.Row="0"
+                        Orientation="Horizontal"
+                        Padding="10,8,10,4"
+                        Spacing="6">
+                <TextBlock x:Name="TitleText"
+                           FontFamily="{StaticResource DisplayFont}"
+                           FontSize="13"
+                           CharacterSpacing="40"
+                           Foreground="{StaticResource CoalPaperBrush}" />
+                <TextBlock x:Name="HintText"
+                           VerticalAlignment="Center"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="9"
+                           CharacterSpacing="40"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+            </StackPanel>
+
+            <!-- Scope dropdown (Variables only) -->
+            <ComboBox x:Name="ScopeCombo"
+                      Grid.Row="1"
+                      Margin="10,0,10,6"
+                      MinWidth="180"
+                      HorizontalAlignment="Stretch"
+                      Visibility="Collapsed"
+                      FontFamily="{StaticResource MonoFont}"
+                      FontSize="11"
+                      SelectedIndex="0">
+                <ComboBoxItem Content="— Local Variables (this file) —" />
+                <ComboBoxItem Content="— Global Variables (cross-file) —" />
+                <ComboBoxItem Content="— Graph Variables (this graph) —" />
+            </ComboBox>
+
+            <!-- Items list -->
+            <ScrollViewer x:Name="ItemsScroller"
+                          Grid.Row="2"
+                          MinHeight="90"
+                          MaxHeight="220"
+                          Padding="6,2,6,2"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid>
+                <ItemsRepeater x:Name="ItemsHost" ItemsSource="{x:Bind Items, Mode=OneWay}">
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:RailItemViewModel">
+                            <Grid Padding="6,3,6,3"
+                                  Background="{x:Bind SelectionBrush, Mode=OneWay}"
+                                  CanDrag="True"
+                                  DragStarting="OnRailItemDragStarting"
+                                  Tapped="OnRailItemTapped"
+                                  DoubleTapped="OnRailItemDoubleTapped"
+                                  ToolTipService.ToolTip="Double-click to open editor · F2 to rename · drag to wire onto canvas"
+                                  Tag="{x:Bind}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Rectangle Width="8"
+                                           Height="8"
+                                           Margin="0,0,6,0"
+                                           VerticalAlignment="Center"
+                                           Fill="{x:Bind ColorBrush}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind Name}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{ThemeResource CoalPrimaryTextBrush}"
+                                           FontFamily="{ThemeResource MonoFont}"
+                                           FontSize="11" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{x:Bind Type}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{ThemeResource CoalSecondaryTextBrush}"
+                                           FontFamily="{ThemeResource MonoFont}"
+                                           FontSize="10" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+                <!--  Empty-section message —
+                     toggled by code-behind when Items rebinds to an empty set so
+                     an empty rail reads as intentionally-empty, not broken. -->
+                <TextBlock x:Name="EmptyHint"
+                           Visibility="Collapsed"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Margin="0,14"
+                           IsHitTestVisible="False"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="10"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                </Grid>
+            </ScrollViewer>
+
+            <!-- Footer button strip -->
+            <Border Grid.Row="3"
+                    BorderBrush="{StaticResource CoalRaisedBrush}"
+                    BorderThickness="0,1,0,0"
+                    Padding="8,4,8,6">
+                <StackPanel x:Name="ButtonStrip"
+                            x:FieldModifier="public"
+                            Orientation="Horizontal"
+                            Spacing="4" />
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

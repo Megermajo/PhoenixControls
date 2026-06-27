@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    C12 (audit/winui-regressions-2026-05-24) — preset picker shown at layer
+    creation. Pre-fix `VisualistViewModel.NewLayer()` silently constructed a
+    fresh document with the engine's hard-coded FullHD default, so users had
+    to open the Inspector and change the preset / resolution after creation.
+    Now B35's preset→resolution mapping is exposed at the explicit creation
+    event: pick FullHD / QHD / UHD / Vertical / Square or Custom (W/H spin)
+    upfront. Cancel returns null and NewLayer aborts cleanly.
+
+    Visual treatment mirrors KeyboardShortcutsDialog (Architect) — same
+    Coal* / Ember* / Brass* tokens, eyebrow header, brass hairline — so the
+    dialog reads as part of the same shell family across the suite. Lives
+    in Visualist.WinUI because the layer-preset domain is Visualist-owned;
+    per feedback_visualist_architect_chrome_independence.md we do NOT lift
+    the Architect dialog's resource dictionary, we author the local copy.
+-->
+<ContentDialog
+    x:Class="Phoenix.Controls.Visualist.WinUI.Dialogs.NewLayerDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="New Layer"
+    Background="{StaticResource CoalShellBrush}"
+    BorderBrush="{StaticResource CoalCardBrush}"
+    BorderThickness="1"
+    CornerRadius="6"
+    PrimaryButtonText="Create"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary">
+
+    <ContentDialog.Resources>
+        <Style x:Key="NewLayerEyebrow" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="180" />
+            <Setter Property="Foreground" Value="{StaticResource EmberPrimaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+        <Style x:Key="NewLayerFieldLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CharacterSpacing" Value="80" />
+            <Setter Property="Foreground" Value="{StaticResource CoalSecondaryTextBrush}" />
+            <Setter Property="Margin" Value="0,8,0,4" />
+        </Style>
+        <Style x:Key="NewLayerHint" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Foreground" Value="{StaticResource CoalMutedTextBrush}" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <Grid Width="420">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Eyebrow header — matches the Architect KeyboardShortcutsDialog
+             treatment so the dialog reads as part of the same shell. -->
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,8">
+            <TextBlock Text="VISUALIST" Style="{StaticResource NewLayerEyebrow}" />
+            <TextBlock FontFamily="{StaticResource SansFont}"
+                       FontSize="13"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       Text="Pick the resolution preset for the new layer." />
+        </StackPanel>
+
+        <Rectangle Grid.Row="1" Fill="{StaticResource BrassGradientBrush}" />
+
+        <StackPanel Grid.Row="2" Margin="0,10,0,0">
+            <TextBlock Text="NAME" Style="{StaticResource NewLayerFieldLabel}" />
+            <TextBox x:Name="NameBox"
+                     PlaceholderText="untitled"
+                     FontFamily="{StaticResource MonoFont}" />
+
+            <TextBlock Text="PRESET" Style="{StaticResource NewLayerFieldLabel}" />
+            <ComboBox x:Name="PresetBox"
+                      HorizontalAlignment="Stretch"
+                      SelectionChanged="OnPresetChanged" />
+
+            <Grid x:Name="CustomSizeRow" Margin="0,8,0,0" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0"
+                           Text="WIDTH"
+                           Style="{StaticResource NewLayerFieldLabel}" />
+                <TextBlock Grid.Row="0" Grid.Column="2"
+                           Text="HEIGHT"
+                           Style="{StaticResource NewLayerFieldLabel}" />
+                <NumberBox Grid.Row="1" Grid.Column="0"
+                           x:Name="CustomWidthBox"
+                           Value="1920" Minimum="1" Maximum="16384" />
+                <NumberBox Grid.Row="1" Grid.Column="2"
+                           x:Name="CustomHeightBox"
+                           Value="1080" Minimum="1" Maximum="16384" />
+            </Grid>
+
+            <TextBlock x:Name="PresetHint"
+                       Style="{StaticResource NewLayerHint}"
+                       Text="1920 × 1080" />
+        </StackPanel>
+    </Grid>
+</ContentDialog>
