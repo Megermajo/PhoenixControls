@@ -47,8 +47,22 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// <see cref="GlobalLogger"/> rather than nested modals per
 /// feedback_no_modal_dialogs_for_repeatable_rejections.md.
 /// </para>
+///
+/// <para>
+/// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml /
+/// InitializeComponent. A code-constructed ContentDialog defined in a LIBRARY
+/// assembly (Visualist.WinUI) throws XamlParseException at
+/// Application.LoadComponent when <c>new</c>'d while detached — proven by the
+/// 1.0.6 runtime stack trace, which still crashed AFTER all resource markup was
+/// stripped. The throw is in the XAML parse itself, before any resource /
+/// DialogTheme code runs. Building the content in code removes LoadComponent
+/// entirely, so the parse can't fail by construction (the default ContentDialog
+/// template still resolves at ShowAsync against Hub's app scope, which merges
+/// XamlControlsResources — the show path that already works for Hub's dialogs).
+/// See NameTypeDialog / DialogTheme.cs for the full rationale.
+/// </para>
 /// </summary>
-public sealed partial class ShapeEditorDialog : ContentDialog
+public sealed class ShapeEditorDialog : ContentDialog
 {
     private readonly Node   _node;
     private readonly bool   _isBezier;
@@ -76,6 +90,11 @@ public sealed partial class ShapeEditorDialog : ContentDialog
     private const double HitSlop      = 4.0;
     private const double SurfacePad   = 8.0;
 
+    // The x:Name'd elements from the retired XAML are now `*Field` backing
+    // fields, declared below near BuildContent, and aliased to their original
+    // identifiers (EyebrowText, ShapeSurface, …) via the property accessors so
+    // the rest of this class keeps referencing the SAME names verbatim.
+
     /// <summary>
     /// Fires when the user clicks "Animate Vertex" (or the per-vertex
     /// right-click "Animate" item). Args: (vertexIndex, currentX, currentY,
@@ -86,7 +105,11 @@ public sealed partial class ShapeEditorDialog : ContentDialog
 
     public ShapeEditorDialog(Node node)
     {
-        InitializeComponent();
+        BuildContent();
+        // Code-constructed library dialog — theme applied in code via DialogTheme;
+        // no directly-resolved resource markup in the content tree (the dialog has
+        // no XAML at all). See Architect NameTypeDialog / DialogTheme.cs.
+        ApplyDialogTheme();
         _node = node ?? throw new ArgumentNullException(nameof(node));
 
         _isBezier         = string.Equals(node.Title, "Mask.Bezier", StringComparison.Ordinal);
@@ -127,6 +150,296 @@ public sealed partial class ShapeEditorDialog : ContentDialog
         // OnSurfaceSizeChanged; RenderSurface is also safe to call before that
         // (it early-returns on a zero-size surface).
     }
+
+    // ── content construction (replaces the retired XAML + InitializeComponent) ──
+    //
+    // Faithful 1:1 rebuild of ShapeEditorDialog.xaml. The root attributes, the
+    // <ContentDialog.Resources> MaxWidth/MaxHeight overrides, the five keyed
+    // Styles (applied inline as setters), every x:Name'd element, every literal
+    // property, and every event-handler wiring are reproduced exactly. Theme
+    // brushes / fonts are applied separately in ApplyDialogTheme (as before).
+    private void BuildContent()
+    {
+        // Root ContentDialog attributes that were on <ContentDialog …>.
+        Title = "Edit Shape";
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(6);
+        PrimaryButtonText = "OK";
+        CloseButtonText = "Cancel";
+        DefaultButton = ContentDialogButton.Primary;
+
+        // <ContentDialog.Resources> — R43 size overrides read by the default
+        // ContentDialog template. Keep them.
+        Resources["ContentDialogMaxWidth"]  = 980.0;
+        Resources["ContentDialogMaxHeight"] = 820.0;
+
+        // ── eyebrow header (Grid.Row 0) ──
+        // ShapeDialogEyebrow style applied inline.
+        EyebrowTextField.FontSize = 10;
+        EyebrowTextField.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        EyebrowTextField.CharacterSpacing = 180;
+        EyebrowTextField.Margin = new Thickness(0, 0, 0, 4);
+        EyebrowTextField.Text = "VISUALIST · SHAPE";
+
+        SubtitleTextField.FontSize = 13;
+        SubtitleTextField.Text = "Author the mask vertices. Click empty space to add, drag a vertex to move.";
+
+        var headerPanel = new StackPanel { Spacing = 2, Margin = new Thickness(0, 0, 0, 8) };
+        headerPanel.Children.Add(EyebrowTextField);
+        headerPanel.Children.Add(SubtitleTextField);
+        Grid.SetRow(headerPanel, 0);
+
+        // ── hairline rule (Grid.Row 1) ──
+        Grid.SetRow(HairlineRuleField, 1);
+
+        // ── content row (Grid.Row 2) ──
+        var contentGrid = new Grid { Margin = new Thickness(0, 10, 0, 0), ColumnSpacing = 14 };
+        // R51 — vertex canvas column stretches; right column fixed 220px.
+        contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 420 });
+        contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        Grid.SetRow(contentGrid, 2);
+
+        // ── left: vertex canvas ──
+        var leftColumn = new StackPanel { Spacing = 6 };
+        Grid.SetColumn(leftColumn, 0);
+
+        var toggleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        ClosedToggleField.Content = "Closed path";
+        ClosedToggleField.FontSize = 12;
+        ClosedToggleField.Checked += OnClosedToggled;
+        ClosedToggleField.Unchecked += OnClosedToggled;
+
+        VertexCountTextField.VerticalAlignment = VerticalAlignment.Center;
+        VertexCountTextField.FontSize = 10;
+        VertexCountTextField.Text = "0 vertices";
+
+        toggleRow.Children.Add(ClosedToggleField);
+        toggleRow.Children.Add(VertexCountTextField);
+        leftColumn.Children.Add(toggleRow);
+
+        // R51 — canvas fills this frame.
+        ShapeSurfaceFrameField.Height = 440;
+        ShapeSurfaceFrameField.HorizontalAlignment = HorizontalAlignment.Stretch;
+        ShapeSurfaceFrameField.MinWidth = 420;
+        ShapeSurfaceFrameField.BorderThickness = new Thickness(1);
+        ShapeSurfaceFrameField.CornerRadius = new CornerRadius(4);
+        ShapeSurfaceFrameField.SizeChanged += OnSurfaceFrameSizeChanged;
+
+        ShapeSurfaceField.SizeChanged += OnSurfaceSizeChanged;
+        ShapeSurfaceField.PointerPressed += OnSurfacePointerPressed;
+        ShapeSurfaceField.PointerMoved += OnSurfacePointerMoved;
+        ShapeSurfaceField.PointerReleased += OnSurfacePointerReleased;
+        ShapeSurfaceField.RightTapped += OnSurfaceRightTapped;
+
+        ShapeSurfaceFrameField.Child = ShapeSurfaceField;
+        leftColumn.Children.Add(ShapeSurfaceFrameField);
+
+        // ── right: numeric + actions ──
+        var rightColumn = new StackPanel { Spacing = 2 };
+        Grid.SetColumn(rightColumn, 1);
+
+        // ShapeDialogFieldLabel style applied inline to the three section labels.
+        ApplyFieldLabelStyle(SelectedVertexLabelField);
+        SelectedVertexLabelField.Text = "SELECTED VERTEX";
+        rightColumn.Children.Add(SelectedVertexLabelField);
+
+        // X coord row.
+        var xRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 2, 0, 0) };
+        ApplyCoordLabelStyle(XCoordLabelField);
+        XCoordLabelField.Text = "X";
+        ApplyCoordBoxStyle(XBoxField);
+        XBoxField.KeyDown += OnCoordKeyDown;
+        XBoxField.LostFocus += OnCoordLostFocus;
+        XBoxField.Tag = "x";
+        xRow.Children.Add(XCoordLabelField);
+        xRow.Children.Add(XBoxField);
+        rightColumn.Children.Add(xRow);
+
+        // Y coord row.
+        var yRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 2, 0, 0) };
+        ApplyCoordLabelStyle(YCoordLabelField);
+        YCoordLabelField.Text = "Y";
+        ApplyCoordBoxStyle(YBoxField);
+        YBoxField.KeyDown += OnCoordKeyDown;
+        YBoxField.LostFocus += OnCoordLostFocus;
+        YBoxField.Tag = "y";
+        yRow.Children.Add(YCoordLabelField);
+        yRow.Children.Add(YBoxField);
+        rightColumn.Children.Add(yRow);
+
+        // Bezier handle panel.
+        ApplyFieldLabelStyle(BezierHandlesLabelField);
+        BezierHandlesLabelField.Text = "BEZIER HANDLES";
+        BezierHandlePanelField.Children.Add(BezierHandlesLabelField);
+
+        BezierHandlePanelField.Children.Add(BuildCpRow(Cp1XCoordLabelField, "Cp1 X", Cp1XBoxField, "cp1x"));
+        BezierHandlePanelField.Children.Add(BuildCpRow(Cp1YCoordLabelField, "Cp1 Y", Cp1YBoxField, "cp1y"));
+        BezierHandlePanelField.Children.Add(BuildCpRow(Cp2XCoordLabelField, "Cp2 X", Cp2XBoxField, "cp2x"));
+        BezierHandlePanelField.Children.Add(BuildCpRow(Cp2YCoordLabelField, "Cp2 Y", Cp2YBoxField, "cp2y"));
+        rightColumn.Children.Add(BezierHandlePanelField);
+
+        // Actions.
+        ApplyFieldLabelStyle(ActionsLabelField);
+        ActionsLabelField.Text = "ACTIONS";
+        rightColumn.Children.Add(ActionsLabelField);
+
+        AddVertexButtonField.Content = "Add Vertex";
+        AddVertexButtonField.HorizontalAlignment = HorizontalAlignment.Stretch;
+        AddVertexButtonField.Margin = new Thickness(0, 2, 0, 0);
+        AddVertexButtonField.Click += OnAddVertexClick;
+        rightColumn.Children.Add(AddVertexButtonField);
+
+        DeleteVertexButtonField.Content = "Delete Vertex";
+        DeleteVertexButtonField.HorizontalAlignment = HorizontalAlignment.Stretch;
+        DeleteVertexButtonField.Margin = new Thickness(0, 4, 0, 0);
+        DeleteVertexButtonField.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        DeleteVertexButtonField.BorderThickness = new Thickness(1);
+        DeleteVertexButtonField.IsEnabled = false;
+        DeleteVertexButtonField.Click += OnDeleteVertexClick;
+        rightColumn.Children.Add(DeleteVertexButtonField);
+
+        AnimateVertexButtonField.Content = "Animate Vertex";
+        AnimateVertexButtonField.HorizontalAlignment = HorizontalAlignment.Stretch;
+        AnimateVertexButtonField.Margin = new Thickness(0, 4, 0, 0);
+        AnimateVertexButtonField.IsEnabled = false;
+        AnimateVertexButtonField.Click += OnAnimateVertexClick;
+        rightColumn.Children.Add(AnimateVertexButtonField);
+
+        // ShapeDialogHint style applied inline.
+        HintTextField.FontSize = 10;
+        HintTextField.Margin = new Thickness(0, 6, 0, 0);
+        HintTextField.TextWrapping = TextWrapping.Wrap;
+        HintTextField.Text = "Ctrl+Z / Ctrl+Y undo-redo · Del removes the selected vertex (min 2).";
+        rightColumn.Children.Add(HintTextField);
+
+        contentGrid.Children.Add(leftColumn);
+        contentGrid.Children.Add(rightColumn);
+
+        // Outer Grid (3 rows: header / 2px rule / content).
+        var rootGrid = new Grid();
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2) });
+        rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        rootGrid.Children.Add(headerPanel);
+        rootGrid.Children.Add(HairlineRuleField);
+        rootGrid.Children.Add(contentGrid);
+
+        // R43 — scroll fallback so the dialog stays usable at high DPI.
+        var scroll = new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility   = ScrollBarVisibility.Auto,
+            HorizontalScrollMode          = ScrollMode.Auto,
+            VerticalScrollMode            = ScrollMode.Auto,
+            Content                       = rootGrid,
+        };
+        Content = scroll;
+    }
+
+    // The fields are created here (used by BuildContent above). They are the
+    // x:Name'd elements from the retired XAML, now created in code; the public
+    // property names below alias them so the rest of the class (handlers, theme,
+    // logic) keeps referencing the SAME identifiers as the old code-behind.
+    private readonly TextBlock  EyebrowTextField        = new();
+    private readonly TextBlock  SubtitleTextField       = new();
+    private readonly Rectangle  HairlineRuleField       = new();
+    private readonly CheckBox   ClosedToggleField       = new();
+    private readonly TextBlock  VertexCountTextField    = new();
+    private readonly Border     ShapeSurfaceFrameField  = new();
+    private readonly Microsoft.UI.Xaml.Controls.Canvas ShapeSurfaceField = new();
+    private readonly TextBlock  SelectedVertexLabelField= new();
+    private readonly TextBlock  XCoordLabelField        = new();
+    private readonly TextBox    XBoxField               = new();
+    private readonly TextBlock  YCoordLabelField        = new();
+    private readonly TextBox    YBoxField               = new();
+    private readonly StackPanel BezierHandlePanelField  = new();
+    private readonly TextBlock  BezierHandlesLabelField = new();
+    private readonly TextBlock  Cp1XCoordLabelField     = new();
+    private readonly TextBox    Cp1XBoxField            = new();
+    private readonly TextBlock  Cp1YCoordLabelField     = new();
+    private readonly TextBox    Cp1YBoxField            = new();
+    private readonly TextBlock  Cp2XCoordLabelField     = new();
+    private readonly TextBox    Cp2XBoxField            = new();
+    private readonly TextBlock  Cp2YCoordLabelField     = new();
+    private readonly TextBox    Cp2YBoxField            = new();
+    private readonly TextBlock  ActionsLabelField       = new();
+    private readonly Button     AddVertexButtonField    = new();
+    private readonly Button     DeleteVertexButtonField = new();
+    private readonly Button     AnimateVertexButtonField= new();
+    private readonly TextBlock  HintTextField           = new();
+
+    // One Cp coordinate row: a label + a coord TextBox carrying its axis Tag.
+    private StackPanel BuildCpRow(TextBlock label, string labelText, TextBox box, string tag)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 2, 0, 0) };
+        ApplyCoordLabelStyle(label);
+        label.Text = labelText;
+        ApplyCoordBoxStyle(box);
+        box.KeyDown += OnCoordKeyDown;
+        box.LostFocus += OnCoordLostFocus;
+        box.Tag = tag;
+        row.Children.Add(label);
+        row.Children.Add(box);
+        return row;
+    }
+
+    // ── keyed-style setters applied inline (recipe §2d) ──
+
+    // ShapeDialogFieldLabel: FontSize 11, SemiBold, CharacterSpacing 80, Margin 0,8,0,2.
+    private static void ApplyFieldLabelStyle(TextBlock t)
+    {
+        t.FontSize = 11;
+        t.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
+        t.CharacterSpacing = 80;
+        t.Margin = new Thickness(0, 8, 0, 2);
+    }
+
+    // ShapeCoordLabel: FontSize 10, VerticalAlignment Center, Width 38.
+    private static void ApplyCoordLabelStyle(TextBlock t)
+    {
+        t.FontSize = 10;
+        t.VerticalAlignment = VerticalAlignment.Center;
+        t.Width = 38;
+    }
+
+    // ShapeCoordBox: FontSize 11, Width 120, MinHeight 28.
+    private static void ApplyCoordBoxStyle(TextBox b)
+    {
+        b.FontSize = 11;
+        b.Width = 120;
+        b.MinHeight = 28;
+    }
+
+    // ── named-element accessors ───────────────────────────────────────────────
+    // Alias the *Field backing fields to the x:Name identifiers the rest of this
+    // class uses verbatim from the original code-behind.
+    private TextBlock  EyebrowText         => EyebrowTextField;
+    private TextBlock  SubtitleText        => SubtitleTextField;
+    private Rectangle  HairlineRule        => HairlineRuleField;
+    private CheckBox   ClosedToggle        => ClosedToggleField;
+    private TextBlock  VertexCountText     => VertexCountTextField;
+    private Border     ShapeSurfaceFrame   => ShapeSurfaceFrameField;
+    private Microsoft.UI.Xaml.Controls.Canvas ShapeSurface => ShapeSurfaceField;
+    private TextBlock  SelectedVertexLabel => SelectedVertexLabelField;
+    private TextBlock  XCoordLabel         => XCoordLabelField;
+    private TextBox    XBox                => XBoxField;
+    private TextBlock  YCoordLabel         => YCoordLabelField;
+    private TextBox    YBox                => YBoxField;
+    private StackPanel BezierHandlePanel   => BezierHandlePanelField;
+    private TextBlock  BezierHandlesLabel  => BezierHandlesLabelField;
+    private TextBlock  Cp1XCoordLabel      => Cp1XCoordLabelField;
+    private TextBox    Cp1XBox             => Cp1XBoxField;
+    private TextBlock  Cp1YCoordLabel      => Cp1YCoordLabelField;
+    private TextBox    Cp1YBox             => Cp1YBoxField;
+    private TextBlock  Cp2XCoordLabel      => Cp2XCoordLabelField;
+    private TextBox    Cp2XBox             => Cp2XBoxField;
+    private TextBlock  Cp2YCoordLabel      => Cp2YCoordLabelField;
+    private TextBox    Cp2YBox             => Cp2YBoxField;
+    private TextBlock  ActionsLabel        => ActionsLabelField;
+    private Button     AddVertexButton     => AddVertexButtonField;
+    private Button     DeleteVertexButton  => DeleteVertexButtonField;
+    private Button     AnimateVertexButton => AnimateVertexButtonField;
+    private TextBlock  HintText            => HintTextField;
 
     // R49 — Localizer routing for the strings the XAML had hardcoded.
     private string _defaultHint = "";
@@ -702,6 +1015,80 @@ public sealed partial class ShapeEditorDialog : ContentDialog
         // caller may have inspected the live node mid-edit.
         _node.Attributes["Vertices"] = _origVerticesJson;
         _node.Attributes["Closed"]   = _origClosed;
+    }
+
+    // ── theme application (code-constructed library dialog) ──────────────────
+
+    // Re-applies every brush / font that used to live as directly-resolved
+    // resource markup on the root, the keyed styles, and the non-template
+    // elements. Those resolve at InitializeComponent on a disconnected library
+    // dialog and throw XamlParseException, so they're set here from the running
+    // app's resources instead.
+    private void ApplyDialogTheme()
+    {
+        // Root: was Background="{ThemeResource CoalShellBrush}" /
+        //            BorderBrush="{ThemeResource CoalCardBrush}".
+        if (DialogTheme.Brush("CoalShellBrush") is { } shell) Background = shell;
+        if (DialogTheme.Brush("CoalCardBrush")  is { } card)  BorderBrush = card;
+
+        // Eyebrow header (was ShapeDialogEyebrow style: DisplayFont / EmberPrimaryBrush).
+        if (DialogTheme.Font("DisplayFont")        is { } disp) EyebrowText.FontFamily  = disp;
+        if (DialogTheme.Brush("EmberPrimaryBrush") is { } ember) EyebrowText.Foreground = ember;
+
+        // Subtitle (was inline SansFont / CoalSecondaryTextBrush).
+        if (DialogTheme.Font("SansFont")                is { } sans) SubtitleText.FontFamily  = sans;
+        if (DialogTheme.Brush("CoalSecondaryTextBrush") is { } sec)  SubtitleText.Foreground  = sec;
+
+        // Hairline rule (was Fill="{ThemeResource BrassGradientBrush}").
+        if (DialogTheme.Brush("BrassGradientBrush") is { } brass) HairlineRule.Fill = brass;
+
+        // Closed-path toggle (was inline SansFont).
+        if (DialogTheme.Font("SansFont") is { } sans2) ClosedToggle.FontFamily = sans2;
+
+        // Vertex count (was inline MonoFont / CoalMutedTextBrush).
+        if (DialogTheme.Font("MonoFont")            is { } mono) VertexCountText.FontFamily  = mono;
+        if (DialogTheme.Brush("CoalMutedTextBrush") is { } muted) VertexCountText.Foreground = muted;
+
+        // Surface frame (was Background CoalShellBrush / BorderBrush CoalCardBrush).
+        if (DialogTheme.Brush("CoalShellBrush") is { } frameBg) ShapeSurfaceFrame.Background  = frameBg;
+        if (DialogTheme.Brush("CoalCardBrush")  is { } frameBd) ShapeSurfaceFrame.BorderBrush = frameBd;
+
+        // Vertex canvas (was Background="{ThemeResource CoalRaisedBrush}").
+        if (DialogTheme.Brush("CoalRaisedBrush") is { } raised) ShapeSurface.Background = raised;
+
+        // Section field-labels (was ShapeDialogFieldLabel style: SansFont / CoalSecondaryTextBrush).
+        var fieldFont  = DialogTheme.Font("SansFont");
+        var fieldBrush = DialogTheme.Brush("CoalSecondaryTextBrush");
+        foreach (var lbl in new[] { SelectedVertexLabel, BezierHandlesLabel, ActionsLabel })
+        {
+            if (fieldFont  is { } ff) lbl.FontFamily = ff;
+            if (fieldBrush is { } fb) lbl.Foreground = fb;
+        }
+
+        // Coord labels (was ShapeCoordLabel style: MonoFont / CoalMutedTextBrush).
+        var coordLabelFont  = DialogTheme.Font("MonoFont");
+        var coordLabelBrush = DialogTheme.Brush("CoalMutedTextBrush");
+        foreach (var lbl in new[] { XCoordLabel, YCoordLabel, Cp1XCoordLabel, Cp1YCoordLabel, Cp2XCoordLabel, Cp2YCoordLabel })
+        {
+            if (coordLabelFont  is { } cf) lbl.FontFamily = cf;
+            if (coordLabelBrush is { } cb) lbl.Foreground = cb;
+        }
+
+        // Coord boxes (was ShapeCoordBox style: MonoFont).
+        if (DialogTheme.Font("MonoFont") is { } boxFont)
+            foreach (var box in new[] { XBox, YBox, Cp1XBox, Cp1YBox, Cp2XBox, Cp2YBox })
+                box.FontFamily = boxFont;
+
+        // Delete button (was Foreground / BorderBrush ="{ThemeResource ErrBrush}").
+        if (DialogTheme.Brush("ErrBrush") is { } err)
+        {
+            DeleteVertexButton.Foreground  = err;
+            DeleteVertexButton.BorderBrush = err;
+        }
+
+        // Hint text (was ShapeDialogHint style: MonoFont / CoalMutedTextBrush).
+        if (DialogTheme.Font("MonoFont")            is { } hintFont)  HintText.FontFamily  = hintFont;
+        if (DialogTheme.Brush("CoalMutedTextBrush") is { } hintBrush) HintText.Foreground  = hintBrush;
     }
 
     // ── theme helpers ──────────────────────────────────────────────────────

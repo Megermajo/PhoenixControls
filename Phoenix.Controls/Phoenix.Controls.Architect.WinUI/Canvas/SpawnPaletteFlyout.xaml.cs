@@ -358,11 +358,17 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         }
 
         var tokens = TokenizeQuery(query);
+        // Score every candidate, then emit best-first. OrderByDescending is a
+        // STABLE sort in LINQ, so rows with equal scores keep their catalog
+        // (Category/Title) order — the old behaviour for the tail of the list.
+        var scored = new List<(SpawnRow Row, int Score)>(_all.Count);
         foreach (var r in _all)
         {
             if (IsSuppressedByContext(r.Title)) continue;
-            if (MatchesTokens(r, tokens)) rows.Add(r);
+            if (ScoreMatch(r, tokens, query) is int s) scored.Add((r, s));
         }
+        foreach (var hit in scored.OrderByDescending(x => x.Score))
+            rows.Add(hit.Row);
         //  A zero-result search left a blank ListView
         // with no feedback. Append a non-selectable message row (Header kind, so
         // arrow/Enter nav skips it) so the user knows the query matched nothing.
@@ -416,29 +422,68 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     }
 
     /// <summary>
-    /// Token-prefix matcher mirroring pre-T15 MatchesSpawnQuery. Every query
-    /// token must prefix-match at least one pool token (title / category /
-    /// keyword). When a query token has no prefix match, fall back to a
-    /// substring check against description before failing the row.
+    /// Relevance score for a row against the query, or <c>null</c> when the row
+    /// does not match at all. Replaces the prior boolean prefix matcher so the
+    /// results can be RANKED instead of returned in catalog order — pre-fix a
+    /// short query like "se" prefix-matched dozens of pool tokens and the exact
+    /// node was buried among them. Ranking (highest first):
+    ///   • whole-query EXACT on the visible name / registry title  (1000)
+    ///   • whole-query PREFIX on either                            ( 800)
+    ///   • whole-query SUBSTRING on either                         ( 600)
+    ///   • per-token prefix over the pooled fields                 ( 200 + 50/token)
+    ///   • description-only substring fallback                     ( +10/token)
+    /// Every query token must prefix-match a POOL field (title / display /
+    /// category / keyword) or the row is rejected; description text is only a
+    /// tie-break nudge, never an inclusion reason (see the in-body note), so
+    /// the best title candidate surfaces first and unrelated nodes drop out.
     /// </summary>
-    private static bool MatchesTokens(SpawnRow row, IReadOnlyList<string> queryTokens)
+    private static int? ScoreMatch(SpawnRow row, IReadOnlyList<string> queryTokens, string rawQuery)
     {
-        if (queryTokens.Count == 0) return true;
-        //  Use the row's cached, pre-tokenized pool
-        // instead of re-tokenizing its title/category/keywords every pass.
-        var pool = row.SearchPool;
+        if (queryTokens.Count == 0) return 0;
+        string q       = rawQuery.Trim();
+        string title   = row.Title ?? string.Empty;
+        string display = row.DisplayTitle ?? string.Empty;
 
-        foreach (var q in queryTokens)
+        if (title.Equals(q, StringComparison.OrdinalIgnoreCase)
+            || display.Equals(q, StringComparison.OrdinalIgnoreCase))
+            return 1000;
+        if (title.StartsWith(q, StringComparison.OrdinalIgnoreCase)
+            || display.StartsWith(q, StringComparison.OrdinalIgnoreCase))
+            return 800;
+        if (q.Length > 1
+            && (title.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || display.Contains(q, StringComparison.OrdinalIgnoreCase)))
+            return 600;
+
+        //  Use the row's cached, pre-tokenized pool
+        // (title + display + category + keywords) instead of re-tokenizing per pass.
+        //
+        // [ARCH-PALETTE-DESC-NOISE 2026-06-28] A query token must PREFIX-MATCH a
+        // pool token or the row is rejected. The prior build also accepted a
+        // token that merely appeared as a SUBSTRING of the node's DESCRIPTION,
+        // which flooded results: typing "bran" matched every node whose
+        // description mentions "branch / branches / branch-local" (Async.Parallel,
+        // DB.CheckExists, Var.Get, Public.Get/Set, Twitch.LastActive, …) even
+        // though their TITLES have nothing to do with "bran" (Majo: "search bar
+        // still buggy as hell"). Description text is now only a small ranking
+        // nudge for a token that ALREADY hit the pool — never an inclusion reason
+        // on its own. Intentional synonyms belong in the template Keywords (which
+        // ARE in the pool), so no legitimate match is lost.
+        var pool = row.SearchPool;
+        int tokenScore = 0;
+        foreach (var qt in queryTokens)
         {
             bool prefix = false;
-            foreach (var p in pool) if (p.StartsWith(q, StringComparison.OrdinalIgnoreCase)) { prefix = true; break; }
-            if (prefix) continue;
-            if (!string.IsNullOrEmpty(row.Description) &&
-                row.Description.Contains(q, StringComparison.OrdinalIgnoreCase))
-                continue;
-            return false;
+            foreach (var p in pool)
+                if (p.StartsWith(qt, StringComparison.OrdinalIgnoreCase)) { prefix = true; break; }
+            if (!prefix) return null; // a query token hit no pool field → not a result
+            tokenScore += 50;
+            // Tie-break nudge only — the token also appears in the description.
+            if (!string.IsNullOrEmpty(row.Description)
+                && row.Description.Contains(qt, StringComparison.OrdinalIgnoreCase))
+                tokenScore += 5;
         }
-        return true;
+        return 200 + tokenScore;
     }
 
     /// <summary>
@@ -756,8 +801,13 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             {
                 if (_searchPool is not null) return _searchPool;
                 var pool = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var tk in TokenizeQuery(Title))    pool.Add(tk);
-                foreach (var tk in TokenizeQuery(Category)) pool.Add(tk);
+                foreach (var tk in TokenizeQuery(Title))        pool.Add(tk);
+                // DisplayTitle is the user-VISIBLE name (template DisplayName
+                // override, e.g. "Reroute" for "Flow.Reroute"); index it too so a
+                // user typing what they SEE actually matches. Pre-fix only the
+                // registry Title was pooled, so DisplayName-only words never hit.
+                foreach (var tk in TokenizeQuery(DisplayTitle)) pool.Add(tk);
+                foreach (var tk in TokenizeQuery(Category))     pool.Add(tk);
                 foreach (var k in Keywords)
                     foreach (var tk in TokenizeQuery(k)) pool.Add(tk);
                 _searchPool = pool;

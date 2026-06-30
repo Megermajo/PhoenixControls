@@ -1072,7 +1072,7 @@ public sealed partial class LogicCanvasView
             }));
             return true;
         }
-        if (node.Title == "Process.Spawn")
+        if (node.Title == "Process.Start")
         {
             flyout.Items.Add(NewMenuItem("Edit process graph", GlyphEdit, () =>
             {

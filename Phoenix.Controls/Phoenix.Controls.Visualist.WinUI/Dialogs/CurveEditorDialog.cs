@@ -37,7 +37,17 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// Per feedback_visualist_architect_chrome_independence.md the dialog stays
 /// Visualist-local — no Shared lift.
 /// </summary>
-public sealed partial class CurveEditorDialog : ContentDialog
+///
+// [DIALOG-NO-XAML-FIX 2026-06-29] No .xaml / InitializeComponent — a
+// code-constructed library ContentDialog throws XamlParseException at
+// Application.LoadComponent when `new`'d detached (proven by the 1.0.6 runtime
+// stack trace; resource stripping never helped because the throw is in the XAML
+// parse itself). The whole visual tree is built in code here; the keyed Styles
+// that lived in <ContentDialog.Resources> are applied as direct setters on each
+// element, and the theme brushes/fonts are resolved at runtime via DialogTheme
+// (Application.Current.Resources) — see NameTypeDialog / DialogTheme.cs for the
+// full rationale. The default ContentDialog template still resolves at ShowAsync.
+public sealed class CurveEditorDialog : ContentDialog
 {
     private readonly Keyframe _keyframe;
 
@@ -56,9 +66,135 @@ public sealed partial class CurveEditorDialog : ContentDialog
     private XamlPath? _curvePath;
     private int       _draggingHandle; // 0 none, 1 P1, 2 P2
 
+    // Named elements that were x:Name'd in the old XAML — now plain fields built
+    // in the ctor.
+    private readonly TextBlock EyebrowText;
+    private readonly TextBlock SubtitleText;
+    private readonly Rectangle BrassHairline;
+    private readonly TextBlock CurveTypeLabel;
+    private readonly ToggleButton LinearPill;
+    private readonly ToggleButton EaseInPill;
+    private readonly ToggleButton EaseOutPill;
+    private readonly ToggleButton EaseInOutPill;
+    private readonly ToggleButton BezierPill;
+    private readonly ToggleButton StepPill;
+    private readonly TextBlock PreviewLabel;
+    private readonly Border PreviewBorder;
+    private readonly Grid BezierSurface;
+    private readonly TextBlock BezierHandleReadout;
+    private readonly TextBlock BezierHint;
+
     public CurveEditorDialog(Keyframe keyframe)
     {
-        InitializeComponent();
+        // Root properties that were attributes on <ContentDialog …>.
+        Title = "Edit Curve";
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(6);
+        PrimaryButtonText = "Save";
+        CloseButtonText = "Cancel";
+        DefaultButton = ContentDialogButton.Primary;
+
+        // ── Visual tree (formerly the <Grid Width="460"> body) ────────────
+        var root = new Grid { Width = 460 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        // Row 0 — eyebrow header + subtitle.
+        var headerStack = new StackPanel { Spacing = 2, Margin = new Thickness(0, 0, 0, 8) };
+        Grid.SetRow(headerStack, 0);
+
+        // CurveDialogEyebrow style → FontSize 10, SemiBold, CharacterSpacing 180,
+        // Margin 0,0,0,4 (applied directly per recipe §2d).
+        EyebrowText = new TextBlock
+        {
+            Text = "VISUALIST · CURVE",
+            FontSize = 10,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = 180,
+            Margin = new Thickness(0, 0, 0, 4),
+        };
+        SubtitleText = new TextBlock
+        {
+            FontSize = 13,
+            Text = "Pick an easing curve for this keyframe.",
+        };
+        headerStack.Children.Add(EyebrowText);
+        headerStack.Children.Add(SubtitleText);
+        root.Children.Add(headerStack);
+
+        // Row 1 — brass hairline.
+        BrassHairline = new Rectangle();
+        Grid.SetRow(BrassHairline, 1);
+        root.Children.Add(BrassHairline);
+
+        // Row 2 — curve-type pills + preview.
+        var bodyStack = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+        Grid.SetRow(bodyStack, 2);
+
+        // CurveDialogFieldLabel style → FontSize 11, SemiBold, CharacterSpacing 80,
+        // Margin 0,8,0,4.
+        CurveTypeLabel = MakeFieldLabel("CURVE TYPE");
+        bodyStack.Children.Add(CurveTypeLabel);
+
+        var pillRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
+        LinearPill    = MakePill("Linear");
+        EaseInPill    = MakePill("Ease In");
+        EaseOutPill   = MakePill("Ease Out");
+        EaseInOutPill = MakePill("Ease In-Out");
+        BezierPill    = MakePill("Bezier");
+        StepPill      = MakePill("Step");
+        pillRow.Children.Add(LinearPill);
+        pillRow.Children.Add(EaseInPill);
+        pillRow.Children.Add(EaseOutPill);
+        pillRow.Children.Add(EaseInOutPill);
+        pillRow.Children.Add(BezierPill);
+        pillRow.Children.Add(StepPill);
+        bodyStack.Children.Add(pillRow);
+
+        PreviewLabel = MakeFieldLabel("PREVIEW");
+        bodyStack.Children.Add(PreviewLabel);
+
+        BezierSurface = new Grid
+        {
+            Width = 420,
+            Height = 220,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+        };
+        BezierSurface.SizeChanged    += OnBezierSurfaceSizeChanged;
+        BezierSurface.PointerPressed  += OnBezierSurfacePointerPressed;
+        BezierSurface.PointerMoved    += OnBezierSurfacePointerMoved;
+        BezierSurface.PointerReleased += OnBezierSurfacePointerReleased;
+
+        PreviewBorder = new Border
+        {
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = BezierSurface,
+        };
+        bodyStack.Children.Add(PreviewBorder);
+
+        // CurveDialogHint style → FontSize 10, Margin 0,4,0,0, TextWrapping Wrap.
+        BezierHandleReadout = MakeHint("P1 (0.25, 0.10)  ·  P2 (0.25, 1.00)");
+        bodyStack.Children.Add(BezierHandleReadout);
+
+        // Hint carries an extra Margin="0,4,0,0" on the XAML element (on top of
+        // the style's 0,4,0,0 — same value, so the override is a no-op visually).
+        BezierHint = MakeHint(
+            "Drag P1 and P2 inside the box. Non-Bezier curves use the preview only — the handles are inert.");
+        BezierHint.Margin = new Thickness(0, 4, 0, 0);
+        bodyStack.Children.Add(BezierHint);
+
+        root.Children.Add(bodyStack);
+
+        Content = root;
+
+        // Code-constructed library dialog — theme applied in code via
+        // DialogTheme; no directly-resolved resource markup. See Architect
+        // NameTypeDialog / DialogTheme.cs.
+        ApplyDialogTheme();
         _keyframe = keyframe ?? throw new ArgumentNullException(nameof(keyframe));
 
         _curve = _keyframe.Curve;
@@ -77,6 +213,93 @@ public sealed partial class CurveEditorDialog : ContentDialog
         ApplyLocalization();
 
         UpdatePillSelection();
+    }
+
+    // CurveDialogFieldLabel keyed style, applied directly (recipe §2d).
+    private static TextBlock MakeFieldLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 11,
+        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+        CharacterSpacing = 80,
+        Margin = new Thickness(0, 8, 0, 4),
+    };
+
+    // CurveDialogHint keyed style, applied directly (recipe §2d).
+    private static TextBlock MakeHint(string text) => new()
+    {
+        Text = text,
+        FontSize = 10,
+        Margin = new Thickness(0, 4, 0, 0),
+        TextWrapping = TextWrapping.Wrap,
+    };
+
+    // CurvePillButtonStyle keyed style, applied directly (recipe §2d). The
+    // Click handler matches the XAML's Click="OnPillClicked" wiring.
+    private ToggleButton MakePill(string content)
+    {
+        var tb = new ToggleButton
+        {
+            Content = content,
+            FontSize = 11,
+            Padding = new Thickness(10, 4, 10, 4),
+            Margin = new Thickness(0, 0, 4, 0),
+            MinHeight = 26,
+            MinWidth = 60,
+        };
+        tb.Click += OnPillClicked;
+        return tb;
+    }
+
+    // Re-applies every theme brush/font that was stripped from the XAML to keep
+    // this code-constructed library dialog from throwing XamlParseException at
+    // InitializeComponent. Resolved at runtime from Application.Current.Resources
+    // via DialogTheme, which needs no visual-tree attachment.
+    private void ApplyDialogTheme()
+    {
+        // Root chrome — was Background / BorderBrush on <ContentDialog>.
+        if (DialogTheme.Brush("CoalShellBrush") is { } shell) Background  = shell;
+        if (DialogTheme.Brush("CoalCardBrush")  is { } card)  BorderBrush = card;
+
+        // Eyebrow (CurveDialogEyebrow style → FontFamily=DisplayFont, Foreground=EmberPrimaryBrush).
+        if (DialogTheme.Font("DisplayFont")        is { } displayFont) EyebrowText.FontFamily  = displayFont;
+        if (DialogTheme.Brush("EmberPrimaryBrush") is { } ember)       EyebrowText.Foreground  = ember;
+
+        // Subtitle (was inline FontFamily=SansFont, Foreground=CoalSecondaryTextBrush).
+        if (DialogTheme.Font("SansFont")                 is { } sansFont) SubtitleText.FontFamily = sansFont;
+        if (DialogTheme.Brush("CoalSecondaryTextBrush")  is { } secText)  SubtitleText.Foreground = secText;
+
+        // Brass hairline (was Fill=BrassGradientBrush on the Grid.Row=1 Rectangle).
+        if (DialogTheme.Brush("BrassGradientBrush") is { } brass) BrassHairline.Fill = brass;
+
+        // Field labels (CurveDialogFieldLabel style → FontFamily=SansFont, Foreground=CoalSecondaryTextBrush).
+        var fieldFont  = DialogTheme.Font("SansFont");
+        var fieldBrush = DialogTheme.Brush("CoalSecondaryTextBrush");
+        foreach (var label in new[] { CurveTypeLabel, PreviewLabel })
+        {
+            if (fieldFont  is { } ff) label.FontFamily = ff;
+            if (fieldBrush is { } fb) label.Foreground = fb;
+        }
+
+        // Hints (CurveDialogHint style → FontFamily=MonoFont, Foreground=CoalMutedTextBrush).
+        var hintFont  = DialogTheme.Font("MonoFont");
+        var hintBrush = DialogTheme.Brush("CoalMutedTextBrush");
+        foreach (var hint in new[] { BezierHandleReadout, BezierHint })
+        {
+            if (hintFont  is { } hf) hint.FontFamily = hf;
+            if (hintBrush is { } hb) hint.Foreground = hb;
+        }
+
+        // Pills (CurvePillButtonStyle style → FontFamily=MonoFont).
+        if (DialogTheme.Font("MonoFont") is { } pillFont)
+        {
+            foreach (var pill in new[] { LinearPill, EaseInPill, EaseOutPill, EaseInOutPill, BezierPill, StepPill })
+                pill.FontFamily = pillFont;
+        }
+
+        // Preview box (was Background=CoalShellBrush, BorderBrush=CoalCardBrush).
+        if (DialogTheme.Brush("CoalShellBrush") is { } previewBg) PreviewBorder.Background  = previewBg;
+        if (DialogTheme.Brush("CoalCardBrush")  is { } previewBd) PreviewBorder.BorderBrush = previewBd;
     }
 
     private void ApplyLocalization()
@@ -100,16 +323,13 @@ public sealed partial class CurveEditorDialog : ContentDialog
     private void OnPillClicked(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton tb) return;
-        KeyframeCurve picked = tb.Name switch
-        {
-            "LinearPill"    => KeyframeCurve.Linear,
-            "EaseInPill"    => KeyframeCurve.EaseIn,
-            "EaseOutPill"   => KeyframeCurve.EaseOut,
-            "EaseInOutPill" => KeyframeCurve.EaseInOut,
-            "BezierPill"    => KeyframeCurve.Bezier,
-            "StepPill"      => KeyframeCurve.Step,
-            _               => _curve,
-        };
+        KeyframeCurve picked = ReferenceEquals(tb, LinearPill)    ? KeyframeCurve.Linear
+                             : ReferenceEquals(tb, EaseInPill)    ? KeyframeCurve.EaseIn
+                             : ReferenceEquals(tb, EaseOutPill)   ? KeyframeCurve.EaseOut
+                             : ReferenceEquals(tb, EaseInOutPill) ? KeyframeCurve.EaseInOut
+                             : ReferenceEquals(tb, BezierPill)    ? KeyframeCurve.Bezier
+                             : ReferenceEquals(tb, StepPill)      ? KeyframeCurve.Step
+                             : _curve;
         _curve = picked;
         UpdatePillSelection();
         RenderBezierSurface();

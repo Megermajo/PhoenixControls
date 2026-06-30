@@ -55,40 +55,62 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec) },
                 new[] { ("Done", ColExec) });
 
-            // ── PROCESS — unified async-spawn primitive ─────────────────
+            // ── PROCESS — live, self-contained mini-script ──────────────
             //
-            // Process.Spawn fires off the body of a Process as a
-            // detached, named, asynchronous unit. The parent script continues
-            // past the spawn point without waiting; the spawned body runs on
-            // its own CTS owned by ProcessManager (Process.Terminate cancels).
-            // Authoring lives in a macro-editor-style ProcessEditorForm — the
-            // process owns its internal graph plus Process.Entry / Process.Exit
-            // for var-in / var-out boundaries (parallel to Macro.Entry / Exit).
+            // A Process is its own canvas of event triggers (Schedule, on_chat,
+            // on_event, …). Process.Start launches a new INSTANCE whose triggers
+            // go live and stay live until Process.Stop tears that instance down —
+            // it runs like a normal .phx, for as long as the instance is started,
+            // with no run-duration limit. Multiple instances of one process run
+            // concurrently, each carrying its own start params (read in the body
+            // as {param.<name>}). The process owns an internal graph with
+            // Process.Entry (the "on start" trigger + param declarations) and
+            // Process.Exit (the "on stop" trigger).
             //
-            // Process.Host / Session.Start / Session.End were retired in the
-            // sweep that introduced this — Process.Spawn is the unified
-            // detached primitive, so the half-built session machinery and
-            // the no-op process.host registration both went away.
+            // The old fire-and-forget Process.Spawn / Process.Terminate are kept
+            // registered for back-compat (so legacy .phxg still load + export and
+            // the coverage tests stay green) but HiddenFromPalette — migration
+            // (ProcessNodeMigration) rewrites placed Spawn→Start / Terminate→Stop.
+            AddTemplate("Process.Start", "Process", Color.DimGray,
+                "Launches a new instance of a Process. Its event triggers (Schedule, on_chat, on_event, etc.) go live and run until Process.Stop ends THIS instance - like a normal .phx, with no run-duration cap. Start params (synced from the process's Process.Entry) are passed in and read in the body as {param.<name>}. InstanceId outputs the new instance's id; wire it into a Process.Stop. Starting again launches a second concurrent instance.",
+                new[] { ("Flow", ColExec) },
+                new[] { ("Done", ColExec), ("InstanceId", ColString) },
+                new Dictionary<string, string> { { "ProcessId", "" }, { "ProcessName", "Process" } });
+
+            AddTemplate("Process.Stop", "Process", Color.DimGray,
+                "Stops a running Process instance by InstanceId (the value returned from Process.Start). The instance's live triggers go dormant and its schedule timers are cancelled. Stopping an unknown / already-stopped id is a no-op.",
+                new[] { ("Flow", ColExec), ("InstanceId", ColString) },
+                new[] { ("Done", ColExec) });
+
+            // Deprecated (hidden) — legacy fire-and-forget spawn primitive.
             AddTemplate("Process.Spawn", "Process", Color.DimGray,
                 Localizer.T("architect.node.bubble.process_spawn"),
                 new[] { ("Flow", ColExec) },
                 new[] { ("Done", ColExec), ("InstanceId", ColString) },
                 new Dictionary<string, string> { { "ProcessId", "" }, { "ProcessName", "Process" } });
 
+            // Deprecated (hidden) — legacy terminate, superseded by Process.Stop.
             AddTemplate("Process.Terminate",  "Process", Color.DimGray,
                 Localizer.T("architect.node.bubble.process_terminate"),
                 new[] { ("Flow", ColExec), ("InstanceId", ColString) },
                 new[] { ("Done", ColExec) });
 
+            // Process.Entry — the "on start" trigger of a process. Its Flow output
+            // fires once when an instance starts; its dynamic param outputs expose
+            // the start params (read elsewhere in the body as {param.<name>}).
             AddTemplate("Process.Entry", "Process", Color.FromArgb(70, 70, 110),
                 Localizer.T("architect.node.bubble.process_entry"),
                 null,
                 new[] { ("Flow", ColExec) });
 
+            // Process.Exit — the "on stop" trigger of a process. Output-only: its
+            // "On Stop" exec OUTPUT fires once when the instance is stopped (cleanup
+            // hook). A live process never "returns", so there is no inbound flow —
+            // it is an entry point like Process.Entry, walked from its output.
             AddTemplate("Process.Exit", "Process", Color.FromArgb(55, 55, 90),
                 Localizer.T("architect.node.bubble.process_exit"),
-                new[] { ("Flow", ColExec) },
-                null);
+                null,
+                new[] { ("On Stop", ColExec) });
 
             // ── Stray Flow Control template (authored between PROCESS and
             // DATABANK in the legacy file). Category remains "Flow Control"

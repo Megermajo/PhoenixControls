@@ -119,6 +119,12 @@ namespace Phoenix.Controls.Hub.Core
 
             foreach (var file in files)
             {
+                // Live-process TEMPLATES are NOT whole-file schedules — they run
+                // per-instance (ProcessInstanceManager owns their timers). GetFiles is
+                // non-recursive so a processes/ subfolder is already excluded; this is a
+                // defensive guard in case the logic path is ever mis-pointed.
+                if (ProcessTemplateRegistry.IsUnderProcessesFolder(file)) continue;
+
                 string source;
                 try { source = File.ReadAllText(file); }
                 catch (Exception ex)
@@ -129,38 +135,51 @@ namespace Phoenix.Controls.Hub.Core
 
                 string name = Path.GetFileNameWithoutExtension(file);
 
-                foreach (Match m in ScheduleHeaderRegex.Matches(source))
+                foreach (var entry in ParseScheduleHeaders(source, name))
                 {
-                    string kind = m.Groups["kind"].Value;
-                    string arg  = m.Groups["arg"].Value.Trim();
-
-                    var entry = new ScheduleEntry { Name = name, Enabled = true };
-                    switch (kind)
-                    {
-                        case "on_schedule":
-                            entry.CronExpression = arg;
-                            break;
-                        case "on_schedule_once":
-                            entry.RunAt = arg;
-                            break;
-                        case "on_interval":
-                            if (!int.TryParse(arg, out int seconds) || seconds <= 0)
-                            {
-                                GlobalLogger.Log($"Scheduler: '{name}.phx' has invalid on_interval('{arg}') — skipping.", "Scheduler", LogLevel.CriticalError);
-                                continue;
-                            }
-                            entry.IntervalSeconds = seconds;
-                            break;
-                        default:
-                            continue;
-                    }
-
                     var captured = entry;
                     _ = Task.Run(() => RunEntryAsync(captured, token));
                     count++;
                 }
             }
             return count;
+        }
+
+        /// <summary>
+        /// Parses on_schedule / on_schedule_once / on_interval header blocks out of a
+        /// script body into <see cref="ScheduleEntry"/> objects. Shared by the
+        /// file-level scheduler and <see cref="ProcessInstanceManager"/>'s per-instance
+        /// timers. Invalid on_interval values are logged + skipped.
+        /// </summary>
+        internal static IEnumerable<ScheduleEntry> ParseScheduleHeaders(string content, string name)
+        {
+            foreach (Match m in ScheduleHeaderRegex.Matches(content ?? string.Empty))
+            {
+                string kind = m.Groups["kind"].Value;
+                string arg  = m.Groups["arg"].Value.Trim();
+
+                var entry = new ScheduleEntry { Name = name, Enabled = true };
+                switch (kind)
+                {
+                    case "on_schedule":
+                        entry.CronExpression = arg;
+                        break;
+                    case "on_schedule_once":
+                        entry.RunAt = arg;
+                        break;
+                    case "on_interval":
+                        if (!int.TryParse(arg, out int seconds) || seconds <= 0)
+                        {
+                            GlobalLogger.Log($"Scheduler: '{name}' has invalid on_interval('{arg}') — skipping.", "Scheduler", LogLevel.CriticalError);
+                            continue;
+                        }
+                        entry.IntervalSeconds = seconds;
+                        break;
+                    default:
+                        continue;
+                }
+                yield return entry;
+            }
         }
 
         /// <summary>
@@ -183,23 +202,39 @@ namespace Phoenix.Controls.Hub.Core
         //  ENTRY RUNNER
         // ─────────────────────────────────────────────────────────────────────
 
+        // File-level scheduler entry — delegates to the shared loop with a closure
+        // that fires the whole named script via FireScriptAsync.
         private async Task RunEntryAsync(ScheduleEntry entry, CancellationToken ct)
+        {
+            string mode = !string.IsNullOrWhiteSpace(entry.RunAt) ? "schedule_once"
+                        : entry.IntervalSeconds > 0               ? "interval"
+                        :                                           "cron";
+            await RunScheduleLoopAsync(entry, ct, fireCount => FireScriptAsync(entry.Name, mode, fireCount));
+        }
+
+        /// <summary>
+        /// The schedule wait/fire loop, parameterised on what to do per fire. Shared by
+        /// the file-level scheduler (fires the named script) and
+        /// <see cref="ProcessInstanceManager"/>'s per-instance timers (runs the instance
+        /// template). <paramref name="fire"/> is invoked with the running fire count
+        /// (1-based; always 1 for a one-shot RunAt). Cancellation via
+        /// <paramref name="ct"/> unwinds the loop cleanly.
+        /// </summary>
+        internal static async Task RunScheduleLoopAsync(ScheduleEntry entry, CancellationToken ct, Func<int, Task> fire)
         {
             try
             {
                 // ── Mode 1: RunAt (once at a specific time) ──────────────
                 if (!string.IsNullOrWhiteSpace(entry.RunAt))
                 {
-                    // M30 — DateTimeOffset.Now folds the local offset in, so a parsed
-                    // RunAt that includes a timezone designator (e.g. "2026-04-25T09:00-05:00")
-                    // resolves correctly without the DST skip/double-fire that DateTime.Now
-                    // had during fall-back / spring-forward boundaries.
+                    // M30 — DateTimeOffset.Now folds the local offset in so a RunAt with
+                    // a timezone designator resolves without DST skip/double-fire.
                     if (DateTimeOffset.TryParse(entry.RunAt, out DateTimeOffset fireAt))
                     {
                         TimeSpan delay = fireAt - DateTimeOffset.Now;
                         if (delay > TimeSpan.Zero)
                             await Task.Delay(delay, ct);
-                        await FireScriptAsync(entry.Name, "schedule_once", 1);
+                        await fire(1);
                     }
                     return;
                 }
@@ -211,7 +246,7 @@ namespace Phoenix.Controls.Hub.Core
                     while (!ct.IsCancellationRequested)
                     {
                         await Task.Delay(TimeSpan.FromSeconds(entry.IntervalSeconds), ct);
-                        await FireScriptAsync(entry.Name, "interval", ++fireCount);
+                        await fire(++fireCount);
                     }
                     return;
                 }
@@ -222,21 +257,17 @@ namespace Phoenix.Controls.Hub.Core
                     int fireCount = 0;
                     while (!ct.IsCancellationRequested)
                     {
-                        // P0-5 — DST safety: compute both the next occurrence AND the
-                        // wait-delta in UTC. Mixing DateTime.Now (local) on either side
-                        // causes missed or duplicate fires across spring-forward /
-                        // fall-back transitions. M30 already standardised the RunAt
-                        // branch on DateTimeOffset; the cron branch follows suit.
+                        // P0-5 — compute next occurrence + wait-delta in UTC (DST safety).
                         DateTime next = GetNextCronOccurrence(entry.CronExpression, DateTime.UtcNow);
                         if (next == DateTime.MaxValue) return; // invalid cron, already logged
                         TimeSpan wait = next - DateTime.UtcNow;
                         if (wait > TimeSpan.Zero)
                             await Task.Delay(wait, ct);
-                        await FireScriptAsync(entry.Name, "cron", ++fireCount);
+                        await fire(++fireCount);
                     }
                 }
             }
-            catch (OperationCanceledException) { /* normal shutdown */ }
+            catch (OperationCanceledException) { /* normal cancel/shutdown */ }
             catch (Exception ex)
             {
                 GlobalLogger.Error("Scheduler", $"Scheduler error for '{entry.Name}'", ex);

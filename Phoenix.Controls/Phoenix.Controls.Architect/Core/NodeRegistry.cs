@@ -386,6 +386,12 @@ namespace Phoenix.Controls.Architect.Core
             "AI.VisionDescribe",
             "AI.WithTools",
             "AI.StreamText",
+            // Live-processes redesign — the old fire-and-forget spawn nodes are
+            // superseded by Process.Start / Process.Stop. Kept REGISTERED (legacy
+            // graphs load + export, coverage tests stay green) but hidden from the
+            // palette/search; ProcessNodeMigration upgrades placed nodes on load.
+            "Process.Spawn",
+            "Process.Terminate",
         };
 
         // Templates offered in the spawn palette / search / node-reference —
@@ -417,12 +423,16 @@ namespace Phoenix.Controls.Architect.Core
                 return rr;
             }
 
-            // Macro.Entry / Macro.Exit / Process.Entry / Process.Exit:
-            // dynamic placeholder sockets — same Entry/Exit factory because
-            // the var-in/var-out shape is identical (Macro.Call and
-            // Process.Spawn both surface those sockets at the call site).
+            // Macro.Entry / Macro.Exit / Process.Entry: dynamic placeholder
+            // sockets (var-in / var-out surface). Process.Entry keeps this — its
+            // "+ input" placeholder is how a user declares start params.
+            //
+            // Process.Exit is NOT here: in the live-process model it is the
+            // "on stop" trigger (a fixed Flow-input + "On Stop" exec OUTPUT, per
+            // its template) rather than a var-out surface — processes don't return
+            // values — so it falls through to the generic template-based factory.
             if (title == "Macro.Entry" || title == "Macro.Exit"
-             || title == "Process.Entry" || title == "Process.Exit")
+             || title == "Process.Entry")
             {
                 return CreateMacroEntryExitNode(title, t, location);
             }
@@ -442,9 +452,14 @@ namespace Phoenix.Controls.Architect.Core
                     Size        = new Size(sw, sh + 14 + 2 * ss),
                     Attributes  = new Dictionary<string, string>(t.DefaultProperties)
                 };
-                sp.Sockets.Add(new Socket { Name = "Flow",       Type = SocketType.Input,  Color = ColExec,   Offset = new Point(-6,       sh + 6) });
-                sp.Sockets.Add(new Socket { Name = "Done",       Type = SocketType.Output, Color = ColExec,   Offset = new Point(sw - 14, sh + 6) });
-                sp.Sockets.Add(new Socket { Name = "InstanceId", Type = SocketType.Output, Color = ColString, Offset = new Point(sw - 14, sh + 6 + ss) });
+                // DataType set from colour at creation (see CreateVisualTriggerNode's
+                // [visual-trigger-pins] note): Socket.DataType defaults to Any, and the
+                // canvas derives the pin SHAPE + wire compatibility from DataType — so a
+                // freshly-dropped Spawn whose Flow/Done pins were left at Any rendered as
+                // ◆ Diamonds and refused to wire to normal ▶ Flow pins until save+reload.
+                sp.Sockets.Add(new Socket { Name = "Flow",       Type = SocketType.Input,  Color = ColExec,   DataType = DataTypeFromColor(ColExec),   Offset = new Point(-6,       sh + 6) });
+                sp.Sockets.Add(new Socket { Name = "Done",       Type = SocketType.Output, Color = ColExec,   DataType = DataTypeFromColor(ColExec),   Offset = new Point(sw - 14, sh + 6) });
+                sp.Sockets.Add(new Socket { Name = "InstanceId", Type = SocketType.Output, Color = ColString, DataType = DataTypeFromColor(ColString), Offset = new Point(sw - 14, sh + 6 + ss) });
                 return sp;
             }
 
@@ -460,8 +475,11 @@ namespace Phoenix.Controls.Architect.Core
                     Size        = new Size(200, 68),
                     Attributes  = new Dictionary<string, string>(t.DefaultProperties)
                 };
-                mc.Sockets.Add(new Socket { Name = "Flow", Type = SocketType.Input,  Color = ColExec, Offset = new Point(-6, 30) });
-                mc.Sockets.Add(new Socket { Name = "Flow", Type = SocketType.Output, Color = ColExec, Offset = new Point(186, 30) });
+                // DataType set from colour at creation — see the Process.Spawn /
+                // CreateVisualTriggerNode notes: without it the Flow pins render as
+                // ◆ Diamonds and refuse normal ▶ Flow wires until save+reload.
+                mc.Sockets.Add(new Socket { Name = "Flow", Type = SocketType.Input,  Color = ColExec, DataType = DataTypeFromColor(ColExec), Offset = new Point(-6, 30) });
+                mc.Sockets.Add(new Socket { Name = "Flow", Type = SocketType.Output, Color = ColExec, DataType = DataTypeFromColor(ColExec), Offset = new Point(186, 30) });
                 return mc;
             }
 
@@ -565,6 +583,7 @@ namespace Phoenix.Controls.Architect.Core
                 node.Sockets.Add(new Socket
                 {
                     Name = "Flow", Type = SocketType.Input, Color = ColExec,
+                    DataType = DataTypeFromColor(ColExec),
                     Offset = new Point(-6, headerH + 6)
                 });
 
@@ -572,6 +591,7 @@ namespace Phoenix.Controls.Architect.Core
                 node.Sockets.Add(new Socket
                 {
                     Name = "EventName", Type = SocketType.Input, Color = ColString,
+                    DataType = DataTypeFromColor(ColString),
                     Offset = new Point(-6, headerH + 6 + socketSpacing)
                 });
             }
@@ -580,6 +600,7 @@ namespace Phoenix.Controls.Architect.Core
             node.Sockets.Add(new Socket
             {
                 Name = "Flow", Type = SocketType.Output, Color = ColExec,
+                DataType = DataTypeFromColor(ColExec),
                 Offset = new Point(nodeWidth - 14, headerH + 6)
             });
 
@@ -591,6 +612,7 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     Name = "+ variable", Type = SocketType.Input,
                     Color = ColString, IsPlaceholder = true,
+                    DataType = DataTypeFromColor(ColString),
                     Offset = new Point(-6, headerH + 6 + 2 * socketSpacing)
                 });
             }
@@ -600,6 +622,7 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     Name = "+ variable", Type = SocketType.Output,
                     Color = ColString, IsPlaceholder = true,
+                    DataType = DataTypeFromColor(ColString),
                     Offset = new Point(nodeWidth - 14, headerH + 6 + socketSpacing)
                 });
             }
@@ -612,6 +635,7 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     Name = "+ return", Type = SocketType.Output,
                     Color = ColReturn, IsPlaceholder = true,
+                    DataType = DataTypeFromColor(ColReturn),
                     Offset = new Point(nodeWidth - 14, headerH + 6 + 3 * socketSpacing)
                 });
             }
@@ -621,6 +645,7 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     Name = "+ return", Type = SocketType.Input,
                     Color = ColReturn, IsPlaceholder = true,
+                    DataType = DataTypeFromColor(ColReturn),
                     Offset = new Point(-6, headerH + 6 + 2 * socketSpacing)
                 });
             }
@@ -653,12 +678,20 @@ namespace Phoenix.Controls.Architect.Core
             };
 
             // Flow socket
+            // DataType set from colour at creation (see CreateVisualTriggerNode's
+            // [visual-trigger-pins] note). Without it this Flow pin defaulted to
+            // SocketDataType.Any, so the canvas rendered it as a ◆ Diamond instead of
+            // an exec ▶ Chevron AND AreCompatible rejected every Flow↔Any wire — which
+            // made a freshly-created Macro/Process Entry/Exit unwireable to normal pipes
+            // (and a new auto-seeded process unauthorable) until the next save+reload
+            // re-synced DataType from Color via MigrateNodes.
             node.Sockets.Add(new Socket
             {
-                Name   = "Flow",
-                Type   = isEntry ? SocketType.Output : SocketType.Input,
-                Color  = ColExec,
-                Offset = isEntry
+                Name     = "Flow",
+                Type     = isEntry ? SocketType.Output : SocketType.Input,
+                Color    = ColExec,
+                DataType = DataTypeFromColor(ColExec),
+                Offset   = isEntry
                     ? new Point(nodeWidth - 14, headerH + 6)
                     : new Point(-6, headerH + 6)
             });
@@ -669,6 +702,7 @@ namespace Phoenix.Controls.Architect.Core
                 Name          = isEntry ? "+ input" : "+ output",
                 Type          = isEntry ? SocketType.Output : SocketType.Input,
                 Color         = ColString,
+                DataType      = DataTypeFromColor(ColString),
                 IsPlaceholder = true,
                 Offset        = isEntry
                     ? new Point(nodeWidth - 14, headerH + 6 + socketSpacing)
@@ -696,10 +730,14 @@ namespace Phoenix.Controls.Architect.Core
                 Attributes  = new Dictionary<string, string>(t.DefaultProperties)
             };
 
-            // Flow input only — no flow output (terminal node)
+            // Flow input only — no flow output (terminal node).
+            // DataType set from colour at creation — see CreateVisualTriggerNode's
+            // [visual-trigger-pins] note (Flow pins left at Any render as ◆ Diamonds
+            // and reject normal ▶ Flow wires until save+reload).
             node.Sockets.Add(new Socket
             {
                 Name = "Flow", Type = SocketType.Input, Color = ColExec,
+                DataType = DataTypeFromColor(ColExec),
                 Offset = new Point(-6, headerH + 6)
             });
 
@@ -708,6 +746,7 @@ namespace Phoenix.Controls.Architect.Core
             {
                 Name = "+ return", Type = SocketType.Input,
                 Color = ColReturn, IsPlaceholder = true,
+                DataType = DataTypeFromColor(ColReturn),
                 Offset = new Point(-6, headerH + 6 + socketSpacing)
             });
 
@@ -906,7 +945,8 @@ namespace Phoenix.Controls.Architect.Core
                     var sock = new Socket
                     {
                         Name = "+ return", Type = SocketType.Input,
-                        Color = ColReturn, IsPlaceholder = true
+                        Color = ColReturn, DataType = DataTypeFromColor(ColReturn),
+                        IsPlaceholder = true
                     };
                     node.Sockets.Add(sock);
                     RestripeAfterAdd(sock);
@@ -923,7 +963,8 @@ namespace Phoenix.Controls.Architect.Core
                 var sock = new Socket
                 {
                     Name = "+ variable", Type = argPhType,
-                    Color = ColString, IsPlaceholder = true
+                    Color = ColString, DataType = DataTypeFromColor(ColString),
+                    IsPlaceholder = true
                 };
                 node.Sockets.Add(sock);
                 RestripeAfterAdd(sock);
@@ -934,7 +975,8 @@ namespace Phoenix.Controls.Architect.Core
                 var sock = new Socket
                 {
                     Name = "+ return", Type = retPhType,
-                    Color = ColReturn, IsPlaceholder = true
+                    Color = ColReturn, DataType = DataTypeFromColor(ColReturn),
+                    IsPlaceholder = true
                 };
                 node.Sockets.Add(sock);
                 RestripeAfterAdd(sock);

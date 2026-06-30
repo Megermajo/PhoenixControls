@@ -131,7 +131,7 @@ public sealed partial class LogicCanvasView
                 // Reuse the ViewModel's canonical macro→call socket-sync.
                 if (macro is not null) _vm.RefreshMacroCallSockets(node, macro);
             }
-            else if (templateTitle == "Process.Spawn"
+            else if (templateTitle == "Process.Start"
                 && node.Attributes.TryGetValue("ProcessId", out var pid)
                 && !string.IsNullOrEmpty(pid))
             {

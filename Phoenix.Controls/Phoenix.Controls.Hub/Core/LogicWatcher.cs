@@ -132,6 +132,11 @@ namespace Phoenix.Controls.Hub.Core
             {
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
                 InternalBufferSize = InternalBufferBytes,
+                // Watch subfolders too so saves to live-process templates under
+                // processes/<graph>/ trigger a refresh. ScriptRegistry.Refresh stays
+                // top-level only (it enumerates *.phx non-recursively), so a template
+                // change just drives ProcessTemplateRegistry.Refresh via OnRefresh.
+                IncludeSubdirectories = true,
                 EnableRaisingEvents = false, // arm AFTER wiring handlers
             };
 

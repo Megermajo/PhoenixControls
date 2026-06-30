@@ -5,13 +5,22 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Architect.WinUI.Services;
 using Windows.System;
 
 namespace Phoenix.Controls.Architect.WinUI.Dialogs;
 
-public sealed partial class RecentFilesDialog : ContentDialog
+// [DIALOG-NO-XAML-FIX 2026-06-29] No .xaml / InitializeComponent — a
+// code-constructed library ContentDialog throws XamlParseException at
+// Application.LoadComponent when `new`'d detached (proven by the 1.0.6 runtime
+// stack trace; resource stripping never helped because the throw is in the XAML
+// parse itself). Content is built in code; the default template still resolves
+// at ShowAsync. The per-row ItemTemplate is rebuilt via XamlReader.Load (its
+// {Binding}/{ThemeResource} markup is deferred and resolves at row realization,
+// so it's safe). See NameTypeDialog / ConfirmDialog / DialogTheme.cs.
+public sealed class RecentFilesDialog : ContentDialog
 {
     public sealed record Row(string FileName, string FullPath, bool IsMissing, bool IsPinned = false)
     {
@@ -26,10 +35,166 @@ public sealed partial class RecentFilesDialog : ContentDialog
     /// <summary>Path the user picked, or null when the dialog closed without picking.</summary>
     public string? PickedPath { get; private set; }
 
+    // Named elements that were x:Name'd in the old XAML — now plain fields built
+    // in the ctor.
+    private readonly TextBlock MruHint;
+    private readonly ListView RecentList;
+    private readonly TextBlock EmptyHint;
+    private readonly Button ClearButton;
+
     public RecentFilesDialog()
     {
-        InitializeComponent();
+        Title = "Open Recent";
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(6);
+        CloseButtonText = "Cancel";
+        DefaultButton = ContentDialogButton.Close;
+
+        var grid = new Grid { Width = 520, Height = 400 };
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var infoBar = new InfoBar
+        {
+            Severity = InfoBarSeverity.Informational,
+            Title = "Read-only reference",
+            Message = "This view can stay open while you edit — close manually when done.",
+            IsOpen = true,
+            IsClosable = false,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        Grid.SetRow(infoBar, 0);
+        grid.Children.Add(infoBar);
+
+        MruHint = new TextBlock
+        {
+            Margin = new Thickness(0, 0, 0, 6),
+            FontSize = 11,
+            Text = "Architect MRU — last 10 graphs opened",
+        };
+        Grid.SetRow(MruHint, 1);
+        grid.Children.Add(MruHint);
+
+        RecentList = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.Single,
+            IsItemClickEnabled = true,
+        };
+        RecentList.ItemTemplate = BuildItemTemplate();
+        RecentList.ItemClick += OnItemClick;
+        RecentList.KeyDown += OnRecentListKeyDown;
+        // The per-row Pin button's Click can't be wired by name inside an
+        // XamlReader.Load template (no code-behind to bind "OnPinToggleClick"
+        // against), so attach it per realized container instead. The handler
+        // reads the row off the button's DataContext exactly as before.
+        RecentList.ContainerContentChanging += OnContainerContentChanging;
+        Grid.SetRow(RecentList, 2);
+        grid.Children.Add(RecentList);
+
+        EmptyHint = new TextBlock
+        {
+            Visibility = Visibility.Collapsed,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 12,
+            Text = "No recent files yet — open a .phxg from File → Open.",
+        };
+        Grid.SetRow(EmptyHint, 2);
+        grid.Children.Add(EmptyHint);
+
+        ClearButton = new Button
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Content = "Clear list",
+        };
+        ClearButton.Click += OnClearClick;
+        Grid.SetRow(ClearButton, 3);
+        grid.Children.Add(ClearButton);
+
+        Content = grid;
+
+        // Theme applied in code — see DialogTheme. (DataTemplate row brushes stay
+        // in the template markup; template content is deferred and resolves at realization.)
+        if (DialogTheme.Brush("BgPanelBrush")    is { } bg) Background  = bg;
+        if (DialogTheme.Brush("BorderSoftBrush") is { } bd) BorderBrush = bd;
+        if (DialogTheme.Brush("TextLabelBrush")  is { } tl) { MruHint.Foreground = tl; EmptyHint.Foreground = tl; }
         Reload();
+    }
+
+    // Per-row template — built from the EXACT DataTemplate markup the old XAML
+    // carried, preserving every {Binding} and {ThemeResource} verbatim. Template
+    // content is deferred (resolves at row realization in the live tree), so the
+    // {ThemeResource} refs are safe here — unlike on the dialog root.
+    private static DataTemplate BuildItemTemplate()
+    {
+        const string xaml = @"
+<DataTemplate xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+              xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+  <!-- 0.10.0 UX P2: per-row Pin toggle. -->
+  <Grid Margin=""0,4,0,4"" Opacity=""{Binding Opacity}""
+        ToolTipService.ToolTip=""{Binding FullPath}"">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width=""*"" />
+      <ColumnDefinition Width=""Auto"" />
+    </Grid.ColumnDefinitions>
+    <StackPanel Grid.Column=""0"" Spacing=""2"">
+      <TextBlock Text=""{Binding FileName}""
+                 FontSize=""13""
+                 Foreground=""{ThemeResource TextStrongBrush}"" />
+      <TextBlock Text=""{Binding FullPath}""
+                 FontSize=""10""
+                 Foreground=""{ThemeResource TextLabelBrush}""
+                 TextTrimming=""CharacterEllipsis"" />
+    </StackPanel>
+    <Button Grid.Column=""1""
+            Width=""28""
+            Height=""28""
+            Padding=""0""
+            Margin=""6,0,0,0""
+            Background=""Transparent""
+            BorderThickness=""0""
+            Content=""{Binding PinGlyph}""
+            FontFamily=""Segoe Fluent Icons,Segoe MDL2 Assets""
+            FontSize=""12""
+            ToolTipService.ToolTip=""Pin to top / unpin""
+            AutomationProperties.Name=""Pin or unpin this file"" />
+  </Grid>
+</DataTemplate>";
+        return (DataTemplate)XamlReader.Load(xaml);
+    }
+
+    // Wire each realized row's Pin button to OnPinToggleClick. The template
+    // (built via XamlReader.Load) can't carry a Click="..." attribute because
+    // there's no code-behind for the loader to bind the name against, so the
+    // handler is attached here, once per container, when content arrives.
+    private void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue) return;
+        if (args.ItemContainer?.ContentTemplateRoot is FrameworkElement rootEl &&
+            FindPinButton(rootEl) is { } btn)
+        {
+            // De-dupe across recycling: detach then re-attach so a recycled
+            // container never accumulates duplicate handlers.
+            btn.Click -= OnPinToggleClick;
+            btn.Click += OnPinToggleClick;
+        }
+    }
+
+    // The Pin button is the single Button in the row template; locate it by
+    // walking the realized container's visual children.
+    private static Button? FindPinButton(DependencyObject root)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is Button b) return b;
+            if (FindPinButton(child) is { } found) return found;
+        }
+        return null;
     }
 
     private void Reload()

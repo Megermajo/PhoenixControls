@@ -190,7 +190,7 @@ namespace Phoenix.Controls.Architect.Core
                         if (peerNode.Title != srcNode.Title) continue;
                         if (!peerNode.Attributes.TryGetValue("EventName", out var peerEv)) continue;
                         if (!peerEv.Equals(evName, StringComparison.OrdinalIgnoreCase)) continue;
-                        SyncSocketNamesAcrossGraphs(srcNode, peerNode, ref changed);
+                        SyncSocketNamesAcrossGraphs(srcNode, peerNode, peerGraph, ref changed);
                     }
                 }
 
@@ -344,22 +344,77 @@ namespace Phoenix.Controls.Architect.Core
                 => HashCode.Combine(o.Title, o.EventName?.ToLowerInvariant());
         }
 
-        private static void SyncSocketNamesAcrossGraphs(Node src, Node peer, ref bool changed)
+        /// <summary>
+        /// Make <paramref name="peer"/>'s arg/return data sockets MATCH
+        /// <paramref name="src"/>'s — renaming the common prefix, dropping peer
+        /// sockets the source no longer has (and their links in
+        /// <paramref name="peerGraph"/>), and APPENDING sockets the source grew.
+        /// <para>
+        /// Pre-fix this only renamed the <c>Min(src,peer)</c> common prefix and
+        /// never added or removed sockets, so activating a NEW arg/return bubble
+        /// on one file's Event node never propagated the bubble to the paired
+        /// node in another file — "cross-file bubble sync is dead". Now mirrors
+        /// the within-graph <see cref="PlaceholderActivator"/>.SyncSocketGroup
+        /// shape (add above the trailing placeholder, drop excess + links).
+        /// </para>
+        /// </summary>
+        private static void SyncSocketNamesAcrossGraphs(Node src, Node peer, Graph peerGraph, ref bool changed)
         {
             foreach (var socketType in new[] { SocketType.Input, SocketType.Output })
             {
                 var srcSockets  = src.Sockets.Where(s => s.Type == socketType && !s.IsPlaceholder && s.Name != "Flow").ToList();
                 var peerSockets = peer.Sockets.Where(s => s.Type == socketType && !s.IsPlaceholder && s.Name != "Flow").ToList();
+
+                // Rename / re-type the common prefix.
                 int common = Math.Min(srcSockets.Count, peerSockets.Count);
                 for (int i = 0; i < common; i++)
                 {
                     if (peerSockets[i].Name     != srcSockets[i].Name     ||
-                        peerSockets[i].Color    != srcSockets[i].Color     ||
+                        peerSockets[i].Color    != srcSockets[i].Color    ||
                         peerSockets[i].DataType != srcSockets[i].DataType)
                     {
                         peerSockets[i].Name     = srcSockets[i].Name;
                         peerSockets[i].Color    = srcSockets[i].Color;
                         peerSockets[i].DataType = srcSockets[i].DataType;
+                        changed = true;
+                    }
+                }
+
+                // Drop excess peer sockets (the source shrank) and their links.
+                for (int i = srcSockets.Count; i < peerSockets.Count; i++)
+                {
+                    var excess = peerSockets[i];
+                    peerGraph.Links.RemoveAll(l => l.FromSocketId == excess.Id || l.ToSocketId == excess.Id);
+                    peer.Sockets.Remove(excess);
+                    changed = true;
+                }
+
+                // Append sockets the source grew, inserted above the trailing
+                // placeholder so the "+ variable" / "+ return" row stays last.
+                // Offsets here are placeholders — the canvas re-stripes them on
+                // load (RebuildSockets / EnsureEventNodePlaceholders).
+                if (srcSockets.Count > peerSockets.Count)
+                {
+                    int peerWidth = peer.Size.Width > 0 ? peer.Size.Width : 200;
+                    bool isInput  = socketType == SocketType.Input;
+                    for (int i = peerSockets.Count; i < srcSockets.Count; i++)
+                    {
+                        var s = srcSockets[i];
+                        var newSock = new Socket
+                        {
+                            Id            = Guid.NewGuid().ToString(),
+                            Name          = s.Name,
+                            Type          = socketType,
+                            Color         = s.Color,
+                            DataType      = s.DataType,
+                            IsPlaceholder = false,
+                            Offset        = new System.Drawing.Point(isInput ? -6 : peerWidth - 14, 0),
+                        };
+                        var trailingPlaceholder = peer.Sockets.FirstOrDefault(p => p.IsPlaceholder && p.Type == socketType);
+                        int insertAt = trailingPlaceholder is not null
+                            ? peer.Sockets.IndexOf(trailingPlaceholder)
+                            : peer.Sockets.Count;
+                        peer.Sockets.Insert(insertAt, newSock);
                         changed = true;
                     }
                 }

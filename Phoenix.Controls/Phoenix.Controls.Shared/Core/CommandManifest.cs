@@ -328,11 +328,20 @@ namespace Phoenix.Controls.Shared.Core
                 new ArgSpec("TimeoutMS", ArgType.Int),
                 new ArgSpec("EventData", ArgType.KvPairs, Variadic: true));
 
-            // Process — unified async-spawn primitive. Spawn is engine-native
-            // (`process_spawn(...)` block-header, see ScriptEngine);
-            // Terminate is the only remaining command. process.host /
-            // session.start / session.end / interceptor.start retired with
-            // SessionManager.
+            // Process — live-instance lifecycle. process.start launches a new
+            // instance of a process template (data/logic/processes/<ProcessId>.phx),
+            // returns its minted instance id, and passes start params as instance-
+            // scoped vars (read in the template as {param.<name>}). process.stop
+            // tears one down by id. Both replace the retired fire-and-forget
+            // `process_spawn(...)` block + process.terminate (kept as a deprecated
+            // shim below so already-exported .phx still load).
+            AddT("process.start",
+                new ArgSpec("ProcessId", ArgType.String),
+                new ArgSpec("Name", ArgType.String, Optional: true, Default: "Process"),
+                new ArgSpec("StartParams", ArgType.KvPairs, Variadic: true));
+            AddT("process.stop", new ArgSpec("InstanceId", ArgType.String));
+            // Deprecated alias — old Process.Terminate nodes / hand-written .phx.
+            // The Hub handler routes it to StopInstance as a fallback.
             AddT("process.terminate", new ArgSpec("InstanceId", ArgType.String));
 
             // Databank simple

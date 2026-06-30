@@ -735,6 +735,20 @@ namespace Phoenix.Controls.Architect.Core
                 node.Sockets    ??= new List<Socket>();
             }
 
+            // Live-processes migration — upgrade the legacy fire-and-forget
+            // process nodes to the live-instance model. Process.Spawn → Process.Start
+            // and Process.Terminate → Process.Stop have identical socket/attr shapes,
+            // so the template re-sync below is a no-op; we only retitle, so the node
+            // binds to the new template and re-exports as process.start / process.stop.
+            // (The old templates stay registered + HiddenFromPalette as a backstop.)
+            // Runs per-graph in the migration recursion, so nested process/macro
+            // bodies upgrade too. Idempotent: titles already upgraded are left alone.
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Title == "Process.Spawn")          node.Title = "Process.Start";
+                else if (node.Title == "Process.Terminate") node.Title = "Process.Stop";
+            }
+
             // 0.10.0 (arch-perf P1) — adjacency prebuild. The downstream
             // collision-repair + dangling-link sweep both used to walk
             // graph.Links inside an outer loop over graph.Nodes (or vice

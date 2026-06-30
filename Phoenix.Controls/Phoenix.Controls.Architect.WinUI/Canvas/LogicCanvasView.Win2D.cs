@@ -111,6 +111,17 @@ public sealed partial class LogicCanvasView
         try
         {
             ApplyImmediateModeState();
+            // [tooltip-canvas-restore] The GPU canvas draws nodes + sockets as
+            // pixels, so the per-pin TooltipPopup wiring the retained NodeView path
+            // uses (NodeView.Pins) never existed here — hover tooltips silently
+            // stopped working once the Win2D canvas became the default. Attach ONE
+            // dynamic resolver to HostRoot (the pointer-handling surface whose
+            // coordinate space HostToCanvas expects); it resolves the socket / node
+            // under the cursor and drives the EXISTING TooltipPopup dwell/show/hide
+            // machinery. Auto-detaches on HostRoot.Unloaded.
+            if (HostRoot is not null)
+                Phoenix.Controls.Architect.WinUI.Controls.TooltipPopup.AttachDynamic(
+                    HostRoot, ResolveImmediateTooltip);
         }
         catch (Exception ex)
         {
@@ -366,6 +377,43 @@ public sealed partial class LogicCanvasView
     private void InvalidateImmediate()
     {
         if (_useImmediateMode) ImmediateCanvas?.Invalidate();
+    }
+
+    /// <summary>
+    /// [tooltip-canvas-restore] Resolve the rich hover tooltip (title / body) for
+    /// whatever socket or node sits under the cursor on the immediate GPU canvas.
+    /// Socket pins take priority over the node body; bare canvas returns an empty
+    /// title which suppresses the tip. <paramref name="hostPoint"/> is HostRoot-
+    /// local (the element the resolver is attached to via TooltipPopup.AttachDynamic),
+    /// so it maps to canvas space through the same HostToCanvas the pointer pipeline
+    /// uses. Mirrors the socket/node tooltip content the retained NodeView path shows.
+    /// </summary>
+    private (string title, string? body, string? glyph) ResolveImmediateTooltip(Windows.Foundation.Point hostPoint)
+    {
+        if (!_useImmediateMode || _vm is null) return (string.Empty, null, null);
+        var canvasPoint = HostToCanvas(hostPoint);
+
+        // Socket pin first — the smaller, more specific target.
+        var sock = ResolveSocketAtCanvasPoint(canvasPoint, WireDropModelHitRadius);
+        if (sock is not null) return SplitTooltip(sock.Tooltip, sock.Label);
+
+        // Node body otherwise.
+        if (ResolveModelHit(canvasPoint) is NodeViewModel node)
+            return SplitTooltip(node.NodeTooltip, node.Title);
+
+        return (string.Empty, null, null); // bare canvas → suppress
+    }
+
+    // Split a "Title\nBody…" tooltip string into the TooltipPopup (title, body)
+    // pair (no glyph). Empty input falls back to <paramref name="fallbackTitle"/>.
+    private static (string title, string? body, string? glyph) SplitTooltip(string? text, string? fallbackTitle)
+    {
+        string s = text ?? string.Empty;
+        int nl = s.IndexOf('\n');
+        string title = nl >= 0 ? s.Substring(0, nl) : s;
+        string? body = nl >= 0 ? s.Substring(nl + 1) : null;
+        if (string.IsNullOrEmpty(title)) title = fallbackTitle ?? string.Empty;
+        return (title, body, null);
     }
 
     /// <summary>
@@ -743,18 +791,36 @@ public sealed partial class LogicCanvasView
 
         string text = s.PillDisplayText ?? string.Empty;
         bool isDb = NodeGeometry.IsDbPill(node.Model, s.Model);
-        bool multiline = !isDb && NodeGeometry.IsMultilinePill(s.Model?.Name, text);
-        if (multiline)
+        // [ARCH-PILL-CLIP 2026-06-28] A pill wraps (multi-line) when it is a
+        // DECLARED multi-line editor (Template / Script / Payload / newline) OR
+        // when a plain pill's single-line text is wider than the row's pill-wrap
+        // budget. NodeGeometry.SocketRowHeights ALREADY measured + reserved the
+        // wrapped height for every non-DB pill at this SAME PillWrapWidth, so the
+        // grown row exists — the renderer previously drew plain over-wide pills
+        // single-line NoWrap (CharacterEllipsis) into an 18px slot, so the text
+        // was clipped while the reserved height sat empty (Majo: "pill text gets
+        // cut off even though there's room"). Pass the REAL IsMultilinePill flag
+        // to PillWrapWidth so the wrap width here == the width the row-height was
+        // measured at (240 for a declared editor, 480 for a plain value); a
+        // mismatch would wrap into more/fewer lines than reserved → vertical clip.
+        // DB pills never wrap — they widen single-line so the whole identifier shows.
+        double lead = NodeGeometry.SocketPillLead(s.Model?.Name ?? string.Empty);
+        bool isMultiline = !isDb && NodeGeometry.IsMultilinePill(s.Model?.Name, text);
+        double wrapW = NodeGeometry.PillWrapWidth(node.Model, lead, isMultiline, false);
+        double textW = NodeGeometry.EstimateTextWidth(text, 11.0, mono: true);
+        bool wraps = !isDb && (isMultiline || textW > wrapW);
+        if (wraps)
         {
-            double wrapW = NodeGeometry.PillWrapWidth(
-                node.Model, NodeGeometry.SocketPillLead(s.Model?.Name ?? string.Empty), true, false);
             double w = Math.Max(10.0, Math.Min(availW, wrapW));
             double h = Math.Max(18.0, rowH - 4.0);
             return (pillX, rowCY - h / 2.0, w, h, true);
         }
-        // Single-line (incl. DB): pill sizes to its text but never past availW.
-        double contentW = NodeGeometry.EstimateTextWidth(text, 11.0, mono: true) + 10.0;
-        double sw = Math.Max(10.0, Math.Min(availW, contentW));
+        // Single-line (incl. DB): size to the text + a few px of slack so a
+        // measure-vs-draw font drift (NodeGeometry.EstimateTextWidth vs the Win2D
+        // CanvasTextFormat face) can't ellipsis-trim the last glyph. The body
+        // already reserved this width via SocketRowContentWidth, so the slack
+        // comes out of headroom, not the output column.
+        double sw = Math.Max(10.0, Math.Min(availW, textW + 18.0));
         return (pillX, rowCY - 9.0, sw, 18.0, false);
     }
 

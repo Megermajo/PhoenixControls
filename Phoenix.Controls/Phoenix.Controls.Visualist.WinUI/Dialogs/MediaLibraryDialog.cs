@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
@@ -39,8 +41,23 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// All other rejection paths (already-gone, blocked-by-references, IO
 /// failure) route through <see cref="GlobalLogger"/>.
 /// </para>
+///
+/// <para>
+/// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml /
+/// InitializeComponent. A code-constructed ContentDialog defined in a LIBRARY
+/// assembly (Visualist.WinUI) throws XamlParseException at
+/// Application.LoadComponent when `new`'d while detached — proven by the 1.0.6
+/// runtime stack trace, which still crashed AFTER the resource markup was
+/// stripped. The throw is in the XAML parse itself, before any resource or
+/// DialogTheme code runs; building the content in code removes LoadComponent
+/// entirely. The ListView's ItemTemplate is rebuilt via XamlReader.Load with
+/// its {Binding}/{ThemeResource} markup preserved verbatim (template content is
+/// deferred, so it resolves safely at row realization). The default
+/// ContentDialog template still resolves at ShowAsync against Hub's app scope.
+/// See DialogTheme.cs.
+/// </para>
 /// </summary>
-public sealed partial class MediaLibraryDialog : ContentDialog
+public sealed class MediaLibraryDialog : ContentDialog
 {
     /// <summary>
     /// Decorated row the ListView binds to — adds the human-readable size
@@ -76,9 +93,157 @@ public sealed partial class MediaLibraryDialog : ContentDialog
     public Layer?  LiveLayer { get; set; }
     public string? LiveLayerFileName { get; set; }
 
+    // Named elements that were x:Name'd in the old XAML — now plain fields
+    // built in the ctor.
+    private readonly TextBlock HeaderLine;
+    private readonly ListView  MediaList;
+    private readonly TextBlock EmptyHint;
+    private readonly TextBlock StatusLine;
+    private readonly Button    RefreshButton;
+    private readonly Button    DeleteButton;
+
+    // The DataTemplate markup preserved VERBATIM from the original
+    // <ListView.ItemTemplate> — {Binding}/{ThemeResource} are deferred and
+    // resolve at row realization, so they're safe inside a template even though
+    // they can't be used on a directly-loaded element.
+    private const string RowTemplateXaml = @"
+<DataTemplate xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+              xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+    <Grid Margin=""0,4,0,4"" ColumnSpacing=""8"">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width=""*"" />
+            <ColumnDefinition Width=""Auto"" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Grid.Column=""0"" Spacing=""2"">
+            <TextBlock Text=""{Binding FileName}""
+                       FontFamily=""{ThemeResource MonoFont}""
+                       FontSize=""13""
+                       Foreground=""{ThemeResource CoalPrimaryTextBrush}"" />
+            <TextBlock Text=""{Binding RelativePath}""
+                       FontFamily=""{ThemeResource MonoFont}""
+                       FontSize=""10""
+                       Foreground=""{ThemeResource CoalSecondaryTextBrush}""
+                       TextTrimming=""CharacterEllipsis"" />
+        </StackPanel>
+
+        <TextBlock Grid.Column=""1""
+                   Text=""{Binding SizeLabel}""
+                   VerticalAlignment=""Center""
+                   FontFamily=""{ThemeResource MonoFont}""
+                   FontSize=""10""
+                   Foreground=""{ThemeResource CoalMutedTextBrush}"" />
+    </Grid>
+</DataTemplate>";
+
     public MediaLibraryDialog()
     {
-        InitializeComponent();
+        // Root ContentDialog attributes from the old <ContentDialog …>.
+        Title           = "Media Library";
+        CloseButtonText = "Close";
+        DefaultButton   = ContentDialogButton.Close;
+
+        // ── Root grid (560×420, four rows). ──────────────────────────────
+        var root = new Grid { Width = 560, Height = 420 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        // Row 0 — header line.
+        HeaderLine = new TextBlock
+        {
+            Margin   = new Thickness(0, 0, 0, 6),
+            FontSize = 11,
+            Text     = "data/media — files served at /media/<path>",
+        };
+        Grid.SetRow(HeaderLine, 0);
+        root.Children.Add(HeaderLine);
+
+        // Row 1 — the media list.
+        MediaList = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.Single,
+            ItemTemplate  = (DataTemplate)XamlReader.Load(RowTemplateXaml),
+        };
+        MediaList.SelectionChanged += OnSelectionChanged;
+        Grid.SetRow(MediaList, 1);
+        root.Children.Add(MediaList);
+
+        // Row 1 (overlaid) — empty hint.
+        EmptyHint = new TextBlock
+        {
+            Visibility          = Visibility.Collapsed,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment   = VerticalAlignment.Center,
+            FontSize            = 12,
+            Text                = "data/media is empty — drop image / video / audio files into the Hub media folder to populate this list.",
+        };
+        Grid.SetRow(EmptyHint, 1);
+        root.Children.Add(EmptyHint);
+
+        // Row 2 — status line.
+        StatusLine = new TextBlock
+        {
+            Margin       = new Thickness(0, 8, 0, 0),
+            FontSize     = 10,
+            TextWrapping = TextWrapping.Wrap,
+            Text         = "Select a file to inspect or delete.",
+        };
+        Grid.SetRow(StatusLine, 2);
+        root.Children.Add(StatusLine);
+
+        // Row 3 — button row (right-aligned Refresh / Delete).
+        var buttonRow = new StackPanel
+        {
+            Orientation         = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin              = new Thickness(0, 8, 0, 0),
+            Spacing             = 6,
+        };
+
+        RefreshButton = new Button { Content = "Refresh" };
+        RefreshButton.Click += OnRefreshClick;
+
+        DeleteButton = new Button
+        {
+            Content         = "Delete",
+            Background       = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness  = new Thickness(1),
+            IsEnabled        = false,
+        };
+        DeleteButton.Click += OnDeleteClick;
+
+        buttonRow.Children.Add(RefreshButton);
+        buttonRow.Children.Add(DeleteButton);
+        Grid.SetRow(buttonRow, 3);
+        root.Children.Add(buttonRow);
+
+        Content = root;
+
+        // Code-constructed library dialog — theme applied in code via
+        // DialogTheme; no directly-resolved resource markup (DataTemplate refs
+        // are deferred and safe). See Architect NameTypeDialog / DialogTheme.cs.
+        if (DialogTheme.Brush("CoalSurfaceBrush") is { } bg) Background = bg;
+
+        if (DialogTheme.Font("MonoFont") is { } mono)
+        {
+            HeaderLine.FontFamily = mono;
+            StatusLine.FontFamily = mono;
+        }
+        if (DialogTheme.Brush("CoalSecondaryTextBrush") is { } secondary)
+        {
+            HeaderLine.Foreground = secondary;
+            EmptyHint.Foreground  = secondary;
+        }
+        if (DialogTheme.Brush("CoalMutedTextBrush") is { } muted)
+            StatusLine.Foreground = muted;
+        if (DialogTheme.Brush("ErrBrush") is { } err)
+        {
+            DeleteButton.Foreground  = err;
+            DeleteButton.BorderBrush = err;
+        }
+
         // Loaded fires after XamlRoot is set so nested ContentDialogs that
         // we open from button handlers can adopt the same root.
         Loaded += (_, _) => Reload();

@@ -299,6 +299,10 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <!-- Target-picker chevron column (Process.Spawn / Macro.Call).
+                         Auto so it collapses to zero width on every other
+                         middle-attribute row, keeping the layout unchanged. -->
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <!-- Key label — 12pt sans, same family/size as socket labels so
@@ -388,6 +392,35 @@
                                  Visibility="{Binding IsEditing, Converter={StaticResource BoolVis}}" />
                     </Grid>
                 </Border>
+
+                <!-- Target picker (▾) — Process.Spawn process / Macro.Call macro.
+                     Mirrors the DB.* TableName/Column socket picker: a chevron
+                     that opens a MenuFlyout of the graph's processes / macros so
+                     the user binds by PICKING (which sets the ProcessId/MacroId
+                     the exporter needs) instead of typing a name that never bound.
+                     Auto column collapses when HasOptionsPicker is false. Tag is
+                     deliberately NOT set (HitTagFrom would mis-route the click);
+                     the handler reads the MiddleAttributeViewModel off DataContext. -->
+                <Button Grid.Column="3"
+                        Width="16"
+                        Height="16"
+                        Padding="0"
+                        MinWidth="0"
+                        MinHeight="0"
+                        Margin="4,0,0,0"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Right"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{StaticResource TextLabelBrush}"
+                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                        FontSize="9"
+                        Content="&#xE70D;"
+                        canvas:CanvasInteraction.IsEditAffordance="True"
+                        ToolTipService.ToolTip="Pick from available processes / macros"
+                        AutomationProperties.Name="Pick target"
+                        Visibility="{Binding HasOptionsPicker, Converter={StaticResource BoolVis}}"
+                        Click="OnMiddleAttrPickerClicked" />
             </Grid>
         </DataTemplate>
 

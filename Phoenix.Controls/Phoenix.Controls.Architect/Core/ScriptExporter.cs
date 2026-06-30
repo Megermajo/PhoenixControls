@@ -182,18 +182,33 @@ namespace Phoenix.Controls.Architect.Core
         // the in-flight macro stack (nesting context). See CtxExportMacroSubGraph.
         private readonly Dictionary<string, string> _macroExportCache;
 
+        // Live-processes — when true, this exporter is producing a process
+        // TEMPLATE (a standalone mini-script): Process.Entry → on_process_start:,
+        // Process.Exit → on_process_stop:, and Process.Entry param outputs resolve
+        // to {param.<name>} (the instance-scoped start params). Off for the normal
+        // main-script export and the legacy inline Process.Spawn path.
+        private readonly bool _processTemplateMode;
+
         public ScriptExporter(Graph graph, string macroContextId = "")
             : this(graph, macroContextId, new Stack<string>(), new Dictionary<string, string>(StringComparer.Ordinal))
         {
         }
 
+        /// <summary>Constructs an exporter that emits a process TEMPLATE (see
+        /// <see cref="_processTemplateMode"/> / <see cref="ExportAll"/>).</summary>
+        public ScriptExporter(Graph graph, bool processTemplateMode)
+            : this(graph, "", new Stack<string>(), new Dictionary<string, string>(StringComparer.Ordinal), processTemplateMode)
+        {
+        }
+
         private ScriptExporter(Graph graph, string macroContextId, Stack<string> macroStack,
-                               Dictionary<string, string> macroExportCache)
+                               Dictionary<string, string> macroExportCache, bool processTemplateMode = false)
         {
             _graph = graph;
             _macroContextId = macroContextId;
             _macroStack = macroStack;
             _macroExportCache = macroExportCache;
+            _processTemplateMode = processTemplateMode;
             // Seed the O(1) cycle-check companion from whatever is already on the
             // shared stack (a sub-exporter inherits the parent's in-flight chain).
             _macroStackSet = new HashSet<string>(_macroStack, StringComparer.Ordinal);
@@ -234,7 +249,10 @@ namespace Phoenix.Controls.Architect.Core
             _linkByFromSocket = null;
             _linksByToNode = null;
             _outgoingCountByNode = null;
-            Emit($"# Script — Generated from \"{_graph.Name}\"");
+            if (_processTemplateMode)
+                Emit($"# Process template — \"{_graph.Name}\" — generated, do not edit by hand");
+            else
+                Emit($"# Script — Generated from \"{_graph.Name}\"");
             Emit($"# Exported: {DateTime.Now:yyyy-MM-dd HH:mm}");
 
             // Validator pass — surface any Errors (cycles, dangling links) and
@@ -270,6 +288,11 @@ namespace Phoenix.Controls.Architect.Core
             var eventNodes = _graph.Nodes
                 .Where(n => (n.Category == "Events" && !inlineEventTitles.Contains(n.Title))
                          || n.Title == "Process.Entry"
+                         // Live-process template mode — Process.Exit is the "on stop"
+                         // trigger root (its "On Stop" output → on_process_stop:). Only
+                         // an entry point while exporting a template; in the legacy inline
+                         // path it stays a plain terminator handled by ProcessExitHandler.
+                         || (_processTemplateMode && n.Title == "Process.Exit")
                          // S13 — Macro.Entry lives in Category="Macros" (not "Events"),
                          // so it never matched the Events filter and macro bodies rooted
                          // on its Flow output silently exported empty. Treat it as an
@@ -294,6 +317,33 @@ namespace Phoenix.Controls.Architect.Core
             _sb.Append(body);
 
             return _sb.ToString();
+        }
+
+        /// <summary>
+        /// Full export for the live-process model: the main script PLUS one
+        /// standalone TEMPLATE per Process in the graph. A process body is no
+        /// longer inlined into the main script — its Process.Start nodes emit
+        /// `process.start(...)` (see ProcessStartHandler) and the Hub runs the
+        /// template as a live, event-driven mini-script per started instance.
+        /// Each template is produced by a fresh top-level exporter in
+        /// <see cref="_processTemplateMode"/>, so its Process.Entry / Process.Exit /
+        /// Schedule / on_chat / … nodes become real top-level blocks.
+        /// </summary>
+        public ProcessExportResult ExportAll()
+        {
+            string main = Export();
+            var templates = new Dictionary<string, string>(StringComparer.Ordinal);
+            var ids = new List<string>();
+            if (_graph.Processes != null)
+            {
+                foreach (var p in _graph.Processes)
+                {
+                    if (p == null || string.IsNullOrEmpty(p.ProcessId) || p.Graph == null) continue;
+                    templates[p.ProcessId] = new ScriptExporter(p.Graph, processTemplateMode: true).Export();
+                    ids.Add(p.ProcessId);
+                }
+            }
+            return new ProcessExportResult(main, templates, ids);
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -339,6 +389,21 @@ namespace Phoenix.Controls.Architect.Core
             // strip on ExportMacroSubGraph's output. Without this special-case the
             // node would fall through to the `on_event(...)` switch below and emit a
             // spurious `on_event(Macro.Entry):` header, corrupting the macro body.
+            // Live-process template mode — Process.Entry is the "on start" trigger
+            // (header on_process_start:, body at indent 1) and Process.Exit is the
+            // "on stop" trigger (header on_process_stop:, walking its "On Stop" output).
+            if (_processTemplateMode && node.Title == "Process.Entry")
+            {
+                Emit("on_process_start:");
+                FollowNamedOutput(node, "Flow", 1);
+                return;
+            }
+            if (_processTemplateMode && node.Title == "Process.Exit")
+            {
+                Emit("on_process_stop:");
+                FollowNamedOutput(node, "On Stop", 1);
+                return;
+            }
             if (node.Title == "Process.Entry" || node.Title == "Macro.Entry")
             {
                 FollowNamedOutput(node, "Flow", 0);
@@ -836,6 +901,19 @@ namespace Phoenix.Controls.Architect.Core
 
         private string ResolveOutputFromNode(Node src, Socket srcSocket)
         {
+            // Live-process template mode — Process.Entry param outputs are the
+            // instance-scoped start params injected by process.start, read in the
+            // template body as {param.<name>}. (Outside template mode, Process.Entry
+            // rides the legacy _macroContextId slot scheme below — the deprecated
+            // inline Process.Spawn path.) Sanitize so a param renamed to "User Name"
+            // produces {param.user_name} matching the process.start write side.
+            if (_processTemplateMode && src.Title == "Process.Entry"
+                && srcSocket.Type == SocketType.Output
+                && srcSocket.Name != "Flow" && !srcSocket.IsPlaceholder)
+            {
+                return $"{{param.{SanitizeIdentifier(srcSocket.Name)}}}";
+            }
+
             // Macro.Entry outputs resolve to the global variables bound by the parent Macro.Call
             // expansion. _macroContextId is now the FULL slot-prefix (set by MacroCallHandler) of
             // shape "_macro_<stableMacroId>_<callSiteId>" — both sides of the contract use it
@@ -1433,6 +1511,14 @@ namespace Phoenix.Controls.Architect.Core
             if (src.Title == "Array.Push" && srcSocket.Name == "List"
                 && _nodeResultVars.TryGetValue(src.Id, out var pushed))
                 return pushed;
+
+            // Process.Start / Process.Spawn InstanceId — the handler caches the
+            // minted instance global under the "{nodeId}_{SocketName}" key; read it
+            // back so a wired Process.Stop / Process.Terminate references the same
+            // instance global rather than the bare-literal fallback below.
+            if ((src.Title == "Process.Start" || src.Title == "Process.Spawn")
+                && _nodeResultVars.TryGetValue($"{src.Id}_{srcSocket.Name}", out var procInst))
+                return procInst;
 
             return $"\"{src.Title}.{srcSocket.Name}\"";
         }

@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
@@ -41,8 +43,20 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// import + thumbnail decode live here in the dialog. Visualist-local per
 /// feedback_visualist_architect_chrome_independence.md.
 /// </para>
+///
+/// <para>
+/// [DIALOG-NO-XAML-FIX 2026-06-29] No .xaml / InitializeComponent — a
+/// code-constructed library ContentDialog throws XamlParseException at
+/// Application.LoadComponent when <c>new</c>'d detached (proven by the 1.0.6
+/// runtime stack trace; resource stripping never helped because the throw is in
+/// the XAML parse itself). Content is built in code; the default template still
+/// resolves at ShowAsync against Hub's app scope. The GridView ItemTemplate is
+/// built via XamlReader.Load — deferred template content, so its {Binding} /
+/// {ThemeResource} markup resolves at row realization (safe), not at load. See
+/// NameTypeDialog / DialogTheme.cs for the full rationale.
+/// </para>
 /// </summary>
-public sealed partial class MediaPickerDialog : ContentDialog
+public sealed class MediaPickerDialog : ContentDialog
 {
     /// <summary>Coarse media classification derived from the file extension.</summary>
     public enum MediaKind { Image, Video, Audio, Other }
@@ -58,6 +72,21 @@ public sealed partial class MediaPickerDialog : ContentDialog
     private readonly ObservableCollection<Row> _rows = new();
     private CancellationTokenSource? _thumbCts;
 
+    // Named elements that were x:Name'd in the old XAML — now plain fields built
+    // in the ctor.
+    private readonly TextBlock EyebrowLine;
+    private readonly TextBlock HeaderLine;
+    private readonly ToggleButton AllChip;
+    private readonly ToggleButton ImageChip;
+    private readonly ToggleButton VideoChip;
+    private readonly ToggleButton AudioChip;
+    private readonly Microsoft.UI.Xaml.Shapes.Rectangle DividerLine;
+    private readonly GridView MediaGrid;
+    private readonly TextBlock EmptyHint;
+    private readonly TextBlock StatusLine;
+    private readonly Button ImportButton;
+    private readonly Button RefreshButton;
+
     // Extension classification — mirrors the baseline filter sets + LayerCanvasView's
     // accepted-drop extensions so the picker, the canvas, and the kernel agree.
     private static readonly HashSet<string> s_imageExt =
@@ -69,7 +98,160 @@ public sealed partial class MediaPickerDialog : ContentDialog
 
     public MediaPickerDialog(MediaKind? filter = null)
     {
-        InitializeComponent();
+        // Root attributes that were on <ContentDialog …>.
+        Title = "Browse Media";
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(6);
+        PrimaryButtonText = "Use Selected";
+        CloseButtonText = "Cancel";
+        IsPrimaryButtonEnabled = false;
+        DefaultButton = ContentDialogButton.Primary;
+
+        // ── visual tree (was the <Grid Width=620 Height=460> body) ───────────
+        var root = new Grid { Width = 620, Height = 460 };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(2) });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        // header (row 0)
+        var headerPanel = new StackPanel { Spacing = 2, Margin = new Thickness(0, 0, 0, 8) };
+        Grid.SetRow(headerPanel, 0);
+
+        // EyebrowLine — keyed Style PickerEyebrow setters applied directly.
+        EyebrowLine = new TextBlock
+        {
+            Text = "VISUALIST · MEDIA",
+            FontSize = 10,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = 180,
+            Margin = new Thickness(0, 0, 0, 4),
+        };
+        HeaderLine = new TextBlock { FontSize = 11, Text = "data/media" };
+        headerPanel.Children.Add(EyebrowLine);
+        headerPanel.Children.Add(HeaderLine);
+
+        // filter chips (row 1)
+        var chipPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 0,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        Grid.SetRow(chipPanel, 1);
+        AllChip   = MakeChip("All");
+        ImageChip = MakeChip("Image");
+        VideoChip = MakeChip("Video");
+        AudioChip = MakeChip("Audio");
+        chipPanel.Children.Add(AllChip);
+        chipPanel.Children.Add(ImageChip);
+        chipPanel.Children.Add(VideoChip);
+        chipPanel.Children.Add(AudioChip);
+
+        // divider (row 2)
+        DividerLine = new Microsoft.UI.Xaml.Shapes.Rectangle();
+        Grid.SetRow(DividerLine, 2);
+
+        // thumbnail grid (row 3)
+        var scroller = new ScrollViewer
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+        Grid.SetRow(scroller, 3);
+
+        MediaGrid = new GridView
+        {
+            SelectionMode = ListViewSelectionMode.Single,
+            ItemTemplate = BuildItemTemplate(),
+        };
+        MediaGrid.DoubleTapped += OnGridDoubleTapped;
+        MediaGrid.SelectionChanged += OnGridSelectionChanged;
+        scroller.Content = MediaGrid;
+
+        // empty hint (row 3, overlaid)
+        EmptyHint = new TextBlock
+        {
+            Visibility = Visibility.Collapsed,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 380,
+            TextAlignment = TextAlignment.Center,
+            Text = "No media in this category. Use Import to add files to data/media.",
+        };
+        Grid.SetRow(EmptyHint, 3);
+
+        // status line (row 4)
+        StatusLine = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            FontSize = 10,
+            TextWrapping = TextWrapping.Wrap,
+            Text = "Select a file, then Use Selected — or double-click a tile.",
+        };
+        Grid.SetRow(StatusLine, 4);
+
+        // import / refresh button row (row 5)
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 8, 0, 0),
+            Spacing = 6,
+        };
+        Grid.SetRow(buttonPanel, 5);
+        ImportButton = new Button { Content = "Import…" };
+        ImportButton.Click += OnImportClick;
+        RefreshButton = new Button { Content = "Refresh" };
+        RefreshButton.Click += OnRefreshClick;
+        buttonPanel.Children.Add(ImportButton);
+        buttonPanel.Children.Add(RefreshButton);
+
+        root.Children.Add(headerPanel);
+        root.Children.Add(chipPanel);
+        root.Children.Add(DividerLine);
+        root.Children.Add(scroller);
+        root.Children.Add(EmptyHint);
+        root.Children.Add(StatusLine);
+        root.Children.Add(buttonPanel);
+        Content = root;
+
+        // Code-constructed library dialog — theme applied in code via DialogTheme;
+        // the body carries no directly-resolved resource markup (DataTemplate refs
+        // are deferred and safe). See Architect NameTypeDialog / DialogTheme.cs.
+        if (DialogTheme.Brush("CoalShellBrush") is { } shell) Background = shell;
+        if (DialogTheme.Brush("CoalCardBrush") is { } card) BorderBrush = card;
+
+        // Eyebrow caption (was Style PickerEyebrow's FontFamily / Foreground setters).
+        if (DialogTheme.Font("DisplayFont") is { } eyebrowFont) EyebrowLine.FontFamily = eyebrowFont;
+        if (DialogTheme.Brush("EmberPrimaryBrush") is { } ember) EyebrowLine.Foreground = ember;
+
+        // Header sub-line.
+        if (DialogTheme.Font("MonoFont") is { } mono)
+        {
+            HeaderLine.FontFamily = mono;
+            StatusLine.FontFamily = mono;
+            // Filter chips (was Style PickerChip's FontFamily setter).
+            AllChip.FontFamily   = mono;
+            ImageChip.FontFamily = mono;
+            VideoChip.FontFamily = mono;
+            AudioChip.FontFamily = mono;
+        }
+        if (DialogTheme.Brush("CoalSecondaryTextBrush") is { } secondary)
+        {
+            HeaderLine.Foreground = secondary;
+            EmptyHint.Foreground  = secondary;
+        }
+        if (DialogTheme.Brush("CoalMutedTextBrush") is { } muted) StatusLine.Foreground = muted;
+
+        // Header/body divider rule.
+        if (DialogTheme.Brush("BrassGradientBrush") is { } brass) DividerLine.Fill = brass;
+
         _filter = filter;
 
         Title = filter switch
@@ -90,6 +272,70 @@ public sealed partial class MediaPickerDialog : ContentDialog
         PrimaryButtonClick += OnUseSelected;
         Loaded += (_, _) => Reload();
         Closed += (_, _) => _thumbCts?.Cancel();
+    }
+
+    // Keyed Style PickerChip — setters applied directly per recipe §2d.
+    private ToggleButton MakeChip(string content)
+    {
+        var chip = new ToggleButton
+        {
+            Content = content,
+            FontSize = 11,
+            Padding = new Thickness(10, 4, 10, 4),
+            Margin = new Thickness(0, 0, 4, 0),
+            MinHeight = 26,
+            MinWidth = 60,
+        };
+        chip.Click += OnFilterChipClick;
+        return chip;
+    }
+
+    // GridView ItemTemplate — built via XamlReader.Load with the DataTemplate
+    // markup preserved VERBATIM from the old XAML (every {Binding} / {ThemeResource}
+    // kept). Template content is deferred, so the {ThemeResource} refs resolve at
+    // row realization in the live tree — safe, unlike on the dialog root.
+    private static DataTemplate BuildItemTemplate()
+    {
+        const string tpl =
+@"<DataTemplate xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+              xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+    <Grid Width=""110"" Height=""124"" Padding=""4"" RowSpacing=""3"">
+        <Grid.RowDefinitions>
+            <RowDefinition Height=""96"" />
+            <RowDefinition Height=""*"" />
+        </Grid.RowDefinitions>
+        <Border Grid.Row=""0""
+                Width=""96"" Height=""96""
+                Background=""{ThemeResource CoalRaisedBrush}""
+                BorderBrush=""{ThemeResource CoalCardBrush}""
+                BorderThickness=""1""
+                CornerRadius=""3"">
+            <Grid>
+                <TextBlock Text=""{Binding KindGlyph}""
+                           HorizontalAlignment=""Center""
+                           VerticalAlignment=""Center""
+                           FontFamily=""{ThemeResource MonoFont}""
+                           FontSize=""14""
+                           FontWeight=""Bold""
+                           Foreground=""{ThemeResource EmberPrimaryBrush}""
+                           Visibility=""{Binding PlaceholderVisibility}"" />
+                <Image Source=""{Binding Thumbnail}""
+                       Stretch=""UniformToFill""
+                       HorizontalAlignment=""Stretch""
+                       VerticalAlignment=""Stretch"" />
+            </Grid>
+        </Border>
+        <TextBlock Grid.Row=""1""
+                   Text=""{Binding FileName}""
+                   FontFamily=""{ThemeResource MonoFont}""
+                   FontSize=""9""
+                   MaxWidth=""100""
+                   TextAlignment=""Center""
+                   TextTrimming=""CharacterEllipsis""
+                   Foreground=""{ThemeResource CoalSecondaryTextBrush}"" />
+    </Grid>
+</DataTemplate>";
+        return (DataTemplate)XamlReader.Load(tpl);
     }
 
     // ── filter chips ───────────────────────────────────────────────────────

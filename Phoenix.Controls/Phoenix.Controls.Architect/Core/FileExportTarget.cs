@@ -30,10 +30,10 @@ namespace Phoenix.Controls.Architect.Core
                 try
                 {
                     ct.ThrowIfCancellationRequested();
-                    var exporter = new ScriptExporter(graph);
-                    string script = exporter.Export();
-                    ct.ThrowIfCancellationRequested();
-                    File.WriteAllText(graphFilePath, script);
+                    // Live-process model — writes the main .phx PLUS one template
+                    // per Process (see ProcessTemplateWriter). Replaces the single
+                    // Export()+WriteAllText so process bodies land in their own files.
+                    ProcessTemplateWriter.WriteExport(graph, graphFilePath);
                 }
                 catch (OperationCanceledException)
                 {

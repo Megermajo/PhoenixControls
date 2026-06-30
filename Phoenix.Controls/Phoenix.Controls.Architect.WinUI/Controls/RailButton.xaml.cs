@@ -50,6 +50,14 @@ public sealed partial class RailButton : UserControl
         {
             HostButton.Content = Glyph;
             if (AccentBrush is not null) HostButton.Foreground = AccentBrush;
+            // Forward any ToolTipService tooltip attached to THIS UserControl onto
+            // the inner Button. The Button (custom ControlTemplate) is the real
+            // hover target and fills the wrapper, so a tip set only on the wrapper
+            // never surfaced on hover — the rail buttons' tooltips were dead. The
+            // caller (LeftRail.AddButton) sets the tip before the control loads, so
+            // it's present by the time this fires; harmless when none is set.
+            var tip = ToolTipService.GetToolTip(this);
+            if (tip is not null) ToolTipService.SetToolTip(HostButton, tip);
         };
     }
 

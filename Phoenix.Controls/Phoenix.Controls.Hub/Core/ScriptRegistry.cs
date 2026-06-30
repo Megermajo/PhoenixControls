@@ -70,6 +70,15 @@ namespace Phoenix.Controls.Hub.Core
         // ScriptManager.DispatchObsEvent which fans across every script whose
         // ObsEventTypes set contains the matched name.
         public HashSet<string>  ObsEventTypes      { get; set; } = new(StringComparer.Ordinal);
+
+        // Live processes — set ONLY on synthetic process-instance entries registered
+        // by ProcessInstanceManager (FileName = "process::<instanceId>"). A non-null
+        // InstanceId marks an instance: its Content is the process template, and
+        // ScopedVars are the instance's start params (keyed "param.<name>") merged
+        // UNDER event vars on every run. Normal file-script entries leave both null
+        // and behave exactly as before.
+        public string?                              InstanceId { get; set; }
+        public IReadOnlyDictionary<string, string>? ScopedVars { get; set; }
     }
 
     // Persisted DTO — superset of the old Dictionary<string, bool> format
@@ -85,6 +94,16 @@ namespace Phoenix.Controls.Hub.Core
         public static ScriptRegistry Instance => _instance ??= new ScriptRegistry();
 
         private readonly ConcurrentDictionary<string, ScriptInfo> _scripts = new();
+
+        // Live-process instances — synthetic ScriptInfos for every STARTED process
+        // instance, owned by ProcessInstanceManager. WhereEnabled yields from this
+        // alongside _scripts so every registry-driven event family fans out to live
+        // instances for free. Deliberately NOT touched by LoadScripts / Refresh:
+        // process templates live under data/logic/processes/<graph>/ (a subfolder the
+        // non-recursive *.phx loader never sees) and only run per-instance, never as
+        // standalone top-level scripts.
+        private readonly ConcurrentDictionary<string, ScriptInfo> _processInstances = new(StringComparer.Ordinal);
+
         private string _statesPath  = "";
         private string _logicPath   = "";
 
@@ -309,7 +328,14 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task<string> GetContentAsync(string fileName)
         {
-            if (!_scripts.TryGetValue(fileName, out var info)) return "";
+            if (!_scripts.TryGetValue(fileName, out var info))
+            {
+                // Live-process instance ("process::<id>") isn't a file in _scripts —
+                // serve its template body from the instance registry so the fan-out
+                // run path gets content.
+                var inst = ResolveInstance(fileName);
+                return inst?.Content ?? "";
+            }
             if (info.Content != null) return info.Content;
             string path = info.FullPath;
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) { info.Content = ""; return ""; }
@@ -333,7 +359,11 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public string GetContent(string fileName)
         {
-            if (!_scripts.TryGetValue(fileName, out var info)) return "";
+            if (!_scripts.TryGetValue(fileName, out var info))
+            {
+                var inst = ResolveInstance(fileName);
+                return inst?.Content ?? "";
+            }
             if (info.Content != null) return info.Content;
             string path = info.FullPath;
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) { info.Content = ""; return ""; }
@@ -455,7 +485,9 @@ namespace Phoenix.Controls.Hub.Core
         // itself on IOException so a transient overlap with an exclusive
         // writer rides through. Final attempt re-throws so the caller's
         // existing catch still logs the failure.
-        private static string ReadAllTextStable(string path, int maxAttempts = 5, int delayMs = 50)
+        // internal so ProcessTemplateRegistry reuses the same race-tolerant read
+        // for templates Architect's exporter may be mid-overwrite of.
+        internal static string ReadAllTextStable(string path, int maxAttempts = 5, int delayMs = 50)
         {
             WaitForFileStable(path);
             for (int i = 0; i < maxAttempts - 1; i++)
@@ -589,6 +621,65 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 if (match(s)) yield return s;
             }
+            // Live-process fan-out — every STARTED instance is just another
+            // ScriptInfo whose Content is the process template. The same header
+            // predicate selects it, and the engine's EventType discriminator gates
+            // the right block inside, so chat / on_event / on_obs / on_bus /
+            // on_state_change / on_clipboard / startup all reach live instances with
+            // no per-family change. Schedules bypass WhereEnabled and are driven by
+            // ProcessInstanceManager's per-instance timers instead.
+            foreach (var s in _processInstances.Values)
+            {
+                if (!s.IsEnabled) continue;
+                if (s.Content == null) continue;
+                if (match(s)) yield return s;
+            }
+        }
+
+        // ── Live-process instance registry (owned by ProcessInstanceManager) ──────
+
+        /// <summary>
+        /// Publishes a synthetic ScriptInfo for a started process instance so the
+        /// WhereEnabled fan-out reaches it. <paramref name="templateContent"/> is the
+        /// process template; <paramref name="scopedVars"/> are the instance's start
+        /// params (keyed "param.&lt;name&gt;"). Re-registering the same id replaces it.
+        /// </summary>
+        public void RegisterProcessInstance(string instanceId, string templateContent,
+                                            IReadOnlyDictionary<string, string> scopedVars)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return;
+            var info = new ScriptInfo
+            {
+                FileName   = $"process::{instanceId}",
+                FullPath   = "",
+                IsEnabled  = true,
+                Content    = templateContent ?? "",
+                InstanceId = instanceId,
+                ScopedVars = scopedVars,
+            };
+            BuildHeaderIndex(info, info.Content);
+            _processInstances[instanceId] = info;
+            SafeEvent.Raise(OnChanged, "ScriptRegistry", "OnChanged");
+        }
+
+        /// <summary>Removes a started instance's synthetic ScriptInfo (idempotent).</summary>
+        public void UnregisterProcessInstance(string instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId)) return;
+            if (_processInstances.TryRemove(instanceId, out _))
+                SafeEvent.Raise(OnChanged, "ScriptRegistry", "OnChanged");
+        }
+
+        /// <summary>The synthetic ScriptInfo for a live instance, or null.</summary>
+        public ScriptInfo? GetProcessInstance(string instanceId)
+            => _processInstances.TryGetValue(instanceId, out var info) ? info : null;
+
+        /// <summary>Maps a "process::&lt;id&gt;" FileName to its instance ScriptInfo, or null.</summary>
+        private ScriptInfo? ResolveInstance(string? fileName)
+        {
+            const string prefix = "process::";
+            if (fileName == null || !fileName.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            return GetProcessInstance(fileName.Substring(prefix.Length));
         }
 
         public bool IsEnabled(string fileName)

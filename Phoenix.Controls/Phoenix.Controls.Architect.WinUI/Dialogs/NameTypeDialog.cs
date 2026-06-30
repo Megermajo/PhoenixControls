@@ -22,7 +22,19 @@ namespace Phoenix.Controls.Architect.WinUI.Dialogs;
 //   * Static TryParse(input, out NameTypeResult) helper for non-dialog
 //     consumers (scripted tests, paste-from-clipboard) that want the same
 //     validation surface without a XAML ContentDialog.
-public sealed partial class NameTypeDialog : ContentDialog
+//
+// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml / InitializeComponent.
+//   A code-constructed ContentDialog defined in a LIBRARY assembly
+//   (Architect.WinUI) throws XamlParseException at Application.LoadComponent when
+//   `new`'d while detached — proven by the 1.0.6 runtime stack trace, which still
+//   crashed AFTER the resource markup was stripped (425db1b5). The resource
+//   theory was wrong; the throw is in the XAML parse itself, before any resource
+//   or DialogTheme code runs. Building the content in code removes LoadComponent
+//   entirely, so the parse can't fail by construction (the default ContentDialog
+//   template still resolves at ShowAsync against Hub's app scope, which merges
+//   XamlControlsResources — the show path that already works for Hub's dialogs).
+//   See DialogTheme.cs.
+public sealed class NameTypeDialog : ContentDialog
 {
     private static readonly Regex NameRx = new(@"^[A-Za-z_][A-Za-z0-9_\.]*$", RegexOptions.Compiled);
 
@@ -32,9 +44,65 @@ public sealed partial class NameTypeDialog : ContentDialog
 
     private HashSet<string> _existingNames = new(StringComparer.OrdinalIgnoreCase);
 
+    // Named elements that were x:Name'd in the old XAML — now plain fields built
+    // in the ctor.
+    private readonly TextBlock EyebrowText;
+    private readonly TextBox NameBox;
+    private readonly ComboBox TypeBox;
+    private readonly TextBox DefaultBox;
+    private readonly TextBlock ErrorText;
+
     public NameTypeDialog()
     {
-        InitializeComponent();
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(6);
+        PrimaryButtonText = "OK";
+        CloseButtonText = "Cancel";
+        DefaultButton = ContentDialogButton.Primary;
+
+        EyebrowText = new TextBlock { FontSize = 10, CharacterSpacing = 80, Text = "DETAILS" };
+
+        NameBox = new TextBox { PlaceholderText = "Name", FontSize = 13 };
+        NameBox.KeyDown += OnNameBoxKeyDown;
+
+        TypeBox = new ComboBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Visibility = Visibility.Collapsed,
+            FontSize = 12,
+        };
+        TypeBox.Items.Add(new ComboBoxItem { Content = "String" });
+        TypeBox.Items.Add(new ComboBoxItem { Content = "Number" });
+        TypeBox.Items.Add(new ComboBoxItem { Content = "Bool" });
+        TypeBox.SelectedIndex = 0;
+        TypeBox.SelectionChanged += OnTypeBoxSelectionChanged;
+
+        DefaultBox = new TextBox
+        {
+            PlaceholderText = "Default value (optional)",
+            Visibility = Visibility.Collapsed,
+            FontSize = 12,
+        };
+        DefaultBox.KeyDown += OnDefaultBoxKeyDown;
+        DefaultBox.TextChanged += OnDefaultBoxTextChanged;
+
+        ErrorText = new TextBlock { FontSize = 11, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
+
+        var panel = new StackPanel { Spacing = 10, MinWidth = 320 };
+        panel.Children.Add(EyebrowText);
+        panel.Children.Add(NameBox);
+        panel.Children.Add(TypeBox);
+        panel.Children.Add(DefaultBox);
+        panel.Children.Add(ErrorText);
+        Content = panel;
+
+        // Theme is applied in code (NOT via XAML resource markup) — see
+        // DialogTheme for why a code-constructed library dialog can't resolve
+        // {StaticResource}/{ThemeResource} at load.
+        if (DialogTheme.Brush("BgPanelBrush")    is { } bg) Background  = bg;
+        if (DialogTheme.Brush("BorderSoftBrush") is { } bd) BorderBrush = bd;
+        if (DialogTheme.Brush("TextLabelBrush")  is { } tl) EyebrowText.Foreground = tl;
+        if (DialogTheme.Brush("StatusRedBrush")  is { } sr) ErrorText.Foreground   = sr;
         PrimaryButtonClick += OnPrimary;
         //  Focus + select the name field when the dialog
         // opens so the user can type immediately (and a typed name replaces any

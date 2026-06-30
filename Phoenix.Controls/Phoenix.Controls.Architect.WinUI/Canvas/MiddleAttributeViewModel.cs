@@ -67,6 +67,20 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     public bool IsPillRow => !_isBool;
 
     /// <summary>
+    /// True when this middle-attribute row offers a ▾ picker listing available
+    /// targets (Process.Spawn → the graph's processes, Macro.Call → its macros)
+    /// instead of free-text entry — mirrors the DB.* TableName/Column picker on
+    /// <see cref="SocketViewModel.HasDatabankPicker"/>. Picking is also the ONLY
+    /// way to actually BIND the call: typing the name free-text wrote
+    /// ProcessName/MacroName but never the ProcessId/MacroId the exporter binds
+    /// on, so the spawn exported as "not found". The chevron only shows on the
+    /// pill row (not the bool case); NodeView.OnMiddleAttrPickerClicked resolves
+    /// the live list + performs the bind — this flag just flips the chevron.
+    /// </summary>
+    public bool HasOptionsPicker
+        => !_isBool && NodeGeometry.IsOptionsPickerAttr(_parentNode, _key);
+
+    /// <summary>
     /// Stored attribute value. Setter writes through to
     /// <see cref="Node.Attributes"/> using the same semantics as
     /// <see cref="SocketViewModel.ValuePill"/> — null/empty removes the entry
@@ -164,7 +178,11 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     /// grows tall (height measured at the SAME width). Re-raised on value change and
     /// via <see cref="RaisePillConstraint"/> when a sibling pill changes the body width.</summary>
     public double PillMaxWidth
-        => NodeGeometry.PillWrapWidth(_parentNode, NodeGeometry.MiddleAttrPillLead(_key), IsMultiline, isDb: false);
+        => NodeGeometry.PillWrapWidth(
+            _parentNode,
+            NodeGeometry.MiddleAttrPillLead(_key)
+              + (HasOptionsPicker ? NodeGeometry.MiddleAttrPickerChevronWidth : 0.0),
+            IsMultiline, isDb: false);
 
     /// <summary> Re-raise <see cref="PillMaxWidth"/> — called by
     /// NodeViewModel when the node body width changes (e.g. a sibling row's pill

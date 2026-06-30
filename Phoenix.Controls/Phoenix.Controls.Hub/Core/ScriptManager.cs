@@ -796,6 +796,13 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task TimedExecuteAsync(string fn, string content, Dictionary<string, string> vars, CancellationToken token)
         {
+            // Live-process instance run — merge the instance's start params (keyed
+            // "param.<name>", so they never clobber event vars) so the template body
+            // resolves {param.<name>} / {process.instance_id}. This is the single
+            // choke point every event family AND schedule tick funnels through, so the
+            // ~11 dispatchers need no per-family change. No-op for normal file scripts.
+            MergeProcessInstanceVars(fn, vars);
+
             long memBefore = GC.GetTotalMemory(false);
             var cpuBefore = System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime;
             var wallSw = Stopwatch.StartNew();
@@ -979,6 +986,9 @@ namespace Phoenix.Controls.Hub.Core
             // ScriptManager partial-class split — RegisterHubCommands is now
             // an entirely declarative orchestrator.
             RegisterSystemCommands();
+
+            // ── process.start / process.stop (live instances) ────────────────
+            RegisterProcessCommands();
 
             // ── db.* handlers ────────────────────────────────────────────────
             // Carved into ScriptManager.Db.cs. See that file for the contract

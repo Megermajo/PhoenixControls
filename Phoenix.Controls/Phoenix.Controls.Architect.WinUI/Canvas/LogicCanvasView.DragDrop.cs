@@ -762,7 +762,7 @@ public sealed partial class LogicCanvasView
             return null;
         }
 
-        var node = NodeRegistry.CreateNode("Process.Spawn",
+        var node = NodeRegistry.CreateNode("Process.Start",
             new System.Drawing.Point((int)canvasPos.X, (int)canvasPos.Y));
         if (node is null) return null;
         node.Attributes["ProcessId"]   = processId;
@@ -781,6 +781,54 @@ public sealed partial class LogicCanvasView
                 level: LogLevel.System);
         }
         return node;
+    }
+
+    // ── Inline target-picker binding (NodeView middle-attr ▾) ───────────────
+    // Bridges the NodeView process / macro picker to the existing socket-sync
+    // paths so picking a target from the chevron binds the call node exactly
+    // like the rail drag-drop spawn does. PUBLIC so NodeView (the materialized
+    // editor surface) can drive the bind back onto the canvas.
+
+    /// <summary>
+    /// Bind a Process.Spawn node to <paramref name="process"/> from the inline
+    /// process picker. Sets ProcessId, re-syncs ProcessName + the spawn's
+    /// var-in/var-out sockets to the process Entry/Exit signature (the SAME path
+    /// <see cref="SpawnProcessSpawn"/> uses), rebuilds the node's row VMs, and
+    /// marks the graph mutated (one undo entry; canvas repaints + .phx
+    /// re-exports). No-op for a null / non-Process.Spawn node. Binding the id —
+    /// not just the display name — is what makes the spawn actually resolve at
+    /// export time (free-text ProcessName left ProcessId empty → "not found").
+    /// </summary>
+    public void BindProcessSpawnNode(Node spawnNode, Phoenix.Controls.Shared.Models.Process process)
+    {
+        if (_vm is null || spawnNode is null || process is null) return;
+        if (!string.Equals(spawnNode.Title, "Process.Start", StringComparison.Ordinal)) return;
+        PushUndoForInlineEdit();
+        spawnNode.Attributes ??= new(); // mirror RefreshMacroCallSockets' defensive guard
+        spawnNode.Attributes["ProcessId"] = process.ProcessId;
+        SyncProcessSpawnNodeSockets(spawnNode, process); // also sets ProcessName + sockets/links
+        _vm.Nodes.FirstOrDefault(n => n.Id == spawnNode.Id)?.RebuildSockets();
+        _vm.OnGraphMutated();
+    }
+
+    /// <summary>
+    /// Macro.Call counterpart of <see cref="BindProcessSpawnNode"/> — binds the
+    /// call node to <paramref name="macro"/> from the inline macro picker, reusing
+    /// the canonical <see cref="LogicCanvasViewModel.RefreshMacroCallSockets"/>
+    /// socket-sync the drag-drop spawn uses.
+    /// </summary>
+    public void BindMacroCallNode(Node callNode, Macro macro)
+    {
+        if (_vm is null || callNode is null || macro is null) return;
+        if (!string.Equals(callNode.Title, "Macro.Call", StringComparison.Ordinal)) return;
+        PushUndoForInlineEdit();
+        callNode.Attributes ??= new(); // mirror RefreshMacroCallSockets' defensive guard
+        callNode.Attributes["MacroId"] = macro.MacroId;
+        // MacroName is set by RefreshMacroCallSockets below (matches BindProcessSpawnNode,
+        // which leaves ProcessName to SyncProcessSpawnNodeSockets) — no redundant pre-set.
+        _vm.RefreshMacroCallSockets(callNode, macro);
+        _vm.Nodes.FirstOrDefault(n => n.Id == callNode.Id)?.RebuildSockets();
+        _vm.OnGraphMutated();
     }
 
     // ── Process.Spawn socket-signature sync ─────────────────────────────────

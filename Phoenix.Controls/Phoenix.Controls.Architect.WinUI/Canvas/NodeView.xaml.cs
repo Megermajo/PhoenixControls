@@ -829,6 +829,70 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
+    /// 0.13.x inline TARGET picker — Process.Spawn (process) and Macro.Call
+    /// (macro) middle-attribute rows. Mirrors <see cref="OnDatabankPickerClicked"/>
+    /// (the DB.* TableName/Column picker): the ▾ chevron opens a MenuFlyout of
+    /// the graph's processes / macros so the user binds by PICKING. Picking sets
+    /// the ProcessId / MacroId the exporter binds on (free-text entry only ever
+    /// set the display name, so the spawn exported "not found") AND re-syncs the
+    /// call node's sockets, via the canvas <c>Bind*Node</c> helpers. Reads the
+    /// MiddleAttributeViewModel off the Button's DataContext (NOT Tag — HitTagFrom
+    /// would mis-route the click as a node hit, the same trap the DB picker note
+    /// documents).
+    /// </summary>
+    private void OnMiddleAttrPickerClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        if (fe.DataContext is not MiddleAttributeViewModel m || !m.HasOptionsPicker) return;
+        var canvas = GetCanvasCached(sender as DependencyObject);
+        var graph = canvas?.ViewModel?.Graph;
+        if (canvas is null || graph is null) return;
+        var node = m.ParentNode;
+
+        try
+        {
+            var flyout = new MenuFlyout();
+            // Explicit XamlRoot — the click originates from a Button inside the
+            // zoom/pan-transformed canvas; without it ShowAt can pick the wrong
+            // popup root (mirrors OnDatabankPickerClicked).
+            try { flyout.XamlRoot = fe.XamlRoot; } catch { /* designer — no XamlRoot */ }
+
+            bool isProcess = string.Equals(node.Title, "Process.Start", System.StringComparison.Ordinal);
+            if (isProcess)
+            {
+                if (graph.Processes.Count == 0)
+                    flyout.Items.Add(new MenuFlyoutItem { Text = "(no processes — add one in the left rail)", IsEnabled = false });
+                foreach (var p in graph.Processes)
+                {
+                    var proc = p;
+                    var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(proc.Name) ? "(unnamed process)" : proc.Name };
+                    item.Click += (_, _) => canvas.BindProcessSpawnNode(node, proc);
+                    flyout.Items.Add(item);
+                }
+            }
+            else // Macro.Call
+            {
+                if (graph.Macros.Count == 0)
+                    flyout.Items.Add(new MenuFlyoutItem { Text = "(no macros — add one in the left rail)", IsEnabled = false });
+                foreach (var mac in graph.Macros)
+                {
+                    var macro = mac;
+                    var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(macro.Name) ? "(unnamed macro)" : macro.Name };
+                    item.Click += (_, _) => canvas.BindMacroCallNode(node, macro);
+                    flyout.Items.Add(item);
+                }
+            }
+
+            if (fe.XamlRoot is null) return;
+            flyout.ShowAt(fe);
+        }
+        catch (Exception ex)
+        {
+            Phoenix.Controls.Shared.Services.GlobalLogger.Error("NodeView", "OnMiddleAttrPickerClicked", ex);
+        }
+    }
+
+    /// <summary>
     /// PointerEntered on the value pill — if the pill content carries a
     /// <c>{var}</c> token, set the canvas VM's <c>HoveredVarChainName</c>
     /// so writers / readers light up across the canvas. Mirrors pre-T15

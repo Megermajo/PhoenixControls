@@ -1073,6 +1073,77 @@ namespace Phoenix.Controls.Architect.Core
     /// resolves to that same per-node global so downstream Process.Terminate
     /// nodes can wire it.
     /// </summary>
+    /// <summary>
+    /// Process.Start — launches a LIVE instance of a process. Emits
+    ///   <c>&lt;slot&gt; = process.start("&lt;ProcessId&gt;", "&lt;Name&gt;"[, p1=v1, p2=v2 …])</c>
+    /// where the param pairs come from the process's Process.Entry declared output
+    /// sockets matched to this node's inputs (read in the template body as
+    /// <c>{param.&lt;name&gt;}</c>). The InstanceId output binds to <c>&lt;slot&gt;</c>
+    /// — a per-call-site <c>global.</c> var holding the runtime-minted instance id
+    /// returned by <c>process.start</c>, so two Start nodes never collide and a
+    /// later Process.Stop (even in another handler) can reference it. Replaces the
+    /// inlined <c>process_spawn(...)</c> block of the legacy ProcessSpawnHandler:
+    /// the body now lives in its own template file and is fanned events by the Hub.
+    /// </summary>
+    internal sealed class ProcessStartHandler : IExporterHandler
+    {
+        public string NodeTitle => "Process.Start";
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            string processId   = node.GetAttr("ProcessId", "");
+            string processName = node.GetAttr("ProcessName", "Process");
+
+            var process = string.IsNullOrEmpty(processId)
+                ? null
+                : ctx.Graph.Processes.FirstOrDefault(p => p.ProcessId == processId);
+
+            string idSlot = $"global._proc_inst_{ctx.IdPrefix(node)}";
+            ctx.NodeResultVars[$"{node.Id}_InstanceId"] = $"{{{idSlot}}}";
+
+            var argParts = new List<string>();
+            if (process != null)
+            {
+                var entryNode = process.Graph?.Nodes.FirstOrDefault(n => n.Title == "Process.Entry");
+                if (entryNode != null)
+                {
+                    foreach (var eSocket in entryNode.Sockets
+                        .Where(s => s.Type == SocketType.Output && !s.IsPlaceholder && s.Name != "Flow"))
+                    {
+                        var callInput = node.Sockets.FirstOrDefault(
+                            s => s.Type == SocketType.Input && s.Name == eSocket.Name);
+                        if (callInput == null)
+                        {
+                            ctx.Emit($"{prefix}# WARNING: Process '{processName}' start param '{eSocket.Name}' is unbound — missing socket on the Process.Start. Re-open the editor to refresh, or rename the param to match.");
+                            continue;
+                        }
+                        string key = ctx.SanitizeIdentifier(eSocket.Name);
+                        string val = ctx.Resolve(node, eSocket.Name, "\"\"");
+                        if (val.Contains('|'))
+                        {
+                            // Array-valued param — same pipe→array.make hoist as EventTriggerHandler.
+                            string tempVar = $"global._procarg_{ctx.IdPrefix(node)}_{key}";
+                            string makeArgs = string.Join(", ", val.Split('|'));
+                            ctx.Emit($"{prefix}{tempVar} = array.make({makeArgs})");
+                            argParts.Add($"{key}={{{tempVar}}}");
+                        }
+                        else
+                        {
+                            argParts.Add($"{key}={ctx.StripQuotes(val)}");
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ctx.Emit($"{prefix}# WARNING: Process.Start references unknown process id '{processId}' (name '{processName}').");
+            }
+
+            string argsCsv = argParts.Count > 0 ? ", " + string.Join(", ", argParts) : "";
+            ctx.Emit($"{prefix}{idSlot} = process.start(\"{processId}\", \"{processName}\"{argsCsv})");
+            ctx.FollowNamed(node, "Done", indent);
+        }
+    }
+
     internal sealed class ProcessSpawnHandler : IExporterHandler
     {
         public string NodeTitle => "Process.Spawn";

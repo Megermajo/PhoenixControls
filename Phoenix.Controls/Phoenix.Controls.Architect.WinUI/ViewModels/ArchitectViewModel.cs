@@ -652,7 +652,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         bool any = false;
         foreach (var node in graph.Nodes)
         {
-            if (!string.Equals(node.Title, "Process.Spawn", StringComparison.Ordinal)) continue;
+            if (!string.Equals(node.Title, "Process.Start", StringComparison.Ordinal)) continue;
             if (node.Attributes is null) continue;
             if (!node.Attributes.TryGetValue("ProcessId", out var id)
                 || !string.Equals(id, process.ProcessId, StringComparison.Ordinal)) continue;
@@ -751,6 +751,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
 
         // Step 3 — outputs: fixed names first (refresh offset only), then the
         // exit-derived var-out sockets after them.
+        var callTemplate = NodeRegistry.GetTemplate(callNode.Title);
         int outputRow = 0;
         foreach (var fixedName in fixedOutputNames)
         {
@@ -758,19 +759,46 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                 s.Type == SocketType.Output && s.Name == fixedName);
             var offset = new System.Drawing.Point(
                 (int)(width - 14), CallSiteHeaderH + 6 + outputRow * CallSiteRowSpacing);
+
+            // Resolve the fixed output's canonical colour/type from the template
+            // (Process.Spawn: Done = Flow, InstanceId = String). Without an explicit
+            // DataType these pins default to SocketDataType.Any and render as
+            // unwireable ◆ Diamonds instead of the correct shape — the same class of
+            // bug fixed in the node factories. Set both branches so a legacy node whose
+            // fixed output was synthesised bare (pre-fix create-if-missing) self-heals.
+            System.Drawing.Color? fixedColor = null;
+            if (callTemplate is not null)
+                foreach (var o in callTemplate.Outputs)
+                    if (o.Name == fixedName) { fixedColor = o.Color; break; }
+
             if (existing is not null)
+            {
                 existing.Offset = offset;
+                if (fixedColor is { } fc)
+                {
+                    existing.Color    = fc;
+                    existing.DataType = NodeRegistry.DataTypeFromColorPublic(fc);
+                }
+            }
             else
+            {
                 // Create-if-missing (mirrors the input + var-output passes above/
                 // below). A call node deserialized without its template fixed
                 // output would otherwise never regain it, leaving the macro/process
                 // result pin unwireable. No-op for the normal case (socket present).
-                callNode.Sockets.Add(new Socket
+                var sock = new Socket
                 {
                     Name   = fixedName,
                     Type   = SocketType.Output,
                     Offset = offset,
-                });
+                };
+                if (fixedColor is { } fc)
+                {
+                    sock.Color    = fc;
+                    sock.DataType = NodeRegistry.DataTypeFromColorPublic(fc);
+                }
+                callNode.Sockets.Add(sock);
+            }
             outputRow++;
         }
         for (int i = 0; i < exitSockets.Count; i++)
@@ -1246,8 +1274,10 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         {
             try
             {
-                var exporter = new ScriptExporter(graph);
-                System.IO.File.WriteAllText(phxPath, exporter.Export());
+                // Live-process model — writes the main .phx PLUS one template per
+                // Process under processes/<graphStem>/ (see ProcessTemplateWriter),
+                // replacing the single Export()+WriteAllText.
+                Phoenix.Controls.Architect.Core.ProcessTemplateWriter.WriteExport(graph, phxPath);
                 return phxPath;
             }
             catch (Exception ex)

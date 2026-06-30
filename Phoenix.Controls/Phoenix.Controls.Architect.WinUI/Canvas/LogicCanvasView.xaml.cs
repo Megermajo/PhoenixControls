@@ -499,7 +499,7 @@ public sealed partial class LogicCanvasView : UserControl
                     e.Handled = true;
                 }
             }
-            else if (n.Title == "Process.Spawn"
+            else if (n.Title == "Process.Start"
                   && n.Model.Attributes is not null
                   && n.Model.Attributes.TryGetValue("ProcessId", out var pid)
                   && !string.IsNullOrEmpty(pid))
@@ -2027,6 +2027,18 @@ public sealed partial class LogicCanvasView : UserControl
             case nameof(NodeViewModel.IsSelected):
                 if (_realizedProxy.Contains(vm) && _nodeProxies.TryGetValue(vm, out var ps))
                     ApplyProxySelection(ps, vm);
+                break;
+            // [resize-reanchor] A node that grew / shrank to fit its content moved
+            // its pins to new edge coordinates. The GPU canvas already repaints
+            // every render tick (InvalidateImmediate in OnRenderingTick), so the
+            // node body + pins follow automatically — but the incident wires render
+            // from cached anchors that only recompute when a link is flagged dirty.
+            // TranslateNode flags them on MOVE; resize had no equivalent, so wires
+            // detached from resized pins ("bubbles outside the node") until the next
+            // drag. Flag the node's wires for re-anchor on the next tick.
+            case nameof(NodeViewModel.Width):
+            case nameof(NodeViewModel.Height):
+                _vm?.MarkNodeLinksDirty(vm.Id);
                 break;
         }
     }

@@ -156,6 +156,14 @@ namespace Phoenix.Controls.Shared.Core
             "on_schedule_once(",
             "on_interval(",
             "on_state_change(",
+            // Live processes — a process template's lifecycle blocks. on_process_start
+            // runs once when an instance is started (EventType="ProcessStart"),
+            // on_process_stop once when it is stopped (EventType="ProcessStop").
+            // Gated in ShouldEnterBlock so the rest of the template (on_chat /
+            // on_interval / …) never enters during the start/stop run, and these
+            // never enter during a normal event fan-out.
+            "on_process_start",
+            "on_process_stop",
             "on ",
             "elif ",
         };

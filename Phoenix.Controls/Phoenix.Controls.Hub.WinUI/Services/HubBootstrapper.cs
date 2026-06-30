@@ -351,6 +351,10 @@ public static class HubBootstrapper
             // registry ends up pointed at the correct path even when ctor's
             // resolution missed.
             ScriptRegistry.Instance.LoadScripts(logicPath);
+            // Live-process templates live under <logicPath>/processes/<graph>/ and
+            // are NOT loaded as normal scripts. ProcessInstanceManager pulls one at
+            // process.start time; load the index now so the first start is a lookup.
+            ProcessTemplateRegistry.Instance.Load(logicPath);
         }, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
 
@@ -402,6 +406,15 @@ public static class HubBootstrapper
                 // so the registry state SchedulerService re-scans is fresh.
                 s_logicWatcher.OnRefresh += static () =>
                 {
+                    // Refresh process templates first so a freshly-saved template is
+                    // available for the next process.start (live instances keep their
+                    // start-time snapshot — see ProcessInstanceManager).
+                    try { ProcessTemplateRegistry.Instance.Refresh(); }
+                    catch (Exception ex)
+                    {
+                        GlobalLogger.Error("HubBootstrapper",
+                            "ProcessTemplateRegistry.Refresh from LogicWatcher.OnRefresh failed", ex);
+                    }
                     try { SchedulerService.Instance.Reload(); }
                     catch (Exception ex)
                     {
@@ -839,6 +852,11 @@ public static class HubBootstrapper
         s_logicWatcher            = null;
         s_optInCts                = null;
         s_obsWebSocketClient      = null;
+
+        // Stop every live process instance first so their per-instance schedule
+        // timers cancel before the shared scheduler is drained.
+        try { ProcessInstanceManager.Instance.StopAll(); }
+        catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "ProcessInstanceManager.StopAll failed", ex); }
 
         // A4 — drain the SchedulerService before LogicWatcher so a final
         // OnRefresh-driven Reload can't queue tasks against a dying CTS.

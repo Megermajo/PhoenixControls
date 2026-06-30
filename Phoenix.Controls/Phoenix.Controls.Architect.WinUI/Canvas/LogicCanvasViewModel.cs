@@ -1003,6 +1003,28 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// [resize-reanchor] Mark every wire incident on <paramref name="nodeId"/>
+    /// dirty for the next render-tick recompute. A node that grows / shrinks to
+    /// fit its content (pill edit, socket add/remove, dynamic event-pair grow)
+    /// moves its pins to new edge coordinates; <see cref="TranslateNode"/> is the
+    /// only other dirty trigger and it fires on MOVE, not RESIZE — so without
+    /// this the cached wire anchors stayed at the pre-resize pin positions and
+    /// the wires visibly detached from the pins ("bubbles outside the node")
+    /// until the node was next dragged. Mirrors the per-node incident-link scan
+    /// in <see cref="TranslateNode"/>; O(incident), no-op when the node is wireless.
+    /// </summary>
+    public void MarkNodeLinksDirty(string? nodeId)
+    {
+        if (string.IsNullOrEmpty(nodeId)) return;
+        if (_linksByNode.TryGetValue(nodeId, out var incident) && incident.Count > 0)
+        {
+            for (int i = 0; i < incident.Count; i++)
+                incident[i].MarkPathDirty();
+            AnyLinkDirty = true;
+        }
+    }
+
     /// <summary>Returns the node VM at id, or null if unknown.</summary>
     /// <remarks>
     ///  O(1) lookup against the VM-level id→VM index

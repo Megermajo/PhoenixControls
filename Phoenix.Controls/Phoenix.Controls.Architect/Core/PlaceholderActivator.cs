@@ -209,11 +209,17 @@ namespace Phoenix.Controls.Architect.Core
             int width     = node.Size.Width > 0 ? node.Size.Width : NodeWidth;
             int nextOffsetY = RecalculateSocketOffsets(node);
 
+            // DataType derived from colour at creation — the canvas reads it for pin
+            // SHAPE + wire compatibility; left at the Any default a freshly-appended
+            // placeholder renders as a ◆ Diamond instead of the correct pin and rejects
+            // normal wires until save+reload (same class as the node-factory fix).
+            Color nextPhColor = isReturnSocket ? NodeRegistry.ColReturn : NodeRegistry.ColString;
             node.Sockets.Add(new Socket
             {
                 Name          = nextPlaceholderName,
                 Type          = placeholder.Type,
-                Color         = isReturnSocket ? NodeRegistry.ColReturn : NodeRegistry.ColString,
+                Color         = nextPhColor,
+                DataType      = NodeRegistry.DataTypeFromColorPublic(nextPhColor),
                 IsPlaceholder = true,
                 Offset        = new Point(isInput ? -6 : width - 14, nextOffsetY),
             });
@@ -276,11 +282,14 @@ namespace Phoenix.Controls.Architect.Core
                 s.IsPlaceholder && s.Type == socket.Type && s.Name == trailingName);
             if (trailing is not null) node.Sockets.Remove(trailing);
 
-            // Reset the activated socket back to placeholder shape.
+            // Reset the activated socket back to placeholder shape. DataType is
+            // derived from the (just-reset) colour, NOT hardcoded to String — a return
+            // placeholder is ColReturn and must not be coerced to String, or it reverts
+            // to the wrong pin shape (the canvas derives shape from DataType).
             socket.IsPlaceholder = true;
             socket.Name          = trailingName;
             socket.Color         = isReturnSocket ? NodeRegistry.ColReturn : NodeRegistry.ColString;
-            socket.DataType      = SocketDataType.String;
+            socket.DataType      = NodeRegistry.DataTypeFromColorPublic(socket.Color);
 
             RecalculateSocketOffsets(node);
             RecalculateNodeSize(node);

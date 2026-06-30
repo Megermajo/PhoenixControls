@@ -109,10 +109,14 @@ namespace Phoenix.Controls.Hub.Core
                 bool found = _engine.TerminateSpawnedProcess(id);
                 if (!found)
                 {
-                    // Backstop: if the id doesn't match a live engine spawn but
-                    // does live in ProcessManager (legacy / hand-registered),
-                    // still tear it down so the broadcast clears.
-                    ProcessManager.Instance.TerminateProcess(id);
+                    // Live-process backstop: an id minted by the new process.start
+                    // belongs to ProcessInstanceManager, not the engine spawn ledger.
+                    // Route the deprecated process.terminate there first.
+                    if (!ProcessInstanceManager.Instance.StopInstance(id))
+                    {
+                        // Last resort: legacy / hand-registered ProcessManager record.
+                        ProcessManager.Instance.TerminateProcess(id);
+                    }
                 }
                 return null;
             });

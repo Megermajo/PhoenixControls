@@ -56,11 +56,18 @@
   function s(tag, attrs) {
     var el = document.createElementNS(SVGNS, tag);
     if (attrs) for (var k in attrs) if (attrs[k] != null) el.setAttribute(k, attrs[k]);
+    // String / number children must become SVG text nodes — appendChild rejects
+    // a raw string ("parameter 1 is not of type 'Node'"), which is what the glyph
+    // builders (e.g. <text> labels in threeMoves) pass. Mirror h()'s text handling.
+    function addChild(x) {
+      if (x == null || x === false) return;
+      el.appendChild(x.nodeType ? x : document.createTextNode(String(x)));
+    }
     for (var i = 2; i < arguments.length; i++) {
       var c = arguments[i];
       if (c == null) continue;
-      if (Array.isArray(c)) c.forEach(function (x) { if (x) el.appendChild(x); });
-      else el.appendChild(c);
+      if (Array.isArray(c)) c.forEach(addChild);
+      else addChild(c);
     }
     return el;
   }
@@ -243,8 +250,8 @@
   }
   function leftRail() {
     var rows = [
-      { dot: "#7FBED1", t: "Variables", hint: "value store", d: 'Named values you read and write across a flow. Scoped <b>Local</b> (this file), <b>Graph</b> (this graph), or <b>Global</b> (every <code>.phx</code>).' },
-      { dot: "#9CC97A", t: "Processes", hint: "long-running", d: 'Async loops that run until stopped &mdash; chat collectors, rotating-tip timers, rate limiters. Kick them off from <code>Twitch.StreamStart</code>.' },
+      { dot: "#7FBED1", t: "Variables", hint: "value store", d: 'Named values you read and write across a flow. Scoped <b>Var</b> (graph-local, saved to the databank), <b>Public</b> (run-local, crosses parallel branches), or the databank-backed <b>global</b> store.' },
+      { dot: "#9CC97A", t: "Processes", hint: "long-running", d: 'Async loops that run until stopped &mdash; chat collectors, rotating-tip timers, rate limiters. Kick them off from <code>System.Startup</code>.' },
       { dot: "#E5A24E", t: "Macros", hint: "reusable subgraphs", d: 'A graph you call like a single node. Build once, reuse everywhere; publish a macro globally to share it across files.' }
     ];
     return h("div", { class: "pr-rail" }, rows.map(function (r) {

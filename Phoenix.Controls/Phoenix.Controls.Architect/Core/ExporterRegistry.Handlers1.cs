@@ -167,6 +167,13 @@ namespace Phoenix.Controls.Architect.Core
         //   - Process.Terminate stays a SimpleEmit — fixed (id) shape.
         private static void RegisterProcessSession(ExporterRegistry r)
         {
+            // Process.Stop — fixed (id) shape. Stops a live instance by id.
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Process.Stop", "process.stop",
+                new[] { new SocketArg("InstanceId", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            // Deprecated alias — legacy Process.Terminate nodes / hand-written .phx.
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Process.Terminate", "process.terminate",
                 new[] { new SocketArg("InstanceId", "\"\"") },
@@ -252,7 +259,9 @@ namespace Phoenix.Controls.Architect.Core
             // Macros
             r.Register(new MacroCallHandler());
 
-            // Processes (unified async-spawn primitive)
+            // Processes — live instances (Process.Start) + the deprecated
+            // fire-and-forget Process.Spawn (kept for back-compat / coverage).
+            r.Register(new ProcessStartHandler());
             r.Register(new ProcessSpawnHandler());
             r.Register(new ProcessEntryHandler());
             r.Register(new ProcessExitHandler());

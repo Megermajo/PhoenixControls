@@ -159,7 +159,7 @@ public sealed partial class SubGraphWindow : Window
         if (string.IsNullOrEmpty(callSiteId))
         {
             GlobalLogger.Log(
-                $"SubGraphWindow: no {(_isMacro ? "Macro.Call" : "Process.Spawn")} call-site " +
+                $"SubGraphWindow: no {(_isMacro ? "Macro.Call" : "Process.Start")} call-site " +
                 $"found in parent graph for {(_isMacro ? _macroId : _processId)}.",
                 "SubGraphWindow", LogLevel.System);
             return;
@@ -206,7 +206,7 @@ public sealed partial class SubGraphWindow : Window
         if (_architectVm is null) return string.Empty;
         try
         {
-            string targetTitle = _isMacro ? "Macro.Call" : "Process.Spawn";
+            string targetTitle = _isMacro ? "Macro.Call" : "Process.Start";
             string attrKey     = _isMacro ? "MacroId" : "ProcessId";
             string? targetId   = _isMacro ? _macroId  : _processId;
             if (string.IsNullOrEmpty(targetId)) return string.Empty;
@@ -383,7 +383,7 @@ public sealed partial class SubGraphWindow : Window
                 {
                     targetId = mid;
                 }
-                else if (n.Title == "Process.Spawn"
+                else if (n.Title == "Process.Start"
                       && n.Attributes != null
                       && n.Attributes.TryGetValue("ProcessId", out var pid)
                       && !string.IsNullOrEmpty(pid))
@@ -394,7 +394,7 @@ public sealed partial class SubGraphWindow : Window
                 if (ancestorIds.Contains(targetId!))
                 {
                     hitCount++;
-                    string kindLabel = n.Title == "Macro.Call" ? "Macro.Call" : "Process.Spawn";
+                    string kindLabel = n.Title == "Macro.Call" ? "Macro.Call" : "Process.Start";
                     string targetLabel = string.Equals(targetId, subjectId, StringComparison.Ordinal)
                         ? "self (recursive)"
                         : "ancestor-on-call-stack";

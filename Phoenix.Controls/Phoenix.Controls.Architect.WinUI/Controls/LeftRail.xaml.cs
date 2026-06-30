@@ -1039,12 +1039,41 @@ public sealed partial class LeftRail : UserControl
         return i;
     }
 
+    // ── XamlRoot resolution for CRUD dialogs ─────────────────────────────
+
+    /// <summary>
+    /// Resolve a non-null <see cref="UIElement.XamlRoot"/> for the rail's
+    /// Add / Rename / Delete <see cref="ContentDialog"/>s. The rail's OWN
+    /// <c>XamlRoot</c> can come back null when the rail is hosted inside the
+    /// Hub pillar shell — and the pre-fix CRUD methods gated on
+    /// <c>XamlRoot is null</c> and returned SILENTLY, so every "+" / rename /
+    /// delete button "did nothing" with no dialog and no log (the rail's unit
+    /// tests call the CRUD methods directly, bypassing the dialog, so the dead
+    /// real-click path stayed green — Majo 2026-06-28: rail-wide "creating
+    /// processes does not work / nothing happens on +"). Fall back to the
+    /// canvas view the host wired via <see cref="SetCanvasView"/> — a loaded
+    /// sibling in the same window that reliably carries a XamlRoot. Logs at
+    /// System tier (per the no-silent-rejection rule) when neither resolves so
+    /// a future recurrence is visible in the SystemLog panel, not anonymous.
+    /// </summary>
+    private XamlRoot? ResolveCrudXamlRoot(string action)
+    {
+        var xr = XamlRoot ?? _canvasView?.XamlRoot;
+        if (xr is null)
+            GlobalLogger.Log(
+                $"rail.{action}: no XamlRoot available — dialog suppressed (rail not attached to a live window).",
+                "Architect.LeftRail", LogLevel.System);
+        return xr;
+    }
+
     // ── Variables CRUD ──────────────────────────────────────────────────
 
     private async System.Threading.Tasks.Task AddVariableAsync()
     {
-        if (_vm is null || XamlRoot is null) return;
-        var dlg = NameTypeDialog.ForVariable(XamlRoot, "New variable");
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("add-variable");
+        if (xr is null) return;
+        var dlg = NameTypeDialog.ForVariable(xr, "New variable");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         //  Duplicate-name guard previously returned silently — violates
         // feedback_no_modal_dialogs_for_repeatable_rejections.md (no modal, but
@@ -1119,10 +1148,12 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task DeleteVariableAsync(string name)
     {
-        if (_vm is null || XamlRoot is null) return;
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("delete-variable");
+        if (xr is null) return;
         // 0.10.0 UX P2: ForDanger flips warning header on, defaults the
         // close (safer) button, and labels the primary button "Delete".
-        var dlg = ConfirmDialog.ForDanger(XamlRoot, "Delete variable",
+        var dlg = ConfirmDialog.ForDanger(xr, "Delete variable",
             $"Remove variable '{name}' from this graph?",
             destructiveVerb: "Delete");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
@@ -1132,11 +1163,13 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task RenameVariableAsync(string oldName)
     {
-        if (_vm is null || XamlRoot is null) return;
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("rename-variable");
+        if (xr is null) return;
         var existing = _vm.Graph.Variables.FirstOrDefault(v =>
             v.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase));
         if (existing is null) return;
-        var dlg = NameTypeDialog.ForVariable(XamlRoot, "Rename variable",
+        var dlg = NameTypeDialog.ForVariable(xr, "Rename variable",
             existing.Name, existing.Type, existing.DefaultValue,
             existingNames: _vm.Graph.Variables
                 .Where(v => !v.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase))
@@ -1180,8 +1213,10 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task AddMacroAsync()
     {
-        if (_vm is null || XamlRoot is null) return;
-        var dlg = NameTypeDialog.ForName(XamlRoot, "New macro", "MACRO");
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("add-macro");
+        if (xr is null) return;
+        var dlg = NameTypeDialog.ForName(xr, "New macro", "MACRO");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var name = UniquifyMacroName(dlg.EnteredName);
         var macro = new Macro { Name = name };
@@ -1254,10 +1289,12 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task RenameMacroAsync(string id)
     {
-        if (_vm is null || XamlRoot is null) return;
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("rename-macro");
+        if (xr is null) return;
         var m = _vm.Graph.Macros.FirstOrDefault(x => x.MacroId == id);
         if (m is null) return;
-        var dlg = NameTypeDialog.ForName(XamlRoot, "Rename macro", "MACRO", m.Name,
+        var dlg = NameTypeDialog.ForName(xr, "Rename macro", "MACRO", m.Name,
             existingNames: _vm.Graph.Macros
                 .Where(x => x.MacroId != id)
                 .Select(x => x.Name));
@@ -1315,10 +1352,12 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task DeleteMacroAsync(string id)
     {
-        if (_vm is null || XamlRoot is null) return;
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("delete-macro");
+        if (xr is null) return;
         var m = _vm.Graph.Macros.FirstOrDefault(x => x.MacroId == id);
         if (m is null) return;
-        var dlg = ConfirmDialog.ForDanger(XamlRoot, "Delete macro",
+        var dlg = ConfirmDialog.ForDanger(xr, "Delete macro",
             $"Remove macro '{m.Name}'? Macro.Call sites will be detached but kept on the canvas.",
             destructiveVerb: "Delete");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
@@ -1377,8 +1416,10 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task AddProcessAsync()
     {
-        if (_vm is null || XamlRoot is null) return;
-        var dlg = NameTypeDialog.ForName(XamlRoot, "New process", "PROCESS");
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("add-process");
+        if (xr is null) return;
+        var dlg = NameTypeDialog.ForName(xr, "New process", "PROCESS");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var taken = new HashSet<string>(_vm.Graph.Processes.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
         var name = dlg.EnteredName;
@@ -1458,10 +1499,12 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task RenameProcessAsync(string id)
     {
-        if (_vm is null || XamlRoot is null) return;
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("rename-process");
+        if (xr is null) return;
         var p = _vm.Graph.Processes.FirstOrDefault(x => x.ProcessId == id);
         if (p is null) return;
-        var dlg = NameTypeDialog.ForName(XamlRoot, "Rename process", "PROCESS", p.Name,
+        var dlg = NameTypeDialog.ForName(xr, "Rename process", "PROCESS", p.Name,
             existingNames: _vm.Graph.Processes
                 .Where(x => x.ProcessId != id)
                 .Select(x => x.Name));
@@ -1513,10 +1556,12 @@ public sealed partial class LeftRail : UserControl
 
     private async System.Threading.Tasks.Task DeleteProcessAsync(string id)
     {
-        if (_vm is null || XamlRoot is null) return;
+        if (_vm is null) return;
+        var xr = ResolveCrudXamlRoot("delete-process");
+        if (xr is null) return;
         var p = _vm.Graph.Processes.FirstOrDefault(x => x.ProcessId == id);
         if (p is null) return;
-        var dlg = ConfirmDialog.ForDanger(XamlRoot, "Delete process",
+        var dlg = ConfirmDialog.ForDanger(xr, "Delete process",
             $"Remove process '{p.Name}'? Process.Spawn sites will be detached but kept on the canvas.",
             destructiveVerb: "Delete");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;

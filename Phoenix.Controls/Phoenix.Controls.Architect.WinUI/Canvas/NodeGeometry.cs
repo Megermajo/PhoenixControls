@@ -358,7 +358,8 @@ public static class NodeGeometry
                     //  + 16 row padding (8L+8R) so the body grows
                     // wide enough to hold the pill + its row chrome; mirrors
                     // MiddleAttrPillLead so width-grow and PillWrapWidth agree.
-                    double rowW = keyW + 16.0 + pillW + 16.0; // 16px dotted-spacer + 16px row padding
+                    double rowW = keyW + 16.0 + pillW + 16.0 // 16px dotted-spacer + 16px row padding
+                                + (IsOptionsPickerAttr(node, kv.Key) ? MiddleAttrPickerChevronWidth : 0.0);
                     if (rowW > middleW) middleW = rowW;
                 }
             }
@@ -530,6 +531,30 @@ public static class NodeGeometry
     public static double MiddleAttrPillLead(string? key)
         => EstimateTextWidth(key, 12.0) + 12.0 /* key padding */
          + 16.0 /* dotted-spacer minimum */ + 16.0 /* row padding 8L+8R */ + 12.0 /* pill Border padding */;
+
+    /// <summary>
+    /// Width (px) the inline target-picker ▾ chevron claims on a middle-attribute
+    /// row — the Button (16px) + its 4px left margin, rounded up for breathing
+    /// room. Reserved on Process.Spawn / Macro.Call picker rows so the node body
+    /// grows for the chevron AND the pill wraps within (body − chevron), keeping
+    /// IntrinsicWidth, PillMaxWidth, and MeasureMiddleAttributesHeight consistent
+    /// (the chevron lives in NodeView.xaml's MiddleAttributeRowTemplate col 3).
+    /// </summary>
+    public const double MiddleAttrPickerChevronWidth = 22.0;
+
+    /// <summary>
+    /// True when a middle-attribute row carries the inline target picker (the
+    /// Process.Spawn process name / Macro.Call macro name). Single source of
+    /// truth shared by <see cref="MiddleAttributeViewModel.HasOptionsPicker"/>
+    /// (the chevron's visibility) and the width/height budgets here, so the
+    /// reserved space and the rendered chevron never disagree.
+    /// </summary>
+    public static bool IsOptionsPickerAttr(Node? node, string? key)
+    {
+        var title = node?.Title ?? string.Empty;
+        return (title == "Process.Start" && string.Equals(key, "ProcessName", System.StringComparison.Ordinal))
+            || (title == "Macro.Call"    && string.Equals(key, "MacroName",   System.StringComparison.Ordinal));
+    }
 
     /// <summary>
     /// Fixed left-of-pill chrome on a socket (input) row (pin overhang + label +
@@ -1072,7 +1097,8 @@ public static class NodeGeometry
                     continue;
                 }
 
-                double pillBudget = PillWrapWidth(node, MiddleAttrPillLead(kv.Key), IsMultilinePill(kv.Key, effective), isDb: false);
+                double pickerLead = IsOptionsPickerAttr(node, kv.Key) ? MiddleAttrPickerChevronWidth : 0.0;
+                double pillBudget = PillWrapWidth(node, MiddleAttrPillLead(kv.Key) + pickerLead, IsMultilinePill(kv.Key, effective), isDb: false);
 
                 double measured = MeasureWrappedTextHeight(effective, 11.0, pillBudget, mono: true);
                 // Row = max(measured wrapped pill, single-row floor) + 2px row
@@ -1226,7 +1252,7 @@ public static class NodeGeometry
                 node.Attributes.TryGetValue("Commands", out v); break;
             case "Macro.Call":
                 node.Attributes.TryGetValue("MacroName", out v); break;
-            case "Process.Spawn":
+            case "Process.Start":
                 node.Attributes.TryGetValue("ProcessName", out v); break;
             case "Value.String":
             case "Value.Int":

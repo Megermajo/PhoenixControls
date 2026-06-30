@@ -139,6 +139,18 @@ namespace Phoenix.Controls.Shared.Core
                 return string.IsNullOrEmpty(EventType) || EventType.Equals("Twitch.ChatMessage", StringComparison.OrdinalIgnoreCase);
             if (line.StartsWith("on_startup"))
                 return string.IsNullOrEmpty(EventType) || EventType.Equals("Startup", StringComparison.OrdinalIgnoreCase);
+            // Live processes — on_process_start / on_process_stop run a process
+            // template's lifecycle blocks. The instance manager sets EventType to
+            // "ProcessStart" / "ProcessStop" when running them, so they never enter
+            // during a normal event fan-out (EventType="Twitch.ChatMessage" etc.),
+            // and the template's other blocks (on_chat / on_interval / …) never
+            // enter during the start/stop run. Checked BEFORE the bare "on " /
+            // permissive fall-through. (on_process_stop must precede on_process_start
+            // is not required — the StartsWith targets are disjoint.)
+            if (line.StartsWith("on_process_start"))
+                return string.IsNullOrEmpty(EventType) || EventType.Equals("ProcessStart", StringComparison.OrdinalIgnoreCase);
+            if (line.StartsWith("on_process_stop"))
+                return string.IsNullOrEmpty(EventType) || EventType.Equals("ProcessStop", StringComparison.OrdinalIgnoreCase);
             if (line.StartsWith("on "))
                 return true;
 
