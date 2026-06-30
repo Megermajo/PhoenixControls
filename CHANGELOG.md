@@ -7,6 +7,21 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2606302 - 2026.06.30
+
+**Fixed**
+- Hub's in-app updater now installs new versions — the Update button in Settings spotted updates but couldn't apply them before.
+- An update now finishes cleanly and Hub reopens on the new version.
+- New macros in Architect open with their In and Out nodes already in place.
+- Macros that used to open as an empty graph are repaired automatically when you open them.
+- Macros now pass their data through and run, instead of opening blank.
+- Dragging a wire onto a "+" slot on Event, Macro, and Process nodes now adds that input or return — it often did nothing before.
+- The "+" slots are easier to see, with a clearer dashed outline.
+- The "+" slots are easier to land a wire on.
+- Macro and Process call nodes update as you change their inputs and outputs, with no need to save and reopen.
+
+> Heads up — the in-app updater was broken in earlier versions, so it can't install this update for you. Download and install this version manually once (use the Download button); from this version on, the in-app updater works normally.
+
 ## Hotfix - 1.0.2606301 - 2026.06.30
 
 **New**
