@@ -3156,6 +3156,18 @@ public sealed partial class LogicCanvasView : UserControl
         return null;
     }
 
+    //  Temporary lifecycle trace for the dynamic-bubble (placeholder)
+    // system — drop resolution → activation → call-site sync. Gated by a const so it
+    // is a one-line flip to silence/remove once the residual "+ not visible" / no-sync
+    // cases are confirmed from a single repro run. Logs to the Hub System Log + rolling
+    // log, the same channel the proven  /  probes used.
+    internal static bool BubbleDiagEnabled = true;
+    internal static void BubbleDiag(string msg)
+    {
+        if (!BubbleDiagEnabled) return;
+        GlobalLogger.Log(" " + msg, "Architect.Canvas", LogLevel.System);
+    }
+
     // [Tranche-2] Pin hit radius for the MODEL-side wire-drop fallback below.
     private const double WireDropModelHitRadius = 14.0;
 
@@ -3194,7 +3206,42 @@ public sealed partial class LogicCanvasView : UserControl
                 if (d2 <= best2) { best2 = d2; hit = sock; }
             }
         }
-        return hit;
+        if (hit is not null) return hit;
+
+        //  Managed dynamic placeholders ("+ variable" / "+ input"
+        // / "+ output" / "+ return") render their label across the WHOLE row, but their
+        // pin is a tiny edge target. On the Win2D canvas there is no Ellipse hit-target,
+        // so a natural drop aimed at the "+ variable" LABEL lands >radius from the edge
+        // pin, misses the nearest-pin pass above, and falls through to the body-drop
+        // fallback (FindFirstCompatibleInput) — which historically skipped placeholders,
+        // so the dynamic bubble never grew. Restore the retained canvas's generous
+        // target: accept a drop anywhere along a placeholder ROW as a SECOND pass — only
+        // when no real pin was hit, so this can never steal a drop meant for a real pin.
+        double bandHalf = NodeGeometry.SocketRowHeight / 2.0;
+        foreach (var node in _vm.Nodes)
+        {
+            if (canvasPoint.X < node.X - radius || canvasPoint.X > node.X + node.Width + radius
+                || canvasPoint.Y < node.Y - radius || canvasPoint.Y > node.Y + node.Height + radius)
+                continue;
+            var rowHit = PlaceholderRowHit(node, node.Inputs, canvasPoint, bandHalf)
+                      ?? PlaceholderRowHit(node, node.Outputs, canvasPoint, bandHalf);
+            if (rowHit is not null) return rowHit;
+        }
+        return null;
+
+        static SocketViewModel? PlaceholderRowHit(
+            NodeViewModel node,
+            System.Collections.Generic.IEnumerable<SocketViewModel> pool,
+            Point pt, double bandHalf)
+        {
+            foreach (var sock in pool)
+            {
+                if (!sock.IsDynamicPlaceholder) continue;
+                var (_, ay) = sock.Anchor();
+                if (System.Math.Abs(pt.Y - (node.Y + ay)) <= bandHalf) return sock;
+            }
+            return null;
+        }
     }
 
     /// <summary>
@@ -3687,6 +3734,8 @@ public sealed partial class LogicCanvasView : UserControl
         if (_vm is null) return;
         if (!PlaceholderActivator.IsManagedPlaceholder(endpointNode.Model, endpoint.Model)) return;
 
+        BubbleDiag($"activate \"{endpoint.Model.Name}\" on \"{endpointNode.Title}\" " +
+            $"← wire from \"{otherEnd.Model.Name}\" ({otherEnd.DataType})");
         PlaceholderActivator.Activate(_vm.Graph, endpointNode.Model, endpoint.Model, otherEnd.Model);
         // [P1] Activate may have synced sockets onto paired Event.* nodes too,
         // so rebuild the endpoint's VM AND its Event-pair peers — but NOT every

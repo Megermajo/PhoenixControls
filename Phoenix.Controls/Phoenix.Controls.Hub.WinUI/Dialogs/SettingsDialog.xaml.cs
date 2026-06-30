@@ -1098,7 +1098,11 @@ public sealed partial class SettingsDialog : ContentDialog
                 XamlRoot? rootForProgress = this.XamlRoot;
                 this.Hide();
 
-                string installRoot = AppContext.BaseDirectory;
+                // The Updater needs the SUITE ROOT ({app}\, parent of Hub\ /
+                // Updater\), not the Hub exe's own folder. AppContext.BaseDirectory
+                // is {app}\Hub\ in the installer layout, so use the shared
+                // resolver to climb to the suite root.
+                string installRoot = UpdateChecker.ResolveSuiteRoot();
                 bool spawned = UpdateChecker.BeginApply(rel, installRoot);
                 if (!spawned)
                 {

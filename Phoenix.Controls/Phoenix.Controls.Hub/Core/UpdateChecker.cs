@@ -612,6 +612,29 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
+        /// Resolves the suite root — the folder that holds the per-app
+        /// subfolders (<c>Hub\</c>, <c>Updater\</c>, <c>Viewer\</c>) in the
+        /// installer / Releases layout. The running Hub.WinUI.exe lives in
+        /// <c>&lt;suiteRoot&gt;\Hub\</c>, so when our base dir is named "Hub"
+        /// the suite root is its parent; a flat dev-tree (everything in one
+        /// bin) has no "Hub" wrapper, so the base dir itself is the root.
+        /// This is the value the Updater expects as <c>--install-root</c> and
+        /// the anchor for locating <c>Updater\Phoenix.Controls.Updater.exe</c>.
+        /// </summary>
+        public static string ResolveSuiteRoot()
+        {
+            string baseDir = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+            try
+            {
+                var di = new DirectoryInfo(baseDir);
+                if (string.Equals(di.Name, "Hub", StringComparison.OrdinalIgnoreCase) && di.Parent is not null)
+                    return di.Parent.FullName;
+            }
+            catch { /* unparseable base dir — fall back to it as-is below */ }
+            return baseDir;
+        }
+
+        /// <summary>
         /// Spawns Phoenix.Controls.Updater.exe with the asset URL + SHA-256 +
         /// tag taken from a <see cref="UpdateStatus.ReleaseAvailable"/> state.
         /// <paramref name="installRoot"/> is the folder the running suite lives
@@ -624,10 +647,25 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public static bool BeginApply(UpdateStatus.ReleaseAvailable release, string installRoot)
         {
-            string updaterExe = Path.Combine(AppContext.BaseDirectory, "Phoenix.Controls.Updater.exe");
+            // The Updater ships in a SIBLING folder of the Hub exe in the
+            // installer / Releases layout (<suiteRoot>\Updater\…), NOT next to
+            // Hub (<suiteRoot>\Hub\…) — Hub.WinUI doesn't ProjectReference the
+            // Updater, so its exe is never copied into Hub\. Resolve the suite
+            // root from the running Hub's base dir and look there; fall back to
+            // a flat dev-tree where the Updater sits alongside Hub in one bin.
+            string suiteRoot = ResolveSuiteRoot();
+            string updaterDir = Path.Combine(suiteRoot, "Updater");
+            string updaterExe = Path.Combine(updaterDir, "Phoenix.Controls.Updater.exe");
             if (!File.Exists(updaterExe))
             {
-                GlobalLogger.Log($"Phoenix.Controls.Updater.exe not found at {updaterExe}", "UpdateChecker", LogLevel.CriticalError);
+                string flat = Path.Combine(AppContext.BaseDirectory, "Phoenix.Controls.Updater.exe");
+                if (File.Exists(flat)) updaterExe = flat;
+            }
+            if (!File.Exists(updaterExe))
+            {
+                GlobalLogger.Log(
+                    $"Phoenix.Controls.Updater.exe not found (looked in {updaterDir} and next to Hub)",
+                    "UpdateChecker", LogLevel.CriticalError);
                 return false;
             }
 

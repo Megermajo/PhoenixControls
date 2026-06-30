@@ -72,6 +72,14 @@ public sealed partial class SubGraphWindow : Window
     private bool _promptInFlight;
     private LogicCanvasViewModel? _innerVm;
 
+    //  Debounced live push of the edited Entry/Exit signature
+    // to the parent canvas's Macro.Call / Process.Start nodes WHILE this editor is
+    // open — pre-fix the sync fired only on window close, so a bubble added to a
+    // Macro.Entry / Process.Entry didn't reach its call sites until the sub-graph
+    // window was closed. A burst of inner mutations coalesces into one parent push.
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _callSiteSyncTimer;
+    private const int CallSiteSyncDebounceMs = 300;
+
     // 0.11.x polish — per-window LogicInspector wired to the inner
     // canvas's selection. Replaces the floating-singleton InspectorWindow
     // for sub-graph editors so each open macro/process gets its own
@@ -291,21 +299,8 @@ public sealed partial class SubGraphWindow : Window
         // (RefreshMacroCallSockets / RefreshProcessSpawnSockets) and is invoked
         // here. Runs BEFORE the event-unsubscribe below so the AVM reference is
         // still live. Best-effort — a refresh fault must not block teardown.
-        try
-        {
-            if (_architectVm is not null)
-            {
-                if (_isMacro && !string.IsNullOrEmpty(_macroId))
-                    _architectVm.RefreshMacroCallSockets(_macroId!);
-                else if (!_isMacro && !string.IsNullOrEmpty(_processId))
-                    _architectVm.RefreshProcessSpawnSockets(_processId!);
-            }
-        }
-        catch (Exception ex)
-        {
-            GlobalLogger.Error("SubGraphWindow",
-                "OnClosed call-site socket refresh", ex);
-        }
+        _callSiteSyncTimer?.Stop();
+        PushCallSiteSocketRefresh();
 
         // Unhook rename + undo-rebind event subscriptions so the AVM
         // doesn't keep this closed window alive via its event handler list.
@@ -504,6 +499,12 @@ public sealed partial class SubGraphWindow : Window
         // create a per-canvas controller, defeating the cross-window
         // undo-stack share.
         win.Canvas.ArchitectVm = architectVm;
+        // Self-heal: a macro created before Macro.Entry/Macro.Exit were seeded at
+        // creation has an empty body (no in/out node) and can neither receive flow/data
+        // nor return anything. Restore the boundary pair on open so legacy macros become
+        // authorable. Idempotent (singleton-guarded) — a macro that already has them is
+        // untouched. Runs BEFORE LoadGraph so the nodes are in the first VM build.
+        NodeRegistry.EnsureSubGraphBoundaryNodes(macro.Graph, "Macro.Entry", "Macro.Exit");
         vm.LoadGraph(macro.Graph);
         win.Canvas.DataContext = vm;
         win._innerVm = vm;
@@ -555,6 +556,9 @@ public sealed partial class SubGraphWindow : Window
         // handled inside GraphSerializer.LoadGraph for the entire .phxg tree.
         // 0.10.0 — same ArchitectVm-before-DataContext order as macro editor.
         win.Canvas.ArchitectVm = architectVm;
+        // Self-heal (defensive parity with the macro editor): restore Process.Entry /
+        // Process.Exit if a legacy/empty process body is missing them. Idempotent.
+        NodeRegistry.EnsureSubGraphBoundaryNodes(process.Graph, "Process.Entry", "Process.Exit");
         vm.LoadGraph(process.Graph);
         win.Canvas.DataContext = vm;
         win._innerVm = vm;
@@ -818,10 +822,61 @@ public sealed partial class SubGraphWindow : Window
             if (dq is null || dq.HasThreadAccess) ApplyDirtyMarker();
             else dq.TryEnqueue(ApplyDirtyMarker);
         }
+        //  Push the edited Entry/Exit signature to the parent
+        // canvas's call-site nodes live (debounced) so Macro.Call / Process.Start track
+        // bubble adds/removes without waiting for the sub-graph window to close.
+        ScheduleLiveCallSiteSync();
         // 0.10.0 (arch-ux-state #9) — re-run cycle detection after every
         // inner-graph mutation so a freshly-added Macro.Call surfaces
         // immediately. DetectAndReportCycles is best-effort + cheap (O(N)).
         DetectAndReportCycles();
+    }
+
+    //  (Re)start the debounce timer; on tick, push the current
+    // signature to the parent canvas's call-site nodes. Non-repeating, restarted on
+    // every inner mutation so the push lands ~CallSiteSyncDebounceMs after edits quiet.
+    private void ScheduleLiveCallSiteSync()
+    {
+        var dq = DispatcherQueue;
+        if (dq is null) return;
+        if (_callSiteSyncTimer is null)
+        {
+            _callSiteSyncTimer = dq.CreateTimer();
+            _callSiteSyncTimer.IsRepeating = false;
+            _callSiteSyncTimer.Interval = TimeSpan.FromMilliseconds(CallSiteSyncDebounceMs);
+            _callSiteSyncTimer.Tick += (_, _) => PushCallSiteSocketRefresh();
+        }
+        _callSiteSyncTimer.Stop();
+        _callSiteSyncTimer.Start();
+    }
+
+    //  Push the just-edited macro/process Entry/Exit signature
+    // out to its Macro.Call / Process.Start call-site nodes on the parent canvas.
+    // Shared by the live debounce tick (ScheduleLiveCallSiteSync) and OnClosed (final
+    // sync). Best-effort — a refresh fault must never block editing or teardown. The
+    // inner VM mutated the SAME macro.Graph / process.Graph reference that lives on the
+    // parent graph, so the canonical signature is already in place; this just pushes it
+    // to the call-site display (external wires preserved by name).
+    private void PushCallSiteSocketRefresh()
+    {
+        try
+        {
+            if (_architectVm is null) return;
+            if (_isMacro && !string.IsNullOrEmpty(_macroId))
+            {
+                GlobalLogger.Log($" call-site sync → Macro.Call (macro {_macroId})", "SubGraphWindow", LogLevel.System);
+                _architectVm.RefreshMacroCallSockets(_macroId!);
+            }
+            else if (!_isMacro && !string.IsNullOrEmpty(_processId))
+            {
+                GlobalLogger.Log($" call-site sync → Process.Start (process {_processId})", "SubGraphWindow", LogLevel.System);
+                _architectVm.RefreshProcessSpawnSockets(_processId!);
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("SubGraphWindow", "call-site socket refresh", ex);
+        }
     }
 
     private void ApplyDirtyMarker()

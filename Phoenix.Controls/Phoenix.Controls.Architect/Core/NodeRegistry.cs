@@ -911,6 +911,42 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
+        /// Ensure a macro / process sub-graph carries its boundary node pair — the
+        /// <c>Macro.Entry</c>+<c>Macro.Exit</c> (or <c>Process.Entry</c>+<c>Process.Exit</c>)
+        /// nodes that let the parent <c>Macro.Call</c> / <c>Process.Start</c> site pass
+        /// flow + data into the body and read results back out. Seeds whichever
+        /// singleton is missing and returns true if it added anything; a no-op when
+        /// both already exist, so it is safe to call on every editor open as a
+        /// self-heal for sub-graphs created before the boundary nodes were seeded.
+        /// </summary>
+        /// <remarks>
+        /// Without these nodes the exporter walks an empty Entry/Exit and the
+        /// macro / process transfers nothing — an "empty body" that cannot be
+        /// authored. The rail's "New process" path seeded these inline ();
+        /// the "New macro" path historically did not, so a freshly-created macro
+        /// opened with no in/out node. Centralising the seed here keeps the create
+        /// path (LeftRail) and the heal path (SubGraphWindow editor open) in lockstep.
+        /// Entry is placed top-left, Exit to its right — the same layout the
+        /// convert-to-macro collapse (CollapseSelectionToMacro) uses.
+        /// </remarks>
+        public static bool EnsureSubGraphBoundaryNodes(Graph graph, string entryTitle, string exitTitle)
+        {
+            if (graph is null) return false;
+            bool added = false;
+            if (!graph.Nodes.Exists(n => string.Equals(n.Title, entryTitle, StringComparison.Ordinal)))
+            {
+                var entry = CreateNode(entryTitle, new Point(80, 160));
+                if (entry is not null) { graph.Nodes.Add(entry); added = true; }
+            }
+            if (!graph.Nodes.Exists(n => string.Equals(n.Title, exitTitle, StringComparison.Ordinal)))
+            {
+                var exit = CreateNode(exitTitle, new Point(520, 160));
+                if (exit is not null) { graph.Nodes.Add(exit); added = true; }
+            }
+            return added;
+        }
+
+        /// <summary>
         /// Ensures Event.Trigger / Event.Executor / Event.Return nodes have the
         /// expected dynamic placeholder sockets. Safe to call on both newly created
         /// and deserialized nodes — does nothing if placeholders already exist.

@@ -881,20 +881,29 @@ public sealed partial class LogicCanvasView
     {
         Color pinColor = ParseHexColor(s.ColorHex, _imSubText);
         double ox = cx - 7, oy = cy - 7;
+        //  Dynamic placeholders ("+ variable" / "+ input"
+        // / "+ output" / "+ return") render their pin outline DASHED — matching the
+        // retained NodeView's IsDynamicPlaceholder StrokeDashArray — so an add-slot
+        // reads as a distinct "droppable" target rather than a faint solid pin (which
+        // is why a "+ slot" looked absent on the GPU canvas). Placeholders are always
+        // hollow (SocketViewModel.RebuildPinDerived forces PinFilled=false), so only
+        // the outline (Draw*, not Fill*) branches take the dashed style. A null style
+        // is the default solid stroke for every non-placeholder pin.
+        CanvasStrokeStyle? stroke = s.IsDynamicPlaceholder ? s_imDashedStroke : null;
 
         switch (s.Kind)
         {
             case SocketPinKind.Circle:
             case SocketPinKind.Mismatch:
                 if (s.PinFilled) ds.FillCircle((float)cx, (float)cy, 4.5f, pinColor);
-                else             ds.DrawCircle((float)cx, (float)cy, 4.5f, pinColor, 1.5f);
+                else             ds.DrawCircle((float)cx, (float)cy, 4.5f, pinColor, 1.5f, stroke);
                 return;
 
             case SocketPinKind.RoundedSquare:
             {
                 var rsq = new Rect(ox + 2, oy + 2, 10, 10);
                 if (s.PinFilled) ds.FillRoundedRectangle(rsq, 2, 2, pinColor);
-                else             ds.DrawRoundedRectangle(rsq, 2, 2, pinColor, 1.5f);
+                else             ds.DrawRoundedRectangle(rsq, 2, 2, pinColor, 1.5f, stroke);
                 return;
             }
 
@@ -915,7 +924,7 @@ public sealed partial class LogicCanvasView
                 pb.EndFigure(CanvasFigureLoop.Closed);
                 using var geom = CanvasGeometry.CreatePath(pb);
                 if (s.PinFilled) ds.FillGeometry(geom, pinColor);
-                else             ds.DrawGeometry(geom, pinColor, 1.5f);
+                else             ds.DrawGeometry(geom, pinColor, 1.5f, stroke);
                 return;
             }
         }

@@ -334,10 +334,11 @@ public sealed class UpdateRunner
     private async Task<UpdateOutcome> RunReleasesFlowAsync()
     {
         // Don't operate on a path that doesn't already contain a recognisable
-        // Phoenix Controls install. Either Hub.exe is here at the release-layout
-        // location (phoenix-controls/Hub/Phoenix.Controls.Hub.exe), or Hub.exe
-        // is right next to us (a dev tree where the Updater was launched from a
-        // project bin folder).
+        // Phoenix Controls install. Either Hub.WinUI.exe is here at the
+        // release-layout location (phoenix-controls/Hub/Phoenix.Controls.Hub.WinUI.exe),
+        // or it is right next to us (a dev tree where the Updater was launched
+        // from a flat project bin). MINE-12: the WinForms Hub.exe was retired
+        // in T15 and is no longer staged in either the zip or the installer.
         string installRoot = _args.InstallRoot!;
         // QC39-04: same install-root sanity gate as Update mode.
         if (!IsInstallRootSafe(installRoot, out string rootReason))
@@ -349,8 +350,8 @@ public sealed class UpdateRunner
             return UpdateOutcome.Failed;
         }
         bool looksLikeRelease = Directory.Exists(Path.Combine(installRoot, "Hub"))
-                             && File.Exists(Path.Combine(installRoot, "Hub", "Phoenix.Controls.Hub.exe"));
-        bool looksLikeDevTree = File.Exists(Path.Combine(installRoot, "Phoenix.Controls.Hub.exe"));
+                             && File.Exists(Path.Combine(installRoot, "Hub", "Phoenix.Controls.Hub.WinUI.exe"));
+        bool looksLikeDevTree = File.Exists(Path.Combine(installRoot, "Phoenix.Controls.Hub.WinUI.exe"));
         if (!looksLikeRelease && !looksLikeDevTree)
         {
             Log($"refusing to update -- {installRoot} does not look like a Phoenix Controls install.");

@@ -876,6 +876,10 @@ public sealed partial class LogicCanvasView
         switch (_drag)
         {
             case DragState.WireDrop when _wireFromSocket is not null:
+                BubbleDiag($"drop: from \"{_wireFromSocket.Label}\" ({_wireFromSocket.DataType}) → " +
+                    (hit is SocketViewModel ht
+                        ? $"socket \"{ht.Label}\"{(ht.IsPlaceholder ? " [PLACEHOLDER]" : "")} on \"{ht.ParentNode?.Title}\""
+                        : hit is NodeViewModel bn ? $"body \"{bn.Title}\"" : "nothing"));
                 if (hit is SocketViewModel target)
                 {
                     TryCreateLink(_wireFromSocket, target);
@@ -1595,11 +1599,29 @@ public sealed partial class LogicCanvasView
     private static SocketViewModel? FindFirstCompatibleInput(SocketViewModel src, NodeViewModel target)
     {
         var pool = src.Direction == SocketType.Output ? target.Inputs : target.Outputs;
+        // Prefer a real, type-compatible socket.
         foreach (var s in pool)
         {
             if (s.IsPlaceholder) continue;
             if (NodeRegistry.AreCompatible(src.DataType, s.DataType))
                 return s;
+        }
+        //  No real socket matched — fall back to a managed dynamic
+        // placeholder ("+ variable" / "+ input" / "+ output" / "+ return") so a body-drop
+        // on a node whose only viable target is its add-slot (e.g. a fresh Macro.Entry /
+        // Process.Entry / Event.Trigger carrying only Flow + the placeholder) GROWS the
+        // bubble instead of no-op'ing. Managed placeholders are always DATA slots and
+        // ADOPT the wire's type on activation (TryCreateLink's 
+        // owns the type check), so the only thing to exclude is a flow source — a flow
+        // wire wants the node's real Flow input, already handled by the loop above.
+        if (src.DataType != SocketDataType.Flow)
+        {
+            foreach (var s in pool)
+                if (s.IsDynamicPlaceholder)
+                {
+                    BubbleDiag($"body-drop fallback → placeholder \"{s.Label}\" on \"{target.Title}\"");
+                    return s;
+                }
         }
         return null;
     }

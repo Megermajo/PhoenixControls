@@ -1220,6 +1220,12 @@ public sealed partial class LeftRail : UserControl
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var name = UniquifyMacroName(dlg.EnteredName);
         var macro = new Macro { Name = name };
+        // Seed Macro.Entry / Macro.Exit into the new macro body — the parity fix the
+        // "New process" path got in  but the macro path never did, so a fresh
+        // macro opened with no in/out node and could neither receive flow/data nor
+        // return anything (the exporter walks Macro.Entry/Exit; an empty body transfers
+        // nothing). Singleton-guarded + shared with the editor-open self-heal.
+        NodeRegistry.EnsureSubGraphBoundaryNodes(macro.Graph, "Macro.Entry", "Macro.Exit");
         _vm.Graph.Macros.Add(macro);
         Refresh();
         //  AVM is required for shared undo + rename sync; bail if
@@ -1432,18 +1438,14 @@ public sealed partial class LeftRail : UserControl
             }
         }
         var proc = new Process { Name = name };
-        //  [P0] — seed Process.Entry / Process.Exit into the new
-        // process body. The baseline ProcessesPanel.AddProcess() did this;
-        // the WinUI rewrite dropped it, so new processes opened with an
-        // empty body and the user had to hand-add Entry/Exit before the
-        // process could accept inputs/outputs (ExporterRegistry's process
-        // input/output emit walks Process.Entry's output sockets — without
-        // an Entry node the process exports nothing). CreateNode returns
-        // null only for unknown titles, so the null-guards are defensive.
-        var entryNode = NodeRegistry.CreateNode("Process.Entry", new System.Drawing.Point(80, 160));
-        var exitNode  = NodeRegistry.CreateNode("Process.Exit",  new System.Drawing.Point(520, 160));
-        if (entryNode != null) proc.Graph.Nodes.Add(entryNode);
-        if (exitNode  != null) proc.Graph.Nodes.Add(exitNode);
+        //  [P0] — seed Process.Entry / Process.Exit into the new process body.
+        // The baseline ProcessesPanel.AddProcess() did this; the WinUI rewrite dropped
+        // it, so new processes opened with an empty body and the user had to hand-add
+        // Entry/Exit before the process could accept inputs/outputs (ExporterRegistry's
+        // process input/output emit walks Process.Entry's output sockets — without an
+        // Entry node the process exports nothing). Now routed through the shared,
+        // singleton-guarded helper (one canonical seed path for macros + processes).
+        NodeRegistry.EnsureSubGraphBoundaryNodes(proc.Graph, "Process.Entry", "Process.Exit");
         _vm.Graph.Processes.Add(proc);
         Refresh();
         //  AVM is required for shared undo + rename sync; bail if
