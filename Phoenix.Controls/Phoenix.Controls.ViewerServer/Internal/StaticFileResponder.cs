@@ -70,7 +70,7 @@ internal static class StaticFileResponder
         // measured in tens of KB so revalidation cost is negligible.
         resp.AddHeader("Cache-Control", "no-cache");
 
-        // Defence-in-depth headers for the HTML shell (QC27-04).
+        // Defence-in-depth headers for the HTML shell.
         // The viewer SPA is fully self-hosted — no third-party
         // scripts, fonts, or styles — so a strict policy holds.
         // Verified before locking down: WebViewer/dist contains no

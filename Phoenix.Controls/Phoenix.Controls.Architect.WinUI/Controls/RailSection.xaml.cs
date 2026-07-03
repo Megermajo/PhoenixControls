@@ -18,7 +18,7 @@ public sealed partial class RailSection : UserControl
     public event EventHandler<RailItemViewModel>? ItemSelected;
 
     /// <summary>
-    ///  P1-A3: fires when the user double-taps a rail row.
+    /// Fires when the user double-taps a rail row.
     /// LeftRail subscribes and dispatches to <c>OpenMacroEditor</c> /
     /// <c>OpenProcessEditor</c> / variable-rename based on
     /// <see cref="RailItemViewModel.Kind"/>. Pre-T15 the WinForms
@@ -94,11 +94,11 @@ public sealed partial class RailSection : UserControl
                 if (d is RailSection s)
                 {
                     s.SetSelectedItem(null);
-                    s.UpdateEmptyHint(); // 
+                    s.UpdateEmptyHint(); //
                 }
             }));
 
-    //  Show the empty-section message when
+    // Show the empty-section message when
     // the bound collection has no rows so an empty rail reads as intentional.
     private void UpdateEmptyHint()
     {
@@ -232,7 +232,7 @@ public sealed partial class RailSection : UserControl
     /// </summary>
     private void OnRailItemDragStarting(UIElement sender, DragStartingEventArgs args)
     {
-        //  [P2] — require Kind AND Id AND Name to be non-empty before
+        //  — require Kind AND Id AND Name to be non-empty before
         // packaging the drag payload. RailItemViewModel.Id/Name default to
         // string.Empty, so a half-built row (e.g. a freshly-added variable
         // before Refresh() back-fills its Id) could otherwise be dragged into
@@ -267,7 +267,7 @@ public sealed partial class RailSection : UserControl
     }
 
     /// <summary>
-    ///  P1-A3: route the double-tapped row back to LeftRail via
+    /// Route the double-tapped row back to LeftRail via
     /// <see cref="ItemDoubleTapped"/> so the parent can open the appropriate
     /// editor (macro / process sub-graph window or variable rename dialog).
     /// Also flips the selection so a follow-up toolbar action picks the

@@ -16,7 +16,7 @@ using Windows.UI;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
-// 0.11.5 canvas-polish r3 — pin overlay. The pin chrome that used to live
+// 0.11.5 — pin overlay. The pin chrome that used to live
 // inside InputRowTemplate / OutputRowTemplate (NodeView.xaml) is now built
 // in code and parented to NodeView.PinOverlay, which is a SIBLING of
 // NodeRoot in NodeView's outer Grid. The sibling parenting is the load-
@@ -52,14 +52,14 @@ public sealed partial class NodeView
     // single Shape (Ellipse / Polygon / Rectangle) so the per-socket update
     // path can swap Stroke/Fill without poking through a Viewbox child.
     //
-    // B40 / B41 / B42 (audit/winui-regressions-2026-05-24) — three new layers
+    // Three new layers
     // sit alongside the existing pin chrome:
     //   • SelectionRing — gold focus halo when this socket is the selected one.
     //   • AnimatedBadge — small yellow dot when the destination var has a
-    //     keyframe in the Visualist timeline registry (B42 stub; see
+    //     keyframe in the Visualist timeline registry (currently a stub; see
     //     IsPinAnimatedExternally below).
     // The Pin shape itself gains a connected-vs-unconnected differentiation
-    // via Fill opacity (B40) so unconnected pins read as outlines and
+    // via Fill opacity so unconnected pins read as outlines and
     // connected pins read as filled glyphs.
     private sealed class PinElements
     {
@@ -75,7 +75,7 @@ public sealed partial class NodeView
         public int        RowIndex;
         public SocketType Direction;
         public SocketPinKind PinKind;
-        // S4-fix — last-applied dynamic-placeholder state, so the same-kind
+        // Last-applied dynamic-placeholder state, so the same-kind
         // property-change branch only re-allocates a DoubleCollection
         // (StrokeDashArray) when the dashed-vs-solid state actually flipped,
         // not on every ColorHex / Fill bump.
@@ -93,7 +93,7 @@ public sealed partial class NodeView
     private static SolidColorBrush PinRequiredHaloBrush => s_pinRequiredHaloBrush ??= ResolveBrush(
         "PinRequiredHaloBrush", 0xFF, 0xE0, 0xA2, 0x3A);
 
-    // Drop-state brushes. S4-fix — the Valid (compatible) halo restores the
+    // Drop-state brushes. The Valid (compatible) halo restores the
     // baseline's semi-transparent green glow (#C878DC78 — alpha 0xC8/200,
     // RGB 0x78,0xDC,0x78) so it reads as a reachability AFFORDANCE rather than
     // a fully-opaque selection marker. The Invalid halo stays the saturated
@@ -102,7 +102,7 @@ public sealed partial class NodeView
     private static readonly SolidColorBrush s_dropValidBrush   = new(Color.FromArgb(0xC8, 0x78, 0xDC, 0x78));
     private static readonly SolidColorBrush s_dropInvalidBrush = new(Color.FromArgb(0xFF, 0xCB, 0x4D, 0x3F));
 
-    //  Shared transparent brush + a hex→brush cache so
+    // Shared transparent brush + a hex→brush cache so
     // the pin-rebuild path (BuildPinShape calls HexBrush 2x per pin, 6+ per
     // socket per rebuild) and DropStateBrushFor's None arm stop allocating a
     // fresh SolidColorBrush every call. UI-thread only, so a plain Dictionary is
@@ -112,14 +112,14 @@ public sealed partial class NodeView
     private static readonly System.Collections.Generic.Dictionary<string, SolidColorBrush> s_hexBrushCache =
         new(System.StringComparer.Ordinal);
 
-    // B41 (audit/winui-regressions-2026-05-24) — selection-ring brush. Reuses
+    // Selection-ring brush. Reuses
     // the canvas's selection gold (EmberPrimaryBrush) so the per-socket halo
     // matches the per-node selection halo painted by NodeView.xaml.cs.
     private static SolidColorBrush? s_pinSelectionBrush;
     private static SolidColorBrush PinSelectionBrush => s_pinSelectionBrush ??= ResolveBrush(
         "EmberPrimaryBrush", 0xFF, 0xE5, 0xA2, 0x4E);
 
-    // B42 (audit/winui-regressions-2026-05-24) — animated-pin badge brush.
+    // Animated-pin badge brush.
     // Yellow dot mirrors the Visualist marker for an animated pin
     // (AnimatedPinRegistry indicates a destination variable has keyframes).
     // The Architect-side surface is conditional on a registry lookup that
@@ -128,7 +128,7 @@ public sealed partial class NodeView
     private static readonly SolidColorBrush s_animatedBadgeBrush =
         new(Color.FromArgb(0xFF, 0xE5, 0xA2, 0x4E));
 
-    // B41 — single-source-of-truth selected-socket id. Shared statically
+    // Single-source-of-truth selected-socket id. Shared statically
     // across every NodeView in the same process so sibling nodes can clear
     // their selection ring when this one's pin is clicked. The field stores
     // the Socket.Id so cross-NodeView lookup is by id (cheap string compare),
@@ -146,7 +146,7 @@ public sealed partial class NodeView
     private static event EventHandler? s_selectionChanged;
 
     /// <summary>
-    /// B41 — set the canvas-wide selected socket. Pass <c>null</c> to clear.
+    /// Set the canvas-wide selected socket. Pass <c>null</c> to clear.
     /// Idempotent on no-op assignment so a pointer-press on the already-
     /// selected pin doesn't trigger a useless re-paint pass across every
     /// visible node.
@@ -168,7 +168,7 @@ public sealed partial class NodeView
     internal static void ClearPinSelection() => SetSelectedSocket(null);
 
     /// <summary>
-    /// B42 (audit/winui-regressions-2026-05-24) — query the cross-pillar
+    /// Query the cross-pillar
     /// animated-var tracker for the variable name bound to this socket.
     /// Returns true when at least one of the candidate names this socket
     /// resolves to has an active keyframe registration on the Visualist side.
@@ -251,14 +251,14 @@ public sealed partial class NodeView
             NodeRoot.SizeChanged += OnNodeRootSizeChanged;
             _nodeRootSizeHooked = true;
         }
-        // B41 — listen to canvas-wide socket-selection changes so this NodeView
+        // Listen to canvas-wide socket-selection changes so this NodeView
         // can clear / set its own ring when a sibling NodeView's pin is clicked.
         if (!_selectionListenerHooked)
         {
             s_selectionChanged += OnGlobalSelectionChanged;
             _selectionListenerHooked = true;
         }
-        // B42 — listen for cross-pillar animated-var state changes so the
+        // Listen for cross-pillar animated-var state changes so the
         // animated-pin badge re-paints live (without waiting for the next
         // pin overlay rebuild). Subscriber is per-NodeView so the static
         // tracker's invocation list grows linearly with visible nodes — a
@@ -275,7 +275,7 @@ public sealed partial class NodeView
 
     private void UnhookPinOverlay()
     {
-        // S4-fix (P0) — tear down the per-NodeView tooltip DispatcherTimer so
+        // Tear down the per-NodeView tooltip DispatcherTimer so
         // its Tick closure (which captures this NodeView via the _tooltipPending*
         // fields) stops pinning the instance alive across view recycling
         // (palette hovers, virtualization, rapid graph loads). DispatcherTimer
@@ -283,13 +283,13 @@ public sealed partial class NodeView
         // correct teardown; the pre-fix code never released the timer, leaking
         // a NodeView per recycle.
         CleanupTooltipTimer();
-        // S4-fix — also clear the coalesced-reposition guard. A reposition can be
+        // Also clear the coalesced-reposition guard. A reposition can be
         // enqueued (flag set true) and the NodeView torn down before the dispatcher
         // pumps the callback that would reset it; left stuck true, the recycled
         // view's next RebuildPinOverlay → ScheduleCoalescedReposition early-returns
         // and never re-enqueues, leaving pins misaligned until another change fires.
         _repositionScheduled = false;
-        // arch-perf P1-3 (Fix 6) — same teardown guard for the coalesced REBUILD
+        // Same teardown guard for the coalesced REBUILD
         // flag: a deferred rebuild can be enqueued and the view torn down before
         // the pump fires; clear it BEFORE the early-return below so a recycled
         // view's next ScheduleCoalescedRebuild isn't stuck and re-enqueues.
@@ -341,7 +341,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// B42 — react to a cross-pillar animated-var state flip. Re-evaluates
+    /// React to a cross-pillar animated-var state flip. Re-evaluates
     /// IsPinAnimatedExternally for every pin on this NodeView and toggles
     /// the badge Visibility. Cheap: pin count per node is small (~8 typical)
     /// and we only touch Visibility on a single Ellipse per pin. Marshalled
@@ -376,7 +376,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// B41 — react to a canvas-wide socket-selection change. Walks the
+    /// React to a canvas-wide socket-selection change. Walks the
     /// per-NodeView pin map and toggles SelectionRing visibility against
     /// the static <see cref="s_selectedSocketId"/>. Cheap: pin count per
     /// node is small (~8 typical) and we only touch Visibility.
@@ -419,7 +419,7 @@ public sealed partial class NodeView
         // rebuild rather than incremental add/remove tracking. The pin count
         // per node is small (~8 typical, ~16 worst-case) so the rebuild cost
         // is negligible compared to the layout pass it triggers anyway.
-        // arch-perf P1-3 (Fix 6) — coalesce the rebuild: a RebuildSockets cycle
+        // Coalesce the rebuild: a RebuildSockets cycle
         // raises a BURST of CollectionChanged events (one per socket add/remove),
         // each of which used to do a full teardown+recreate of every pin element
         // synchronously. Defer + de-dupe so the whole burst collapses into ONE
@@ -454,7 +454,7 @@ public sealed partial class NodeView
         // pins aren't stacked at the overlay origin before rows realise.
         RepositionAllPins();
 
-        // [REFRAMED] S4-fix — pin overlay double-reposition jump.
+        // Pin overlay double-reposition jump.
         // The new ItemsControl rows haven't realised yet, so the synchronous
         // RepositionAllPins above reads STALE measured-Y. Pre-fix this file
         // ALSO eagerly deferred a second full RepositionAllPins to the next
@@ -471,7 +471,7 @@ public sealed partial class NodeView
         ScheduleCoalescedReposition();
     }
 
-    // [REFRAMED] S4-fix — coalesced full-overlay reposition.
+    // Coalesced full-overlay reposition.
     // Multiple triggers fire in one layout cycle (rebuild + each row's Loaded
     // + each row's SizeChanged); without coalescing each scheduled its own
     // full reposition and the overlay settled in stages (the "jump twice"
@@ -499,7 +499,7 @@ public sealed partial class NodeView
             });
     }
 
-    // arch-perf P1-3 (Fix 6) — coalesced full-overlay REBUILD, mirroring
+    // Coalesced full-overlay REBUILD, mirroring
     // ScheduleCoalescedReposition. OnPinSocketCollectionChanged fires once per
     // socket add/remove during a RebuildSockets cycle; without this, a node
     // growing K sockets did K full PinOverlay teardown+recreate passes back to
@@ -559,7 +559,7 @@ public sealed partial class NodeView
         }
 
         // Layer 2 — drop-state halo (Valid green glow / Invalid red during
-        // drag). S4-fix — 20×20 (was 14×14) with a 2.0 stroke (was 1.75) so the
+        // drag). 20×20 (was 14×14) with a 2.0 stroke (was 1.75) so the
         // compatible-target glow ring reads as a reachability affordance, not a
         // tight selection marker. The 20px ring overhangs the 14×14 chrome,
         // which is fine — it's parented to the pin chrome Grid and centred.
@@ -594,7 +594,7 @@ public sealed partial class NodeView
         var pinShape = BuildPinShape(sock.Kind, sock.ColorHex, sock.FillColorHex);
         pinShape.Tag = sock;
         if (sock.IsDynamicPlaceholder) pinShape.StrokeDashArray = NewPinDashArray();
-        // B40 (audit/winui-regressions-2026-05-24) — unconnected pins paint as
+        // Unconnected pins paint as
         // outlines (Fill brush at 0.4 opacity), connected pins paint solid.
         // We touch only the Shape's Fill.Opacity — Stroke stays at full
         // opacity so the outline still reads.
@@ -628,12 +628,12 @@ public sealed partial class NodeView
         };
         pinChrome.Children.Add(arity);
 
-        // Layer 6 — B41 (audit/winui-regressions-2026-05-24) selection ring.
+        // Layer 6 — selection ring.
         // Painted as a 16×16 gold ellipse with Stroke=EmberPrimary, transparent
         // fill, sitting on top of the pin glyph but BELOW the hit target so
         // clicks still land on the HitTarget. Visibility tracks the static
         // s_selectedSocketId via OnGlobalSelectionChanged.
-        // arch-perf (element reduction) — the per-socket selection ring is DEAD in
+        // The per-socket selection ring is DEAD in
         // the current build: nothing calls SetSelectedSocket with a non-null id (pin
         // selection was removed; ClearPinSelection only ever passes null), so it is
         // never shown. Create it ONLY when the socket is selected right now (never,
@@ -657,7 +657,7 @@ public sealed partial class NodeView
             pinChrome.Children.Add(selectionRing);
         }
 
-        // Layer 7 — B42 (audit/winui-regressions-2026-05-24) animated-pin badge.
+        // Layer 7 — animated-pin badge.
         // A 6×6 yellow dot in the bottom-right of the pin chrome surfaces
         // "this socket's destination variable has Visualist keyframes".
         // The cross-pillar registry isn't wired yet (IsPinAnimatedExternally
@@ -665,7 +665,7 @@ public sealed partial class NodeView
         // paints — but the layer is in place so the activation is a one-line
         // change inside that helper once Phoenix.Controls.Shared grows a
         // shared AnimatedVarTracker.
-        // arch-perf (element reduction) — IsPinAnimatedExternally is a stub returning
+        // IsPinAnimatedExternally is a stub returning
         // false (the cross-pillar AnimatedVarTracker isn't wired), so this badge
         // never paints. Create it ONLY when the socket is actually animated (never,
         // currently), saving one element per pin × every socket. When the registry
@@ -698,14 +698,14 @@ public sealed partial class NodeView
             Fill = s_transparentBrush,
             Tag = sock,
         };
-        //  Precise marker so the canvas pointer code can tell a
+        // Precise marker so the canvas pointer code can tell a
         // genuine socket-PIN press (this 24×24 hit-target) apart from the socket
         // ROW grid, which shares Tag=SocketViewModel. LogicCanvasView.ResolvePinUnderCursor
         // keys on this to start a wire-drag authoritatively — even when WinUI reports
         // e.OriginalSource as the row container behind the pin ("no pipe on some sockets").
         CanvasInteraction.SetIsSocketPin(hit, true);
         // Clicking a pin no longer paints a persistent selection ring on the
-        // bubble. Majo flagged the B41 click-to-select halo as an unwanted
+        // bubble. Majo flagged the click-to-select halo as an unwanted
         // "selection frame" on the socket — it also broke the UE-Blueprints
         // idiom the canvas models (pins are pure wire endpoints; only nodes
         // and wires carry selection). The press is left unhooked here so the
@@ -713,7 +713,7 @@ public sealed partial class NodeView
         // SelectionRing layer below stays in the tree but is now only ever
         // shown if something explicitly calls SetSelectedSocket (nothing on
         // the plain-click path does anymore).
-        // B14 (audit/winui-regressions-2026-05-24) — hover-anchored
+        // Hover-anchored
         // TooltipPopup on the pin's hit target. PointerEntered starts a
         // ~600 ms delay timer; expiry positions the shared TooltipPopup at
         // the cursor and shows it with the socket's title (Label · DataType)
@@ -726,7 +726,7 @@ public sealed partial class NodeView
         hit.PointerExited   += OnPinHitTargetPointerExitedForTooltip;
         hit.PointerCanceled += OnPinHitTargetPointerExitedForTooltip;
         hit.PointerCaptureLost += OnPinHitTargetPointerExitedForTooltip;
-        //  Stamp this pin on the canvas FIRST (so the bubbling
+        // Stamp this pin on the canvas FIRST (so the bubbling
         // press reaches OnHostPointerPressed with the socket already known —
         // the deterministic replacement for the flaky geometry probe), THEN
         // cancel the hover-tip so it doesn't paint underneath the drag cursor.
@@ -754,7 +754,7 @@ public sealed partial class NodeView
             IsDashed = sock.IsDynamicPlaceholder,
         };
         _pinElements[sock] = built;
-        // S4-fix — apply the wire-drag dimming for the socket's CURRENT
+        // Apply the wire-drag dimming for the socket's CURRENT
         // DropState so a pin rebuilt mid-drag (placeholder activation, dynamic
         // grow) immediately reflects compatibility instead of painting bright
         // until the next DropState change.
@@ -762,7 +762,7 @@ public sealed partial class NodeView
         sock.PropertyChanged += OnPinSocketPropertyChanged;
     }
 
-    // ─── B14 hover-anchored TooltipPopup wiring ─────────────────────────
+    // ─── Hover-anchored TooltipPopup wiring ─────────────────────────────
     // Pre-T15 Architect rendered a custom TooltipPopup (rich title + glyph +
     // body, mouse-anchored) on socket / pill hover; post-T15 fell back to
     // plain ToolTipService which lost the iconography + the cursor-following
@@ -773,7 +773,7 @@ public sealed partial class NodeView
     // Hide). One shared DispatcherTimer per NodeView is enough — sockets on
     // the same node never have overlapping hover sessions.
 
-    //  Dwell-only show policy. A tip paints only after
+    // Dwell-only show policy. A tip paints only after
     // a genuine InitialDelayMs (400ms) of the cursor RESTING on a socket/pill/title.
     // The earlier "smart re-show" (skip the delay when re-hovering within
     // ReshowDelayMs of the last hide) was removed: it fired Show()/Popup-open on
@@ -795,7 +795,7 @@ public sealed partial class NodeView
     private FrameworkElement? _tooltipPendingAnchor;
 
     /// <summary>
-    /// B14 — pointer entered the per-pin hit target. Cache the socket +
+    /// Pointer entered the per-pin hit target. Cache the socket +
     /// anchor and arm the delay timer. The Show call doesn't fire until
     /// <see cref="InitialDelayMs"/> ms elapses without a PointerExited,
     /// so cursor flickers across the canvas don't pop transient tips.
@@ -823,7 +823,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    ///  Stamp the pressed socket on the owning canvas so its
+    /// Stamp the pressed socket on the owning canvas so its
     /// <c>OnHostPointerPressed</c> starts the wire-drag deterministically. This
     /// handler runs on the pin's own hit-target — i.e. WinUI already hit-tested
     /// the press onto THIS pin — so it is authoritative, unlike the canvas-level
@@ -842,7 +842,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// B14 — push the current cursor position (XamlRoot-relative) into the
+    /// Push the current cursor position (XamlRoot-relative) into the
     /// shared <see cref="TooltipPopup"/> static so the popup's first paint
     /// anchors to it. Bare ResolvePointerPositionForAnchor would fall back
     /// to the anchor element's top-right corner; this keeps the popup
@@ -881,12 +881,12 @@ public sealed partial class NodeView
     /// restarts the timer so the delay restarts cleanly. Centralised so the pin /
     /// socket-row / node-title / middle-attr arm sites all share one delay
     /// policy. The tip therefore only paints after a genuine rest on a socket —
-    /// see the  note in the body for why the former
+    /// see the note in the body for why the former
     /// 0ms fast-reshow was removed.
     /// </summary>
     private void StartTooltipTimer()
     {
-        //  Always require the full dwell delay — the
+        // Always require the full dwell delay — the
         // 0ms fast-reshow (skip the delay when re-hovering within ReshowDelayMs of
         // the last hide) is exactly what made tooltips POP DURING MOVEMENT: panning
         // (incl. wheel-pan, where the cursor is still and nodes slide under it) and
@@ -920,8 +920,8 @@ public sealed partial class NodeView
         if (anchor is null) return;
         try
         {
-            // Socket-pin path (B14) — title = "Label · DataType", body =
-            // socket Description. Middle-attribute path (B16) — title = key,
+            // Socket-pin path — title = "Label · DataType", body =
+            // socket Description. Middle-attribute path — title = key,
             // body = current display text. Both feed the same shared popup.
             if (_tooltipPendingSocket is { } sock)
             {
@@ -961,7 +961,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// S4-fix (P0) — fully release the per-NodeView tooltip DispatcherTimer.
+    /// Fully release the per-NodeView tooltip DispatcherTimer.
     /// Stop it, detach the Tick handler (whose closure captures this NodeView),
     /// null the reference, and clear the pending-tooltip fields so nothing
     /// keeps the instance alive after unload / DataContext swap. Idempotent.
@@ -1036,7 +1036,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// B14 — invoked from <see cref="NodeView"/> XAML on the input-row /
+    /// Invoked from <see cref="NodeView"/> XAML on the input-row /
     /// output-row label grids. Same shape as the per-pin hit-target handlers
     /// but the anchor is the row label's grid, so the popup paints next to
     /// the label as well as the pin.
@@ -1054,7 +1054,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// B16 — middle-attribute row hover. Shows "{Key}" as title +
+    /// Middle-attribute row hover. Shows "{Key}" as title +
     /// "{DisplayText}" as body so the popup mirrors the inline pill content
     /// without leaning on the bare ToolTipService binding the row's grid
     /// also carries.
@@ -1077,7 +1077,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// Keep the pin glyph's Fill at full opacity. Pre-fix (B40) this dimmed
+    /// Keep the pin glyph's Fill at full opacity. Pre-fix this dimmed
     /// unconnected pins to 0.4 alpha to read connected-vs-unconnected, but
     /// that washed out every unwired pin and made fills look "missing".
     /// Per Majo's socket legend the fill now encodes required-vs-optional
@@ -1100,7 +1100,7 @@ public sealed partial class NodeView
     }
 
     /// <summary>
-    /// S4-fix (P0 + BOTH-RUNS) — wire-drag compatibility dimming. During a wire
+    /// Wire-drag compatibility dimming. During a wire
     /// drag the canvas (LogicCanvasViewModel.BeginDropHinting) flips every
     /// candidate socket's <see cref="SocketViewModel.DropState"/> to
     /// Valid / Invalid (compat already evaluated via NodeRegistry.AreCompatible)
@@ -1129,7 +1129,7 @@ public sealed partial class NodeView
                 ele.DropHalo.Stroke = DropStateBrushFor(sock.DropState);
                 ele.DropHalo.Visibility = sock.DropState == DropState.None
                     ? Visibility.Collapsed : Visibility.Visible;
-                // S4-fix (P0 + BOTH-RUNS) — dim incompatible INPUT sockets to
+                // Dim incompatible INPUT sockets to
                 // 0.3 during the drag (canvas already computed compat into
                 // DropState). Un-dims on Valid / None (drag end clears DropState).
                 ApplyWireDragDimming(ele, sock);
@@ -1143,12 +1143,12 @@ public sealed partial class NodeView
                 if (ele.RequiredHalo is not null)
                     ele.RequiredHalo.Visibility = sock.IsRequiredEmpty
                         ? Visibility.Visible : Visibility.Collapsed;
-                // B40 — connectivity flip → re-apply outline/solid opacity on
+                // Connectivity flip → re-apply outline/solid opacity on
                 // the pin Fill. SyncSocketConnectivity fires this whenever a
                 // wire is added or removed, so the glyph picks up the
                 // outline-vs-solid state without a full overlay rebuild.
                 ApplyPinConnectedOpacity(ele.Pin, sock);
-                // B42 — animated-pin badge is currently gated on a stub that
+                // Animated-pin badge is currently gated on a stub that
                 // returns false, but re-evaluate here so the badge flips
                 // immediately once the cross-pillar tracker is wired and
                 // IsPinAnimatedExternally starts returning true.
@@ -1187,7 +1187,7 @@ public sealed partial class NodeView
                 {
                     ele.Pin.Stroke = HexBrush(sock.ColorHex);
                     ele.Pin.Fill = HexBrush(sock.FillColorHex);
-                    // S4-fix — only re-allocate the DoubleCollection when the
+                    // Only re-allocate the DoubleCollection when the
                     // dashed-vs-solid state actually flipped. A bare ColorHex /
                     // Fill bump (the common cascade case) on an already-dashed
                     // (or already-solid) pin no longer churns a fresh
@@ -1200,7 +1200,7 @@ public sealed partial class NodeView
                         ele.IsDashed = sock.IsDynamicPlaceholder;
                     }
                 }
-                // B40 — Fill brush was just rebuilt above (new SolidColorBrush
+                // Fill brush was just rebuilt above (new SolidColorBrush
                 // from HexBrush); reapply the outline-vs-solid opacity so a
                 // wildcard-cascade type flip doesn't accidentally restore the
                 // pin to full opacity on an unconnected socket.
@@ -1289,7 +1289,7 @@ public sealed partial class NodeView
             var transform = row.TransformToVisual(NodeRoot);
             var topLeft   = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
             double centreY = topLeft.Y + row.ActualHeight / 2.0;
-            //  Hysteresis gate. OnSocketRowSizeChanged re-fires
+            // Hysteresis gate. OnSocketRowSizeChanged re-fires
             // repeatedly while a node body settles (multi-line pill wrap,
             // theme/zoom relayout, first realization); pre-fix each fire ran
             // an unconditional pin reposition + a link nudge, so a settling
@@ -1305,7 +1305,7 @@ public sealed partial class NodeView
             // SocketAnchor adds NodeBorderInset on the y axis; the
             // TransformToVisual measurement already includes the inset, so
             // we feed centreY straight through.
-            //  Own breadcrumb. This path runs from WinUI layout
+            // Own breadcrumb. This path runs from WinUI layout
             // callbacks (row Loaded/SizeChanged), NOT inside OnRenderingTick's
             // "Architect.RenderTick" scope, so a stall here previously inherited
             // the stale "RenderTick.WireRecompute" latch in the watchdog log.
@@ -1314,7 +1314,7 @@ public sealed partial class NodeView
             {
                 sock.SetMeasuredRowCenterY(centreY);
                 SocketRenderState.SetMeasuredRowCenterY(sock.Id, centreY);
-                // [REFRAMED] S4-fix — instead of poking THIS pin's Canvas position
+                // Instead of poking THIS pin's Canvas position
                 // directly (which made the overlay settle row-by-row, contributing
                 // to the visible double-jump), request a single coalesced
                 // full-overlay reposition. The measured-Y is already pushed above,
@@ -1339,7 +1339,7 @@ public sealed partial class NodeView
 
     private void NudgeLinksForSocket(SocketViewModel sock)
     {
-        //  Reach the LogicCanvasViewModel through the same
+        // Reach the LogicCanvasViewModel through the same
         // cached-canvas hook the pill-edit pointer paths use, then mark only
         // the wires incident on this socket dirty via the per-socket index
         // (O(incident)). Pre-fix this full-scanned the entire Links collection
@@ -1355,7 +1355,7 @@ public sealed partial class NodeView
     {
         DropState.Valid   => s_dropValidBrush,
         DropState.Invalid => s_dropInvalidBrush,
-        //  shared transparent (was a fresh alloc/call).
+        // shared transparent (was a fresh alloc/call).
         _                 => s_transparentBrush,
     };
 
@@ -1430,7 +1430,7 @@ public sealed partial class NodeView
         VerticalAlignment   = VerticalAlignment.Center,
     };
 
-    //  Cached entry point — one SolidColorBrush per
+    // Cached entry point — one SolidColorBrush per
     // distinct hex string, shared across every pin. BuildHexBrush does the parse.
     private static SolidColorBrush HexBrush(string? hex)
     {

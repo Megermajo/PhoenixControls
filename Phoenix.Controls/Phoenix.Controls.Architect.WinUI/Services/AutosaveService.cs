@@ -37,14 +37,14 @@ public sealed class AutosaveService : IDisposable
     private int _consecutiveFailures;
 
     /// <summary>
-    ///  Raised after a successful autosave write
+    /// Raised after a successful autosave write
     /// (carries the autosave file name). The host surfaces a transient
     /// status-bar confirmation so the user can see autosave is alive.
     /// </summary>
     public event Action<string>? AutosaveSucceeded;
 
     /// <summary>
-    ///  Raised on a failed autosave write, with the
+    /// Raised on a failed autosave write, with the
     /// running count of CONSECUTIVE failures and the exception. The host shows a
     /// persistent warning after N consecutive failures so a read-only path /
     /// full disk doesn't leave the user trusting a stale recovery file.
@@ -90,7 +90,7 @@ public sealed class AutosaveService : IDisposable
         {
             string target = ResolveAutosavePath();
             await GraphSerializer.SaveGraphAsync(_vm.LogicCanvas.Graph, target);
-            //  reset the failure streak + notify.
+            // reset the failure streak + notify.
             _consecutiveFailures = 0;
             try { AutosaveSucceeded?.Invoke(Path.GetFileName(target)); } catch { /* host hook best-effort */ }
         }
@@ -98,7 +98,7 @@ public sealed class AutosaveService : IDisposable
         {
             // Autosave must never crash the editor. Log and keep ticking.
             GlobalLogger.Error("Architect.Autosave", "tick write failed", ex);
-            //  surface a persistent failure to the
+            // surface a persistent failure to the
             // host so a stuck autosave (read-only path / full disk) isn't silent.
             _consecutiveFailures++;
             try { AutosaveFailed?.Invoke(_consecutiveFailures, ex); } catch { /* host hook best-effort */ }

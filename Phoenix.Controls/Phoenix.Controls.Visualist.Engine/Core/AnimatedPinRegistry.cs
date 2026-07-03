@@ -313,7 +313,7 @@ namespace Phoenix.Controls.Visualist.Core
                 });
                 added += 2;
 
-                // B42 (audit/winui-regressions-2026-05-24) — cross-pillar mirror.
+                // Cross-pillar mirror.
                 // Architect's NodeView.Pins.cs queries AnimatedVarTracker per
                 // socket so a Var.Set / Var.Get whose VariableName matches an
                 // animated Visualist pin lights up its animated-pin badge.
@@ -344,7 +344,7 @@ namespace Phoenix.Controls.Visualist.Core
             int removed = timeline.Keyframes.RemoveAll(k =>
                 k != null && !string.IsNullOrEmpty(k.ParameterPath) && paths.Contains(k.ParameterPath));
 
-            // B42 — drop the cross-pillar mirror for every component we cleared.
+            // Drop the cross-pillar mirror for every component we cleared.
             // The shared tracker is reference-counted, so a duplicate
             // un-mark (e.g. concurrent same-component remove on two pins) just
             // bumps the count down past zero and is idempotent at the
@@ -362,7 +362,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         /// <summary>
-        /// B42 helper — wraps the cross-pillar mirror call so the call sites
+        /// Wraps the cross-pillar mirror call so the call sites
         /// don't carry the namespace fanout. Centralised so a future change
         /// to the shared-tracker contract (e.g. a different naming convention
         /// or an additional channel) lives in one place.

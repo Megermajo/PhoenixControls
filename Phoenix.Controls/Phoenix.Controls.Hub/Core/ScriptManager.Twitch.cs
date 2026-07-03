@@ -890,7 +890,7 @@ namespace Phoenix.Controls.Hub.Core
             _engine.RegisterCommand("twitch.get_viewers", async (args) => {
                 string resultVar = _engine.CurrentBoundArgs?.GetOrDefault<string>("ResultVar", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 if (string.IsNullOrEmpty(resultVar)) return null;
-                //  Brand sweep — was "sovereign-get-viewers-…".
+                // Brand sweep — was "sovereign-get-viewers-…".
                 string reqId = $"phx-get-viewers-{Guid.NewGuid():N}";
                 string response = await WS.Instance.SendAndWaitAsync(
                     $@"{{""request"":""GetActiveViewers"",""id"":""{reqId}""}}",
@@ -909,7 +909,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     catch (Exception ex)
                     {
-                        // [P1 swarm-audit 2026-05-29] Bare catch hid JSON-parse failures of
+                        // Bare catch hid JSON-parse failures of
                         // the Streamer.bot GetActiveViewers response, masking malformed payloads.
                         GlobalLogger.Log($"twitch.get_viewers: JSON parse failed: {ex.Message}", "Script", LogLevel.CriticalError);
                     }
@@ -934,7 +934,7 @@ namespace Phoenix.Controls.Hub.Core
         private void RegisterTwitchChatCommands()
         {
             // twitch.send_chat("message")
-            // M32 — Twitch chat messages are capped at 500 chars by the IRC backend.
+            // Twitch chat messages are capped at 500 chars by the IRC backend.
             // Anything longer is rejected by Streamer.bot/Twitch silently and the
             // script never sees the failure. Reject up-front so the streamer sees
             // a clear log instead of debugging a no-op.
@@ -949,7 +949,7 @@ namespace Phoenix.Controls.Hub.Core
                             "Script", LogLevel.CriticalError);
                         return null;
                     }
-                    // BH-027 — same explicit guards as ChatSource.SendAsBotAsync
+                    // Same explicit guards as ChatSource.SendAsBotAsync
                     // (Hub.WinUI/Services/ChatSource.cs). A blank chat action or
                     // a dropped WS link previously failed silently from a
                     // user-visible perspective; surface them at CriticalError
@@ -988,7 +988,7 @@ namespace Phoenix.Controls.Hub.Core
             });
 
             // twitch.timeout(user, seconds)
-            // M32 — Twitch's timeout duration is bounded: minimum 1 second, maximum
+            // Twitch's timeout duration is bounded: minimum 1 second, maximum
             // 1,209,600 seconds (14 days). Out-of-range durations are rejected by
             // Helix silently. Reject pre-flight so the streamer sees a Communication
             // log instead of a phantom no-op.
@@ -1050,7 +1050,7 @@ namespace Phoenix.Controls.Hub.Core
             // H28 — raw string interpolation of user-supplied args produced invalid JSON
             // when the args contained `"` or `\`. Route through JsonSerializer like the
             // sibling twitch.* commands.
-            // M32 — Twitch ban-reason field is capped at 500 chars. Truncated reasons
+            // Twitch ban-reason field is capped at 500 chars. Truncated reasons
             // confuse mod logs; reject up-front and log so the streamer can shorten it.
             _engine.RegisterCommand("twitch.ban", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
@@ -1111,7 +1111,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 return null;
             });
-            // M32 — Twitch announcement message body capped at 500 chars per Helix.
+            // Twitch announcement message body capped at 500 chars per Helix.
             _engine.RegisterCommand("twitch.announcement", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
                 string message = bound?.GetOrDefault<string>("Message", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);

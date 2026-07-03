@@ -61,7 +61,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
         // C1 (2026-05-14): VM owns its dispatcher via ctor injection — no
         // shared static slot to capture from the View side anymore.
         ApplyLocalizedStrings();
-        //  Mirror the SystemLogView pattern: ActualThemeChanged
+        // Mirror the SystemLogView pattern: ActualThemeChanged
         // fires on OS high-contrast engage, parent RequestedTheme override,
         // or a future in-app settings toggle. Without this subscription
         // the errored-row tint and traffic-light text brush stay resolved
@@ -103,7 +103,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
     }
 
     /// <summary>
-    ///  Runtime theme-swap handler — marshal RefreshBrushes onto
+    /// Runtime theme-swap handler — marshal RefreshBrushes onto
     /// the UI thread (ActualThemeChanged usually fires there but stay
     /// defensive).
     /// </summary>
@@ -137,7 +137,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
         HeaderTime.Text   = Localizer.T("panel.scripts.header.time",   "TIME");
         HeaderRam.Text    = Localizer.T("panel.scripts.header.ram",    "RAM");
         HeaderRuns.Text   = Localizer.T("panel.scripts.header.runs",   "RUNS");
-        // B5 (audit 2026-05-24) — concurrent-slot column header.
+        // Concurrent-slot column header.
         HeaderQueue.Text  = Localizer.T("panel.scripts.header.queue",  "QUEUE");
 
         // Hub UI sweep 2026-05-22 — visible "pop-out" label next to the icon.
@@ -383,7 +383,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
         // it "Ctrl+E", and a later one "Enter", but neither shortcut was
         // ever registered via ScriptView.KeyboardAccelerators.
         // [P3 decision, 2026-06-01] Intentionally NOT wired: the WinForms
-        // ScriptMonitorWindow baseline (22741490^) also registered no
+        // ScriptMonitorWindow baseline also registered no
         // context-menu accelerators, so leaving them off keeps parity. The
         // override label is omitted rather than half-shown so the menu never
         // advertises a shortcut that doesn't fire. Wire both the accelerator
@@ -419,7 +419,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
         toggle.Click += async (_, _) => await Safe(() => ViewModel.ToggleEnabledAsync(row));
         flyout.Items.Add(toggle);
 
-        // B4 (audit 2026-05-24) — Set Policy → Queue / Overlap / Discard.
+        // Set Policy → Queue / Overlap / Discard.
         // Tracks ScriptManager._executionPolicies; Queue is the only
         // currently-enforced policy (IsEnforced) — the others persist but
         // a parenthesised "(not yet enforced)" tag is appended so users
@@ -461,7 +461,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// B4 (audit 2026-05-24) — "Set Policy → Queue / Overlap / Discard"
+    /// "Set Policy → Queue / Overlap / Discard"
     /// submenu. Builds a MenuFlyoutSubItem with three MenuFlyoutItems,
     /// each tagged with a leading "● " for the currently-selected policy
     /// (MenuFlyout has no native radio-item support in WinUI 3 — the
@@ -574,7 +574,7 @@ public sealed partial class ScriptView : UserControl, IDisposable,
             {
                 Text = row.Status.LastError ?? emptyText,
                 TextWrapping = TextWrapping.Wrap,
-                // [P2] Resource *indexing* throws KeyNotFoundException on a
+                // Resource *indexing* throws KeyNotFoundException on a
                 // missing key; use the TryGetValue + pattern-match guard that
                 // the brush lookups above (CoalSecondaryTextBrush /
                 // EmberPrimaryBrush) already use, so an absent MonoFont falls

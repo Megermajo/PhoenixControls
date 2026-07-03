@@ -6,7 +6,7 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 
 // Slim view-model for the right-hand inspector. 0.10.0 collapsed the
 // inspector to a single Description string — the node body owns every
-// editable affordance now (feedback_node_ui_inline_sockets.md). Selection
+// editable affordance now. Selection
 // is set externally; rebuild Description off the new model.
 //
 // Fields is retained as a typed (empty) ObservableCollection because
@@ -19,7 +19,7 @@ public sealed class LogicInspectorViewModel : ObservableObject
     private string _description  = string.Empty;
     private bool   _hasSelection;
 
-    // S10 P3: reusable scratch buffers for SetMultiNodes — the multi-node
+    // Reusable scratch buffers for SetMultiNodes — the multi-node
     // summary fires on every multi-selection change, and allocating a fresh
     // Dictionary + List on each call pressures the GC. Cleared (not
     // re-allocated) per call; the VM is single-threaded (UI-thread only) so
@@ -129,7 +129,7 @@ public sealed class LogicInspectorViewModel : ObservableObject
         DisplayTitle = $"{nodes.Count} nodes";
         Eyebrow      = "Multi-selection";
 
-        // S10 P3: reuse the cached counts dictionary instead of allocating a
+        // Reuse the cached counts dictionary instead of allocating a
         // new one per multi-selection event.
         _multiCounts.Clear();
         foreach (var n in nodes)
@@ -152,7 +152,7 @@ public sealed class LogicInspectorViewModel : ObservableObject
     /// <summary>Convenience overload for non-collection callers.</summary>
     public void SetMultiNodes(System.Collections.Generic.IEnumerable<NodeViewModel> nodeVms)
     {
-        // S10 P3: reuse the cached scratch list rather than allocating a new
+        // Reuse the cached scratch list rather than allocating a new
         // List<Node> per call. SetMultiNodes(IReadOnlyList<Node>) only reads
         // the list before returning, so reusing the buffer is safe.
         _multiNodesScratch.Clear();
@@ -182,7 +182,7 @@ public sealed class LogicInspectorViewModel : ObservableObject
         Eyebrow      = "Wire";
 
         var kind = (fromSocket?.DataType ?? SocketDataType.Any).ToString();
-        // S10 P2: null-coalesce every endpoint so a wire whose node / socket
+        // Null-coalesce every endpoint so a wire whose node / socket
         // was deleted mid-inspection renders "?.?" instead of a bare "."
         // (string interpolation of two nulls). Mirrors DisplayTitle's "? → ?"
         // fallback on the line above.

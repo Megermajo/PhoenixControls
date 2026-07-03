@@ -21,12 +21,12 @@ using Windows.Storage.Pickers;
 namespace Phoenix.Controls.Visualist.WinUI.Controls;
 
 /// <summary>
-/// R16 — docked media library for the Widget Editor. Thumbnail grid + kind chips
-/// + Import + Delete (reference-guarded) + Refresh + drag-out (R20). Restores the
+/// Docked media library for the Widget Editor. Thumbnail grid + kind chips
+/// + Import + Delete (reference-guarded) + Refresh + drag-out. Restores the
 /// pre-WinUI MediaLibraryPanel that the rework demoted to a menu-only delete-list
 /// dialog. Data + import route through <see cref="MediaLibrary"/>; the live layer
 /// for the delete reference-scan comes from the bound <see cref="VisualistViewModel"/>
-/// (DataContext). Visualist-local per feedback_visualist_architect_chrome_independence.
+/// (DataContext). Visualist-local.
 /// </summary>
 public sealed partial class MediaLibraryPanel : UserControl
 {
@@ -45,7 +45,7 @@ public sealed partial class MediaLibraryPanel : UserControl
         MediaGrid.RightTapped += OnGridRightTapped;
         KeyDown += OnPanelKeyDown;
         IsTabStop = true;
-        // P3 — seed the persistent drag-hint footer from the localizer (literal
+        // Seed the persistent drag-hint footer from the localizer (literal
         // fallback when the key is absent so it works without a resource edit).
         DragHint.Text = Localizer.T(
             "visualist.medialib.hint.drag",
@@ -98,7 +98,7 @@ public sealed partial class MediaLibraryPanel : UserControl
         bool empty = _rows.Count == 0;
         EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         MediaGrid.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
-        // P3 — show the drag-gesture footer only when there's something to drag;
+        // Show the drag-gesture footer only when there's something to drag;
         // while empty the EmptyHint already carries the onboarding message.
         DragHint.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
 
@@ -107,7 +107,7 @@ public sealed partial class MediaLibraryPanel : UserControl
 
     private async Task LoadThumbnailsAsync(List<Row> rows, CancellationToken ct)
     {
-        // P2 — disk-backed thumbnail cache (shared with MediaPickerDialog): try
+        // Disk-backed thumbnail cache (shared with MediaPickerDialog): try
         // MediaLibrary's cache (LocalAppData/Visualist/thumbcache, keyed on path +
         // mtime) before paying a decode. Hit → replay cached PNG bytes into a
         // BitmapImage. Miss → decode + downscale to a 96px PNG, show it, store it.
@@ -276,7 +276,7 @@ public sealed partial class MediaLibraryPanel : UserControl
         catch { return IntPtr.Zero; }
     }
 
-    // ── drag-out (R20 source half) ───────────────────────────────────────
+    // ── drag-out (source half) ───────────────────────────────────────────
     private void OnDragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
         if (e.Items.Count == 0 || e.Items[0] is not Row row) { e.Cancel = true; return; }
@@ -289,7 +289,7 @@ public sealed partial class MediaLibraryPanel : UserControl
         };
         if (kind == "other") { e.Cancel = true; return; }   // no loader node for non-media
 
-        // NAMED-1 — the custom DataPackage format does NOT round-trip reliably
+        // The custom DataPackage format does NOT round-trip reliably
         // across the WinUI 3 drag boundary, so the graph drop was no-opping.
         // Carry the FULL payload ("{kind}|{relativePath}") in the Text format too
         // (the reliable channel the canvas drop reads first) — NOT the bare path.
@@ -302,7 +302,7 @@ public sealed partial class MediaLibraryPanel : UserControl
         e.Data.RequestedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
     }
 
-    // ── delete (R58 + P2 toolbar button: right-click + Del-key + Delete button) ─
+    // ── delete (toolbar button: right-click + Del-key + Delete button) ────
     /// <summary>Toolbar Delete — operates on the current grid selection.
     /// Shares the reference-guarded <see cref="DeleteWithGuardAsync"/> path with
     /// the context menu and Del key.</summary>
@@ -313,7 +313,7 @@ public sealed partial class MediaLibraryPanel : UserControl
     }
 
     /// <summary>Keep the toolbar Delete button enabled only when a tile is
-    /// selected (P2 — discoverable but never armed against an empty selection).</summary>
+    /// selected (discoverable but never armed against an empty selection).</summary>
     private void OnGridSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         DeleteButton.IsEnabled = MediaGrid.SelectedItem is Row;

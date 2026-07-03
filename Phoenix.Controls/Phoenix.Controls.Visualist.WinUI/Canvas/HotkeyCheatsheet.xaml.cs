@@ -11,8 +11,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 /// <summary>
 /// Bottom-left context-aware hotkey overlay for Visualist's canvases.
 /// Sibling of <c>Architect.WinUI.Canvas.HotkeyCheatsheet</c> — same shape,
-/// independent code per the chrome-independence rule
-/// (<c>feedback_visualist_architect_chrome_independence.md</c>).
+/// independent code per the chrome-independence rule.
 /// </summary>
 public sealed partial class HotkeyCheatsheet : UserControl
 {

@@ -19,13 +19,13 @@ namespace Phoenix.Controls.Hub.Core
 {
     public partial class ScriptManager : IAsyncDisposable
     {
-        // BH-018 — `??=` is not thread-safe. Concurrent first-touch (e.g. from a
+        // `??=` is not thread-safe. Concurrent first-touch (e.g. from a
         // WS chat callback racing a LayerWatcher InvokeReload) could each
         // construct a ScriptManager and double-run the constructor's side effects
         // (engine wiring, command registration). Double-checked locking on
         // _instanceLock; _instance kept settable to leave room for tests.
         //
-        //  _instance is declared `volatile` so the DCL read on the
+        // _instance is declared `volatile` so the DCL read on the
         // fast path (no lock acquired) sees a fully-published reference. On
         // ARM64 — and on any CLR build where the JIT is free to hoist the
         // read past the constructor's stores — a non-volatile field can be
@@ -51,7 +51,7 @@ namespace Phoenix.Controls.Hub.Core
         private ScriptEngine _engine;
         private string _logicPath;
 
-        //  Initial ScriptRegistry.LoadScripts used to run synchronously
+        // Initial ScriptRegistry.LoadScripts used to run synchronously
         // inside the ctor. LoadScripts calls WaitForFileStable per .phx file,
         // which spins up to 30 × 50 ms = 1.5 s per locked file (antivirus
         // handoff on OneDrive-backed AppData, mid-export Architect write).
@@ -68,7 +68,7 @@ namespace Phoenix.Controls.Hub.Core
         // screen step ordering is preserved.
         private readonly Task _initTask;
 
-        // Bug Sweep 4 (R) — args bounds-check helper. Many RegisterCommand handlers
+        // Args bounds-check helper. Many RegisterCommand handlers
         // index into `args` after a partial Length check (or none at all); a malformed
         // script could raise IndexOutOfRangeException and tear down the engine. This
         // helper returns string.Empty for missing positions so handlers degrade
@@ -109,10 +109,10 @@ namespace Phoenix.Controls.Hub.Core
             eventData.Remove("Args");
         }
 
-        // L16 — Stable, collision-resistant local-var key built from a node id.
+        // Stable, collision-resistant local-var key built from a node id.
         //
-        // Earlier sweep notes flagged a hypothetical "first 6 chars of the GUID"
-        // slice in id-keyed handlers (the spec singled out Array.Push / Array.Unpack
+        // An earlier note flagged a hypothetical "first 6 chars of the GUID"
+        // slice in id-keyed handlers (Array.Push / Array.Unpack
         // / Queue.Pop, but inspection of this file confirms none of those handlers
         // currently key state by node id — they operate on the value list / global
         // queue directly). The helper below is the canonical safe-keying utility
@@ -148,19 +148,19 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly ConcurrentDictionary<string, DateTime> _lastActiveMap =
             new(StringComparer.OrdinalIgnoreCase);
 
-        // Active script execution cancellation tokens — keyed by per-call execution ID
-        // (H54). Keying by file name collided when the same script was running for
+        // Active script execution cancellation tokens — keyed by per-call execution ID.
+        // Keying by file name collided when the same script was running for
         // multiple events at once: the first EndExecution would remove the second
         // call's CTS and the older still-running instances couldn't be cancelled.
         private readonly ConcurrentDictionary<long, CancellationTokenSource> _activeCts = new();
         private long _executionIdCounter;
 
-        // L70 — Hub-wide shutdown token. Until HubBootstrapper is wired to call
+        // Hub-wide shutdown token. Until HubBootstrapper is wired to call
         // SetGlobalShutdownToken at app shutdown, this defaults to CancellationToken.None
         // (i.e. it never fires). When wired, BeginExecutionTracked links every per-script
         // CTS to this token so a global Cancel() actually cancels in-flight script runs
         // instead of relying purely on Stop()/CancelAllScripts being called separately.
-        // Static so the wiring layer (next sweep) doesn't need to plumb an instance ref.
+        // Static so the wiring layer doesn't need to plumb an instance ref.
         private static CancellationToken _globalShutdownToken = CancellationToken.None;
 
         /// <summary>
@@ -182,11 +182,11 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         internal static CancellationToken GlobalShutdownToken => _globalShutdownToken;
 
-        // Shared HttpClient (H31). Per-call `using var client = new HttpClient()` accumulates
+        // Shared HttpClient. Per-call `using var client = new HttpClient()` accumulates
         // sockets in TIME_WAIT and ignores ScriptTimeoutSeconds. One process-wide handler is
         // the documented pattern. Timeout is enforced per-request via CancellationToken instead
         // of HttpClient.Timeout, so different scripts can use different ceilings.
-        // L26 — AllowAutoRedirect = false. .NET's auto-redirect preserves Authorization /
+        // AllowAutoRedirect = false. .NET's auto-redirect preserves Authorization /
         // X-API-Key / cookies across cross-host hops, leaking auth tokens to whatever
         // third party the redirect points at. We follow redirects manually via
         // SendWithManualRedirectAsync below, stripping sensitive headers on cross-host
@@ -196,10 +196,10 @@ namespace Phoenix.Controls.Hub.Core
             // Floor; per-request CT is the real limiter. Without this the default 100 s
             // ignores ScriptTimeoutSeconds entirely.
             Timeout = TimeSpan.FromSeconds(100),
-            MaxResponseContentBufferSize = 5 * 1024 * 1024  // 5 MB cap (H32)
+            MaxResponseContentBufferSize = 5 * 1024 * 1024  // 5 MB cap
         };
 
-        // L26 — sensitive headers stripped on cross-host redirect. Standard list
+        // Sensitive headers stripped on cross-host redirect. Standard list
         // mirrors what curl --location-trusted protects against; "WWW-Authenticate"
         // is a server header so it can't appear on the request anyway. Case-insensitive
         // because callers may spell them either way.
@@ -218,7 +218,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private const int MaxRedirectHops = 5;
 
-        //  Outbound HTTP concurrency cap. A naked `for_each` in a
+        // Outbound HTTP concurrency cap. A naked `for_each` in a
         // script that fires http.get / ai.prompt per element could spin up
         // hundreds of in-flight SendAsync calls, saturating the network
         // thread-pool and starving every other Hub subsystem that needs an
@@ -242,7 +242,7 @@ namespace Phoenix.Controls.Hub.Core
         private static SemaphoreSlim GetRmwLock(string key) =>
             _rmwLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
 
-        // Hard cap on response body size for script-driven HTTP calls (H32). 5 MB is
+        // Hard cap on response body size for script-driven HTTP calls. 5 MB is
         // large enough for any realistic API payload but small enough that a runaway
         // server can't OOM the Hub or bloat the SQLite DB if the body is persisted.
         private const int HttpBodyMaxBytes = 5 * 1024 * 1024;
@@ -282,17 +282,17 @@ namespace Phoenix.Controls.Hub.Core
 
         // Rate-limiting semaphores — initialised in constructor from config
         private SemaphoreSlim _chatSemaphore;
-        // [QC18-S3 docstring] _webhookSemaphore is shared across on_webhook,
+        // _webhookSemaphore is shared across on_webhook,
         // on_hotkey, on_clipboard, and on_websocket fan-out. The AppConfig key
         // name (MaxConcurrentWebhookScripts) suggests it's webhook-only; in
         // practice it caps all four. Renaming the config key would break
         // user config.json files, so the rename + per-flavor split is
-        // deferred to  (AppConfig schema work). Until then, this
+        // deferred (AppConfig schema work). Until then, this
         // comment is the source of truth.
         private SemaphoreSlim _webhookSemaphore;
         private SemaphoreSlim _eventSemaphore;
 
-        //  Re-entry guard for the event semaphore. Set after a
+        // Re-entry guard for the event semaphore. Set after a
         // caller has won an _eventSemaphore slot; checked at every acquire
         // site so a nested event.trigger from an event script's body doesn't
         // try to acquire a second slot from inside the held one. With cap=5
@@ -308,7 +308,7 @@ namespace Phoenix.Controls.Hub.Core
         private enum EventSlotResult { Acquired, Reentered, TimedOut }
 
         /// <summary>
-        ///  Acquires the event-semaphore slot, honoring re-entry. If
+        /// Acquires the event-semaphore slot, honoring re-entry. If
         /// the current async flow already holds a slot (an outer event /
         /// chat / startup / bus / state-change / internal-event script body
         /// is executing and called event.trigger), returns Reentered without
@@ -334,7 +334,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  Companion to <see cref="AcquireEventSlotAsync"/>. Only
+        /// Companion to <see cref="AcquireEventSlotAsync"/>. Only
         /// releases the semaphore when we actually took a slot (i.e. the
         /// caller saw Acquired); Reentered / TimedOut are no-ops so the
         /// outer Acquire/Release pair stays balanced.
@@ -352,7 +352,7 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly ConcurrentDictionary<string, long> _cooldownExpiryUtc =
             new(StringComparer.OrdinalIgnoreCase);
 
-        // P2 — Time.SecondsSinceLastFire backing. Per-key last-fire UTC ticks. Updated
+        // Time.SecondsSinceLastFire backing. Per-key last-fire UTC ticks. Updated
         // atomically on each call; the engine command returns the elapsed seconds before
         // overwriting the slot. Process-lifetime store, like _cooldownExpiryUtc — does
         // not survive a Hub restart by design (uptime-gated alerts re-arm on restart).
@@ -371,8 +371,8 @@ namespace Phoenix.Controls.Hub.Core
 
         private int _stopped;
 
-        // H3 — drain duration before disposing the rate-limit semaphores. M84
-        // gives in-flight script handlers a brief window to unwind so their
+        // Drain duration before disposing the rate-limit semaphores.
+        // Gives in-flight script handlers a brief window to unwind so their
         // awaiting `WaitAsync` calls don't surface ObjectDisposedException. The
         // exact value is empirical; long enough for typical handler unwind,
         // short enough that shutdown doesn't visibly hang.
@@ -382,7 +382,7 @@ namespace Phoenix.Controls.Hub.Core
         /// Cancels active scripts and releases rate-limit semaphores. Idempotent.
         ///
         /// <para>
-        /// H3 (2026-05-14): the drain step uses <see cref="Thread.Sleep(int)"/>
+        /// The drain step uses <see cref="Thread.Sleep(int)"/>
         /// so this method is **not safe to call from the UI thread**. UI-reachable
         /// teardown paths must use <see cref="StopAsync"/>, which uses
         /// <see cref="Task.Delay(int)"/> for an awaitable drain. The sync path
@@ -394,7 +394,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (!BeginStop()) return;
 
-            // M84 — give in-flight handlers a brief window to release before disposal.
+            // Give in-flight handlers a brief window to release before disposal.
             // Without this, ObjectDisposedException can leak from awaiting `.WaitAsync` when
             // the handler races shutdown. We don't block forever; the engine's CTSes are
             // already cancelled above and that should let ongoing waits unblock.
@@ -404,7 +404,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// H3 — async variant of <see cref="Stop"/>. Replaces the
+        /// Async variant of <see cref="Stop"/>. Replaces the
         /// <see cref="Thread.Sleep(int)"/> drain with <see cref="Task.Delay(int)"/>
         /// so UI-thread shutdown paths can await teardown without blocking the
         /// dispatcher. Same observable semantics: cancel active scripts, dispose
@@ -415,7 +415,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (!BeginStop()) return;
 
-            // M84 drain — awaitable so a UI thread can yield instead of blocking.
+            // Drain — awaitable so a UI thread can yield instead of blocking.
             try { await Task.Delay(StopDrainMs).ConfigureAwait(false); }
             catch { /* shutdown best-effort */ }
 
@@ -423,7 +423,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// H3 (2026-05-14) — <see cref="IAsyncDisposable"/> hook so the Hub
+        /// <see cref="IAsyncDisposable"/> hook so the Hub
         /// shutdown path (MainWindow.Closed) can `await` ScriptManager teardown
         /// alongside the HubServices container. Routes to <see cref="StopAsync"/>
         /// so the drain step uses <see cref="Task.Delay(int)"/>, never the
@@ -463,7 +463,7 @@ namespace Phoenix.Controls.Hub.Core
             DisposeSharedConcurrencyPrimitives();
         }
 
-        // [P1 swarm-audit 2026-05-29] The static outbound-HTTP gate and the per-key
+        // The static outbound-HTTP gate and the per-key
         // RMW lock pool were never disposed — a process-lifetime resource leak (the
         // RMW pool also grows unbounded with distinct keys). ScriptManager is a Hub
         // singleton, so the Stop()/StopAsync() teardown path is the correct place to
@@ -490,7 +490,7 @@ namespace Phoenix.Controls.Hub.Core
             return BeginExecutionTracked(scriptName).Cts;
         }
 
-        // Pair-typed bag for the per-execution CTS + its tracking id (H54).
+        // Pair-typed bag for the per-execution CTS + its tracking id.
         internal readonly struct ExecutionToken
         {
             public readonly long Id;
@@ -504,7 +504,7 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // ── Script Monitor (P3) — public lifecycle hook ─────────────────────
+        // ── Script Monitor — public lifecycle hook ──────────────────────────
         // Per-script execution lifecycle telemetry consumed by ScriptMonitorWindow.
         // Fired from BeginExecutionTracked / EndExecutionTracked for the Running /
         // Finished / Error transitions, and from the OnNodeExecuted hook below for
@@ -517,7 +517,7 @@ namespace Phoenix.Controls.Hub.Core
             Finished,  // Engine returned without an unhandled fault or cancellation
             Error,     // Cancelled (timeout / manual stop) — treated as red
             Trigger,   // A non-chat trigger node fired in this script (decorative ping)
-            // QC12-04 — fired BEFORE awaiting the chat/event/webhook semaphore
+            // Fired BEFORE awaiting the chat/event/webhook semaphore
             // when the slot count is at zero. The row flips to yellow / "queued"
             // until the slot is acquired (or the 30s WaitAsync times out and the
             // script is dropped — in that case there's no follow-up phase and
@@ -537,12 +537,12 @@ namespace Phoenix.Controls.Hub.Core
 
         public event Action<ScriptLifecycleEvent>? ScriptLifecycle;
 
-        // ── Event-trigger node filter (P3 / Script Monitor) ─────────────────
+        // ── Event-trigger node filter (Script Monitor) ──────────────────────
         // Returns true when a node title corresponds to an event-trigger node
         // in the Architect graph. The engine's OnNodeExecuted hook only carries
         // the node title (not its category), so we identify trigger families
-        // by stable title prefix. The Twitch.ChatMessage exclusion is the
-        // explicit project rule from project_script_window_redesign — it would
+        // by stable title prefix. The Twitch.ChatMessage exclusion is an
+        // explicit project rule — it would
         // flood the window because every chat line fires it.
         //
         // Heuristic accepted in place of shipping NodeRegistry into the Hub:
@@ -605,7 +605,7 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // QC12-04 — Pre-wait Queued emission for the semaphore-bound script
+        // Pre-wait Queued emission for the semaphore-bound script
         // dispatch paths. Each caller previously did:
         //
         //     if (sem.CurrentCount == 0)
@@ -629,7 +629,7 @@ namespace Phoenix.Controls.Hub.Core
         private void EmitQueued(string scriptName)
             => FireLifecycle(scriptName, ScriptExecutionPhase.Queued);
 
-        // ── Script Monitor (P3) — per-script execution policy ───────────────
+        // ── Script Monitor — per-script execution policy ────────────────────
         // The picker in ScriptMonitorWindow writes here. Today only Queue is
         // actually enforced (via the existing _chatSemaphore + _eventSemaphore
         // path); Overlap and Discard are persisted in this dictionary but the
@@ -670,21 +670,21 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// B5 (audit 2026-05-24) — alias for <see cref="GetExecutionPolicy"/>
-        /// matching the audit's <c>GetPolicy</c> spelling at the UI call site.
+        /// Alias for <see cref="GetExecutionPolicy"/>
+        /// matching the <c>GetPolicy</c> spelling at the UI call site.
         /// </summary>
         public ExecutionPolicy GetPolicy(string scriptName) => GetExecutionPolicy(scriptName);
 
         /// <summary>
-        /// B5 (audit 2026-05-24) — alias for <see cref="SetExecutionPolicy"/>
-        /// matching the audit's <c>SetPolicy(name, value)</c> spelling. Returns
+        /// Alias for <see cref="SetExecutionPolicy"/>
+        /// matching the <c>SetPolicy(name, value)</c> spelling. Returns
         /// the previously-set policy.
         /// </summary>
         public ExecutionPolicy SetPolicy(string scriptName, ExecutionPolicy policy)
             => SetExecutionPolicy(scriptName, policy);
 
         /// <summary>
-        /// B5 (audit 2026-05-24) — current vs configured execution-slot usage for
+        /// Current vs configured execution-slot usage for
         /// the semaphore that gates the given script. Returns (used, total).
         /// Chat-trigger scripts (name starts with <c>on_chat</c>) gate on
         /// <see cref="_chatSemaphore"/> (cap = AppConfig.MaxConcurrentChatScripts);
@@ -733,7 +733,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             int timeoutSec = ConfigManager.Current.ScriptTimeoutSeconds;
 
-            // L70 — link the per-script CTS with the Hub-wide shutdown token so a global
+            // Link the per-script CTS with the Hub-wide shutdown token so a global
             // Cancel() propagates to in-flight execution. Two independent triggers must
             // both be able to cancel: the per-script wall-clock timeout and the Hub's
             // shutdown signal. CreateLinkedTokenSource is the standard .NET pattern;
@@ -748,7 +748,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             long id = Interlocked.Increment(ref _executionIdCounter);
             _activeCts[id] = cts;
-            // P3 — Script Monitor lifecycle ping. By the time we reach Begin the
+            // Script Monitor lifecycle ping. By the time we reach Begin the
             // semaphore slot is already taken, so this is the "Running" transition.
             FireLifecycle(scriptName, ScriptExecutionPhase.Running);
             return new ExecutionToken(id, cts, scriptName);
@@ -771,7 +771,7 @@ namespace Phoenix.Controls.Hub.Core
         private void EndExecutionTracked(ExecutionToken token)
         {
             _activeCts.TryRemove(token.Id, out _);
-            // P3 — Script Monitor lifecycle: cancellation == red, otherwise green.
+            // Script Monitor lifecycle: cancellation == red, otherwise green.
             // Unhandled exceptions are caught upstream by the catch (Exception) blocks
             // in each handler and don't propagate here; the window also subscribes to
             // GlobalLogger CriticalError entries from "ScriptEngine" to catch those.
@@ -821,7 +821,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private ScriptManager()
         {
-            // R9 — engine now takes its persistence dependency explicitly.
+            // Engine now takes its persistence dependency explicitly.
             // Hub's composition root supplies the DB singleton; the
             // parameterless ctor is reserved for test fixtures that don't
             // care about the seam.
@@ -863,7 +863,7 @@ namespace Phoenix.Controls.Hub.Core
 
             int chatLimit    = ConfigManager.Current.MaxConcurrentChatScripts    > 0 ? ConfigManager.Current.MaxConcurrentChatScripts    : int.MaxValue;
             int webhookLimit = ConfigManager.Current.MaxConcurrentWebhookScripts > 0 ? ConfigManager.Current.MaxConcurrentWebhookScripts : int.MaxValue;
-            // C16 — generic event handlers (Twitch sub/cheer, OBS, YouTube, internal event.trigger,
+            // Generic event handlers (Twitch sub/cheer, OBS, YouTube, internal event.trigger,
             // startup, bus, state-change, scheduler) used to run behind a hard-coded cap of 5.
             // Now driven by AppConfig.MaxConcurrentEventScripts (default 8) so a busy channel
             // isn't throttled into the 30s queue-then-drop cycle. 0 = unlimited.
@@ -877,13 +877,13 @@ namespace Phoenix.Controls.Hub.Core
                 ? relativeLogic
                 : Path.Combine(Paths.AppBase, relativeLogic);
 
-            // Phase 2C — forward NODE_EXEC events to Architect via Bus.
-            // L69 — wrap with AsyncErrorBoundary.SafeRunAsync so a transient bus
+            // Forward NODE_EXEC events to Architect via Bus.
+            // Wrap with AsyncErrorBoundary.SafeRunAsync so a transient bus
             // fault doesn't go silent and shutdown OperationCanceledException
             // doesn't pollute the error channel. Bare `_ = SomeAsync()` on a
             // hot per-node-execution path was unbounded and untracked.
             //
-            // Perf-review C2 (2026-05-14): gate emission on Bus.IsArchitectConnected.
+            // Gate emission on Bus.IsArchitectConnected.
             // When Architect is closed (the normal streaming case), every node-exec
             // marker still paid the JSON-serialize + UTF-8 encode + per-client foreach
             // inside BroadcastAsync even though zero subscribers matched. A busy chat
@@ -906,22 +906,21 @@ namespace Phoenix.Controls.Hub.Core
                         "DEBUG_NODE_EXEC broadcast");
                 }
 
-                // P3 — Script Monitor ping. nodeId here is actually the node TITLE
+                // Script Monitor ping. nodeId here is actually the node TITLE
                 // (the engine's "# [Node.Title]" marker format passes the title as
                 // the first arg — see ScriptEngine.cs ProcessBlock). Filter
                 // to event-trigger node titles ONLY, and explicitly drop
-                // "Twitch.ChatMessage" because it would flood the view per
-                // project_script_window_redesign.
+                // "Twitch.ChatMessage" because it would flood the view.
                 if (!string.IsNullOrEmpty(scriptFile) && IsEventTriggerNode(nodeId))
                 {
                     FireLifecycle(scriptFile, ScriptExecutionPhase.Trigger, nodeId);
                 }
             };
 
-            // P1 #1 phase 2 — forward local-scope variable writes to Architect's
+            // Forward local-scope variable writes to Architect's
             // local-vars panel. Same SafeRunAsync wrapper as DEBUG_NODE_EXEC: a
-            // bus fault must not abort the script's own hot loop. Perf-review C2:
-            // same Architect-connected gate as DEBUG_NODE_EXEC — DEBUG_VAR_SET fires
+            // bus fault must not abort the script's own hot loop.
+            // Same Architect-connected gate as DEBUG_NODE_EXEC — DEBUG_VAR_SET fires
             // per local-scope write in script execution, same firehose shape.
             _engine.OnVariableSet += (varName, value, scriptFile) =>
             {
@@ -940,7 +939,7 @@ namespace Phoenix.Controls.Hub.Core
             };
 
             RegisterHubCommands();
-            //  Async script load — no longer blocks the ctor (or
+            // Async script load — no longer blocks the ctor (or
             // whichever caller first touches the singleton). The hot path
             // Execute*Async methods await _initTask at entry to make sure
             // a dispatch arriving before the load completes still runs against
@@ -959,7 +958,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  Public gate so the bootstrapper can `await
+        /// Public gate so the bootstrapper can `await
         /// ScriptManager.InitializeAsync()` to keep splash-step ordering
         /// (i.e. ensure the registry is fully loaded before the "WIRING
         /// TRIGGERS" step that calls ExecuteOnStartupScriptsAsync). Touching
@@ -970,7 +969,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public static Task InitializeAsync() => Instance._initTask;
 
-        // T4 — many of the lambdas below are `async (args) => { …; return null; }`
+        // Many of the lambdas below are `async (args) => { …; return null; }`
         // even though their bodies don't await. The `async`-returns-Task shape is
         // what _engine.RegisterCommand expects (Func<string[], Task<string?>>);
         // keeping the keyword lets future maintainers add `await SomeAsyncCall()`
@@ -992,8 +991,8 @@ namespace Phoenix.Controls.Hub.Core
 
             // ── db.* handlers ────────────────────────────────────────────────
             // Carved into ScriptManager.Db.cs. See that file for the contract
-            // notes (M24 quote stripping in find_row, H34 RMW lock in
-            // increment_cell, H37 stale-result clearing in fetch_row).
+            // notes (quote stripping in find_row, RMW lock in
+            // increment_cell, stale-result clearing in fetch_row).
             RegisterDbCommands();
 
             // ── giveaway.* handlers ─────────────────────────────────────────
@@ -1003,7 +1002,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // ── delay / timeout primitives ──────────────────────────────────
             // Carved into ScriptManager.Delay.cs (delay / delay_seconds /
-            // timeout_check). H11 cancellation-token honoring on both delays
+            // timeout_check). Cancellation-token honoring on both delays
             // is preserved.
             RegisterDelayCommands();
 
@@ -1023,32 +1022,31 @@ namespace Phoenix.Controls.Hub.Core
             // ── twitch.* chat / channel actions ──────────────────────────────
             // Carved into ScriptManager.Twitch.cs (RegisterTwitchChatCommands).
             // send_chat / timeout / shoutout + ban / create_clip / announcement
-            // — direct chat + announcement-tier handlers. M32 500-char body cap
-            // enforced up-front on the message-bearing commands; H28 JSON-safe
+            // — direct chat + announcement-tier handlers. 500-char body cap
+            // enforced up-front on the message-bearing commands; JSON-safe
             // payload on twitch.ban.
             RegisterTwitchChatCommands();
 
-            // P4 — discord.* commands lifted into ScriptManager.Discord.cs.
+            // discord.* commands lifted into ScriptManager.Discord.cs.
             RegisterDiscordCommands();
 
             // HTTP / API commands lifted into ScriptManager.Http.cs.
             RegisterHttpCommands();
             // ── Twitch polls / predictions / rewards / redemptions ────────
             // Carved into ScriptManager.Twitch.cs. Remaining twitch.* surface
-            // (chat/timeout/shoutout, moderation, data lookups) is still inline
-            // pending further sweeps.
+            // (chat/timeout/shoutout, moderation, data lookups) is still inline.
             RegisterTwitchCommands();
 
             // ── State Machine ─────────────────────────────────────────────
             // Carved into ScriptManager.State.cs (state.set/get/exists/delete/
-            // list_keys + public.set). H17 idempotent-write contract and the
-            // BH-003 branch-result tagging are preserved.
+            // list_keys + public.set). The idempotent-write contract and the
+            // branch-result tagging are preserved.
             RegisterStateCommands();
 
             // AI commands lifted into ScriptManager.AI.cs.
             RegisterAICommands();
 
-            // L5 — text.builder dispatch stub removed in sweep 17. Sweep 8
+            // text.builder dispatch stub removed. An earlier change
             // dropped the manifest entry; the dead handler stayed because
             // VerifyCommandManifest demanded it. Now that the manifest no
             // longer advertises "text.builder", the stub is unnecessary and
@@ -1069,30 +1067,30 @@ namespace Phoenix.Controls.Hub.Core
             // here; the partial sees them through partial-class state-share.
             RegisterCooldownCommands();
 
-            // P3 — file.* commands lifted into ScriptManager.File.cs.
+            // file.* commands lifted into ScriptManager.File.cs.
             RegisterFileCommands();
 
-            // P3 — audio.* commands (play / play_tts / set_volume). Lifted into
+            // audio.* commands (play / play_tts / set_volume). Lifted into
             // ScriptManager.Audio.cs so RegisterHubCommands stays smaller; the
             // helper still binds to _engine + AudioService here in this instance.
             RegisterAudioCommands();
 
             // ── flow.* ──────────────────────────────────────────────────────
-            // Carved into ScriptManager.Flow.cs (do_once/do_n). M12
+            // Carved into ScriptManager.Flow.cs (do_once/do_n). The
             // execution-local counter contract (ephemeral, lost on engine
             // restart) and Reset truthy-set semantics preserved.
             RegisterFlowCommands();
 
             // ── Type conversion — return result ──────────────────────────
             // Carved into ScriptManager.Convert.cs (to_int/to_string/to_bool/
-            // to_float). H7 parse-fail returns "0", L7 ParseTruthy share with
+            // to_float). parse-fail returns "0", ParseTruthy share with
             // the engine's inline wrapper preserved.
             RegisterConvertCommands();
 
             // ── Array / collection ops — return result ───────────────────
             // Carved into ScriptManager.Array.cs (RegisterArrayCoreCommands).
             // make/get/length/contains/push/filter — comma-separated CSV in/out.
-            // M18 OOB clamping, M19 empty-list length, M20 ordinal-compare
+            // OOB clamping, empty-list length, and ordinal-compare
             // contracts are preserved.
             RegisterArrayCoreCommands();
 
@@ -1112,12 +1110,12 @@ namespace Phoenix.Controls.Hub.Core
             RegisterChatCommands();
 
             // ── Queue ops ───────────────────────────────────────────────────
-            // Carved into ScriptManager.Queue.cs (push/pop/length/clear). H39
-            // RMW lock on push and the H38 length-as-return-value contract are
+            // Carved into ScriptManager.Queue.cs (push/pop/length/clear). The
+            // RMW lock on push and the length-as-return-value contract are
             // preserved.
             RegisterQueueCommands();
 
-            // ── Twitch moderation / channel control proxies (P3) ─────────────
+            // ── Twitch moderation / channel control proxies ──────────────────
             // Carved into ScriptManager.Twitch.cs (RegisterTwitchModerationCommands).
             // Includes the user-only proxies (unban/mod/unmod/vip/unvip) plus
             // the dedicated mod/control handlers (delete_message, slow_mode,
@@ -1132,7 +1130,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // ── Array slice + helpers ────────────────────────────────────────
             // Carved into ScriptManager.Array.cs (RegisterArrayHelperCommands).
-            // slice/sort/shuffle/reverse/unique — CSV in/out, M18 OOB clamping
+            // slice/sort/shuffle/reverse/unique — CSV in/out, OOB clamping
             // on slice preserved.
             RegisterArrayHelperCommands();
 
@@ -1142,7 +1140,7 @@ namespace Phoenix.Controls.Hub.Core
             // result.obs_error contract, etc.).
             RegisterObsCommands();
 
-            // P0-3 (sweep 0.10.0 ) — reverse-direction manifest audit.
+            // Reverse-direction manifest check.
             // Runs BEFORE VerifyCommandManifest so the two complementary checks
             // execute as a pair at the end of the registration block. See
             // ScriptManager.ManifestVerify.cs for the full rationale; in short
@@ -1169,7 +1167,7 @@ namespace Phoenix.Controls.Hub.Core
 
             if (missing.Count > 0)
             {
-                // L36 — surface near-matches so a typo (e.g. `streamerbot.do_action`
+                // Surface near-matches so a typo (e.g. `streamerbot.do_action`
                 // vs `streamer_bot.do_action`) is obvious in the error.
                 var lines = missing.Select(name =>
                 {
@@ -1186,7 +1184,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // Stores event arguments keyed by event name for event.trigger dispatch.
-        // Bug Sweep 4 (M85) — promoted to ConcurrentDictionary because event.trigger
+        // Promoted to ConcurrentDictionary because event.trigger
         // can run from concurrent script executions; a non-thread-safe Dictionary
         // throws InvalidOperationException ("collection was modified") under load.
         internal readonly ConcurrentDictionary<string, Dictionary<string, string>> _eventArgStore = new();
@@ -1194,7 +1192,7 @@ namespace Phoenix.Controls.Hub.Core
         public async Task ExecuteEventScriptAsync(string triggerName, ChatMessage chatData,
             IReadOnlyDictionary<string, string>? extraVars = null)
         {
-            //  Wait for the async ScriptRegistry.LoadScripts kicked off
+            // Wait for the async ScriptRegistry.LoadScripts kicked off
             // in the ctor so a dispatch arriving before the load completes runs
             // against a fully-populated registry. After init this awaits
             // Task.CompletedTask and is effectively a no-op.
@@ -1209,7 +1207,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // 2. Build Context
             var vars = BuildChatVars(chatData);
-            // Audit fix — scheduler fires inject event.timestamp / event.count so the
+            // Scheduler fires inject event.timestamp / event.count so the
             // Schedule.Cron/RunAt/Recurring node payload bubbles resolve (these were
             // declared autocomplete tokens that nothing populated at runtime).
             if (extraVars != null)
@@ -1226,7 +1224,7 @@ namespace Phoenix.Controls.Hub.Core
             try
             {
                 if (!ScriptRegistry.Instance.IsEnabled(fileName)) return;
-                // Use registry's cached content (H57 — applies WaitForFileStable on first read).
+                // Use registry's cached content (applies WaitForFileStable on first read).
                 string content = await ScriptRegistry.Instance.GetContentAsync(fileName).ConfigureAwait(false);
                 if (string.IsNullOrEmpty(content)) return;
                 // This dispatch path is scheduler-only (SchedulerService.FireScriptAsync
@@ -1247,7 +1245,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] Carry the full exception (chain +
+                // Carry the full exception (chain +
                 // stack) to the ring buffer; label names the failing trigger
                 // so SystemHistory rows stay scannable.
                 GlobalLogger.Error("ScriptEngine", $"Script Error in {triggerName}", ex);
@@ -1266,7 +1264,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnChatScriptsAsync(ChatMessage chatData)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             // Shutdown-teardown guard — once BeginStop has run (or the Hub-wide shutdown
             // token is cancelled) the rate-limit semaphores are being / have been disposed.
@@ -1276,7 +1274,7 @@ namespace Phoenix.Controls.Hub.Core
             if (!Directory.Exists(_logicPath)) return;
             _lastActiveMap[chatData.Username] = DateTime.UtcNow;
 
-            // Hub_CodeReview #20 / H57 — read from the registry's cached content (loaded
+            // Read from the registry's cached content (loaded
             // once and invalidated by LogicWatcher's Refresh) instead of enumerating disk
             // for every chat message.
             //
@@ -1317,7 +1315,7 @@ namespace Phoenix.Controls.Hub.Core
                     if (_chatSemaphore.CurrentCount == 0)
                         GlobalLogger.Log($"Rate limit reached for chat scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
                     EmitQueued(fn);
-                    // BH-019 — bound the wait so a hung chat script can't head-of-line
+                    // Bound the wait so a hung chat script can't head-of-line
                     // the entire chat queue. Mirrors the 30s pattern used by the event
                     // and webhook semaphores. Drop and continue on timeout.
                     bool acquired;
@@ -1364,12 +1362,12 @@ namespace Phoenix.Controls.Hub.Core
                     {
                         _eventSemaphoreHeld.Value = savedHeld;
                         EndExecutionTracked(token);
-                        try { _chatSemaphore.Release(); } catch (ObjectDisposedException) { /* M83 */ }
+                        try { _chatSemaphore.Release(); } catch (ObjectDisposedException) { }
                     }
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Full exception (chain + stack) to ring buffer.
+                    // Full exception (chain + stack) to ring buffer.
                     GlobalLogger.Error("ScriptEngine", $"Script Error in {info.FileName}", ex);
                 }
             }
@@ -1416,7 +1414,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteGenericEventAsync(string eventType, System.Text.Json.JsonElement data)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
 
             // Track the broadcaster's own live state from the StreamOnline/Offline
@@ -1432,7 +1430,7 @@ namespace Phoenix.Controls.Hub.Core
 
             if (!Directory.Exists(_logicPath)) return;
 
-            // Audit fix — Streamer.bot raises channel-point redemptions as
+            // Streamer.bot raises channel-point redemptions as
             // "Twitch.RewardRedemption", but the Architect Twitch.PointRedeem node
             // exports on_event(Twitch.PointRedeem), so a real redemption never
             // matched a PointRedeem script. Normalize the matcher to the Phoenix
@@ -1484,7 +1482,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Label names the event type + failing script file.
+                    // Label names the event type + failing script file.
                     GlobalLogger.Error("ScriptEngine", $"Script Error ({eventType}) in {info.FileName}", ex);
                 }
             }
@@ -1496,7 +1494,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnStartupScriptsAsync()
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
 
@@ -1529,7 +1527,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Full chain + stack to ring buffer.
+                    // Full chain + stack to ring buffer.
                     GlobalLogger.Error("ScriptEngine", $"Startup script error in {info.FileName}", ex);
                 }
             }
@@ -1541,7 +1539,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnBusScriptsAsync(string busEventType, Dictionary<string, string> vars)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
 
@@ -1575,7 +1573,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Label names the bus event + failing script.
+                    // Label names the bus event + failing script.
                     GlobalLogger.Error("ScriptEngine", $"Bus script error ({busEventType}) in {info.FileName}", ex);
                 }
             }
@@ -1588,11 +1586,11 @@ namespace Phoenix.Controls.Hub.Core
         public async Task ExecuteOnWebhookScriptsAsync(string webhookName, System.Text.Json.JsonElement data,
             string? rawBody = null, string httpMethod = "POST", string? requestPath = null)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
 
-            // H20 — first matching script wins; ScriptRegistry already warned at load
+            // First matching script wins; ScriptRegistry already warned at load
             // time about duplicate webhook names so this is a deliberate "don't double-fire".
             ScriptInfo? match = null;
             foreach (var info in ScriptRegistry.Instance.WhereEnabled(s => s.WebhookNames.Contains(webhookName)))
@@ -1605,7 +1603,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // L28 — acquire the rate-limit semaphore BEFORE reading the script content
+            // Acquire the rate-limit semaphore BEFORE reading the script content
             // and building vars. Previously the file read happened first, so the
             // "queuing" log message was emitted only after a slow disk read had already
             // completed — misleading the order of events and (worse) pre-allocating
@@ -1616,7 +1614,7 @@ namespace Phoenix.Controls.Hub.Core
             if (_webhookSemaphore.CurrentCount == 0)
                 GlobalLogger.Log($"Rate limit reached for webhook scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
             EmitQueued(fn);
-            // BH-021 — bound the wait so a slow webhook can't park HTTP threads
+            // Bound the wait so a slow webhook can't park HTTP threads
             // forever. Drop with CriticalError if the cap holds for >30s; the HTTP
             // caller sees the request return without execution.
             if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
@@ -1634,7 +1632,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 var vars = BuildGenericEventVars($"Webhook.{webhookName}", data);
                 vars["webhook.name"] = webhookName;
-                // Audit fix — populate the HTTP.WebhookListener node's Body/Method/Path
+                // Populate the HTTP.WebhookListener node's Body/Method/Path
                 // output vars. Previously only webhook.name + Twitch-shaped fields were
                 // set, so {event.body}/{event.method}/{event.path} (the node's three
                 // outputs) always resolved empty. rawBody falls back to the JSON text
@@ -1645,7 +1643,7 @@ namespace Phoenix.Controls.Hub.Core
                 vars["event.path"]    = requestPath ?? $"/webhook/{webhookName}";
 
                 var token = BeginExecutionTracked(fn);
-                // H55 — save+restore EventType/ScriptFile so a stale value from a prior
+                // Save+restore EventType/ScriptFile so a stale value from a prior
                 // execution (e.g. a different webhook whose content was empty) doesn't
                 // leak into this run, and this run's value doesn't leak back out to a
                 // subsequent dispatch. Mirrors ExecuteInternalEventAsync.
@@ -1670,7 +1668,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] Label names the webhook + failing script.
+                // Label names the webhook + failing script.
                 GlobalLogger.Error("ScriptEngine", $"Webhook script error ({webhookName}) in {match.FileName}", ex);
             }
             finally
@@ -1680,7 +1678,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  — Fires every script with an on_clipboard: block when
+        /// Fires every script with an on_clipboard: block when
         /// ClipboardService receives a WM_CLIPBOARDUPDATE. Unlike hotkey /
         /// webhook, clipboard events have no discriminator — the OS doesn't
         /// differentiate by handler — so every subscriber runs in parallel
@@ -1690,7 +1688,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnClipboardScriptsAsync(string text)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
             text ??= string.Empty;
@@ -1701,7 +1699,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            //  Fan out to all subscribers concurrently. The docstring
+            // Fan out to all subscribers concurrently. The docstring
             // above advertised "every subscriber runs in parallel" but the
             // pre-fix foreach awaited each script sequentially — a slow
             // subscriber forced its successors to wait. Each task acquires its
@@ -1752,7 +1750,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Label names the failing script file.
+                    // Label names the failing script file.
                     GlobalLogger.Error("ScriptEngine", $"Clipboard script error in {info.FileName}", ex);
                 }
                 finally
@@ -1763,7 +1761,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  — Scans all .phx files for on_hotkey("Ctrl+Shift+P"):
+        /// Scans all .phx files for on_hotkey("Ctrl+Shift+P"):
         /// blocks and fires them when HotkeyService receives a WM_HOTKEY
         /// for the matching keystroke. Same rate-limit semaphore as
         /// on_webhook / on_websocket — a hotkey held down can't pile up
@@ -1771,15 +1769,15 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnHotkeyScriptsAsync(string combo)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
 
-            // QC36-12 — kept first-match-wins semantics (unlike the on_websocket
-            // change in the same sweep). Rationale: a system-wide hotkey is a
+            // Kept first-match-wins semantics (unlike on_websocket).
+            // Rationale: a system-wide hotkey is a
             // user-physical action; firing two scripts off a single keypress is
             // surprising, and the duplicate detector in ScriptRegistry now
-            // emits a Communication-tier warning per duplicate combo (QC36-08)
+            // emits a Communication-tier warning per duplicate combo
             // so the operator sees the collision at refresh time and renames
             // one. If a future workflow needs fan-out, switch this to a
             // foreach + break removal mirroring ExecuteOnWebSocketScriptsAsync.
@@ -1835,7 +1833,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] Label names the hotkey combo + script.
+                // Label names the hotkey combo + script.
                 GlobalLogger.Error("ScriptEngine", $"Hotkey script error ({combo}) in {match.FileName}", ex);
             }
             finally
@@ -1845,7 +1843,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  — Scans all .phx files for on_websocket("name"): blocks and
+        /// Scans all .phx files for on_websocket("name"): blocks and
         /// fires them when a message arrives at /ws/&lt;name&gt; on the
         /// WebSocketServerService. Mirrors the on_webhook contract: same rate
         /// limit (MaxConcurrentWebhookScripts), same 30s acquire bound, same
@@ -1853,16 +1851,16 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnWebSocketScriptsAsync(string wsName, System.Text.Json.JsonElement data)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
 
-            // QC36-12 — fan out to every matching on_websocket("name") script,
+            // Fan out to every matching on_websocket("name") script,
             // not just the first. Pre-fix the loop did `match = info; break;`
             // which silently dropped the second + onward subscribers to the
             // same path — surprising vs on_chat / on_event / on_clipboard which
             // all fan out. The new behavior is consistent with those headers
-            // and pairs with QC36-08's duplicate-detection so a user who
+            // and pairs with the duplicate-detection so a user who
             // accidentally collides gets a Communication-tier warning at
             // registry-load time; an intentional fan-out is now possible and
             // the warning is the operator's "is this on purpose?" prompt.
@@ -1912,7 +1910,7 @@ namespace Phoenix.Controls.Hub.Core
                     var vars = new Dictionary<string, string>(sharedVars);
 
                     var token = BeginExecutionTracked(fn);
-                    // H55 — save+restore EventType/ScriptFile per fan-out subscriber so
+                    // Save+restore EventType/ScriptFile per fan-out subscriber so
                     // one on_websocket script's state doesn't leak into the next iteration
                     // (or back out to the caller), keeping DEBUG_VAR_SET / NODE_EXEC markers
                     // tagged with the correct websocket name. Mirrors ExecuteInternalEventAsync.
@@ -1937,7 +1935,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Label names the WS connection + failing script.
+                    // Label names the WS connection + failing script.
                     GlobalLogger.Error("ScriptEngine", $"WebSocket script error ({wsName}) in {match.FileName}", ex);
                 }
                 finally
@@ -1953,7 +1951,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnStateChangeScriptsAsync(string stateName, string newValue, string oldValue)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
 
@@ -1993,7 +1991,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Label names the state key + failing script.
+                    // Label names the state key + failing script.
                     GlobalLogger.Error("ScriptEngine", $"State change script error ({stateName}) in {info.FileName}", ex);
                 }
             }
@@ -2004,7 +2002,7 @@ namespace Phoenix.Controls.Hub.Core
         /// "YouTube.Message", etc.) — used to route ambiguous payload fields like userInput
         /// (chat input vs reward input) and message (chat-style vs sub-style) to the right
         /// context var.</summary>
-        // QC36-05 — testability seam: was `private static`, now `internal static`
+        // Testability seam: was `private static`, now `internal static`
         // so Phoenix.Controls.Tests (covered by InternalsVisibleTo in
         // Phoenix.Controls.Hub.csproj) can round-trip each sub/gift/raid variant
         // through the var-mapping without spinning the full ScriptManager.
@@ -2033,16 +2031,16 @@ namespace Phoenix.Controls.Hub.Core
                         break;
                     }
                 }
-                // H21 — rename user.sub_tier → user.tier to align with the Subscription/GiftSub
-                // Tier socket name emitted by ScriptExporter.cs:500.
+                // Rename user.sub_tier → user.tier to align with the Subscription/GiftSub
+                // Tier socket name emitted by ScriptExporter.cs.
                 //
-                // QC36-05 — normalize tier extraction. JsonElement.ToString() on a
+                // Normalize tier extraction. JsonElement.ToString() on a
                 // string element returns the value WITHOUT the surrounding quotes
                 // for most STJ versions, BUT the pre-fix code path made
                 // {user.tier == "prime"} fragile because GetRawText would have
                 // returned the quoted form. To remove all ambiguity, branch on
                 // ValueKind: strings unwrap via GetString(); numbers ToString().
-                // Tier normalization (Majo 2026-06-03): Twitch / Streamer.bot encode the
+                // Tier normalization: Twitch / Streamer.bot encode the
                 // sub tier as "1000" / "2000" / "3000" / "Prime". The user-facing
                 // convention is 1 / 2 / 3 / prime, so we normalize at this single
                 // ingestion point — the ONLY place a tier variable is written in the Hub —
@@ -2063,7 +2061,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (data.TryGetProperty("title",       out var reward)) vars["user.reward"]      = reward.GetString() ?? "";
                 if (data.TryGetProperty("totalGifts",  out var gifts))  vars["user.total_gifts"] = gifts.ToString();
 
-                // H23 — PointRedeem userInput goes to user.input (the redeem-input socket).
+                // PointRedeem userInput goes to user.input (the redeem-input socket).
                 // For chat-style events the same field name carries the chat message body.
                 if (data.TryGetProperty("userInput", out var input))
                 {
@@ -2075,7 +2073,7 @@ namespace Phoenix.Controls.Hub.Core
                         vars["user.message"] = inputText;
                 }
 
-                // QC36-05 — route `message` into `user.message` for ALL sub-family
+                // Route `message` into `user.message` for ALL sub-family
                 // events, not just Resub. Pre-fix a first-month Sub-with-message
                 // and a GiftSub recipient acknowledgement (which Twitch lets the
                 // recipient include in their on-screen thank-you) silently lost
@@ -2088,7 +2086,7 @@ namespace Phoenix.Controls.Hub.Core
                     string msgStr = msgEl.ValueKind == System.Text.Json.JsonValueKind.String
                         ? (msgEl.GetString() ?? "")
                         : msgEl.ToString();
-                    // Audit fix — Twitch.Cheer added to the list. SB cheer events
+                    // Twitch.Cheer added to the list. SB cheer events
                     // carry the bits message in the same `message` slot, but the
                     // Cheer node's Message output (mapped to {user.message}) was
                     // never populated because Cheer was excluded here.
@@ -2101,7 +2099,7 @@ namespace Phoenix.Controls.Hub.Core
                         vars["user.message"] = msgStr;
                 }
 
-                // H22 — GiftBomb / GiftSub specific extracts. Streamer.bot uses
+                // GiftBomb / GiftSub specific extracts. Streamer.bot uses
                 // "gifter" / "recipient" / "gifts" depending on event variant; we try
                 // each likely key shape rather than baking in one assumption.
                 if (eventType.Equals("Twitch.GiftBomb", StringComparison.OrdinalIgnoreCase))
@@ -2120,7 +2118,7 @@ namespace Phoenix.Controls.Hub.Core
                     else if (data.TryGetProperty("count", out var countEl))
                         vars["user.count"] = countEl.ToString();
 
-                    // QC36-05 — propagate the isAnonymous flag for community-gift
+                    // Propagate the isAnonymous flag for community-gift
                     // bursts. SB sets "isAnonymous":true plus
                     // gifter.displayName="AnAnonymousGifter" when the gifter elected
                     // the Twitch anonymous-gift affordance. Pre-fix, scripts could
@@ -2142,7 +2140,7 @@ namespace Phoenix.Controls.Hub.Core
                     string recipient = ResolveRecipient(data);
                     if (!string.IsNullOrEmpty(recipient)) vars["user.recipient"] = recipient;
 
-                    // QC36-05 — same isAnonymous propagation as GiftBomb.
+                    // Same isAnonymous propagation as GiftBomb.
                     SetAnonymousFlag(vars, data);
                 }
             }
@@ -2150,7 +2148,7 @@ namespace Phoenix.Controls.Hub.Core
             return vars;
         }
 
-        // QC36-05 — extract the Streamer.bot `isAnonymous` field (bool, or
+        // Extract the Streamer.bot `isAnonymous` field (bool, or
         // string "true"/"false" in older SB releases) and surface it as
         // user.is_anonymous = "true" / "false". Always writes the key (default
         // "false") so script authors don't have to null-check before comparing.
@@ -2263,7 +2261,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task<Dictionary<string, string>> ExecuteInternalEventAsync(string fullEventType, Dictionary<string, string> payload)
         {
-            //  Async init gate — see ExecuteEventScriptAsync.
+            // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             // fullEventType = "Internal.GambleResult"
             var returnVars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -2282,7 +2280,7 @@ namespace Phoenix.Controls.Hub.Core
                         vars[$"event.arg.{kv.Key}"] = kv.Value;
 
                     string fn = info.FileName;
-                    //  AcquireEventSlotAsync returns Reentered when the
+                    // AcquireEventSlotAsync returns Reentered when the
                     // current async flow already holds the event semaphore (i.e.
                     // this call came from an outer event script's body via
                     // event.trigger). Re-entry skips the second acquire so a
@@ -2291,7 +2289,7 @@ namespace Phoenix.Controls.Hub.Core
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
                     if (slot == EventSlotResult.TimedOut) continue;
                     var token = BeginExecutionTracked(fn);
-                    // H55 — save+restore EventType, BusEventType, AND ScriptFile so nested
+                    // Save+restore EventType, BusEventType, AND ScriptFile so nested
                     // event.trigger calls don't leak the inner state out to the outer caller
                     // and don't tag NODE_EXEC markers with the wrong file.
                     string savedEventType    = _engine.EventType;
@@ -2332,7 +2330,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24+P1-25] Label names the internal event type + script.
+                    // Label names the internal event type + script.
                     GlobalLogger.Error("ScriptEngine", $"Internal event error ({fullEventType}) in {info.FileName}", ex);
                 }
             }
@@ -2382,7 +2380,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// Per-request header application (H31 — shared HttpClient cannot use
+        /// Per-request header application (the shared HttpClient cannot use
         /// DefaultRequestHeaders without leaking auth across concurrent calls).
         /// Headers go on the request message and the message body's content
         /// headers, depending on which header it is.
@@ -2401,7 +2399,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// L26 — manual redirect follower with cross-host header stripping.
+        /// Manual redirect follower with cross-host header stripping.
         /// Replaces the auto-redirect path the shared HttpClient previously used.
         /// On a 3xx response, builds a fresh HttpRequestMessage for the new URL,
         /// preserving the method (or GET for 303) and headers — except sensitive
@@ -2413,7 +2411,7 @@ namespace Phoenix.Controls.Hub.Core
         internal static async Task<HttpResponseMessage> SendWithManualRedirectAsync(
             HttpRequestMessage initial, CancellationToken ct, bool allowLoopback = false)
         {
-            //  SSRF gate. The initial URL and every redirect target must
+            // SSRF gate. The initial URL and every redirect target must
             // pass UrlImageCache.ValidateUrlForOutboundAsync — same allowlist /
             // blocklist the asset-proxy path uses (scheme allowlist + loopback +
             // RFC1918 + 169.254/16 cloud-metadata + IPv6 ULA reject). Without
@@ -2430,7 +2428,7 @@ namespace Phoenix.Controls.Hub.Core
             if (!preOk)
                 throw new HttpRequestException($"SSRF gate rejected {initialUrl}: {preReason}");
 
-            //  Acquire the outbound-HTTP gate before any SendAsync hop.
+            // Acquire the outbound-HTTP gate before any SendAsync hop.
             // Held across all redirect hops of this single logical request so
             // we count "one logical script HTTP call" against the cap, not
             // "one SendAsync invocation" (otherwise a redirect chain
@@ -2451,7 +2449,7 @@ namespace Phoenix.Controls.Hub.Core
                         ? resp.Headers.Location
                         : new Uri(originalHost, resp.Headers.Location);
 
-                    //  Re-validate every redirect target. A 30x that
+                    // Re-validate every redirect target. A 30x that
                     // points at 169.254.169.254 / 127.0.0.1 / 10.0.0.0/8 must
                     // be refused exactly the same way the initial URL would be.
                     // allowLoopback propagates so an Ollama-configured caller
@@ -2500,7 +2498,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             finally
             {
-                // [P1 swarm-audit 2026-05-29] Release can throw ObjectDisposedException if the
+                // Release can throw ObjectDisposedException if the
                 // semaphore was disposed during shutdown; swallow that race.
                 try { _outboundHttpSem.Release(); } catch (ObjectDisposedException) { }
             }
@@ -2517,7 +2515,7 @@ namespace Phoenix.Controls.Hub.Core
         };
 
         /// <summary>
-        /// M24 / M25 — strips a single matching pair of surrounding ASCII single
+        /// Strips a single matching pair of surrounding ASCII single
         /// or double quotes from the input. Used to normalise args that may have
         /// been emitted by the Resolve+StripQuotes path or the Materialize path,
         /// so the runtime accepts both forms identically.
@@ -2532,7 +2530,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// M20 — single source of truth for the opt-in case-insensitive flag used
+        /// Single source of truth for the opt-in case-insensitive flag used
         /// by array.contains / array.filter. Accepts the canonical truthy set plus
         /// the explicit literal "ignore_case" / "ignorecase" / "i" so callers can
         /// document intent in their script.
@@ -2548,7 +2546,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// M36 — tokenizes a JSON dot-path with `\.` (backslash-dot) escape for
+        /// Tokenizes a JSON dot-path with `\.` (backslash-dot) escape for
         /// literal dots in keys, and `\\` for a literal backslash. Examples:
         ///   "a.b.c"       → ["a", "b", "c"]
         ///   "user\.name"  → ["user.name"]
@@ -2586,7 +2584,7 @@ namespace Phoenix.Controls.Hub.Core
             yield return sb.ToString();
         }
 
-        // M34 — accept both `key:value` (manifesto) and `key=value` (legacy)
+        // Accept both `key:value` (manifesto) and `key=value` (legacy)
         // separators. The Architect template doc says `key:value` but the
         // previous parser only honored `=`, silently dropping every entry.
         private static void ParseHeaderPair(string pair, out string? key, out string? val)

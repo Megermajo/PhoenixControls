@@ -29,7 +29,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     private const string GitHubUrl = "https://github.com/" + UpdateChecker.DefaultGitHubRepo;
     private UpdateChecker? _updateChecker;
 
-    // Perf-review H4 (2026-05-14): AppWindow lives outside the Window's
+    // AppWindow lives outside the Window's
     // managed lifecycle, so its event handlers survive Window.Closed unless
     // explicitly detached. Caption-reserve + min-size handlers now flow
     // through named methods (OnAppWindowChangedClampMin /
@@ -37,8 +37,8 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     // handler — no field-captured lambdas needed for those paths.
     private AppWindow? _appWindow;
     // Defer the startup update check until after the first Loaded fire so
-    // the HTTPS round-trip doesn't compete with first-frame paint
-    // (perf-review C4). Field exists so we can detach on Close even if the
+    // the HTTPS round-trip doesn't compete with first-frame paint.
+    // Field exists so we can detach on Close even if the
     // window closes before Loaded ever fires.
     private RoutedEventHandler? _onDeferStartupUpdateCheck;
 
@@ -62,7 +62,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     // flipping ExtendsContentIntoTitleBar off. Watcher fires on HC toggle.
     private Phoenix.Controls.Hub.WinUI.Services.HighContrastWatcher? _hcWatcher;
 
-    // Sprint K — held so the lazy-construction of pillar MainViews can pass
+    // Held so the lazy-construction of pillar MainViews can pass
     // through the Hub's IHubServices (e.g. Visualist needs IHubServices.Layers
     // for live-presence dots on the LayerRail). Set by SetPanels which fires
     // before the user can click into a pillar tab.
@@ -74,7 +74,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     /// first hit) and, when openTarget is supplied, forwards the path to the
     /// pillar's Open method. Used by:
     ///   * ScriptHostMonitor.OpenInArchitectAsync (script row → Edit in Architect)
-    ///   * Hub.App.OnLaunched's --open argv parser (TODO ) — Explorer
+    ///   * Hub.App.OnLaunched's --open argv parser — Explorer
     ///     double-click on a .phxg / .phxlayer routes through here so the
     ///     right pillar comes up with the file already loaded.
     /// </summary>
@@ -87,7 +87,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             switch (kind)
             {
                 case PillarKind.Architect when _architectView is not null:
-                    //  Architect.OpenAsync replaces the deadlock-prone
+                    // Architect.OpenAsync replaces the deadlock-prone
                     // sync Open; IPillarNavigator.NavigateTo stays sync void so
                     // fire-and-forget through AsyncErrorBoundary, matching the
                     // surrounding "best-effort, log on fault" semantic.
@@ -99,13 +99,13 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                         $"NavigateTo(Architect, '{targetPath}') open failed");
                     break;
                 case PillarKind.Visualist when _visualistView is not null:
-                    // P1-A14 — This is the receiving end of the .phxlayer
+                    // This is the receiving end of the .phxlayer
                     // drop route. Architect's LogicCanvasView raises
                     // LayerFileOpenRequested → Architect.MainView's
                     // subscriber calls IPillarNavigator.NavigateTo(Visualist,
                     // openTarget: path) → lands here, which swaps the active
                     // pillar to Visualist and forwards the path to
-                    // _visualistView.Open. The audit-cited "dragdrop.unrouted
+                    // _visualistView.Open. The "dragdrop.unrouted
                     // .phxlayer" log line only fires when Architect runs
                     // outside a MainView host (e.g. headless tests).
                     _visualistView.Open(openTarget);
@@ -130,7 +130,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         DocViewerHost.Opener = DocViewerWindow.OpenOrFocus;
 
         Title = "Phoenix Controls";
-        // Custom traffic lights (redesign R2): the chrome owns min / max /
+        // Custom traffic lights: the chrome owns min / max /
         // close so we drop the system caption entirely. ExtendsContentIntoTitleBar
         // stays true so the chrome draws over the full top of the window;
         // ConfigureAppWindow then calls SetBorderAndTitleBar(true, false)
@@ -164,7 +164,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         ChromeBar.CloseClicked            += OnCloseClicked;
         ChromeBar.FileCloseRequested      += OnChromeFileCloseRequested;
 
-        // 2026-05-22 (arch-bug #ctrl-z-noop) — wire the chrome's menu
+        // Wire the chrome's menu
         // accelerators onto a window-wide scope so Ctrl+Z, Ctrl+S, Ctrl+O
         // (and the rest of the advertised chords) fire even when the user
         // hasn't opened the Edit menu yet. Pre-fix the accelerators lived
@@ -185,7 +185,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
         // Dispose the Hub workspace's panel VMs at app shutdown so they
         // unsubscribe from HubServices source events before the source
-        // backends get torn down (TODO P1 #1). Tab switching does NOT
+        // backends get torn down. Tab switching does NOT
         // dispose — _hubWorkspace stays alive for the window lifetime
         // and is re-shown on Hub-tab clicks.
         // Also tears down the UpdateChecker subscription + the chrome-bar
@@ -197,26 +197,26 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         WireUpdateChecker();
         WireSavePromptOnClose();
 
-        // M17 (2026-05-14): register the Hub Window with the activation
+        // Register the Hub Window with the activation
         // tracker so StatusDot / ScriptStatusDot pulses can pause when the
         // window is deactivated. Register must run after Content is set
         // (InitializeComponent sets the XAML root) so XamlRoot is reachable.
         WindowActivationTracker.Register(this);
 
-        //  Replay any Architect sibling windows that were open at the
+        // Replay any Architect sibling windows that were open at the
         // last clean shutdown. Best-effort, never blocks boot, faults are
         // logged + swallowed per entry.
         WireArchitectSiblingReplay();
     }
 
-    // Hub UI sweep 2026-05-22 — coordinated shutdown. Replaces the prior
+    // Coordinated shutdown. Replaces the prior
     // "fire and pray" Closed handler that scheduled ~8 SafeRunAsync calls
     // and returned immediately. Window.Closed is synchronous, so those
     // fire-and-forget tasks raced with the message-pump exit; any one of
     // them stalling (a non-cancellable WS accept-loop, an undisposed
     // Threading.Timer, the LiveCaptionService poll, ScriptManager's stop
     // drain) left Phoenix.Controls.Hub.WinUI.exe alive in Task Manager
-    // after the window vanished — the bug Majo reported on 2026-05-22.
+    // after the window vanished.
     //
     // New flow:
     //   1. Synchronous handler-detach + dispose (cheap, no thread work).
@@ -237,7 +237,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // the UI thread before the message pump exits.
         try { _hubWorkspace.Dispose(); } catch (Exception ex) { GlobalLogger.Error("MainWindow", "_hubWorkspace.Dispose", ex); }
 
-        // [bus-persist 2026-06-10] Tear down the persistent pillar bus links at
+        // Tear down the persistent pillar bus links at
         // REAL app close — this is their single Stop site. Both clients run for
         // the whole session (started in StartPillarBusLinks at launch) so the
         // bus keeps transmitting to OBS / Architect debug regardless of which
@@ -413,11 +413,11 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         });
     }
 
-    //  Multi-window Architect replay — read RecentSiblingsStore and
+    // Multi-window Architect replay — read RecentSiblingsStore and
     // re-spawn each surviving sibling once the MainWindow's content tree is
     // up. Fires once via a self-detaching Loaded handler (mirrors App.xaml.cs's
     // splash-close pattern). The store is NOT cleared after replay — sibling
-    // windows themselves Touch/Remove their entries on open/close ().
+    // windows themselves Touch/Remove their entries on open/close.
     private void WireArchitectSiblingReplay()
     {
         void RunReplay()
@@ -473,8 +473,8 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     }
 
     // Subscribe to AppWindow.Closing so unsaved Architect / Visualist work
-    // surfaces a save / discard / cancel prompt before the window goes away
-    // (TODO 2026-05-07 round 2 P0 #1). MainWindow.Closed itself doesn't
+    // surfaces a save / discard / cancel prompt before the window goes away.
+    // MainWindow.Closed itself doesn't
     // expose Cancel — AppWindow.Closing is the one that does.
     private void WireSavePromptOnClose()
     {
@@ -490,7 +490,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         _appWindow.Closing += OnAppWindowClosing;
     }
 
-    //  Three-state close gate so a re-entry between the prompt
+    // Three-state close gate so a re-entry between the prompt
     // completion and the re-issued Close() can distinguish "still asking"
     // from "already approved". Plain-bool _promptInFlight pre-fix flipped
     // back to false BEFORE Close was dispatched — a Closing fire that
@@ -506,7 +506,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
     private async void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        // H2 (2026-05-14): top-to-bottom try around the entire close handler.
+        // Top-to-bottom try around the entire close handler.
         // async void escapes to the dispatcher's unhandled-exception path —
         // a throw from the dirty scan, the args.Cancel toggle, or the
         // DispatcherQueue.TryEnqueue at the bottom would silently tear down
@@ -515,7 +515,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // else.
         try
         {
-            //  Re-issued Close after the prompts resolved — let it
+            // Re-issued Close after the prompts resolved — let it
             // pass. State stays in PromptCompleted because there is no
             // "back to idle" path: once the user has answered Save/Discard,
             // the window is going down. A fault below (handled in the catch)
@@ -594,7 +594,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
 
-        // [P1 swarm-audit 2026-05-29] AppWindow.GetFromWindowId can return null
+        // AppWindow.GetFromWindowId can return null
         // (no AppWindow backing the HWND yet on some startup paths). Bail before
         // dereferencing rather than NRE-ing through SetIcon / Changed / Presenter.
         if (_appWindow is null)
@@ -624,8 +624,8 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // pillar tab strip.
         _appWindow.Changed += OnAppWindowChangedClampMin;
 
-        // Hide the system title bar entirely — redesign R2 hands min /
-        // max / close over to the chrome's custom TrafficLightButton trio.
+        // Hide the system title bar entirely — the chrome's custom
+        // TrafficLightButton trio handles min / max / close.
         // SetBorderAndTitleBar(true, false) keeps the resize border but
         // drops the caption (and its three buttons) so they don't ghost
         // under the chrome on hover. SetTitleBar (called above) still
@@ -635,7 +635,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
         }
 
-        // Order requirement (P1-20): SetTitleBar must run AFTER _appWindow is
+        // Order requirement: SetTitleBar must run AFTER _appWindow is
         // resolved and the Presenter has suppressed the system caption — wiring
         // it before SetBorderAndTitleBar lets the system caption flash through
         // on first paint and the drag region attaches to a chrome that's still
@@ -654,7 +654,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             sender.Resize(new SizeInt32(w, h));
     }
 
-    // Custom traffic-light handlers (redesign R2) — route HubChrome's
+    // Custom traffic-light handlers — route HubChrome's
     // MinimizeClicked / MaximizeRestoreClicked / CloseClicked into the
     // AppWindow.Presenter so the buttons do what their system-caption
     // counterparts used to. Maximize / Restore is a toggle based on the
@@ -686,7 +686,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     /// Called by App.OnLaunched after HubBootstrapper.BootAsync to inject
     /// the four panels into the Hub workspace. Forwards to HubWorkspaceView
     /// rather than holding the per-region references locally — the workspace
-    /// is now an embedded UserControl swapped via MainPaneRegion (TODO.md P0 #3).
+    /// is now an embedded UserControl swapped via MainPaneRegion.
     /// </summary>
     public void SetPanels(IHubServices services, IPanelFactory factory)
     {
@@ -695,7 +695,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     }
 
     /// <summary>
-    /// [bus-persist 2026-06-10] Connect BOTH design-time pillar bus links to the
+    /// Connect BOTH design-time pillar bus links to the
     /// Hub IPC bus (:18081) at Hub launch and keep them up for the whole session.
     /// Called once from App.OnLaunchedCore after SetPanels (the bus server has
     /// already been bound by HubBootstrapper.BootAsync at that point). Both
@@ -721,7 +721,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
     private async void OnPillarTabClicked(object? sender, PillarKind kind)
     {
-        // Single-HUB collapse (TODO.md P0 #3) — pillar tabs swap MainPaneRegion
+        // Single-HUB collapse — pillar tabs swap MainPaneRegion
         // content rather than spawning sibling exes. Each pillar's MainView
         // is constructed lazily on first activation; subsequent clicks reuse
         // the same instance so VM state (open file, undo stack) survives a
@@ -776,7 +776,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             case PillarKind.Visualist:
                 if (_visualistView is null)
                 {
-                    //  Narrowed from IHubServices to ILayerRegistrySource —
+                    // Narrowed from IHubServices to ILayerRegistrySource —
                     // Visualist only consumes layer presence for the LayerRail dot,
                     // so hand it just that surface instead of the whole IHubServices
                     // bag.
@@ -805,7 +805,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
     private void OnPillarShellStateChanged(object? sender, System.EventArgs e)
     {
-        // Perf-review H1: HasThreadAccess fast-path. Pillar shell state mostly
+        // HasThreadAccess fast-path. Pillar shell state mostly
         // changes from UI-thread interactions (save, open, undo) — no need to
         // hop the dispatcher in the common case.
         void Apply() { UpdateWindowTitle(); UpdateChromeFilename(); }
@@ -823,7 +823,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     // Push the active pillar's current filename + dirty bullet into the
     // chrome bar's filename chip. The chip used to stay empty for both
     // editor pillars — only Architect's pillar-local chrome (collapsed
-    // post-T15) wrote it (TODO 2026-05-07 round 2 P2).
+    // post-T15) wrote it.
     private void UpdateChromeFilename()
     {
         IPillarShellHost? host = _activePillar switch
@@ -842,7 +842,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         if (host.IsDirty) name = "• " + name;
         ChromeBar.FileName = name;
 
-        // 0.11.x polish — gate the close-X visibility on whether the active
+        // Gate the close-X visibility on whether the active
         // pillar has a real document to close. Hub itself is never a "file
         // host" surface so the affordance stays hidden when Hub is active.
         bool hasDoc = _activePillar switch
@@ -855,7 +855,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     }
 
     /// <summary>
-    /// 0.11.x polish — HubChrome's close-X fires this when the user clicks it.
+    /// HubChrome's close-X fires this when the user clicks it.
     /// Dispatches to the active pillar's CloseCurrentDocumentAsync, which
     /// honours the dirty-prompt path. Faults log to GlobalLogger; the void
     /// signature keeps the event-handler contract simple.
@@ -979,7 +979,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
     // ── Menu wire-up ─────────────────────────────────────────────────────
     // Dispatches on the stable Menu / Item *tokens* the chrome emits
-    // (TODO P0 #2 follow-up — the previous switch on user-facing English
+    // (the previous switch on user-facing English
     // labels broke as soon as the chrome ran through Localizer.T).
     private void OnMenuItemInvoked(object? sender, MenuItemInvokedEventArgs e)
     {
@@ -1070,24 +1070,24 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             case "visualist.view.layerCanvas":         _visualistView.ShowLayerCanvas(); break;
             case "visualist.view.widgetEditor":        _visualistView.ShowWidgetEditor(); break;
             case "visualist.help.compositorReference": _visualistView.ShowCompositorReference(); break;
-            // B26 (audit/winui-regressions-2026-05-24) — Window → New
+            // Window → New
             // Visualist Window. Routes through the Visualist window
             // registry so the new sibling is registered + activated; the
             // Hub-embedded MainView continues to live in the pillar-tab
             // region. Fire-and-forget the returned Task — the sibling
             // owns its own lifecycle.
             case "visualist.window.new":               _ = _visualistView.OpenNewWindowAsync(); break;
-            // C3 (audit/winui-regressions-2026-05-24) — Window → Preset Gallery.
+            // Window → Preset Gallery.
             // Opens a non-modal sibling window listing every built-in
             // WidgetPreset; Apply routes through VisualistViewModel.ApplyPreset.
             case "visualist.window.presetGallery":     _visualistView.OpenPresetGallery(); break;
-            // Sprint C — Tools → Media Library (CHANGELOG 0.6.4 affordance
+            // Tools → Media Library (CHANGELOG 0.6.4 affordance
             // restored). Fire-and-forget the Task; the dialog's lifecycle
             // is owned by the ContentDialog itself.
             case "visualist.tools.mediaLibrary":       _ = _visualistView.ShowMediaLibraryAsync(); break;
-            // Visualist regression audit 2026-05-31, Lane E — File ▸ Import Media (Ctrl+I)
+            // File ▸ Import Media (Ctrl+I)
             // and Window ▸ Switch. The MainView command methods are present; these two
-            // dispatch cases were the missing wiring (MainWindow is outside the lane's edit scope).
+            // dispatch cases were the missing wiring.
             case "visualist.file.importMedia":         _ = _visualistView.ImportMediaAsync(); break;
             case "visualist.window.switch":            _ = _visualistView.ShowWindowSwitcherAsync(); break;
             default:
@@ -1118,7 +1118,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
     private void HandleViewMenu(string item)
     {
-        // B43 (audit/winui-regressions-2026-05-24) — EventLog has no fixed
+        // EventLog has no fixed
         // slot in the 4-pane grid; clicking View → Event Log opens it in a
         // new pop-out window. Out-of-band path so we don't have to expand
         // the PopOutKind enum + state-restore plumbing for a panel the
@@ -1131,7 +1131,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             return;
         }
 
-        // C16 (audit/winui-regressions-2026-05-24) — "Recent Webhooks" tail
+        // "Recent Webhooks" tail
         // panel, out-of-band of the 4-pane workspace grid (same shape as
         // eventLog above). Each click spawns a fresh pop-out window whose
         // VM subscribes to HUDServer.OnWebhookFired.
@@ -1172,7 +1172,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 _ = ShowSettingsAsync();
                 break;
             case "documentation":
-                // Sprint D — in-app documentation. Replaces the pre-Sprint-D
+                // In-app documentation. Replaces the previous
                 // Process.Start of the GitHub README with a singleton-ish
                 // WinUI 3 Window driven by HubFeatureRegistry. Subsequent
                 // Tools → Documentation clicks activate the existing window
@@ -1190,7 +1190,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         switch (item)
         {
             case "about":
-                // C10 (audit/winui-regressions-2026-05-24) — pre-fix Help →
+                // Pre-fix Help →
                 // About only logged the version line. Open the proper About
                 // dialog instead; the System Log line is kept as a fallback
                 // breadcrumb so a missing XamlRoot still leaves a trace.
@@ -1349,13 +1349,13 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
         if (!ConfigManager.Current.UpdateCheckOnStartup) return;
 
-        // Perf-review C4 (2026-05-14): defer the eager GitHub HTTPS round-trip
+        // Defer the eager GitHub HTTPS round-trip
         // until after the first Loaded fire so it doesn't compete with
         // first-frame paint and panel inflation. ChromeBar fires Loaded once
         // the visual tree is up; wrap with a one-shot self-detach so the
         // check doesn't re-run on theme/visual reloads. The old code wrapped
         // CheckAsync in an extra `async () => { _ = await ... }` closure plus
-        // ConfigureAwait(false) — neither did anything useful (perf-review L17/L18).
+        // ConfigureAwait(false) — neither did anything useful.
         _onDeferStartupUpdateCheck = null;
         _onDeferStartupUpdateCheck = (sender, args) =>
         {

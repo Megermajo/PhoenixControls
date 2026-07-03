@@ -36,8 +36,8 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     private LayerDocument? _document;
 
     // Per-layer document cache so the undo / redo stack survives a layer
-    // round-trip (TODO 2026-05-07 round 2 P1 — undo dropped on every layer
-    // switch). Keyed by absolute path. LRU-bounded at 5 entries — past that,
+    // round-trip (undo was dropped on every layer switch otherwise). Keyed by
+    // absolute path. LRU-bounded at 5 entries — past that,
     // the oldest layer's in-memory document is dropped (any saved file on
     // disk is unaffected; a re-select re-loads from disk into a fresh
     // document with empty undo).
@@ -45,12 +45,12 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     private readonly Dictionary<string, LayerDocument> _layerCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<string> _layerCacheLru = new();
 
-    // R11 — auto-save-on-edit preference bridge. Subscribed in the ctor so a
+    // Auto-save-on-edit preference bridge. Subscribed in the ctor so a
     // runtime flip of VisualistUserConfig.AutoSyncOnEdit re-applies to the live
     // document + every cached document; dropped in Dispose.
     private readonly Action _onUserConfigChanged;
 
-    // NAMED ITEM #3 — re-entrancy guard for the synthetic "(unsaved)" rail row.
+    // Re-entrancy guard for the synthetic "(unsaved)" rail row.
     // Selecting that row sets SelectedLayerItem, whose setter calls
     // LoadSelectedLayer → BindDocumentForPath. For a real file that's correct,
     // but the synthetic row has NO file (empty Path) and stands in for the
@@ -67,14 +67,14 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception ex) { GlobalLogger.Error("VisualistViewModel", "ctor config subscribe", ex); }
     }
 
-    // R11 — push the auto-save preference onto a document as it's bound.
+    // Push the auto-save preference onto a document as it's bound.
     private static void ApplyUserPrefs(LayerDocument doc)
     {
         try { doc.AutoSyncEnabled = Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance.AutoSyncOnEdit; }
         catch (Exception ex) { GlobalLogger.Error("VisualistViewModel", "ApplyUserPrefs", ex); }
     }
 
-    // R11 — re-apply the flag when the user toggles it at runtime. Touches only
+    // Re-apply the flag when the user toggles it at runtime. Touches only
     // a bool on each document (no UI), so it's safe off the UI thread.
     private void OnUserConfigChanged()
     {
@@ -95,7 +95,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         get => _document;
         private set
         {
-            // [P2 audit] Same-value race guard. Unsubscribing BEFORE Set() decided
+            // Same-value race guard. Unsubscribing BEFORE Set() decided
             // whether the value changed meant a duplicate-value assignment
             // (Document = sameDoc) dropped the OnChanged subscription and never
             // re-added it (Set returns false → the re-subscribe block is skipped),
@@ -109,7 +109,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                 if (value is { } d)
                 {
                     d.OnChanged += OnDocumentChanged;
-                    // R11 — apply the auto-save-on-edit preference to every document
+                    // Apply the auto-save-on-edit preference to every document
                     // as it's bound (the single chokepoint covering New / Open / rail
                     // select / SaveAs paths). Pre-fix nothing ever set AutoSyncEnabled,
                     // so the engine's tested auto-save never fired from the UI.
@@ -118,12 +118,12 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(SelectedLayer));
                 OnPropertyChanged(nameof(IsDirty));
                 OnPropertyChanged(nameof(ActiveLayerFileName));
-                // Track A — a graph rebind invalidates any inspector node selection;
+                // A graph rebind invalidates any inspector node selection;
                 // the new document owns different node instances.
                 SelectedNode = null;
                 SelectedWidget = value?.Layer.Widgets.FirstOrDefault();
 
-                // NAMED ITEM #3 — keep the rail in sync with the bound document's
+                // Keep the rail in sync with the bound document's
                 // saved/unsaved state. A document with no FilePath has no row in
                 // Layers (which only enumerates disk files), so the rail would be
                 // empty on an installed build whose data dir holds no .phxlayer —
@@ -136,7 +136,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    // NAMED ITEM #3 — ensure exactly one synthetic "(unsaved)" row exists at the
+    // Ensure exactly one synthetic "(unsaved)" row exists at the
     // top of Layers iff the bound document is in-memory only (no FilePath).
     // Selecting it is done under _settingSyntheticRow so LoadSelectedLayer
     // doesn't try to reload the (path-less) row from disk.
@@ -194,7 +194,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         {
             if (Set(ref _selectedWidget, value))
             {
-                // Track A — switching widgets switches graphs; drop the stale
+                // Switching widgets switches graphs; drop the stale
                 // inspector node selection so it can't bind to a node from the
                 // previous widget's graph.
                 SelectedNode = null;
@@ -219,7 +219,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(WidgetEditorTabLabel));
                 OnPropertyChanged(nameof(ActiveTriggerObject));
                 OnPropertyChanged(nameof(ActiveTriggerDurationLabel));
-                // Track A — the per-param keyframe state is read off the active
+                // The per-param keyframe state is read off the active
                 // trigger's timeline; re-evaluate it against the new trigger so
                 // the inspector diamonds reflect the right track set.
                 RefreshNodeParamAnimatedState();
@@ -235,7 +235,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     /// Re-fires the property-changed signals that drive the timeline editor's
     /// repaint. Called by callers that mutate the active trigger's
     /// <see cref="WidgetTimeline"/> in place — e.g. the right-click pin →
-    /// Animate gesture in WidgetGraphCanvas () — so the keyframe
+    /// Animate gesture in WidgetGraphCanvas — so the keyframe
     /// strip and duration label refresh without forcing a full Document
     /// rebind.
     /// </summary>
@@ -245,10 +245,10 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(ActiveTriggerDurationLabel));
     }
 
-    // ─── Track A — typed per-node inspector ──────────────────────────────
+    // ─── Typed per-node inspector ────────────────────────────────────────
     //
     // The widget-graph canvas raises OnSelectedNodeChanged; WidgetEditorView
-    // (Agent3) routes that here. Setting SelectedNode rebuilds the typed
+    // routes that here. Setting SelectedNode rebuilds the typed
     // parameter list (SelectedNodeParams) the Inspector's NODE section binds
     // to. Selecting nothing clears the list. Every NodeParamVm.Commit and the
     // per-param keyframe toggle route back through this VM's single
@@ -670,7 +670,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Bug #3/B — raised when a node-BODY inline pill commits a value
+    /// Raised when a node-BODY inline pill commits a value
     /// (WidgetGraphCanvas.OnNodeAttributeCommitted). Distinct from
     /// <see cref="NodeParamCommitted"/> (which fires for right-pane INSPECTOR
     /// edits) so the two directions never cross-fire — the Inspector listens to
@@ -737,7 +737,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>
     /// BUILD LOGIC — turn the selected node's template + live attributes into a
-    /// set of typed <see cref="NodeParamVm"/>. See the Track A spec: skip the
+    /// set of typed <see cref="NodeParamVm"/>: skip the
     /// <c>__Range</c>/<c>__KnownValues</c> companion keys; map each real key to
     /// a control kind via the template input socket (falling back to
     /// value/special-case inference); collapse <c>Vector*.Constant</c>'s
@@ -906,7 +906,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         // upstream value at evaluation; the attr is only the fallback the compositor
         // uses when the pin is unwired.)
         //
-        // [inspector-dup 2026-06-23] PASS 2 used to surface a param for EVERY
+        // PASS 2 used to surface a param for EVERY
         // unmatched input socket — which produced the "no-op duplicate" rows Majo
         // reported across the Fusion image-op nodes (not just Image.Transform). Two
         // classes leaked:
@@ -1077,7 +1077,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    // ─── Track A — value parsing / serialization helpers ─────────────────
+    // ─── value parsing / serialization helpers ───────────────────────────
     //
     // These mirror the attribute-value conventions the canvas + NodeTemplates
     // use: scalars / vector components are stored BARE ("1.0", "0"); Color and
@@ -1199,7 +1199,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     private double _playheadMs;
     /// <summary>
     /// Current scrub position in milliseconds for the active trigger's
-    /// timeline. Driven by the WidgetEditorView scrubber (sprint D); read by
+    /// timeline. Driven by the WidgetEditorView scrubber; read by
     /// any future preview surface that wants to render at the scrub point.
     /// Not persisted to .phxlayer — purely an editor-session value.
     /// </summary>
@@ -1245,12 +1245,12 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
             ? $"widget · {_activeTrigger}"
             : $"{_selectedWidget.Name} · {_activeTrigger}";
 
-    // ─── live-presence wiring (Sprint K) ─────────────────────────────────
+    // ─── live-presence wiring ────────────────────────────────────────────
     //
     // Hub's LayerRegistry tracks per-layer browser-source connection presence.
     // The MainView attaches an ILayerRegistrySource here at construction so
     // the LayerRail's per-row dot reflects which layers are actually being
-    // rendered by an OBS browser instead of the pre-Sprint-K hardcoded green.
+    // rendered by an OBS browser instead of a hardcoded green.
     //
     // Threading: LayerRegistry.LiveLayerChanged fires from the WS accept /
     // close path, NOT the UI thread. We capture the UI DispatcherQueue at
@@ -1352,7 +1352,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         Layers.Clear();
 
         string folder = Paths.HubLayers;
-        // P2 audit (folder-missing fallback): mirror Hub's behaviour and create
+        // Folder-missing fallback: mirror Hub's behaviour and create
         // the layers folder if it's absent rather than leaving the rail silently
         // empty with no recovery path. Directory.CreateDirectory is a no-op when
         // the folder already exists. Paths is Shared.Core, so this stays inside
@@ -1378,14 +1378,14 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
             if (item is not null) Layers.Add(item);
         }
 
-        // Sprint K — fresh rows come in with Active=false; if a live source
+        // Fresh rows come in with Active=false; if a live source
         // is attached, seed each row's true state before the rail repaints.
         SeedActiveFromSource();
 
         ReselectAfterEnumeration();
     }
 
-    // NAMED ITEM #3 / P2 — re-establish the rail selection after Layers was
+    // Re-establish the rail selection after Layers was
     // rebuilt by enumeration. Keeps an unsaved in-memory document visible (its
     // saved row would not exist on disk) by re-synthesizing the "(unsaved)" row;
     // otherwise selects the disk row matching the open document, falling back to
@@ -1425,7 +1425,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         SelectedLayerItem = Layers.FirstOrDefault();
     }
 
-    // M32 (2026-05-14): two-phase enumeration split so the .phxlayer disk
+    // Two-phase enumeration split so the .phxlayer disk
     // scan can run on a worker thread (PrefetchLayerListItems) while the
     // ObservableCollection mutation stays on the UI thread (ApplyPrefetched).
     // Tied to MainView.InitializeAsync — non-WinUI consumers should keep
@@ -1433,7 +1433,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     private IReadOnlyList<LayerListItem>? _prefetchedItems;
 
     /// <summary>
-    /// M32 prefetch step — enumerates <c>data/layers/</c> and deserialises
+    /// Prefetch step — enumerates <c>data/layers/</c> and deserialises
     /// each .phxlayer on the calling thread (typically a Task.Run worker).
     /// Pure I/O; touches no WinUI dispatcher state.
     /// </summary>
@@ -1453,7 +1453,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// M32 apply step — moves the prefetched list into <see cref="Layers"/>
+    /// Apply step — moves the prefetched list into <see cref="Layers"/>
     /// on the UI thread, then runs the SeedActiveFromSource + initial
     /// selection that <see cref="RefreshLayers"/> would have. Falls back to
     /// the synchronous RefreshLayers when no prefetch is staged.
@@ -1470,7 +1470,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         Layers.Clear();
         foreach (var item in items) Layers.Add(item);
         SeedActiveFromSource();
-        // NAMED ITEM #3 — same selection logic as RefreshLayers: keep an unsaved
+        // Same selection logic as RefreshLayers: keep an unsaved
         // active document's synthetic row, otherwise reselect the open doc's disk
         // row or fall back to the first.
         ReselectAfterEnumeration();
@@ -1481,7 +1481,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             Layer layer = LayerSerializer.Read(path);
-            // Sprint K — Active seeds to false; if an ILayerRegistrySource is
+            // Active seeds to false; if an ILayerRegistrySource is
             // attached it will overwrite via Initialize/seed. Without one
             // (design-time / fakes) the dot stays inactive, which is the
             // honest answer when there is no live Hub presence to query.
@@ -1501,7 +1501,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
 
     private void LoadSelectedLayer()
     {
-        // NAMED ITEM #3 — selecting the synthetic "(unsaved)" row must NOT reload
+        // Selecting the synthetic "(unsaved)" row must NOT reload
         // from disk: it has no file and stands in for the already-bound in-memory
         // document. Re-binding from its empty Path would throw / clobber the doc.
         // The flag covers programmatic selection; the IsUnsaved check covers a
@@ -1527,7 +1527,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// R12 — cache-aware bind for an absolute layer path. A cache hit re-binds
+    /// Cache-aware bind for an absolute layer path. A cache hit re-binds
     /// the in-memory document (preserving its undo/redo stacks and any unsaved
     /// edits); a miss opens from disk, seeds the LRU, and evicts past the cap.
     /// <para>
@@ -1563,7 +1563,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         {
             string drop = _layerCacheLru.Last!.Value;
             _layerCacheLru.RemoveLast();
-            // R3 (audit 2026-06-03): dispose the evicted document so its auto-save timer
+            // Dispose the evicted document so its auto-save timer
             // doesn't leak. The current Document is always LRU-first, never the evicted
             // Last — the ReferenceEquals guard is belt-and-suspenders.
             if (_layerCache.TryGetValue(drop, out var evicted))
@@ -1577,7 +1577,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    // R30 — never silently lose unsaved work when a cached document is dropped.
+    // Never silently lose unsaved work when a cached document is dropped.
     // LRU eviction (editing >5 distinct layers in a session) and pillar-tab
     // teardown previously Dispose()d cached documents outright — so a dirty layer
     // the user had switched away from lost its edits with NO prompt (auto-save
@@ -1640,7 +1640,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     public void NewLayer()
     {
-        // NAMED ITEM #3 — the Document setter synthesizes the "(unsaved)" rail
+        // The Document setter synthesizes the "(unsaved)" rail
         // row and selects it (the new doc has no FilePath), so the rail shows the
         // freshly-created layer immediately instead of going blank. Do NOT null
         // out _selectedLayerItem afterwards — that would clobber the synthetic
@@ -1650,7 +1650,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// C12 (audit/winui-regressions-2026-05-24) — new empty layer with the
+    /// New empty layer with the
     /// caller-supplied <paramref name="name"/> / <paramref name="preset"/> /
     /// resolution. Used by <c>MainView.OnNewLayer</c> after the
     /// <see cref="Dialogs.NewLayerDialog"/> resolves; lets the user pick
@@ -1665,7 +1665,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
             Resolution = new LayerResolution { Width = Math.Max(1, width), Height = Math.Max(1, height) },
             Preset     = preset,
         };
-        // NAMED ITEM #3 — as with the no-arg overload, the Document setter
+        // As with the no-arg overload, the Document setter
         // synthesizes + selects the "(unsaved)" rail row for this path-less doc,
         // so the new layer is visible in the rail right away. Don't reset the
         // selection here.
@@ -1678,7 +1678,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            // R12 — route through the LRU cache (was a bare Open that dropped
+            // Route through the LRU cache (was a bare Open that dropped
             // undo history + risked discarding unsaved edits on re-open).
             BindDocumentForPath(path);
             // Reflect into the rail if the path is one we enumerated.
@@ -1768,7 +1768,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                 // document now has a FilePath, so the real row replaces the
                 // synthetic "(unsaved)" one with no leftover duplicate.
                 //
-                // [P2 audit] Defensive: if the just-saved file somehow isn't in
+                // Defensive: if the just-saved file somehow isn't in
                 // the enumeration (case-sensitivity on a future *nix port, a
                 // racing external delete, etc.), construct the row from disk and
                 // select it through the BACKING FIELD set so the property's
@@ -1836,13 +1836,13 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// C3 (audit/winui-regressions-2026-05-24) — apply a built-in widget
+    /// Apply a built-in widget
     /// preset to either an existing target widget or a newly-spawned one.
     /// <para>
     /// The "preset gallery" surface currently exposes the built-in
     /// <see cref="WidgetPreset"/> enum (Image / Video / Text / Audio /
     /// WebSource / Particles / Chat / CC). User-authored "save as preset"
-    /// is out of audit scope — when that ships, this method's signature
+    /// is out of scope for now — when that ships, this method's signature
     /// shifts to take a preset id string and resolves through a disk
     /// catalogue instead.
     /// </para>
@@ -2037,10 +2037,10 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// B34 (audit 2026-05-24) — deep-clone the named trigger (graph + timeline)
+    /// Deep-clone the named trigger (graph + timeline)
     /// and append it to the current widget. The clone is named
     /// <c>onTrigger:&lt;identifier&gt;_copy</c> (or _copy2 / _copy3 / … if
-    /// collisions exist) — underscore rather than the hyphen the audit specced,
+    /// collisions exist) — underscore rather than a hyphen,
     /// because <see cref="WidgetTrigger.Name"/> rejects identifiers that don't
     /// match <c>^(onStartup|onTrigger:[A-Za-z][A-Za-z0-9_]*)$</c> and would
     /// silently drop "trigger-copy". <see cref="ActiveTrigger"/> snaps to the
@@ -2123,13 +2123,13 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// B34 — shift the named trigger one slot toward the start of the tab
+    /// Shift the named trigger one slot toward the start of the tab
     /// strip. No-op when the trigger is already first or not found.
     /// </summary>
     public bool MoveTriggerLeft(string triggerName) => MoveTrigger(triggerName, -1);
 
     /// <summary>
-    /// B34 — shift the named trigger one slot toward the end of the tab
+    /// Shift the named trigger one slot toward the end of the tab
     /// strip. No-op when the trigger is already last or not found.
     /// </summary>
     public bool MoveTriggerRight(string triggerName) => MoveTrigger(triggerName, +1);
@@ -2164,7 +2164,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// B34 — reorder via direct index. Used by drag-to-reorder in the trigger
+    /// Reorder via direct index. Used by drag-to-reorder in the trigger
     /// tab strip when the source tab is dropped on a different position.
     /// No-op when either index is out of range or they're equal.
     /// </summary>
@@ -2310,7 +2310,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// R36 — move the selected widget one slot toward the front (<paramref
+    /// Move the selected widget one slot toward the front (<paramref
     /// name="dir"/> = +1) or back (-1) in z-order, swapping ZIndex with its
     /// immediate neighbour. No-op at the extremes. Single-step parity with the
     /// pre-WinUI Ctrl+] / Ctrl+[ chords.
@@ -2344,14 +2344,14 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// R36 — bring a set of widgets to the front as a group, preserving their
+    /// Bring a set of widgets to the front as a group, preserving their
     /// relative order. Used by the layer-canvas To-Front command when more than
     /// one widget is multi-selected.
     /// </summary>
     public void BringWidgetsToFront(IReadOnlyCollection<LayerWidget> widgets)
         => RestackGroup(widgets, toFront: true);
 
-    /// <summary>R36 — send a set of widgets to the back as a group.</summary>
+    /// <summary>Send a set of widgets to the back as a group.</summary>
     public void SendWidgetsToBack(IReadOnlyCollection<LayerWidget> widgets)
         => RestackGroup(widgets, toFront: false);
 
@@ -2394,12 +2394,12 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         // Whole-invoke guard (NOT per-handler GetInvocationList) — this fires on
         // every property change (40+ sites), so we must not allocate per raise.
         // A throwing binding subscriber would otherwise unwind into and kill the
-        // UI dispatcher. (Crash-proofing R1, audit 2026-06-03.)
+        // UI dispatcher.
         try { PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name)); }
         catch (Exception ex) { GlobalLogger.Error("VisualistViewModel", "PropertyChanged", ex); }
     }
 
-    // [P1 swarm-audit 2026-05-29] resource-leak: the Document setter already
+    // The Document setter already
     // unsubscribes the OLD document's OnChanged before binding the new one, but
     // the LAST-held document and the layer-presence source were never detached on
     // teardown. Dispose drops both so a pillar-tab close (MainView.Unloaded)
@@ -2407,7 +2407,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     // ILayerRegistrySource.LiveLayerChanged.
     public void Dispose()
     {
-        // R11 — drop the user-config subscription so a pillar-tab close doesn't
+        // Drop the user-config subscription so a pillar-tab close doesn't
         // leak the VM through VisualistUserConfig.OnChanged.
         try { Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance.OnChanged -= _onUserConfigChanged; }
         catch (Exception ex) { GlobalLogger.Error("VisualistViewModel", "Dispose config unsubscribe", ex); }
@@ -2421,10 +2421,10 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
             }
         }
         DetachLayerSource();
-        // R3 (audit 2026-06-03): dispose every cached LayerDocument so their auto-save
+        // Dispose every cached LayerDocument so their auto-save
         // timers don't leak when the pillar tab closes. Previously only the live
         // document was detached; the LRU document cache leaked its timers.
-        // R30: flush dirty cached docs to disk before disposing so a pillar-tab
+        // Flush dirty cached docs to disk before disposing so a pillar-tab
         // close doesn't silently drop edits on layers the user switched away from.
         // The active _document's close prompt is handled by MainView; dispose it
         // plainly here (don't double-flush it).
@@ -2445,7 +2445,7 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     }
 }
 
-// ─── Track A — typed per-node inspector contract ─────────────────────────
+// ─── Typed per-node inspector contract ───────────────────────────────────
 //
 // MVVM CONTRACT (must stay byte-identical with the InspectorPanel XAML
 // bindings — cross-file binding-name drift is the #1 WinUI bug source).

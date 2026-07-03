@@ -29,7 +29,7 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>
         /// Cached file content. Populated lazily on first read and cleared
-        /// whenever the watcher's Refresh fires for this file (Hub_CodeReview #20).
+        /// whenever the watcher's Refresh fires for this file.
         /// Hot paths (on_chat / on_event / on_webhook scans) read this rather than
         /// re-opening every .phx for every event.
         /// </summary>
@@ -48,23 +48,23 @@ namespace Phoenix.Controls.Hub.Core
         public HashSet<string>  WebhookNames       { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string>  StateChangeNames   { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string>  BusEventTypes      { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-        //  — WS.Server event-trigger node. Same shape as WebhookNames:
+        // WS.Server event-trigger node. Same shape as WebhookNames:
         // each on_websocket("name"): block declares a path the WebSocketServerService
         // exposes at /ws/<name>; matching scripts fire when a client message lands.
         public HashSet<string>  WebSocketNames     { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-        //  — System.Hotkey event-trigger. Each on_hotkey("Ctrl+Shift+P"):
+        // System.Hotkey event-trigger. Each on_hotkey("Ctrl+Shift+P"):
         // block declares a system-wide keystroke that HotkeyService binds via
         // Win32 RegisterHotKey at script-load time. Unbound on script disable /
         // reload so the OS never holds a hotkey for a script that isn't
         // currently subscribed.
         public HashSet<string>  HotkeyBindings     { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-        //  — System.Clipboard event-trigger. Bool flag rather than a
+        // System.Clipboard event-trigger. Bool flag rather than a
         // name set: clipboard updates are global (the OS doesn't differentiate
         // by handler), so the script either subscribes via `on_clipboard:` or
         // it doesn't. ClipboardService fires every script whose flag is set
         // on each WM_CLIPBOARDUPDATE.
         public bool             HasClipboardHeader { get; set; }
-        // B38 — OBS WS v5 event-type subscriptions. Each on_obs("EventType"):
+        // OBS WS v5 event-type subscriptions. Each on_obs("EventType"):
         // block declares an OBS event the containing script wants to react to.
         // ObsWebSocketClient pushes inbound events through
         // ScriptManager.DispatchObsEvent which fans across every script whose
@@ -107,7 +107,7 @@ namespace Phoenix.Controls.Hub.Core
         private string _statesPath  = "";
         private string _logicPath   = "";
 
-        //  LoadScripts can now be invoked concurrently — the
+        // LoadScripts can now be invoked concurrently — the
         // ScriptManager ctor kicks an async copy off the thread pool, and the
         // bootstrapper still issues its own explicit call once the resolved
         // logic path is known. Two concurrent `_scripts.Clear()` + populate
@@ -141,7 +141,7 @@ namespace Phoenix.Controls.Hub.Core
 
         public void LoadScripts(string logicPath)
         {
-            //  Serialise concurrent LoadScripts invocations. The lock
+            // Serialise concurrent LoadScripts invocations. The lock
             // is briefly held across the full populate so a reader iterating
             // _scripts.Values mid-load sees the prior state, not a half-cleared
             // one. ConcurrentDictionary makes the per-entry writes safe; the
@@ -166,7 +166,7 @@ namespace Phoenix.Controls.Hub.Core
                 string name = Path.GetFileName(file);
                 saved.TryGetValue(name, out var s);
 
-                // Inefficiency #20 — cold-start warmup. Eagerly populate Content
+                // Cold-start warmup. Eagerly populate Content
                 // and the header index here so the first dispatch post-startup is
                 // a dictionary lookup, not a synchronous WaitForFileStable +
                 // File.ReadAllText round-trip on the chat / event hot path. If
@@ -200,7 +200,7 @@ namespace Phoenix.Controls.Hub.Core
                 _scripts[name] = info;
             }
 
-            // H20 / QC36-08 — duplicate header-name detection. Two .phx files
+            // Duplicate header-name detection. Two .phx files
             // sharing the same on_webhook / on_websocket / on_hotkey name
             // collide on dispatch (silent fan-out for webhooks, silent drop for
             // websocket/hotkey first-match paths); warn at registry-load time
@@ -315,7 +315,7 @@ namespace Phoenix.Controls.Hub.Core
                 _scripts.TryRemove(key, out _);
             }
 
-            // QC36-08 — generalized duplicate scan covers webhook + websocket + hotkey.
+            // Generalized duplicate scan covers webhook + websocket + hotkey.
             DetectDuplicateHeaderNames();
 
             SafeEvent.Raise(OnChanged, "ScriptRegistry", "OnChanged");
@@ -324,7 +324,7 @@ namespace Phoenix.Controls.Hub.Core
         /// <summary>
         /// Returns the cached .phx contents, lazily reading from disk on first access.
         /// Applies WaitForFileStable so partial writes from Architect's exporter don't
-        /// reach the engine (H57). Header index is populated alongside.
+        /// reach the engine. Header index is populated alongside.
         /// </summary>
         public async Task<string> GetContentAsync(string fileName)
         {
@@ -382,23 +382,23 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly Regex _rxOnWebhook    = new(@"^on_webhook\(""?([^""\)]+)""?\)\s*:", RegexOptions.Multiline | RegexOptions.Compiled);
         private static readonly Regex _rxOnStateChange= new(@"^on_state_change\(""?([^""\)]+)""?\)\s*:", RegexOptions.Multiline | RegexOptions.Compiled);
         private static readonly Regex _rxOnBus        = new(@"^on_bus\(""?([^""\)]+)""?\)\s*:", RegexOptions.Multiline | RegexOptions.Compiled);
-        //  — WS.Server header detection. Same shape as on_webhook.
+        // WS.Server header detection. Same shape as on_webhook.
         private static readonly Regex _rxOnWebsocket  = new(@"^on_websocket\(""?([^""\)]+)""?\)\s*:", RegexOptions.Multiline | RegexOptions.Compiled);
-        //  — System.Hotkey header detection. Group 1 carries the
+        // System.Hotkey header detection. Group 1 carries the
         // keystroke string (e.g. "Ctrl+Shift+P"); HotkeyService parses it
         // into Win32 modifier flags + virtual-key at registration time.
         private static readonly Regex _rxOnHotkey     = new(@"^on_hotkey\(""?([^""\)]+)""?\)\s*:", RegexOptions.Multiline | RegexOptions.Compiled);
-        //  — System.Clipboard header detection. No payload — fires
+        // System.Clipboard header detection. No payload — fires
         // on every clipboard update for any script that opts in.
         private static readonly Regex _rxOnClipboard  = new(@"^on_clipboard\s*:",                RegexOptions.Multiline | RegexOptions.Compiled);
-        // B38 — OBS event header detection. Group 1 carries the bare OBS
+        // OBS event header detection. Group 1 carries the bare OBS
         // event name (e.g. "CurrentProgramSceneChanged"); ObsWebSocketClient
         // forwards the matching events through ScriptManager.DispatchObsEvent.
         private static readonly Regex _rxOnObs        = new(@"^on_obs\(""?([^""\)]+)""?\)\s*:",  RegexOptions.Multiline | RegexOptions.Compiled);
 
         private static void BuildHeaderIndex(ScriptInfo info, string content)
         {
-            // [P0 swarm-audit 2026-05-29] build-fresh + atomic-swap; was in-place
+            // Build-fresh + atomic-swap; was in-place
             // Clear()+Add() racing readers. These typed sets are read concurrently
             // from dispatch threads (WhereEnabled predicates calling .Contains(),
             // DetectDuplicateHeaderNames enumerating them); an in-place Clear()
@@ -439,7 +439,7 @@ namespace Phoenix.Controls.Hub.Core
         /// <summary>
         /// Block briefly until the file is no longer being written. Mirrors
         /// LogicWatcher.WaitForFileStable; duplicated here to avoid a circular
-        /// reference between this class and the watcher (H57).
+        /// reference between this class and the watcher.
         /// </summary>
         private static void WaitForFileStable(string path, int maxAttempts = 30, int delayMs = 50)
         {
@@ -525,15 +525,15 @@ namespace Phoenix.Controls.Hub.Core
             return await sr.ReadToEndAsync().ConfigureAwait(false);
         }
 
-        // QC36-08 — generalized header-collision detector. Was
+        // Generalized header-collision detector. Was
         // `DetectDuplicateWebhookNames` (webhook-only) — now scans every
         // routed header where same-name collisions matter:
         //   * on_webhook(name)   — single-dispatch surface; collision = silent
         //     duplicate fan-out, surprising for the script author.
-        //   * on_websocket(name) — first-match-wins pre-QC36-12, now all-match
-        //     fan-out per QC36-12; either way, a same-name collision should
+        //   * on_websocket(name) — previously first-match-wins, now all-match
+        //     fan-out; either way, a same-name collision should
         //     surface so the user can decide intentional-vs-typo.
-        //   * on_hotkey(combo)   — first-match-wins kept per QC36-12; collision
+        //   * on_hotkey(combo)   — first-match-wins kept; collision
         //     silently drops the loser, exactly the case the warning catches.
         //
         // Tier: Communication, not CriticalError — collisions are an authoring
@@ -548,8 +548,8 @@ namespace Phoenix.Controls.Hub.Core
         // ExecuteOnClipboardScriptsAsync, ScriptManager line 1466).
         //
         // on_state_change(name): not included for now — state changes already
-        // fan out by design (mirrors on_clipboard), and the SR pass-2 brief
-        // didn't flag a regression there.
+        // fan out by design (mirrors on_clipboard), and no regression has been
+        // flagged there.
         private void DetectDuplicateHeaderNames()
         {
             // Each tuple: (header label for log, accessor for the HashSet on
@@ -573,7 +573,7 @@ namespace Phoenix.Controls.Hub.Core
                 var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var info in _scripts.Values)
                 {
-                    // [P0 swarm-audit 2026-05-29] safe to enumerate concurrently:
+                    // safe to enumerate concurrently:
                     // BuildHeaderIndex now atomic-swaps whole set references, so
                     // accessor(info) yields a stable snapshot the watcher can't
                     // Clear() out from under us mid-iteration.
@@ -594,7 +594,7 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // QC36-08 — back-compat shim. Older code paths called
+        // Back-compat shim. Older code paths called
         // DetectDuplicateWebhookNames directly; forward to the generalized
         // detector so callers don't have to be touched in this sweep.
         // Internal so the test project can poke it via InternalsVisibleTo.
@@ -609,7 +609,7 @@ namespace Phoenix.Controls.Hub.Core
             foreach (var s in _scripts.Values)
             {
                 if (!s.IsEnabled) continue;
-                // P2 — never take the synchronous GetContent → WaitForFileStable
+                // Never take the synchronous GetContent → WaitForFileStable
                 // (up to ~1.5 s on a locked file) hit on the dispatch hot path.
                 // LoadScripts / Refresh eagerly populate Content for every script;
                 // a null here means a transient read failure left this brand-new
@@ -691,7 +691,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (_scripts.TryGetValue(fileName, out var info))
             {
-                // P0-5 — UTC for DST-safe persistence. Field stays DateTime? so
+                // UTC for DST-safe persistence. Field stays DateTime? so
                 // existing JSON state files round-trip unchanged; only the captured
                 // wall-clock kind flips local→UTC. UI surfaces should ToLocalTime()
                 // before display.

@@ -49,14 +49,14 @@ public sealed class ViewerWindow : Form
                 browserExecutableFolder: null,
                 userDataFolder: userDataFolder);
 
-            //  Window may have been closed while we awaited environment
+            // Window may have been closed while we awaited environment
             // creation — touching _web after disposal throws ObjectDisposedException
             // through the async void Load handler and crashes the shutdown path.
             if (IsDisposed || !_web.IsHandleCreated || _web.IsDisposed) return;
 
             await _web.EnsureCoreWebView2Async(env);
 
-            //  Same race after the EnsureCoreWebView2Async await —
+            // Same race after the EnsureCoreWebView2Async await —
             // CoreWebView2 is non-null here, but Settings/Source assignment
             // against a disposing control will throw.
             if (IsDisposed || _web.IsDisposed || _web.CoreWebView2 == null) return;
@@ -71,7 +71,7 @@ public sealed class ViewerWindow : Form
         }
         catch (Exception ex)
         {
-            //  Route the failure through GlobalLogger before showing the
+            // Route the failure through GlobalLogger before showing the
             // modal so SystemLog / LiveFeed pick it up alongside the user-facing
             // message. The dialog stays — Viewer is end-user-facing and the
             // WebView2 runtime gap is the most actionable failure mode.

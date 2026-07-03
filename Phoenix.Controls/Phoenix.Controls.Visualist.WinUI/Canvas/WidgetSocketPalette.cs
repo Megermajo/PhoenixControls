@@ -2,16 +2,16 @@ using Phoenix.Controls.Shared.Models;
 
 namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 
-// A2 (audit 2026-05-24) — Visualist's per-pillar SocketDataType → pin
+// Visualist's per-pillar SocketDataType → pin
 // shape mapping. Architect has its own copy at
 // Phoenix.Controls.Architect.WinUI/Canvas/SocketPalette.cs; per the
 // chrome-independence rule the two are kept in sync by design (Majo's
 // published legend is the single contract) but may diverge if a
 // Visualist-only data type gets its own glyph.
 //
-// Pre-A2 every Visualist socket rendered as an 8×8 Rectangle regardless
+// Previously every Visualist socket rendered as an 8×8 Rectangle regardless
 // of type — Manifesto §4.6's "6 distinct shapes" was unmet and Majo
-// flagged it as a recurring regression in the 2026-05-24 audit.
+// flagged it as a recurring regression.
 internal static class WidgetSocketPalette
 {
     /// <summary>
@@ -53,11 +53,11 @@ internal static class WidgetSocketPalette
         _                      => 0,
     };
 
-    // R42 — SocketDataType → fill colour. The shared scalar/flow/bool/etc.
+    // SocketDataType → fill colour. The shared scalar/flow/bool/etc.
     // values MIRROR Architect's NodeRegistry colour constants (Flow=white exec,
     // String=#FFDC64, Int=#82C8FF, Float=#64D4C8, Bool=#8CDC8C, Collection=
-    // #FFAA64, Any/object=#DCA0FF). Copied — not lifted to Shared — per
-    // feedback_visualist_architect_chrome_independence; the Visualist-only
+    // #FFAA64, Any/object=#DCA0FF). Copied — not lifted to Shared — per the
+    // chrome-independence rule; the Visualist-only
     // visual types (Image / Audio / Color / Vector*) extend the table using the
     // colours the sink sockets already ship (Image #EB50AA = DisplaySink,
     // Audio #BE8CF0 = AudioSink). Used to back-fill the wire + pin colour when a

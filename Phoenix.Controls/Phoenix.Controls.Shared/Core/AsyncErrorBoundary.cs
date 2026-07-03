@@ -14,7 +14,7 @@ namespace Phoenix.Controls.Shared.Core
     // into GlobalLogger.Error so SystemLogWindow + LiveFeedWindow render it
     // and OnError subscribers see the original Exception with stack trace.
     //
-    //  The original 3-arg overload swallowed EVERY
+    // The original 3-arg overload swallowed EVERY
     // OperationCanceledException, which hid real per-request timeouts and
     // SQLite cancellations that arrived from unrelated tokens. The strict
     // 4-arg overload only swallows OCE whose CancellationToken matches the
@@ -33,7 +33,7 @@ namespace Phoenix.Controls.Shared.Core
             catch (OperationCanceledException)
             {
                 // Cancellation is expected during shutdown — don't pollute the error channel.
-                //  Legacy overload — preserved for call sites that
+                // Legacy overload — preserved for call sites that
                 // don't have a clear local CT to assert against. New code
                 // should prefer the 4-arg overload.
             }
@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        ///  Strict overload. Only swallows
+        /// Strict overload. Only swallows
         /// <see cref="OperationCanceledException"/> when its
         /// <c>CancellationToken</c> matches <paramref name="expectedCt"/> (or
         /// when the expected token is already cancelled — graceful shutdown);

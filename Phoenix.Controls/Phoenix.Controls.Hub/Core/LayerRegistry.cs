@@ -13,7 +13,7 @@ namespace Phoenix.Controls.Hub.Core
     /// </summary>
     public sealed class LayerRegistry
     {
-        // BH-018 — concurrent first-touch from LayerWatcher.ScanAll and HUDServer's
+        // Concurrent first-touch from LayerWatcher.ScanAll and HUDServer's
         // /api/layer route could each run the ctor. Double-checked locking; the
         // public ctor below is kept available for tests so we still allow `new`.
         private static LayerRegistry? _instance;
@@ -43,7 +43,7 @@ namespace Phoenix.Controls.Hub.Core
         public event Action<string>? LayerReloaded;
 
         /// <summary>
-        /// QC05-07 — raised whenever a layer is removed from the registry (i.e. on
+        /// Raised whenever a layer is removed from the registry (i.e. on
         /// every LayerWatcher Deleted / Renamed-away event). HUDServer subscribes
         /// to prune <c>_layerDropCounts</c> so the diagnostic counter doesn't
         /// accumulate forever once a layer is gone. Symmetric counterpart to
@@ -123,7 +123,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// [QC18-S2 P2] Atomic cap-and-register. Returns <c>true</c> when the new
+        /// Atomic cap-and-register. Returns <c>true</c> when the new
         /// WebSocket was added (the layer's per-layer count was strictly below
         /// <paramref name="maxConnections"/> at the moment of the lock-protected
         /// check). Returns <c>false</c> when the cap was already hit, in which
@@ -250,14 +250,14 @@ namespace Phoenix.Controls.Hub.Core
             {
                 if (_testActiveOverrides.Contains(layerId)) return true;
 
-                // QC58-05 — primary signal: at least one live WebSocket.
+                // Primary signal: at least one live WebSocket.
                 // Mirrors the pre-fix behaviour exactly when the socket
                 // closes cleanly (FIN exchanged → UnregisterConnection
                 // ran → _connections has no entry).
                 if (_connections.TryGetValue(layerId, out var set) && set.Count > 0)
                     return true;
 
-                // QC58-05 — secondary signal: a recent compositor FPS
+                // Secondary signal: a recent compositor FPS
                 // heartbeat (within FpsTtl=5s) means the browser was alive
                 // at least that recently, even if the socket has been
                 // recorded as "no connections" because of a half-open /
@@ -316,7 +316,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// B8 (audit 2026-05-24) — count of layers whose
+        /// Count of layers whose
         /// <see cref="IsLayerActive"/> returns true. Equivalent to
         /// <c>GetActiveLayerIds().Count</c> but skips the allocation
         /// (the StatusStrip polls this every second). Returns 0 when

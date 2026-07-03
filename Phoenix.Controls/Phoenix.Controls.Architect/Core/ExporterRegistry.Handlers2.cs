@@ -1,4 +1,4 @@
-// Handler implementation classes carved from ExporterRegistry.cs ().
+// Handler implementation classes carved from ExporterRegistry.cs.
 // Owns: all IExporterHandler implementations used by RegisterImperative —
 //   BranchHandler, IfHandler, SwitchHandler, SequenceHandler, FlipFlopHandler,
 //   DoOnceHandler, DoNHandler, ForLoopHandler, WhileLoopHandler, CooldownHandler,
@@ -39,7 +39,7 @@ namespace Phoenix.Controls.Architect.Core
         }
     }
 
-    // #28 — Logic.Gate handler removed. The template was deprecated and has zero
+    // Logic.Gate handler removed. The template was deprecated and has zero
     // .phxg references in `Phoenix.Controls.Hub/data/`. Restore from git history
     // if a use case ever resurfaces.
 
@@ -56,8 +56,8 @@ namespace Phoenix.Controls.Architect.Core
             var realCases = allOuts.Where(s => s.Name != "Default").ToList();
             var defaultS  = allOuts.FirstOrDefault(s => s.Name == "Default");
 
-            // Track configured case values to detect duplicates and warn (#27).
-            // M11 — duplicate cases produce unreachable arms (the first match
+            // Track configured case values to detect duplicates and warn.
+            // Duplicate cases produce unreachable arms (the first match
             // always wins). Emit ONLY the first occurrence and surface a
             // ValidationWarning for each dropped duplicate so the user sees it
             // in the script header. Don't emit the dead code.
@@ -133,7 +133,7 @@ namespace Phoenix.Controls.Architect.Core
             // versions emitted `if global... == "true":` which never matched
             // because the runtime stores the toggle as a true/false bool.
             //
-            // Audit fix — the RHS read MUST be braced ({global._flipflop_X}), not
+            // The RHS read MUST be braced ({global._flipflop_X}), not
             // bare. The engine's DB-preload (DbPreloadRegex) only rehydrates braced
             // {global.*} refs at script start; a bare read on a fresh execution
             // (every event/chat trigger is its own ExecuteScriptAsync) is never in
@@ -153,14 +153,14 @@ namespace Phoenix.Controls.Architect.Core
         public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
         {
             string id = ctx.IdPrefix(node);
-            // Audit fix — braced read so the engine DB-preloads the persisted state
+            // Braced read so the engine DB-preloads the persisted state
             // (same root cause as Flow.FlipFlop). A bare `global._doonce_X` in the
             // condition was never rehydrated on a fresh execution, so the comparison
             // saw the literal identifier and the body ran on every trigger instead
             // of once. The set line's LHS stays bare (assignment key is safe).
             ctx.Emit($"{prefix}if {{global._doonce_{id}}} != \"done\":");
             ctx.Emit($"{prefix}    global._doonce_{id} = \"done\"");
-            // [audit 2026-06-01] "Out" is the UNCONDITIONAL flow continuation that
+            // "Out" is the UNCONDITIONAL flow continuation that
             // runs after the once-guard block, not a child nested inside it — so it
             // emits at the same indent as the `if`, NOT indent+1. Passing indent+1
             // double-indented every node downstream of Flow.DoOnce.
@@ -194,7 +194,7 @@ namespace Phoenix.Controls.Architect.Core
         {
             string first = ctx.Resolve(node, "First", "0");
             string last  = ctx.Resolve(node, "Last", "10");
-            //  Use the strict B8 callable detector instead of Contains("(")
+            // Use the strict callable detector instead of Contains("(")
             // so a user-typed parenthesised string literal like "(foo)" doesn't
             // spuriously hoist into a _pre_ global. The MaterializeInput path in
             // ScriptExporter already gates on CallableRegex; ForLoopHandler was the
@@ -253,7 +253,7 @@ namespace Phoenix.Controls.Architect.Core
         public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
         {
             string val = ctx.Resolve(node, "Value", "\"\"");
-            // H15 — extend the predicate to all reasonable "is the value usable"
+            // Extend the predicate to all reasonable "is the value usable"
             // checks: not empty, not the literal string "0" / "false" / "null".
             // Previously the contract said "valid" but we only checked empty string.
             // The trailing parenthesised group covers the case-insensitive forms.
@@ -469,7 +469,7 @@ namespace Phoenix.Controls.Architect.Core
         public string NodeTitle => "Async.Parallel";
         public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
         {
-            // M15 — iterate every Branch* output that exists on the live node so
+            // Iterate every Branch* output that exists on the live node so
             // the 3 â†’ 8 template raise actually emits all wired branches. Order
             // by the trailing integer so Branch1..Branch10 stay numerically
             // sorted (mirrors SequenceHandler's leading-integer ordering, just
@@ -569,7 +569,7 @@ namespace Phoenix.Controls.Architect.Core
         }
     }
 
-    // Audit fix — DB.SetVariable/Increment emit a bare script assignment, which the
+    // DB.SetVariable/Increment emit a bare script assignment, which the
     // engine persists ONLY when the key starts with user./global. (HandleAssignment).
     // An un-prefixed key (e.g. "points") silently landed in execution-local vars and
     // was lost between triggers — the Databank node looked like it stored but didn't.
@@ -657,7 +657,7 @@ namespace Phoenix.Controls.Architect.Core
                     ctx.Emit($"{prefix}{amtVar} = {amt}");
                     amtMat = amtVar;
                 }
-                //  tableName + key are interpolated INSIDE double-quoted
+                // tableName + key are interpolated INSIDE double-quoted
                 // literals, so a user-typed value containing `"` or `\` would break
                 // the parse. EscapeStringLiteral after StripQuotes preserves the
                 // intended characters while keeping the emitted literal valid.
@@ -672,12 +672,12 @@ namespace Phoenix.Controls.Architect.Core
                 // un-prefixed keys to global. so the increment persists across triggers
                 // (see DbVarKeyNormalizer), matching DbSetVariableHandler / DbGetVariableHandler.
                 string keyStripped = DbVarKeyNormalizer.Normalize(ctx.StripQuotes(key));
-                //  Two statements via two Emit calls so the line writer
+                // Two statements via two Emit calls so the line writer
                 // is responsible for inserting Environment.NewLine — the previous
                 // single Emit with an embedded `\n` mixed line endings on Windows
                 // (the rest of the file ends each Emit with CRLF; the inner `\n`
                 // produced a bare LF in the middle).
-                // Audit fix — the read side MUST be braced so the engine DB-preloads
+                // The read side MUST be braced so the engine DB-preloads
                 // the prior value on a fresh execution; a bare `math.add(global.points, n)`
                 // parsed the literal identifier as 0 and lost the running total.
                 ctx.Emit($"{prefix}global.{outVar} = math.add({{{keyStripped}}}, {amt})");
@@ -763,7 +763,7 @@ namespace Phoenix.Controls.Architect.Core
             string rowId  = ctx.Materialize(node, "RowId", "0");
             string rowVar = node.GetAttr("Row", $"global._row_{node.Id.Replace("-","")[..6]}");
             ctx.Emit($"{prefix}db.fetch_row({table}, {rowId}, \"{rowVar}\")");
-            // [audit 2026-06-01] Register the fetched row var so downstream nodes
+            // Register the fetched row var so downstream nodes
             // wired to the "Row" output (and column-socket synthesis in
             // ScriptExporter) can resolve it — mirrors DbFindRowHandler /
             // DbInsertRowHandler which both register NodeResultVars. Was missing,
@@ -865,7 +865,7 @@ namespace Phoenix.Controls.Architect.Core
     // command-call form routes through ScriptManager â†’ SetLocalResultVar, which
     // tags the key in _branchResultKeysLocal so writes inside parallel_begin
     // branches merge back on join. Var.Set's bare-assignment path is branch-local
-    // by design (BH-003 contract).
+    // by design.
     internal sealed class PublicSetHandler : IExporterHandler
     {
         public string NodeTitle => "Public.Set";
@@ -873,7 +873,7 @@ namespace Phoenix.Controls.Architect.Core
         {
             string keyName = node.GetAttrOrFallback("KeyName", "myKey");
             string val = ctx.Resolve(node, "Value", "\"\"");
-            //  KeyName is interpolated INSIDE a double-quoted literal so a
+            // KeyName is interpolated INSIDE a double-quoted literal so a
             // user-typed key containing `"` or `\` would break the parse. Escape
             // before interpolating so `Hello "world"` becomes a valid `"Hello \"world\""`.
             ctx.Emit($"{prefix}public.set(\"{ctx.EscapeStringLiteral(keyName)}\", {val})");
@@ -1045,6 +1045,19 @@ namespace Phoenix.Controls.Architect.Core
                 }
             }
 
+            // Deterministic returns: pre-clear every return slot at the call
+            // site so a body whose flow conditionally skips Macro.Exit can't
+            // leak a PREVIOUS run's DB-persisted slot value into this call's
+            // read. MacroExitHandler (or the data-only fallback in
+            // ProcessEventNode) overwrites with the real value when reached.
+            var firstExit = allExits.FirstOrDefault();
+            if (firstExit != null)
+            {
+                foreach (var xSocket in firstExit.Sockets
+                    .Where(s => s.Type == SocketType.Input && !s.IsPlaceholder && s.Name != "Flow"))
+                    ctx.Emit($"{prefix}global.{slotPrefix}_ret_{ctx.SanitizeIdentifier(xSocket.Name)} = \"\"");
+            }
+
             string subScript = ctx.ExportMacroSubGraph(macro.Graph, slotPrefix);
             var subLines = subScript.Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None)
                                     .Skip(3)
@@ -1054,6 +1067,57 @@ namespace Phoenix.Controls.Architect.Core
 
             ctx.Emit($"{prefix}# END MACRO: {macroName}");
             ctx.FollowNamed(node, "Flow", indent);
+        }
+    }
+
+    /// <summary>
+    /// Macro.Entry — flow-marker, no runtime emit. Entry into a macro body is
+    /// driven by ProcessEventNode (special-cased in ScriptExporter), which
+    /// follows this node's Flow output at indent 0. Reaching Entry through a
+    /// downstream flow path is a graph-shape mistake (entry can't be reached
+    /// from inside its own body); register the title so ProcessNode's
+    /// unknown-handler throw doesn't trip on graphs the validator hasn't yet
+    /// caught. Parallel to ProcessEntryHandler.
+    /// </summary>
+    internal sealed class MacroEntryHandler : IExporterHandler
+    {
+        public string NodeTitle => "Macro.Entry";
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            // No-op: already-visited body nodes are skipped by ProcessNode's
+            // visited-set, so following Flow here can't re-emit the body.
+            ctx.FollowNamed(node, "Flow", indent);
+        }
+    }
+
+    /// <summary>
+    /// Macro.Exit — flow-terminator + return binding for a macro body.
+    /// Reaching Macro.Exit ends the body (parallel to ProcessExitHandler);
+    /// before terminating, every activated input socket is written into the
+    /// per-call-site return slot `global.&lt;macroContextId&gt;_ret_&lt;name&gt;`
+    /// that ScriptExporter.ResolveOutputFromNode hands to consumers of the
+    /// matching Macro.Call output socket. A Macro.Exit reached outside a macro
+    /// sub-graph (stray node pasted into a top-level graph) has no slot
+    /// context — it terminates with the trace comment only.
+    /// </summary>
+    internal sealed class MacroExitHandler : IExporterHandler
+    {
+        public string NodeTitle => "Macro.Exit";
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            if (!string.IsNullOrEmpty(ctx.MacroContextId))
+            {
+                foreach (var s in node.Sockets
+                    .Where(s => s.Type == SocketType.Input && !s.IsPlaceholder && s.Name != "Flow"))
+                {
+                    // Sanitized on both sides of the contract — the read side in
+                    // ResolveOutputFromNode's Macro.Call branch applies the same
+                    // sanitizer, so a socket renamed to "Rand Return" still binds.
+                    ctx.Emit($"{prefix}global.{ctx.MacroContextId}_ret_{ctx.SanitizeIdentifier(s.Name)} = {ctx.Resolve(node, s.Name, "\"\"")}");
+                }
+            }
+            ctx.Emit($"{prefix}# Macro.Exit reached — macro body completes.");
+            // Deliberately no FollowNamed — Exit is a terminator.
         }
     }
 

@@ -4,7 +4,7 @@ using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.Core
 {
-    //  — first per-band carve from NodeRegistry.Templates.cs.
+    // First per-band carve from NodeRegistry.Templates.cs.
     // Owns the EVENTS band: every node template that *triggers* a script
     // (Twitch.* events, YouTube.Message, System.Startup, Bus.OnMessage,
     // Event.Trigger / Event.Executor / Event.Return, HTTP.WebhookListener,
@@ -15,7 +15,7 @@ namespace Phoenix.Controls.Architect.Core
     {
         private static void RegisterEventsTemplates()
         {
-            // D8 — IsMod / IsSub / IsBroadcaster / IsVip / SubMonths / ColorHex
+            // IsMod / IsSub / IsBroadcaster / IsVip / SubMonths / ColorHex
             // outputs appended 2026-06-08. The engine already binds these chatter
             // fields (ScriptManager BuildChatVars: user.is_mod / user.is_sub /
             // user.is_broadcaster / user.is_vip / user.sub_months / user.color_hex)
@@ -68,7 +68,7 @@ namespace Phoenix.Controls.Architect.Core
                 null,
                 new[] { ("Flow", ColExec), ("Gifter", ColString), ("Count", ColNumber), ("IsAnonymous", ColBool) });
 
-            // QC36-06 — the Viewers output is forwarded VERBATIM from
+            // The Viewers output is forwarded VERBATIM from
             // Streamer.bot's raid envelope. SB ingests the raid event from
             // Twitch IRC USERNOTICE / EventSub, where the viewer-count tag
             // (`msg-param-viewerCount`) is broadcaster-controlled at raid-start
@@ -80,8 +80,8 @@ namespace Phoenix.Controls.Architect.Core
             // 10000 viewers (see WS.WarnIfRaidViewerCountSuspicious) so the
             // operator sees obviously-fake values; integrators wanting a
             // verified count should add a Helix cross-check in the script
-            // body. A first-class twitch.verify_raid() command is on the
-            // QC36-06 follow-up list and not in this sweep.
+            // body. A first-class twitch.verify_raid() command is a
+            // follow-up and not in this sweep.
             AddTemplate("Twitch.Raid",         "Events", Color.ForestGreen,
                 Localizer.T("architect.node.bubble.twitch_raid"),
                 null,
@@ -141,7 +141,7 @@ namespace Phoenix.Controls.Architect.Core
                 null,
                 new Dictionary<string, string> { { "EventName", "MyEvent" } });
 
-            // D8 — Payload output appended 2026-06-08. The engine already binds
+            // Payload output appended 2026-06-08. The engine already binds
             // event.payload alongside event.body (ScriptManager.ExecuteOnWebhookScriptsAsync:
             // vars["event.payload"] = rawBody ?? data.GetRawText()). Payload is the
             // raw request body just like Body, exposed as a distinct output so a
@@ -178,7 +178,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Name", ColString), ("OldValue", ColString), ("NewValue", ColString) },
                 new Dictionary<string, string> { { "StateName", "stream_phase" } });
 
-            //  / QC36-12 — WS.Server external WebSocket listener.
+            // WS.Server external WebSocket listener.
             // Hub's WebSocketServerService binds /ws/<Name> when
             // AppConfig.WebSocketServerEnabled is on and fires the matching
             // on_websocket("Name"): block on every text frame a client sends.
@@ -186,21 +186,21 @@ namespace Phoenix.Controls.Architect.Core
             // message arrived on. Streamer-authored panels / dashboards /
             // external bridges connect to ws://<host>:<port>/ws/<Name>.
             //
-            // QC36-12 — multi-handler semantics changed in this sweep:
+            // Multi-handler semantics changed in this sweep:
             // multiple scripts declaring on_websocket("Name") now ALL fire
             // (parallel fan-out, consistent with on_chat / on_event /
             // on_clipboard). Pre-fix the first-match-wins loop silently
             // dropped the second+ subscribers. Colliding names also surface
             // a Communication-tier warning at registry-load time via
-            // QC36-08's generalized duplicate detector.
+            // the generalized duplicate detector.
             //
-            // QC36-11 — incoming frame aggregation is capped at
+            // Incoming frame aggregation is capped at
             // AppConfig.WebSocketMaxMessageBytes (default 1 MiB). Oversized
             // streams close the socket with WebSocket close 1009 MessageTooBig.
             AddTemplate("WS.Server", "Events", Color.DarkSlateBlue,
-                "Fires when an external WebSocket client sends a text frame to the Hub at ws://<host>:<port>/ws/<Name>. Same shape as HTTP.WebhookListener but for live two-way clients (panels / dashboards / bridges). Hub-side server is off by default — turn on WebSocketServerEnabled in config to expose the port. All scripts declaring the same Name fire in parallel (QC36-12); aggregate frame size is capped at WebSocketMaxMessageBytes (default 1 MiB).",
+                "Fires when an external WebSocket client sends a text frame to the Hub at ws://<host>:<port>/ws/<Name>. Same shape as HTTP.WebhookListener but for live two-way clients (panels / dashboards / bridges). Hub-side server is off by default — turn on WebSocketServerEnabled in config to expose the port. All scripts declaring the same Name fire in parallel; aggregate frame size is capped at WebSocketMaxMessageBytes (default 1 MiB).",
                 null,
-                // D8 — Payload output appended 2026-06-08 (additive, last). The engine
+                // Payload output appended 2026-06-08 (additive, last). The engine
                 // already binds event.payload alongside event.body
                 // (ScriptManager.ExecuteOnWebSocketScriptsAsync: sharedVars["event.payload"]
                 // = rawPayload), mirroring HTTP.WebhookListener. Maps via the generic
@@ -208,7 +208,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Body", ColString), ("Path", ColString), ("Payload", ColString) },
                 new Dictionary<string, string> { { "Name", "default" } });
 
-            //  — System.Hotkey event-trigger. Hub's HotkeyService
+            // System.Hotkey event-trigger. Hub's HotkeyService
             // binds the Combination keystroke via Win32 RegisterHotKey when
             // HotkeysEnabled is on and the containing script is enabled,
             // then fires the matching on_hotkey block on press. Combo socket
@@ -221,14 +221,14 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Combo", ColString) },
                 new Dictionary<string, string> { { "Combination", "Ctrl+Shift+P" } });
 
-            //  / QC36-04 — System.Clipboard event-trigger. Hub's
+            // System.Clipboard event-trigger. Hub's
             // ClipboardService subscribes to WM_CLIPBOARDUPDATE on a hidden
             // NativeWindow and fires every script with an on_clipboard:
             // block. Off by default for privacy — Hub never silently
             // observes clipboard contents. Text socket carries the new
             // clipboard text (empty when the format isn't text).
             //
-            // QC36-04 — sensitive-content gates the engine enforces BEFORE
+            // Sensitive-content gates the engine enforces BEFORE
             // dispatching to scripts:
             //   * The "Clipboard Viewer Ignore" clipboard format (KeePass /
             //     1Password / Office / VS opt-out convention) — payload is
@@ -247,7 +247,7 @@ namespace Phoenix.Controls.Architect.Core
                 null,
                 new[] { ("Flow", ColExec), ("Text", ColString) });
 
-            // B38 (audit/winui-regressions-2026-05-24) — OBS.Event trigger.
+            // OBS.Event trigger.
             // Hub's ObsWebSocketClient subscribes to OBS WS v5 events when
             // AppConfig.ObsWebSocketEnabled is true and routes each inbound
             // event to every script declaring on_obs("<EventType>"). The

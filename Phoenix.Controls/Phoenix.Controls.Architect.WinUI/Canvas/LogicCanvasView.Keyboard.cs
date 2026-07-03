@@ -36,7 +36,7 @@ public sealed partial class LogicCanvasView
     // letters are in the same physical position on QWERTY and QWERTZ, so
     // scancode anchoring is harmless there and still covers Dvorak.
 
-    // P1-A22 — Dvorak scancode coverage. Pre-fix only Ctrl+Z / Ctrl+Y had
+    // Dvorak scancode coverage. Pre-fix only Ctrl+Z / Ctrl+Y had
     // scancode-anchored handling, which covered QWERTY/QWERTZ/AZERTY (the
     // letters Majo's audit said were "physical-position-stable on these
     // three") but not Dvorak. On Dvorak the physical C/V/X/D/A/S/F/G keys
@@ -64,14 +64,14 @@ public sealed partial class LogicCanvasView
     private const uint ScanCode_PhysicalF = 0x21;
     private const uint ScanCode_PhysicalG = 0x22;
 
-    // P1-A12 — Pointer-over-canvas tracking. ZoomKeyboard reads this to
+    // Pointer-over-canvas tracking. ZoomKeyboard reads this to
     // decide whether to anchor on the cursor (matches wheel-zoom math at
     // LogicCanvasView.xaml.cs:520-524) or the viewport centre (legacy
     // behaviour, used when the pointer is outside the host).
     private bool _pointerOverHost;
 
     /// <summary>
-    ///  — Raised when the user presses Ctrl+W on the canvas. The
+    /// Raised when the user presses Ctrl+W on the canvas. The
     /// chord is advertised in <c>ArchitectHotkeyCatalog</c> as "Close window
     /// (sibling windows only)" but the canvas owns no window of its own, so it
     /// surfaces the intent as an event and lets the host decide. The intended
@@ -82,12 +82,12 @@ public sealed partial class LogicCanvasView
     /// scoping). Mirrors the no-op-when-unsubscribed contract used by
     /// <c>KeyboardShortcutsRequested</c> / <c>InspectorToggleRequested</c>.
     /// Declared here (rather than alongside the other canvas events in
-    /// LogicCanvasView.xaml.cs) to keep the  change self-contained
+    /// LogicCanvasView.xaml.cs) to keep the change self-contained
     /// in the keyboard partial.
     /// </summary>
     public event System.EventHandler? CloseWindowRequested;
 
-    //  True when any node is mid inline-edit
+    // True when any node is mid inline-edit
     // (title rename, socket value-pill / label edit, or middle-attribute
     // edit). Focus-independent so it catches the window where a pill is in
     // edit mode but keyboard focus hasn't landed on its TextBox yet. Delete
@@ -103,6 +103,52 @@ public sealed partial class LogicCanvasView
             foreach (var m in n.MiddleAttributes) if (m.IsEditing) return true;
         }
         return false;
+    }
+
+    // True when any Flyout / context-menu popup owned by this window is open
+    // (spawn palette, node finder, node / socket / pill / frame context menu,
+    // colour picker, frame-rename box). Canvas keyboard shortcuts must yield to
+    // these — several are shown via ShowAt without pulling focus off the canvas,
+    // so this UserControl's KeyDown still fires underneath them. Only
+    // FlyoutPresenter / MenuFlyoutPresenter popups count; the transient hover
+    // TooltipPopup is a bare Popup and is intentionally NOT treated as a menu,
+    // so a tooltip can never swallow a shortcut.
+    private bool IsAnyMenuOrFlyoutOpen()
+    {
+        var root = XamlRoot;
+        if (root is null) return false;
+        try
+        {
+            foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+            {
+                if (popup.Child is Microsoft.UI.Xaml.Controls.FlyoutPresenter
+                                or Microsoft.UI.Xaml.Controls.MenuFlyoutPresenter)
+                    return true;
+            }
+        }
+        catch { /* never break key handling on a popup query */ }
+        return false;
+    }
+
+    // True when a text-input control currently holds keyboard focus anywhere in
+    // the window — a value-pill / rename box on the canvas, an inspector field,
+    // or a flyout's search box. Focus-based so it still fires during the
+    // click→type focus race (pill visible, its TextBox not yet focused, so the
+    // KeyDown's OriginalSource is still the canvas).
+    private bool IsTextInputFocused()
+    {
+        var root = XamlRoot;
+        if (root is null) return false;
+        try
+        {
+            return Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root)
+                is Microsoft.UI.Xaml.Controls.TextBox
+                or Microsoft.UI.Xaml.Controls.RichEditBox
+                or Microsoft.UI.Xaml.Controls.PasswordBox
+                or Microsoft.UI.Xaml.Controls.NumberBox
+                or Microsoft.UI.Xaml.Controls.AutoSuggestBox;
+        }
+        catch { return false; }
     }
 
     private void OnHostKeyDown(object sender, KeyRoutedEventArgs e)
@@ -133,6 +179,19 @@ public sealed partial class LogicCanvasView
         if (altGr && e.Key is not (VirtualKey.F6 or VirtualKey.F7))
             return;
 
+        // ── Open sub-menu / flyout guard ────────────────────────────────────
+        // A context menu, the spawn palette, the node finder, a colour / pill
+        // picker, or the frame-rename box is open. Its own content owns the
+        // keyboard, but several of those surfaces are shown via ShowAt without
+        // pulling focus off the canvas, so this UserControl's KeyDown STILL
+        // fires underneath them — and bare F framed the viewport, quick-keys
+        // spawned nodes, Space re-opened the palette, etc. while the user was
+        // navigating a sub-menu (Majo report 2026-07-01). Yield every key while
+        // any flyout / menu popup is open; the surface handles it, or it is
+        // harmlessly inert. Hover tooltips are excluded in IsAnyMenuOrFlyoutOpen.
+        if (IsAnyMenuOrFlyoutOpen())
+            return;
+
         // ── Inline-editor guard ─────────────────────────────────────────────
         // When an inline editor (value pill, socket / title rename, inspector
         // field, search box) is the keystroke's target, the field owns text
@@ -158,7 +217,8 @@ public sealed partial class LogicCanvasView
                                                or Microsoft.UI.Xaml.Controls.PasswordBox
                                                or Microsoft.UI.Xaml.Controls.NumberBox
                                                or Microsoft.UI.Xaml.Controls.AutoSuggestBox
-                              || IsAnyInlineEditorActive();
+                              || IsAnyInlineEditorActive()
+                              || IsTextInputFocused();
         if (inInlineEditor)
         {
             // No Ctrl → plain typing / navigation belongs to the field.
@@ -178,7 +238,7 @@ public sealed partial class LogicCanvasView
         // The remaining arms (C/V/X/D/A/S/F/G) anchor by scancode because
         // those letters are in the same physical position on QWERTY/QWERTZ,
         // and the scancode form is what makes Dvorak users hit the canonical
-        // Blueprints chord set (P1-A22).
+        // Blueprints chord set.
         if (ctrl)
         {
             uint sc = e.KeyStatus.ScanCode;
@@ -286,12 +346,12 @@ public sealed partial class LogicCanvasView
                 break;
 
             case VirtualKey.Delete:
-                //  Defense-in-depth backstop. The
+                // Defense-in-depth backstop. The
                 // OriginalSource TextBox guard at the top of this handler
                 // catches Delete while an inline editor HAS keyboard focus.
                 // But a value pill / title / middle-attr editor can briefly be
                 // in edit mode with focus elsewhere (the focus-on-edit-entry
-                // fix lives in NodeView — ARCH-P0-INLINE-PILL-FOCUS). Never nuke
+                // fix lives in NodeView). Never nuke
                 // the selected node while ANY inline editor is open; swallow the
                 // key so it can't fall through to DeleteSelection.
                 if (IsAnyInlineEditorActive())
@@ -308,7 +368,7 @@ public sealed partial class LogicCanvasView
                 // (pre-fix _heldQuickKey was cleared only on KeyUp / LostFocus,
                 // so a user tapping S and then Esc to "cancel" left the canvas
                 // armed and the next bare-canvas click silently spawned a
-                // Flow.Sequence — see Architect UX review P0-5).
+                // Flow.Sequence.
                 bool hadHeldKey = _heldQuickKey is not null;
                 if (hadHeldKey)
                 {
@@ -356,12 +416,11 @@ public sealed partial class LogicCanvasView
                 }
                 break;
 
-            // P1-A13 — F1 opens documentation for the selected node. When no
-            // node is selected, log a discoverability breadcrumb (
-            // adds a Keyboard Shortcuts dialog as the proper fallback; the log
-            // line keeps F1 from looking dead in the meantime — no modal per
-            // feedback_no_modal_dialogs_for_repeatable_rejections).
-            // [Tranche-2] Ctrl+Alt+F6 — DEV toggle for experimental node
+            // F1 opens documentation for the selected node. When no
+            // node is selected, log a discoverability breadcrumb (a later
+            // Keyboard Shortcuts dialog is the proper fallback; the log
+            // line keeps F1 from looking dead in the meantime — no modal).
+            // Ctrl+Alt+F6 — DEV toggle for experimental node
             // virtualization (default OFF; on-screen perf test only — see
             // ToggleNodeVirtualization). F6 is otherwise unused in the canvas.
             case VirtualKey.F6 when ctrl && alt:
@@ -369,7 +428,7 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            // [perf/win2d-immediate-canvas] Ctrl+Alt+F7 — toggle the immediate-
+            // Ctrl+Alt+F7 — toggle the immediate-
             // mode GPU canvas (default OFF; the permanent large-graph perf fix —
             // see LogicCanvasView.Win2D.cs / ToggleImmediateMode). F7 is
             // otherwise unused in the canvas.
@@ -391,9 +450,8 @@ public sealed partial class LogicCanvasView
                 }
                 else
                 {
-                    //  P1-A17 — F1-without-selection falls back to
-                    // the Keyboard Shortcuts help dialog (per 
-                    // P1-A13). The canvas raises an event so the chrome
+                    // F1-without-selection falls back to
+                    // the Keyboard Shortcuts help dialog. The canvas raises an event so the chrome
                     // (which owns the dialog factory + XamlRoot) does the
                     // show. Hosts that don't subscribe (e.g. the SubGraph
                     // editor window) silently no-op — the canvas-side
@@ -413,7 +471,7 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            //  Ctrl+F sits next to Ctrl+S / Ctrl+O for readability;
+            // Ctrl+F sits next to Ctrl+S / Ctrl+O for readability;
             // pre-fix it lived below Ctrl+Y which made it easy to miss when
             // skimming the chord set. Functionally identical to the
             // bottom-of-switch handler that previously hosted it.
@@ -426,7 +484,7 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            //  P1-A9 — F2 opens the rename flyout for the currently
+            // F2 opens the rename flyout for the currently
             // selected single frame. Matches Majo's canvas-rename idiom
             // unification: every canvas rename surface honours BOTH double-click
             // AND F2. Double-click on a frame label routes through
@@ -451,7 +509,7 @@ public sealed partial class LogicCanvasView
                 }
                 break;
 
-            // B11 (audit/winui-regressions-2026-05-24) — F4 toggles the
+            // F4 toggles the
             // inspector panel's expanded / rolled-up state. The canvas
             // doesn't own the inspector column itself (MainView /
             // ArchitectSiblingWindow do); raise InspectorToggleRequested
@@ -466,7 +524,7 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            // C11 (audit/winui-regressions-2026-05-24) — F3 / Shift+F3 walk
+            // F3 / Shift+F3 walk
             // the Find-Node match set without needing the flyout open.
             // StepFindCursor falls back to opening the Find flyout when the
             // match set is empty so the chord is discoverable from a clean
@@ -524,7 +582,7 @@ public sealed partial class LogicCanvasView
             // (TODO 2026-05-07 round 2 P3 — no keyboard zoom). Anchored on
             // the host viewport centre because there's no cursor on a key
             // press; mirrors the same clamp range PointerWheel uses.
-            // 0.10.0 UX P2: Ctrl+Shift+= / Ctrl+Shift+- swaps the 1.1
+            // 0.10.0: Ctrl+Shift+= / Ctrl+Shift+- swaps the 1.1
             // per-press step for 1.025 (fine-step) so users can land
             // on targeted zoom levels (100%, 150%, 200%) without
             // overshooting.
@@ -564,7 +622,7 @@ public sealed partial class LogicCanvasView
             // focus traversal. 0.10.0 — moved spawn-palette open to Ctrl+Space
             // (above) so Tab walks out of the canvas as users expect.
 
-            //  Ctrl+F handler relocated next to Ctrl+S / Ctrl+O
+            // Ctrl+F handler relocated next to Ctrl+S / Ctrl+O
             // above for readability.
 
             case VirtualKey.G when ctrl:
@@ -572,10 +630,9 @@ public sealed partial class LogicCanvasView
                 // in a Macro shell. CollapseSelectionToMacro is a no-op on
                 // <2 selected nodes (so a stray Ctrl+G with nothing selected
                 // is harmless rather than spawning an empty macro).
-                //  Log the silent-reject path so the System Log
-                // surfaces the reason; mirrors the
-                // feedback_no_modal_dialogs_for_repeatable_rejections rule
-                // (don't pop a modal, but DO leave a breadcrumb).
+                // Log the silent-reject path so the System Log
+                // surfaces the reason; mirrors the no-modal-for-repeatable-
+                // rejections rule (don't pop a modal, but DO leave a breadcrumb).
                 if (_vm.SelectedNodes.Count < 2)
                 {
                     GlobalLogger.Log(
@@ -590,7 +647,7 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            //  — Ctrl+W "Close window". ArchitectHotkeyCatalog
+            // Ctrl+W "Close window". ArchitectHotkeyCatalog
             // (Canvas/ArchitectHotkeyCatalog.cs line 89) advertises this
             // chord ("Close window (sibling windows only)") in the Keyboard
             // Shortcuts dialog, but pre-fix this handler had no VirtualKey.W
@@ -622,7 +679,7 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            // Arrow-key node nudge (Architect UX review P0-9). Moves the
+            // Arrow-key node nudge. Moves the
             // current selection by 1 px (10 px with Shift) so keyboard-only
             // users can fine-tune layout without grabbing the mouse. Pushes
             // a single undo entry per keystroke; group-drag is honoured.
@@ -729,7 +786,7 @@ public sealed partial class LogicCanvasView
     {
         if (_vm is null) return;
 
-        // 0.10.0 (arch-ux-state #1) — DEL spans nodes + wires + frames. Pre-fix
+        // DEL spans nodes + wires + frames. Pre-fix
         // only nodes participated in multi-DEL; a marquee that grabbed a wire +
         // a frame + three nodes silently lost the wire + frame on DEL. Now any
         // non-empty selected* collection triggers the batched path so a single
@@ -895,7 +952,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// 0.10.0 UX P2 — discoverable bookmark legend. Opens a small Flyout
+    /// 0.10.0 — discoverable bookmark legend. Opens a small Flyout
     /// anchored at the host top-centre listing all 9 slots, the Ctrl+1..9
     /// (set) and Alt+1..9 (recall) chord hints, and per-slot state ("set"
     /// vs "empty" plus the captured zoom%). Pre-P2 the bookmark chords
@@ -984,7 +1041,7 @@ public sealed partial class LogicCanvasView
 
         PushUndo();
 
-        //  When the user has a multi-selection of >= 2 nodes,
+        // When the user has a multi-selection of >= 2 nodes,
         // scope the auto-format pass to just those nodes — mirrors UE
         // Blueprints' "Align/Straighten Connections" respecting selection.
         // Empty / single-node selections fall back to the whole-graph path
@@ -1070,7 +1127,7 @@ public sealed partial class LogicCanvasView
         }
 
         // Bucket per column, sort by current Y then Title, place.
-        //  Only place nodes that were in the original scope —
+        // Only place nodes that were in the original scope —
         // selection-scoped runs must leave the unselected nodes alone.
         var buckets = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<NodeViewModel>>();
         foreach (var n in targetNodes)
@@ -1090,7 +1147,7 @@ public sealed partial class LogicCanvasView
         if (minCol == int.MaxValue) minCol = 0;
         xOffset = -minCol;
 
-        //  Anchor the placement to the top-left of the original
+        // Anchor the placement to the top-left of the original
         // selection (when scoped) so a Ctrl+L over a multi-selection doesn't
         // catapult the formatted block to canvas origin (0,0); whole-graph
         // runs continue to land at origin since the un-anchored xOffset
@@ -1151,7 +1208,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// 0.10.0 UX P2 — Shift-fine zoom step. Returns 1.025 when Shift is
+    /// 0.10.0 — Shift-fine zoom step. Returns 1.025 when Shift is
     /// held at the time the chord fires, otherwise the standard 1.1 step.
     /// Mirrors the per-detent factor selection inside the wheel-zoom
     /// path in <c>LogicCanvasView.Pointer.cs</c>.
@@ -1165,7 +1222,7 @@ public sealed partial class LogicCanvasView
 
     /// <summary>
     /// Multiplicative zoom around the cursor when the pointer is currently
-    /// inside the host (P1-A12 — matches the wheel-zoom anchor math at
+    /// inside the host (matches the wheel-zoom anchor math at
     /// LogicCanvasView.xaml.cs:520-524) or the host viewport centre as a
     /// fallback when the pointer is outside / has never entered (e.g.
     /// keyboard-only invocation immediately after window focus). Clamp
@@ -1179,7 +1236,7 @@ public sealed partial class LogicCanvasView
         if (System.Math.Abs(newZoom - oldZoom) < 1e-6) return;
 
         double anchorX, anchorY;
-        // P1-A12 — anchor on the cursor when the pointer is over the canvas
+        // Anchor on the cursor when the pointer is over the canvas
         // so Ctrl+0 / Ctrl++ / Ctrl+- behave the same as wheel-zoom from the
         // user's POV (the thing under the cursor stays put). When the
         // pointer is outside the host, fall back to the viewport centre.
@@ -1208,7 +1265,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// P1-A12 — Pointer-over-canvas tracking. Wired on HostRoot's
+    /// Pointer-over-canvas tracking. Wired on HostRoot's
     /// PointerEntered / PointerExited from OnLoaded; consumed by
     /// ZoomKeyboard to pick the anchor (cursor vs viewport centre).
     /// </summary>
@@ -1217,12 +1274,12 @@ public sealed partial class LogicCanvasView
     internal void OnHostPointerExited(object sender, PointerRoutedEventArgs e)
     {
         _pointerOverHost = false;
-        // C8 (audit/winui-regressions-2026-05-24) — clear the frame-edge
+        // Clear the frame-edge
         // hover cursor when the pointer leaves the canvas. Without this the
         // last directional shape we set sticks across the chrome / sibling
         // panels until the user re-enters the canvas.
         UpdateFrameEdgeHoverCursor(source: null);
-        // [perf/win2d-immediate-canvas M4] drop the GPU-canvas hover highlight
+        // Drop the GPU-canvas hover highlight
         // when the pointer leaves the canvas.
         if (_useImmediateMode) ClearImmediateHover();
     }

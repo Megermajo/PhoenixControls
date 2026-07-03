@@ -48,8 +48,7 @@ internal static class VisualTriggerSnippetProducer
     /// Absolute path to the <c>.phxlayer</c> file backing the widget. The file
     /// stem is used as the snippet's LayerID. Pass the loaded document's
     /// <see cref="LayerDocument.FilePath"/>; an unsaved (null/empty) document
-    /// causes the operation to abort with a System-tier log entry per
-    /// <c>feedback_no_modal_dialogs_for_repeatable_rejections</c>.
+    /// causes the operation to abort with a System-tier log entry.
     /// </param>
     /// <param name="widget">The widget that owns the trigger.</param>
     /// <param name="trigger">The trigger to reference.</param>
@@ -158,7 +157,7 @@ internal static class VisualTriggerSnippetProducer
         // author can read. Uses single-line interpolation to keep the channel
         // useful as a quick "what did I just copy" affordance.
         //
-        //  (P1-9) — escape backslash / double-quote / CR / LF so a
+        // Escape backslash / double-quote / CR / LF so a
         // layer or widget id (or a trigger name that snuck past validation
         // via an old .phxlayer migration) can't break out of the string
         // literal. The structured JSON channel above goes through

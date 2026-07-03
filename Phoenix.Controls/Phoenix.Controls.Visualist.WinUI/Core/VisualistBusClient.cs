@@ -37,24 +37,24 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
     ///   - SendVisualTriggerAsync (Test Run) + SendWidgetLiveUpdateAsync (live rect publish).
     ///
     /// Hardening carried over from the baseline:
-    ///   - R3: bounded outbound queue (capacity 256, drop-oldest on overflow) drained in
-    ///         order on (re)connect so messages aren't lost mid-disconnect.
-    ///   - L53: StopAsync uses WaitAsync(1000ms) rather than a blocking .Wait(1000); the
-    ///          synchronous Stop() shim fires the close through Task.Run to avoid
-    ///          sync-over-async deadlocks for UI callers.
-    ///   - L55: malformed inbound messages are logged via GlobalLogger.Error instead of
-    ///          being silently swallowed.
+    ///   - bounded outbound queue (capacity 256, drop-oldest on overflow) drained in
+    ///     order on (re)connect so messages aren't lost mid-disconnect.
+    ///   - StopAsync uses WaitAsync(1000ms) rather than a blocking .Wait(1000); the
+    ///     synchronous Stop() shim fires the close through Task.Run to avoid
+    ///     sync-over-async deadlocks for UI callers.
+    ///   - malformed inbound messages are logged via GlobalLogger.Error instead of
+    ///     being silently swallowed.
     ///
     /// (Ported from the pre-T15 WinForms baseline
     /// <c>Phoenix.Controls.Visualist/Core/VisualistBusClient.cs</c> during the Visualist
-    /// WinUI parity restoration — regression audit 2026-05-31, Lane A. The class is
+    /// WinUI parity restoration. The class is
     /// platform-agnostic — ClientWebSocket + System.Threading.Channels, no UI dependency —
     /// so the port is byte-identical to the baseline apart from the namespace and the
     /// removed in-source InternalsVisibleTo noted above.)
     /// </summary>
     public class VisualistBusClient
     {
-        // R17 — fallback used when AppConfig has no BusUrl property (or the configured
+        // Fallback used when AppConfig has no BusUrl property (or the configured
         // value is empty). Identical to the historical hardcoded value so behavior is
         // unchanged for default installs.
         internal const string DefaultBusUrl = "ws://127.0.0.1:18081/";
@@ -68,7 +68,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         private bool _started;
 
         private ClientWebSocket? _ws;
-        // R17 — resolved from AppConfig.BusUrl (via reflection) at construction time;
+        // Resolved from AppConfig.BusUrl (via reflection) at construction time;
         // falls back to DefaultBusUrl. Captured once so a runtime config edit doesn't
         // race the in-flight ConnectLoopAsync.
         private readonly string _busUrl;
@@ -79,8 +79,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
             _busUrl = ResolveBusUrl();
         }
 
-        // R17 — read AppConfig.BusUrl via reflection; fall back to DefaultBusUrl if
-        // absent or empty. Mirrors the Sweep-7 WS reflective config helper.
+        // Read AppConfig.BusUrl via reflection; fall back to DefaultBusUrl if
+        // absent or empty. Mirrors the WS reflective config helper.
         internal static string ResolveBusUrl()
         {
             try
@@ -101,7 +101,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
             }
         }
 
-        // R3 — bounded outbound queue. Channel<string> stores pre-serialized JSON so a
+        // Bounded outbound queue. Channel<string> stores pre-serialized JSON so a
         // backlog of BusMessage instances doesn't pin live references during a long
         // disconnect. BoundedChannelFullMode.DropOldest gives the "drop oldest, accept
         // newest" semantic. Capacity 256 mirrors the spec.
@@ -115,13 +115,13 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
                 SingleWriter = false,
             });
 
-        // R3 — count of messages displaced because the outbound queue was full. Logged at
+        // Count of messages displaced because the outbound queue was full. Logged at
         // Communication tier once per `DropLogEveryN` drops to avoid log-flood during
         // prolonged disconnects.
         private long _droppedSendCount;
         public long DroppedSendCount => Interlocked.Read(ref _droppedSendCount);
 
-        // R3 — pump that drains _outbound onto the live socket while connected. Started by
+        // Pump that drains _outbound onto the live socket while connected. Started by
         // ConnectLoopAsync after a successful handshake; cancelled when the socket goes
         // down so the pump task exits and a fresh one starts on reconnect. The Channel
         // itself is NOT recreated — pending messages survive across the gap.
@@ -144,14 +144,14 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         /// </summary>
         public void Start()
         {
-            // L_BusClient (audit 2026-06-08): guard FIRST so a defensive double-Start
+            // Guard FIRST so a defensive double-Start
             // (no Stop between) early-returns before touching _cts — otherwise the
             // dispose/recreate below would run on the live, in-flight CTS and leak it.
             // Idempotent — never spawn a second connect loop on the already-started path.
             if (_started) return;
             _started = true;
 
-            // R3 (audit 2026-06-03): recreate the CTS for this run, disposing the prior
+            // Recreate the CTS for this run, disposing the prior
             // one — a Start/Stop/Start cycle (pillar reload) otherwise leaked one
             // CancellationTokenSource each time. Mirrors ArchitectBusClient's
             // swap-then-dispose idiom: assign the fresh CTS BEFORE disposing the old so
@@ -165,7 +165,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         }
 
         /// <summary>
-        /// L53 — synchronous shim. UI callers (window-close handlers) cannot easily
+        /// Synchronous shim. UI callers (window-close handlers) cannot easily
         /// transition to async, so we keep the sync entry point but route the actual
         /// close through Task.Run to dodge the sync-over-async deadlock that .Wait(1000)
         /// on a captured UI SynchronizationContext used to cause. The Task.Run starts the
@@ -189,7 +189,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         }
 
         /// <summary>
-        /// L53 — async shutdown. Cancels the connect loop and closes the live socket with
+        /// Async shutdown. Cancels the connect loop and closes the live socket with
         /// a 1s upper bound enforced via <c>WaitAsync(TimeSpan)</c>. Safe to await from
         /// any context; will not deadlock on a captured UI SynchronizationContext.
         /// </summary>
@@ -199,7 +199,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
             try { _cts.Cancel(); } catch { /* CTS may race a concurrent Start swap */ }
 
             // Stop the pump first so we don't try to send onto a closing socket.
-            // L_BusClient (audit 2026-06-08): cancel AND dispose the linked pump CTS and
+            // Cancel AND dispose the linked pump CTS and
             // null the fields, so a Stop that races/precedes the connect-loop teardown
             // doesn't leave a stale (cancelled) CTS hanging on the singleton. Snapshot
             // first to avoid disposing a CTS a concurrent reconnect just swapped in.
@@ -249,7 +249,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
                     GlobalLogger.Log($"Connected to Bus at {_busUrl}", "BusClient", LogLevel.Communication);
                     SafeEvent.Raise(OnConnectionStatusChanged, true, "VisualistBusClient", "OnConnectionStatusChanged");
 
-                    // R3 — start the outbound pump for this connection. Linked to the
+                    // Start the outbound pump for this connection. Linked to the
                     // outer ct so a Stop() call collapses both at once. The VISUAL_READY
                     // ping below goes through SendAsync, which enqueues; the pump drains
                     // it (along with anything queued during the prior disconnect window)
@@ -275,7 +275,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
                 // Tear down the pump for this connection so the next iteration starts a
                 // fresh one against the new socket. The Channel survives — anything still
                 // queued is delivered by the next pump.
-                // L_BusClient (audit 2026-06-08): cancel AND dispose the per-connection
+                // Cancel AND dispose the per-connection
                 // linked CTS — StartPump creates a fresh CreateLinkedTokenSource on every
                 // (re)connect, so cancel-then-null without dispose leaked one CTS per
                 // reconnect. Same leak class as the _cts headline finding.
@@ -322,7 +322,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
                     }
                     catch (Exception jex)
                     {
-                        // L55 — previously a silent `catch { continue; }`. Surface the
+                        // Previously a silent `catch { continue; }`. Surface the
                         // failure so authors notice malformed traffic instead of debugging
                         // "why is my Visualist preview not refreshing?" with zero logs.
                         // We deliberately log only at the deserialization layer — the
@@ -351,7 +351,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         }
 
         /// <summary>
-        /// R3 — public send entry point. Always enqueues into the bounded outbound
+        /// Public send entry point. Always enqueues into the bounded outbound
         /// channel; the pump (started on each successful connect) drains it onto the
         /// live socket in FIFO order. Sends made while disconnected are buffered;
         /// queue overflow drops the OLDEST entry and bumps <see cref="DroppedSendCount"/>.
@@ -399,7 +399,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
             return Task.CompletedTask;
         }
 
-        // R3 — drain the outbound channel onto the socket. Exits when (a) the linked
+        // Drain the outbound channel onto the socket. Exits when (a) the linked
         // CT trips (Stop or socket teardown), or (b) the socket leaves Open state. Send
         // failures abort the pump so the connect loop can re-establish; the not-yet-
         // sent queue head will be retried on reconnect because we read with await — only

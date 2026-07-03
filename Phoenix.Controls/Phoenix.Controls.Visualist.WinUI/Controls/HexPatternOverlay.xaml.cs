@@ -11,9 +11,8 @@ using XamlPath = Microsoft.UI.Xaml.Shapes.Path;
 namespace Phoenix.Controls.Visualist.WinUI.Controls;
 
 // Tiled flat-top hex grid, stroke-only. Sized to fill its parent on
-// SizeChanged. COPIED from Hub.WinUI's HexPatternOverlay per
-// feedback_visualist_architect_chrome_independence (the two pillars never share
-// paint code) and adapted for use as the Visualist layer-canvas pasteboard
+// SizeChanged. COPIED from Hub.WinUI's HexPatternOverlay (the two pillars
+// never share paint code) and adapted for use as the Visualist layer-canvas pasteboard
 // backdrop — the "Hex" preview-background variant paints this around the layer
 // rect so the layer bounds are visible against the textured pasteboard, while the
 // layer interior stays flat ("hex outside, flat inside").

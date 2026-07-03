@@ -11,15 +11,15 @@ using Phoenix.Controls.ViewerServer;
 namespace Phoenix.Controls.Hub.WinUI.Services;
 
 // Boot orchestrator for the WinUI Hub. Drives seven boot steps and reports
-// each through Track 2's IProgress<SplashProgress> contract (defined in
+// each through the IProgress<SplashProgress> contract (defined in
 // App.xaml.cs as `record struct SplashProgress(string Status, double Fraction)`).
 //
-// ── Track 2 wire-up site ────────────────────────────────────────────────
-// Track 2's App.xaml.cs has a stub `BootHubServicesAsync(IProgress<SplashProgress>)`
+// ── Splash wire-up site ─────────────────────────────────────────────────
+// App.xaml.cs has a stub `BootHubServicesAsync(IProgress<SplashProgress>)`
 // that just awaits Task.Delay. The integration turn replaces the body with:
 //
 //     private IHubServices? _services;
-//     private IPanelFactory? _panelFactory;   // Track 3 owns the concrete factory
+//     private IPanelFactory? _panelFactory;   // the concrete factory owner
 //
 //     protected override async void OnLaunched(LaunchActivatedEventArgs args)
 //     {
@@ -46,22 +46,22 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 //         _splash = null;
 //     }
 //
-// IUiDispatcher is implemented by Track 2 (or the integration turn) wrapping
-// a Microsoft.UI.Dispatching.DispatcherQueue. Track 4 deliberately does not
+// IUiDispatcher is implemented by the integration turn wrapping
+// a Microsoft.UI.Dispatching.DispatcherQueue. This bootstrapper deliberately does not
 // reference WinUI 3 types here — the Hub.WinUI csproj brings WindowsAppSDK
 // for chrome/splash/MainWindow code, but the bridge stays SDK-agnostic so a
 // future test fixture can drive it with a synchronous dispatcher.
 // ────────────────────────────────────────────────────────────────────────
 public static class HubBootstrapper
 {
-    // QC36-01 / QC40-01 — step 8 wires the opt-in event-trigger services
+    // Step 8 wires the opt-in event-trigger services
     // (Hotkey / Clipboard / WebSocket-server / LiveCaption). They are gated on
     // their respective AppConfig flags so a fresh-install Hub doesn't claim
     // global hotkeys, watch the clipboard, bind an extra port, or poll
     // LiveCaptions until the streamer opts in via Settings.
     private const int TotalBootSteps = 8;
 
-    // QC36-01 / QC40-01 — hold strong references so the GC doesn't reclaim
+    // Hold strong references so the GC doesn't reclaim
     // a service while its background loop is still expected to fire. The
     // existing HUDServer / RemoteBridgeServer live forever via HubHost; these
     // four don't (yet) have a process-wide accessor, so the bootstrapper itself
@@ -72,7 +72,7 @@ public static class HubBootstrapper
     private static ClipboardService?        s_clipboardService;
     private static WebSocketServerService?  s_webSocketServerService;
     private static LiveCaptionService?      s_liveCaptionService;
-    // B38 (audit/winui-regressions-2026-05-24) — direct OBS WebSocket v5
+    // Direct OBS WebSocket v5
     // client. Pinned for the same GC reason as the other opt-in services;
     // the message pump inside Websocket.Client is otherwise reclaimable
     // shortly after BootAsync returns, silently killing inbound OBS
@@ -80,7 +80,7 @@ public static class HubBootstrapper
     // is true; torn down in ShutdownOptInServicesAsync.
     private static ObsWebSocketClient?      s_obsWebSocketClient;
 
-    //  LayerWatcher owns a FileSystemWatcher on data/layers/*.phxlayer.
+    // LayerWatcher owns a FileSystemWatcher on data/layers/*.phxlayer.
     // Pinned here for the same reason as the opt-in services above: the watcher
     // is the only strong reference, and without a process-lifetime pin the GC
     // can reclaim the LayerWatcher (and its FileSystemWatcher) shortly after
@@ -89,7 +89,7 @@ public static class HubBootstrapper
     // stayed empty and every /hud/&lt;id&gt; route 404'd.
     private static LayerWatcher? s_layerWatcher;
 
-    // A4 (audit 2026-05-24) — LogicWatcher + SchedulerService were both
+    // LogicWatcher + SchedulerService were both
     // never instantiated in production after T15. Logic hot-reload on .phx
     // save was dead (only an explicit Settings-driven Refresh got the
     // registry to pick up changes), and every Schedule.Cron / RunAt /
@@ -99,7 +99,7 @@ public static class HubBootstrapper
     // BootAsync step 7; torn down in ShutdownOptInServicesAsync.
     private static LogicWatcher? s_logicWatcher;
 
-    // QC27-01 — v2 ViewerServer wiring. The server (HTTP+WS on :18090
+    // V2 ViewerServer wiring. The server (HTTP+WS on :18090
     // serving the WebViewer bundle + a read-only snapshot of Hub state)
     // and its Hub-side read-model adapter both live for the process
     // lifetime once started. Pinned in statics for the same reason as
@@ -121,7 +121,7 @@ public static class HubBootstrapper
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(navigator);
 
-        //  Snapshot AppConfig once at boot. The legacy
+        // Snapshot AppConfig once at boot. The legacy
         // RemoteBridgeServer at step 4 is gated on cfg.RemoteEnabled and the
         // ViewerServer at the end of the method uses the same source-of-truth;
         // pulling the read into a local keeps the gate site obvious and
@@ -130,7 +130,7 @@ public static class HubBootstrapper
         var cfg = ConfigManager.Current;
 
         // ── Step 1 — open the SQLite databank ────────────────────────────
-        // BlockerC (perf/architect-blockers): DB.Instance.Initialize is now
+        // DB.Instance.Initialize is now
         // run during PillarBootstrap.RunHeavyPreUiAsync before BootAsync is
         // entered, so by the time we get here the databank is already open.
         // The call is idempotent (singleton-guarded), but we still skip it
@@ -150,7 +150,7 @@ public static class HubBootstrapper
         ct.ThrowIfCancellationRequested();
 
         // ── Step 3 prep — construct HUDServer + wire LayerRuntime dispatcher ─
-        // P1-6 — the dispatcher MUST be assigned BEFORE Bus.StartAsync starts
+        // The dispatcher MUST be assigned BEFORE Bus.StartAsync starts
         // accepting connections. Pre-fix the assignment lived in Step 4 *after*
         // the bus was already listening: any VISUAL_TRIGGER routed to
         // LayerRuntime.EnqueueTriggerAsync during that window hit the "dispatcher
@@ -171,7 +171,7 @@ public static class HubBootstrapper
         // sources — and Visualist's live canvas preview — refresh WITHOUT a
         // manual OBS "Refresh cache of current page". LayerRegistry raises
         // LayerReloaded on every register/replace; HUDServer.PushLayerReloadedAsync
-        // stamps the M74 reload grace-window and broadcasts. The method, the event,
+        // stamps the reload grace-window and broadcasts. The method, the event,
         // and compositor.js's LAYER_RELOADED handler all existed — this single
         // subscription, which both HUDServer and LayerRegistry XML-doc reference as
         // "HubBootstrapper wires LayerRegistry.LayerReloaded to this", was never
@@ -208,7 +208,7 @@ public static class HubBootstrapper
         // ── Step 3 — IPC bus on 18081 ────────────────────────────────────
         // StartAsync runs the HttpListener accept loop forever; we don't await.
         // The shutdown CT is the bootstrap CT — outer code controls lifetime.
-        //  Pass the bootstrap CT as the expected token: a shutdown
+        // Pass the bootstrap CT as the expected token: a shutdown
         // cancellation on this exact CT is graceful; any other OCE (e.g. a
         // faulted upstream race) flows through to GlobalLogger.Error.
         Report(progress, 3, Localizer.T("splash.status.bus", "BINDING IPC BUS · 18081"));
@@ -216,7 +216,7 @@ public static class HubBootstrapper
             () => Bus.Instance.StartAsync(ct),
             "HubBootstrapper", "Bus.StartAsync",
             ct);
-        // Perf-review H16 (2026-05-14): replace the hard Task.Delay(100) with
+        // Replace the hard Task.Delay(100) with
         // a poll on Bus.IsListening. The listener typically flips IsListening
         // inside ~5-15 ms; the 100 ms sleep was pure latency tax with no
         // observability if the bind actually failed. Cap at 500 ms so a
@@ -227,13 +227,13 @@ public static class HubBootstrapper
         // ── Step 4 — HUD overlay HTTP+WS server ──────────────────────────
         // HUDServer is NOT a singleton (MainForm constructs it). Its
         // instance + LayerRuntime.Dispatcher wiring moved up above the bus
-        // bind for P1-6; this step now just kicks off the HTTP+WS accept
+        // bind; this step now just kicks off the HTTP+WS accept
         // loop for the already-constructed instance. The dispatcher has been
         // live since before Step 3's listener started accepting connections,
         // so any VISUAL_TRIGGER that races in cannot land on a null dispatcher.
         Report(progress, 4, Localizer.T("splash.status.hud", "STARTING HUD SERVER · 18080"));
 
-        // [QC18-S1 P0] Construct LayerWatcher and start it so data/layers/
+        // Construct LayerWatcher and start it so data/layers/
         // is scanned into LayerRegistry and subsequent .phxlayer saves
         // hot-reload. Pre-fix only test fixtures constructed a watcher in
         // production; the registry stayed empty, /hud/<id> 404'd, and every
@@ -275,7 +275,7 @@ public static class HubBootstrapper
             () => hudServer.StartAsync(),
             "HubBootstrapper", "HUDServer.StartAsync");
 
-        // [QC18-S1 P1] RemoteBridgeServer (legacy Viewer-pairing wire) is now
+        // RemoteBridgeServer (legacy Viewer-pairing wire) is now
         // gated on AppConfig.RemoteEnabled. Pre-fix the bridge constructed
         // and bound port 18083 on every Hub boot regardless of the toggle —
         // identical to the gating bug v2 ViewerServer documented at the
@@ -316,7 +316,7 @@ public static class HubBootstrapper
         // WS uses exponential-backoff reconnect internally, so a
         // bot that's down at boot doesn't block the splash; we just kick off
         // the connect attempt and proceed. The status strip shows the
-        // connection state once the panel is wired (Track 3 surfaces this
+        // connection state once the panel is wired (surfaced
         // via IConnectionStatus.StreamerBot).
         Report(progress, 5, Localizer.T("splash.status.streamer_bot", "CONNECTING TO STREAMER.BOT · 8080"));
         _ = AsyncErrorBoundary.SafeRunAsync(
@@ -330,7 +330,7 @@ public static class HubBootstrapper
         // registry at the configured logic directory and load the .phx
         // catalogue eagerly so Snapshot() returns real data once panels open.
         //
-        // Perf-review H17 (2026-05-14): the ScriptManager ctor itself calls
+        // The ScriptManager ctor itself calls
         // ScriptRegistry.LoadScripts internally (ScriptManager.cs end-of-ctor)
         // *and* this bootstrapper called it a second time on the UI thread.
         // File enumeration over data/logic/ on slow disks (OneDrive-backed
@@ -371,7 +371,7 @@ public static class HubBootstrapper
             () => ScriptManager.Instance.ExecuteOnStartupScriptsAsync(),
             "HubBootstrapper", "ExecuteOnStartupScriptsAsync");
 
-        // A4 (audit 2026-05-24) — LogicWatcher: never instantiated in
+        // LogicWatcher: never instantiated in
         // production after the T15 WinForms-shell retirement. Without it,
         // edits to .phx files in data/logic/ never reach the runtime —
         // operators had to restart Hub or open the Settings dialog to pick
@@ -388,7 +388,7 @@ public static class HubBootstrapper
             s_logicWatcher = null;
         }
 
-        // A4 — SchedulerService: same gap. Singleton existed since T15
+        // SchedulerService: same gap. Singleton existed since T15
         // but Start() was never called, so every Schedule.Cron / RunAt /
         // Recurring entry across AppConfig.Schedules AND in-script
         // on_schedule(...) / on_schedule_once(...) / on_interval(...)
@@ -435,17 +435,17 @@ public static class HubBootstrapper
             "HubBootstrapper", LogLevel.System);
 
         // ── Step 8 — opt-in event-trigger services ───────────────────────
-        // QC36-01 — HotkeyService / ClipboardService / WebSocketServerService
+        // HotkeyService / ClipboardService / WebSocketServerService
         // shipped wired through CommandManifest, ExporterRegistry and Settings
         // checkboxes in 0.7.0, but the runtime instances were never created.
         // Toggling Settings persisted a bit and did nothing. Construct them
         // here, gated on their AppConfig flags so a fresh install still boots
         // with zero global keystroke / clipboard / extra-port surface.
         //
-        // QC40-01 — LiveCaptionService has the same shape: implemented,
+        // LiveCaptionService has the same shape: implemented,
         // advertised, never instantiated. Same gating treatment.
         //
-        // QC36-02 — gating at construction time is the primary defense (lazier
+        // Gating at construction time is the primary defense (lazier
         // resource use — no HotkeyWindow, no ClipboardWindow, no HttpListener
         // bind, no UIA poll loop). The services also keep their internal
         // toggles where present, defense-in-depth.
@@ -457,7 +457,7 @@ public static class HubBootstrapper
         StartOptInServices();
 
         // ── Compose contract surface ─────────────────────────────────────
-        // Single-HUB collapse (TODO.md P0 #3): no LauncherService — pillar
+        // Single-HUB collapse: no LauncherService — pillar
         // navigation goes through IPillarNavigator, implemented by
         // Hub.MainWindow and threaded in by App.OnLaunched.
         var live     = new LiveFeedSource(dispatcher);
@@ -468,7 +468,7 @@ public static class HubBootstrapper
         var layers   = new LayerRegistrySource(LayerRegistry.Instance);
         var services = new HubServices(live, chat, scripts, sysLog, status, layers);
 
-        // QC27-01 — v2 ViewerServer bring-up. Gated on
+        // V2 ViewerServer bring-up. Gated on
         // AppConfig.ViewerServerEnabled (default false) so a fresh-install
         // Hub doesn't bind :18090 or expose the v2 web bundle until the
         // streamer opts in. Wired here, AFTER HubServices composition, so
@@ -483,7 +483,7 @@ public static class HubBootstrapper
     }
 
     /// <summary>
-    /// QC36-01 / QC40-01 — bring up the opt-in event-trigger services
+    /// Bring up the opt-in event-trigger services
     /// (HotkeyService / ClipboardService / WebSocketServerService /
     /// LiveCaptionService). Each is gated on its AppConfig flag and wrapped
     /// in its own try block: a fault in one service must not bring down the
@@ -497,7 +497,7 @@ public static class HubBootstrapper
         var cfg = ConfigManager.Current;
         var scripts = ScriptManager.Instance;
 
-        // QC36-01 — global hotkeys (on_hotkey("Ctrl+Shift+P"):)
+        // Global hotkeys (on_hotkey("Ctrl+Shift+P"):)
         if (cfg.HotkeysEnabled)
         {
             try
@@ -514,7 +514,7 @@ public static class HubBootstrapper
             }
         }
 
-        // QC36-01 — clipboard watcher (on_clipboard:)
+        // Clipboard watcher (on_clipboard:)
         if (cfg.ClipboardWatchEnabled)
         {
             try
@@ -531,7 +531,7 @@ public static class HubBootstrapper
             }
         }
 
-        // QC36-01 / QC36-02 — external WebSocket listener (on_websocket("name"):).
+        // External WebSocket listener (on_websocket("name"):).
         // The "don't construct if disabled" gate here is the primary defense; the
         // service's own StartAsync short-circuit (added below) is defense-in-depth
         // so a bootstrap-side bug reaching StartAsync with the flag off still
@@ -541,7 +541,7 @@ public static class HubBootstrapper
             try
             {
                 s_webSocketServerService = new WebSocketServerService(scripts);
-                // B44 (audit/winui-regressions-2026-05-24) — publish the
+                // Publish the
                 // service via HubHost so the Hub StatusStrip badge can read
                 // ConnectedClientCount + IsListening once per second without
                 // peeking at the bootstrapper's private static field.
@@ -560,7 +560,7 @@ public static class HubBootstrapper
             }
         }
 
-        // QC40-01 — Windows 11 LiveCaptions UIA bridge.
+        // Windows 11 LiveCaptions UIA bridge.
         // Per the brief: call IsLiveCaptionsSupported during construction; if the
         // toggle is on but the OS doesn't support it, log a warning so the user
         // (on Win10 / pre-22621 Win11) understands why nothing is happening.
@@ -583,7 +583,7 @@ public static class HubBootstrapper
                 {
                     s_liveCaptionService = new LiveCaptionService(cfg.LiveCaptionsAutoLaunch);
 
-                    // B33 (audit 2026-05-24) — broadcast pipeline. Pre-fix
+                    // Broadcast pipeline. Pre-fix
                     // captions were captured into the service's private buffer
                     // and the CaptionChanged event had no production subscriber
                     // (only test fixtures listened), so Caption.LiveCaption
@@ -679,13 +679,13 @@ public static class HubBootstrapper
             }
         }
 
-        // B38 (audit/winui-regressions-2026-05-24) — direct OBS WS v5
+        // Direct OBS WS v5
         // event subscription. Off by default; when ObsWebSocketEnabled is
         // true we construct the client, route its EventReceived through
         // ScriptManager.DispatchObsEvent (powering on_obs handlers) AND
         // emit an OBS_EVENT bus broadcast for Architect's debug-trace
-        // surface. Dual-routing mirrors WS.cs's OBS.SceneChanged dispatch
-        // (see M82): the script and bus paths have different consumers
+        // surface. Dual-routing mirrors WS.cs's OBS.SceneChanged dispatch:
+        // the script and bus paths have different consumers
         // and lifetimes, so collapsing them would tie Architect debug
         // visibility to script subscription.
         if (cfg.ObsWebSocketEnabled)
@@ -758,7 +758,7 @@ public static class HubBootstrapper
     }
 
     /// <summary>
-    /// QC27-01 — construct and start the v2 <see cref="ViewerServer.ViewerServer"/>
+    /// Construct and start the v2 <see cref="ViewerServer.ViewerServer"/>
     /// when <see cref="AppConfig.ViewerServerEnabled"/> is set. Gated at
     /// construction time (no HttpListener bind unless enabled) so the
     /// fresh-install posture stays "loopback-only zero surface".
@@ -841,7 +841,7 @@ public static class HubBootstrapper
         s_hotkeyService           = null;
         s_clipboardService        = null;
         s_webSocketServerService  = null;
-        // B44 — clear the HubHost accessor in lockstep with the bootstrapper's
+        // Clear the HubHost accessor in lockstep with the bootstrapper's
         // private field so a late StatusStrip read during shutdown doesn't
         // dereference a service we just told the kernel to tear down.
         HubHost.WebSocketServer   = null;
@@ -858,7 +858,7 @@ public static class HubBootstrapper
         try { ProcessInstanceManager.Instance.StopAll(); }
         catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "ProcessInstanceManager.StopAll failed", ex); }
 
-        // A4 — drain the SchedulerService before LogicWatcher so a final
+        // Drain the SchedulerService before LogicWatcher so a final
         // OnRefresh-driven Reload can't queue tasks against a dying CTS.
         try { SchedulerService.Instance.Stop(); }
         catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "SchedulerService.Stop failed", ex); }
@@ -893,7 +893,7 @@ public static class HubBootstrapper
             catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "WebSocketServerService shutdown failed", ex); }
         }
 
-        // B38 — DisposeAsync awaits DisconnectAsync internally (sends Normal
+        // DisposeAsync awaits DisconnectAsync internally (sends Normal
         // Closure to OBS + disposes the underlying WebsocketClient). The
         // client's own teardown shifts the blocking dispose to a thread-pool
         // task so this await stays UI-thread friendly.
@@ -933,7 +933,7 @@ public static class HubBootstrapper
             catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "opt-in CTS dispose failed", ex); }
         }
 
-        // [P1 swarm-audit 2026-05-29] Dispose the DiscordService singleton so
+        // Dispose the DiscordService singleton so
         // its long-lived shared HttpClient releases its socket handles on Hub
         // shutdown. DiscordService is a core (always-on) service rather than an
         // opt-in one, but this method is the bootstrapper's single teardown
@@ -953,7 +953,7 @@ public static class HubBootstrapper
 
     // SplashProgress.Fraction is a 0.0–1.0 fill ratio. Map step N out of
     // TotalBootSteps to N / TotalBootSteps so the progress bar advances
-    // monotonically; Track 2's splash clamps to [0, 1] anyway, so trailing
+    // monotonically; the splash clamps to [0, 1] anyway, so trailing
     // arithmetic from a future totals change can't push past full.
     private static void Report(IProgress<SplashProgress>? progress, int step, string status)
     {
@@ -962,7 +962,7 @@ public static class HubBootstrapper
         progress.Report(new SplashProgress(status, fraction));
     }
 
-    // Perf-review H16: poll Bus.IsListening with a 5 ms cadence and a hard
+    // Poll Bus.IsListening with a 5 ms cadence and a hard
     // deadline. Replaces the previous unconditional Task.Delay(100). Warm
     // listener typically flips in 5-15 ms — old code paid 100 ms every boot.
     private static async Task WaitForBusListeningAsync(TimeSpan timeout, CancellationToken ct)
@@ -973,7 +973,7 @@ public static class HubBootstrapper
             ct.ThrowIfCancellationRequested();
             await Task.Delay(5, ct).ConfigureAwait(false);
         }
-        // QC43-04: surface a degraded boot when the bus never flips IsListening
+        // Surface a degraded boot when the bus never flips IsListening
         // within the budget. Pillars connecting to a not-yet-listening bus will
         // fall through to their exponential-backoff reconnect path; without
         // this log the user sees the connection-failure symptom in the status

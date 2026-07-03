@@ -9,7 +9,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Shared.Models
 {
     /// <summary>
-    ///  (P1-9) — `Name` is now validated. A widget trigger name is
+    /// `Name` is validated. A widget trigger name is
     /// either the literal "onStartup" or the form "onTrigger:&lt;identifier&gt;"
     /// where the identifier starts with a letter and is followed by letters,
     /// digits, or underscores. Anything else would round-trip through the
@@ -21,8 +21,7 @@ namespace Phoenix.Controls.Shared.Models
     ///
     /// Setter discipline:
     ///   * The default <see cref="Name"/> setter performs validation and
-    ///     silently no-ops + logs invalid input (per
-    ///     feedback_no_modal_dialogs_for_repeatable_rejections.md). The
+    ///     silently no-ops + logs invalid input. The
     ///     existing literal sets in the codebase ("onStartup",
     ///     "onTrigger:greet", etc.) keep working unchanged.
     ///   * <see cref="SetForLoad(string)"/> bypasses validation. The JSON
@@ -37,7 +36,7 @@ namespace Phoenix.Controls.Shared.Models
         // ^(onStartup|onTrigger:<identifier>)$ — matches the two shapes the
         // codebase already uses (see Phoenix.Controls.Hub/data/layers/*.phxlayer
         // and the project docs's "Layer / widget model" section).
-        // [test-suite fix 2026-05-30] The `trigger_<8hex>` alternative accepts
+        // The `trigger_<8hex>` alternative accepts
         // MakeFallbackName's deterministic SHA-fallback as a first-class valid
         // name. Before this, LayerSerializer's load-time migration (line ~155)
         // rewrote an unsalvageable name to MakeFallbackName(raw) — a bare
@@ -45,7 +44,7 @@ namespace Phoenix.Controls.Shared.Models
         // STILL failed IsValidName, so the "every surviving name satisfies the
         // validator" invariant the migration claims was violated. MakeFallbackName
         // stays the bare-identifier producer (Visualist callers prepend
-        // `onTrigger:` themselves; Sprint12 asserts the 16-char hex form), so the
+        // `onTrigger:` themselves; the validator asserts the hex form), so the
         // reconciliation belongs here: bless the exact fallback shape.
         private static readonly Regex _validName = new(
             @"^(onStartup|onTrigger:[A-Za-z][A-Za-z0-9_]*|trigger_[0-9a-f]{8})$",

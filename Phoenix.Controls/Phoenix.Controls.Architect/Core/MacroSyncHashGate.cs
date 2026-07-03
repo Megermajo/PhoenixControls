@@ -7,13 +7,13 @@ using Phoenix.Controls.Shared.Models;
 namespace Phoenix.Controls.Architect.Core
 {
     /// <summary>
-    /// Sweep 18 (Macro audit P1 #2 — perf-only) — gates Architect's
-    /// <c>MainView.OnMacroSync</c> cascade-refresh on a per-macro signature hash.
+    /// Gates Architect's <c>MainView.OnMacroSync</c> cascade-refresh on a
+    /// per-macro signature hash.
     ///
     /// Background: every Hub-broadcast <c>MACRO_SYNC</c> call previously walked
     /// every Macro.Call node in the open document via
     /// <c>Canvas.RefreshGlobalMacro → RefreshAllCallNodesForMacro →
-    /// RefreshMacroCallSockets</c>. Sweep 11 made the inner refresh diff-based and
+    /// RefreshMacroCallSockets</c>. The inner refresh is diff-based and
     /// idempotent, so it's correct to call on an unchanged macro — just wasted
     /// CPU. The gate skips the refresh when the macro's
     /// <see cref="BuildSignature">signature</see> hash matches the last applied
@@ -130,7 +130,7 @@ namespace Phoenix.Controls.Architect.Core
 
         // FNV-1a 64-bit. Reference: https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
         //
-        // PERF (perf/architect-blockers, HIGH): pre-cache, every call allocated
+        // PERF: pre-cache, every call allocated
         // a fresh byte[] via Encoding.UTF8.GetBytes(s). MACRO_SYNC fires per
         // macro publish + per cross-instance broadcast — with 50 macros × ~500
         // bytes of signature = ~25 KB of per-broadcast garbage. Switch to

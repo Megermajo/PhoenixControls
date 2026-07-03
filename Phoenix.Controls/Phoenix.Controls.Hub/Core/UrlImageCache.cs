@@ -21,10 +21,10 @@ namespace Phoenix.Controls.Hub.Core
     /// HTTP-only fetch (no Chromium); the Visualist-side WebView2 cache for editor previews
     /// is queued for a later phase.
     ///
-    /// C12: writes go to a <c>.tmp</c> sibling and only get atomically moved into place after
+    /// Writes go to a <c>.tmp</c> sibling and only get atomically moved into place after
     /// the entire body has streamed successfully. A failed fetch never leaves a 0-byte cache file.
     ///
-    /// C13: SSRF defense + MIME / magic-byte / size validation. Pre-fetch we reject non-HTTP(S)
+    /// SSRF defense + MIME / magic-byte / size validation. Pre-fetch we reject non-HTTP(S)
     /// schemes and any host that resolves to a loopback / link-local / private / ULA address
     /// (incl. cloud metadata 169.254.169.254). Post-fetch we verify Content-Type against an
     /// allowlist, sniff the first bytes for a matching magic header, and cap body size at
@@ -36,11 +36,11 @@ namespace Phoenix.Controls.Hub.Core
         /// How long a cached file is considered fresh before being re-fetched.
         /// Defaults to 24h. Settable so callers (typically HubBootstrapper)
         /// can drive it from configuration without touching the constructor signature.
-        /// Wired from <c>AppConfig.UrlImageCacheTtlHours</c> at the HUDServer ctor (L38).
+        /// Wired from <c>AppConfig.UrlImageCacheTtlHours</c> at the HUDServer ctor.
         /// </summary>
         public TimeSpan Ttl { get; set; } = TimeSpan.FromHours(24);
 
-        // M35 (2026-05-14): hard cap on any single fetch attempt. Without this,
+        // Hard cap on any single fetch attempt. Without this,
         // a slow-loris CDN could hold the HttpClient socket open indefinitely —
         // HttpClient.Timeout is set at construction time on shared injected
         // instances we don't own, so we layer a per-call deadline via a linked
@@ -49,13 +49,12 @@ namespace Phoenix.Controls.Hub.Core
         // fetch fails before the OBS browser source notices a missing asset.
         private static readonly TimeSpan PerFetchTimeout = TimeSpan.FromSeconds(10);
 
-        // M34 (2026-05-14): soft cap on cache directory size. When the cache
+        // Soft cap on cache directory size. When the cache
         // total exceeds this value after a successful fetch, the LRU sweep
         // (oldest-LastWriteTime-first) deletes entries until the total drops
         // below the cap. The value is local rather than wired through
-        // AppConfig to keep the sweep within the Hub project boundary (the
-        // HUB-PERF-D1 carve-out only authorized one Shared change for the
-        // GlobalLogger refactor). 256 MiB is generous for a typical overlay
+        // AppConfig to keep the sweep within the Hub project boundary.
+        // 256 MiB is generous for a typical overlay
         // session while bounding long-running Hub processes that accumulate
         // stale CDN payloads across many stream sessions.
         public long MaxCacheBytes { get; set; } = 256L * 1024 * 1024;
@@ -67,7 +66,7 @@ namespace Phoenix.Controls.Hub.Core
         // check + set is atomic across the fan-out of concurrent fetches.
         private int _sweepRunning;
 
-        // QC35-03 — per-URL fetch lock. Without this, two widgets pointing at
+        // Per-URL fetch lock. Without this, two widgets pointing at
         // the same external image both raced the same `<sha>.tmp` write. The
         // unique-tmp-suffix change in M-prev solved torn writes but didn't
         // deduplicate the fetches themselves; cold-cache spikes for shared
@@ -88,7 +87,7 @@ namespace Phoenix.Controls.Hub.Core
         }
         private readonly ConcurrentDictionary<string, FetchLock> _fetchLocks = new();
 
-        // QC35-04 — negative result cache. A failed fetch (5xx, MIME reject,
+        // Negative result cache. A failed fetch (5xx, MIME reject,
         // SSRF reject) used to re-hit the origin on every subsequent /asset/url
         // request, amplifying any client-side retry storm into a DDoS against
         // the origin. Cache the failure for a short TTL so the next attempts
@@ -97,7 +96,7 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromSeconds(60);
         private readonly ConcurrentDictionary<string, DateTime> _negativeCache = new();
 
-        // QC35-05 — last-access timestamps for LRU eviction. The previous sweep
+        // Last-access timestamps for LRU eviction. The previous sweep
         // sorted by LastWriteTimeUtc (= fetch time), which meant a freshly-
         // fetched-and-never-used image survived while a stale-mtime hot image
         // got evicted. Track in-process access time on TryGet hits and prefer
@@ -113,7 +112,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private readonly string _cacheDir;
         private readonly HttpClient _http;
-        // Hub_CodeReview #18 — only dispose the HttpClient if we created it. An
+        // Only dispose the HttpClient if we created it. An
         // injected one is owned by the caller (typically a shared singleton in
         // tests / future host wiring).
         private readonly bool _ownsHttp;
@@ -131,7 +130,7 @@ namespace Phoenix.Controls.Hub.Core
                 _http = http;
                 _ownsHttp = false;
             }
-            // L38 fix: TTL is now injectable. Default of 24h preserves the previous
+            // TTL is now injectable. Default of 24h preserves the previous
             // behavior for any call site that doesn't pass a value. A non-positive
             // TimeSpan would produce nonsense semantics, so silently fall back.
             if (ttl is TimeSpan t && t > TimeSpan.Zero)
@@ -147,7 +146,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 try { _http.Dispose(); } catch { }
             }
-            // QC35-03 — release any semaphores still in the dict (process
+            // Release any semaphores still in the dict (process
             // shutdown or test teardown). Refcount tracking normally evicts
             // them on the last release, but a fault inside the critical
             // section can leave one behind.
@@ -175,7 +174,7 @@ namespace Phoenix.Controls.Hub.Core
 
             string sha = Sha256Hex(url);
 
-            // QC35-04 — negative-cache short-circuit. If the previous fetch for
+            // Negative-cache short-circuit. If the previous fetch for
             // this URL failed (any reason) within NegativeCacheTtl, return null
             // immediately without re-validating, re-resolving DNS, or hitting
             // the origin. Cleanup is implicit: TryFetchAsync overwrites the
@@ -199,7 +198,7 @@ namespace Phoenix.Controls.Hub.Core
             string ext = GuessExtension(url);
             string path = Path.Combine(_cacheDir, $"{sha}{ext}");
 
-            // QC35-05 — bump last-access on hot reads so the LRU sweep favors
+            // Bump last-access on hot reads so the LRU sweep favors
             // recently-used assets. Done outside the fetch lock because the
             // existence check is a cheap stat that doesn't need serialization.
             if (File.Exists(path))
@@ -212,7 +211,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
             }
 
-            // QC35-03 — serialize concurrent fetches of the same URL onto one
+            // Serialize concurrent fetches of the same URL onto one
             // SemaphoreSlim. The first caller wins the gate and does the HTTP
             // work; the runners-up wait on the semaphore and then re-check the
             // file existence above on retry. This caps the cold-cache origin
@@ -286,7 +285,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         private async Task<string?> DoFetchAsync(string url, string sha, string path, CancellationToken ct)
         {
-            // QC35-03 — disambiguate the temp filename per-fetch. The previous
+            // Disambiguate the temp filename per-fetch. The previous
             // `path + ".tmp"` formula meant every concurrent fetch of the same
             // URL wrote into the same file: writer A's stream would race
             // writer B's stream, and the `File.Move(tmp, path, overwrite: true)`
@@ -304,7 +303,7 @@ namespace Phoenix.Controls.Hub.Core
                 ? ConfigManager.Current.MaxAssetSizeBytes
                 : 5 * 1024 * 1024;
 
-            // M35 (2026-05-14): link the caller's CT with a 10s per-fetch
+            // Link the caller's CT with a 10s per-fetch
             // deadline so a stalled CDN socket can't hold the HttpClient
             // indefinitely. We don't set HttpClient.Timeout because the client
             // may be a shared singleton injected by the caller (test / future
@@ -369,7 +368,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
 
                 File.Move(tmp, path, overwrite: true);
-                // M34 — opportunistic LRU sweep after a successful fetch. The
+                // Opportunistic LRU sweep after a successful fetch. The
                 // sweep runs off-thread (background Task) so the caller doesn't
                 // pay the directory-walk latency on the hot fetch path. Single-
                 // in-flight gate via Interlocked so concurrent fetches don't
@@ -405,18 +404,18 @@ namespace Phoenix.Controls.Hub.Core
             {
                 try { var len = new FileInfo(f).Length; File.Delete(f); total += len; } catch { }
             }
-            // QC35-05 — drop the in-process access-time map alongside the
+            // Drop the in-process access-time map alongside the
             // files. Otherwise the next fetch would inherit stamps for paths
             // that no longer exist on disk.
             _lastAccessUtc.Clear();
-            // QC35-04 — flush the negative cache too. ClearCache is the only
+            // Flush the negative cache too. ClearCache is the only
             // user-initiated "forget everything" entry point, and a stuck
             // negative entry would defeat the point.
             _negativeCache.Clear();
             return total;
         }
 
-        // ── M34: LRU sweep ────────────────────────────────────────────────
+        // ── LRU sweep ────────────────────────────────────────────────
 
         /// <summary>
         /// Schedule a background LRU sweep iff the cap is enabled and another
@@ -458,7 +457,7 @@ namespace Phoenix.Controls.Hub.Core
             // concurrent fetch's File.Move, so we tolerate Length=0 / file-
             // missing exceptions during the walk by skipping the entry.
             //
-            // QC35-05 — score each entry by its in-process last-access stamp
+            // Score each entry by its in-process last-access stamp
             // when we have one (TryGet hits update _lastAccessUtc), and fall
             // back to mtime when we don't. Without this fallback an entry
             // fetched in a prior process run would have no stamp and would
@@ -608,7 +607,7 @@ namespace Phoenix.Controls.Hub.Core
             // Tests set AllowLoopbackForTesting to permit 127.0.0.1 fixtures;
             // every other class of blocked address (private/link-local/ULA/etc.)
             // still applies, and scheme/MIME/size/magic-byte checks are unaffected.
-            //  allowLoopback is a per-call escape (e.g. Ollama on
+            // allowLoopback is a per-call escape (e.g. Ollama on
             // localhost) — opens only the loopback ban, never the others.
             if (IPAddress.IsLoopback(ip)) return !(AllowLoopbackForTesting || allowLoopback);
 
@@ -663,7 +662,7 @@ namespace Phoenix.Controls.Hub.Core
         private static bool IsAllowedImageMime(string? media)
         {
             if (string.IsNullOrEmpty(media)) return false;
-            //  image/svg+xml dropped from the allowlist. SVG was safe
+            // image/svg+xml dropped from the allowlist. SVG was safe
             // by accident — the only consumer (compositor.js) loaded cached
             // images via <img>, which suppresses <script> inside SVG. Any
             // future fetch+blob+iframe path would have inherited an XSS
@@ -696,7 +695,7 @@ namespace Phoenix.Controls.Hub.Core
                     return len >= 12
                         && head[0] == 0x52 && head[1] == 0x49 && head[2] == 0x46 && head[3] == 0x46  // RIFF
                         && head[8] == 0x57 && head[9] == 0x45 && head[10] == 0x42 && head[11] == 0x50; // WEBP
-                //  SVG magic-byte arm removed alongside the MIME allowlist entry.
+                // SVG magic-byte arm removed alongside the MIME allowlist entry.
                 default:
                     return false;
             }
@@ -740,7 +739,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (!string.IsNullOrEmpty(ext) && ext.Length <= 6) return ext.ToLowerInvariant();
             }
             catch { }
-            // M45 — extensionless URLs (CDNs, query-string-keyed images) are common.
+            // Extensionless URLs (CDNs, query-string-keyed images) are common.
             // .png is a safer default than .bin: browsers will at least try to render
             // the cached file as an image; .bin would force a Save-As prompt.
             return ".png";

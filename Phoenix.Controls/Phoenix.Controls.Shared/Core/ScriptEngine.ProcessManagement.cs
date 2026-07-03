@@ -1,4 +1,4 @@
-// ProcessManagement band carved from ScriptEngine.cs ().
+// ProcessManagement band carved from ScriptEngine.cs.
 // Owns: fire-and-forget process spawn/terminate primitives —
 //   _spawnedProcesses ledger + OnProcessSpawned/OnProcessTerminated events,
 //   TerminateSpawnedProcess, HandleProcessSpawnBlock, StripQuotesAndSubstitute.
@@ -90,17 +90,17 @@ namespace Phoenix.Controls.Shared.Core
             // InstanceId output socket resolves to it. The exporter writes
             // the slot name into a per-call-site global before the block.
             // Cache the Replace results — each Replace scans the whole string,
-            // and this is a hot process_spawn path (P2 swarm-audit).
+            // and this is a hot process_spawn path.
             string cleanStableId   = stableProcessId.Replace("-", "");
             string cleanInstanceId = instanceId.Replace("-", "");
             string instanceOutKey = $"global._proc_instance_{cleanStableId}_{cleanInstanceId[..Math.Min(6, cleanInstanceId.Length)]}";
-            // QC01-02 — these two writes mutate the parent's _executionVars dict
+            // These two writes mutate the parent's _executionVars dict
             // and previously skipped _executionVarsLock. Inside a parallel_begin
             // arm, a sibling branch reading vars (e.g. via GetExecutionVar /
             // SubstituteVars / SetLocalResultVar) could collide mid-resize and
             // throw InvalidOperationException or read torn values. Mirror the
             // gated-lock pattern from SetLocalResultVar / GetExecutionVar.
-            // [P0 swarm-audit 2026-05-30] Acquire UNCONDITIONALLY. The prior
+            // Acquire UNCONDITIONALLY. The prior
             // `lockTaken = Volatile.Read(_parallelBranchDepth) > 0` gate was a
             // TOCTOU: a nested event.trigger resets depth to 0 mid-flight, so this
             // writer could skip the lock while a sibling branch is mid-access and
@@ -113,7 +113,7 @@ namespace Phoenix.Controls.Shared.Core
                 vars[instanceOutKey] = instanceId;
                 // Also stash a "last spawned id" sentinel for hand-written scripts.
                 vars["global._proc_last_id"] = instanceId;
-                // [P1 swarm-audit 2026-05-29] When process_spawn runs INSIDE a
+                // When process_spawn runs INSIDE a
                 // parallel_begin branch these writes land in the branch's vars and
                 // must be tagged so parallel_begin's merge-back propagates the
                 // instance id (and the _proc_last_id sentinel) to the outer scope —
@@ -131,7 +131,7 @@ namespace Phoenix.Controls.Shared.Core
             var cts = new CancellationTokenSource();
             // Atomically claim the instance id — if a duplicate id is reused
             // the second spawn collides and is rejected (same posture as
-            // ProcessManager.CreateProcess's BH-038 displaced-displace).
+            // ProcessManager.CreateProcess's displaced-displace).
             if (!_spawnedProcesses.TryAdd(instanceId, cts))
             {
                 GlobalLogger.Log($"process_spawn: instance id '{instanceId}' is already running — refusing duplicate.",
@@ -154,11 +154,11 @@ namespace Phoenix.Controls.Shared.Core
             {
                 // AsyncLocal writes inside this Task only land in this Task's
                 // ExecutionContext — they don't bleed into the parent script's
-                // flow. Same isolation pattern as RunParallelBranch (BH-003).
+                // flow. Same isolation pattern as RunParallelBranch.
                 _executionVars   = snapshot;
                 _executionCt     = cts.Token;
                 _executionDepth  = 0;
-                // QC01-01 — allocate a FRESH StrongBox<int> rather than assigning
+                // Allocate a FRESH StrongBox<int> rather than assigning
                 // _aggregateLoopIterations = 0 (which mutates the parent-shared box
                 // via _execItersLocal.Value.Value=0 and silently zeroes the parent's
                 // runaway-loop counter mid-flight). The spawned process gets its own
@@ -195,7 +195,7 @@ namespace Phoenix.Controls.Shared.Core
             {
                 // Task.Run scheduling failed before the lambda's finally could run —
                 // the ledger entry would leak and permanently lock instanceId.
-                // Remove + dispose the CTS here so the id is reusable. (P2 swarm-audit)
+                // Remove + dispose the CTS here so the id is reusable.
                 if (_spawnedProcesses.TryRemove(instanceId, out var leakedCts))
                 {
                     try { leakedCts.Dispose(); } catch { }

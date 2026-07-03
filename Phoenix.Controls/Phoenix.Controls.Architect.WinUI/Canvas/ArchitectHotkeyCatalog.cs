@@ -90,7 +90,7 @@ public static class ArchitectHotkeyCatalog
 
             // ── Navigate / View ───────────────────────────────────────────
             new("F",             "Frame selection (UE-Blueprints idiom)", SectionNavigateView, AnyCanvas),
-            //  the wheel chords were undocumented.
+            // the wheel chords were undocumented.
             new("Ctrl+Wheel",    "Zoom (cursor-anchored)",                SectionNavigateView, AnyCanvas),
             new("Wheel",         "Pan vertically",                        SectionNavigateView, AnyCanvas),
             new("Shift+Wheel",   "Pan horizontally",                      SectionNavigateView, AnyCanvas),

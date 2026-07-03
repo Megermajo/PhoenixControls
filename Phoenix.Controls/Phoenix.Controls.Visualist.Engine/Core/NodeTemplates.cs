@@ -35,7 +35,7 @@ namespace Phoenix.Controls.Visualist.Core
     /// <c>data/overlay/compositor.js</c>.
     /// </summary>
     /// <remarks>
-    /// Convention notes (BugFixSweep3 — M52/M53/M54):
+    /// Convention notes:
     ///
     /// * <b>Scalar range convention.</b> Per the manifesto §4 "Visual data types", a
     ///   <see cref="SocketDataType.Scalar"/> socket is conventionally a normalised 0..1 value
@@ -47,7 +47,7 @@ namespace Phoenix.Controls.Visualist.Core
     ///   companion attribute <c>X__KnownValues</c> (CSV) hints to the Architect detail panel
     ///   and the Visualist canvas that <c>X</c> should render as a dropdown / autocomplete.
     ///   The double-underscore suffix is intentional: it keeps the catalog free of any new
-    ///   metadata-class plumbing (until F10 adds inline pills) while staying machine-readable
+    ///   metadata-class plumbing (until inline pills land) while staying machine-readable
     ///   for the editor. Renderers strip the suffix when displaying the attribute name.
     ///
     /// * <b>Composition order.</b> The Image.* kernels listed below run in the order they
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Visualist.Core
     /// </remarks>
     public static class NodeTemplates
     {
-        // M53 — Standard CSS blend modes accepted by canvas globalCompositeOperation.
+        // Standard CSS blend modes accepted by canvas globalCompositeOperation.
         // Mirrors the validation list in NodeEvaluator._validBlendModes and compositor.js.
         // Renderers reading "Mode__KnownValues" pick this up to drive the dropdown.
         private const string BlendModeKnownValues =
@@ -64,7 +64,7 @@ namespace Phoenix.Controls.Visualist.Core
             "color-dodge,color-burn,hard-light,soft-light," +
             "difference,exclusion,hue,saturation,color,luminosity";
 
-        // M54 — Scalar range hints. A "<Attribute>__Range" companion attribute documents the
+        // Scalar range hints. A "<Attribute>__Range" companion attribute documents the
         // expected numeric range so editors can render appropriate sliders/spinners. The
         // evaluator does NOT enforce these — clamping is kernel-side work (see Math.Clamp).
         private const string Range01            = "0..1";
@@ -189,7 +189,7 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: O("Value", SocketDataType.String),
                 attrs:   new Dictionary<string, string> { ["Value"] = "\"\"" });
 
-            // M54 — Scalar.Constant emits a normalised scalar. The convention is 0..1
+            // Scalar.Constant emits a normalised scalar. The convention is 0..1
             // (per-attribute "Value__Range") but values outside that band are accepted —
             // downstream kernels decide whether to clamp.
             Add("Scalar.Constant", "Inputs",
@@ -206,7 +206,7 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: O("Value", SocketDataType.Vector2),
                 attrs:   new Dictionary<string, string> { ["X"] = "0", ["Y"] = "0" });
 
-            // M56 / F12 — Vector3 / Vector4 producers added so the new Math.LerpVectorN
+            // Vector3 / Vector4 producers added so the new Math.LerpVectorN
             // and Image.Crop's Rect:Vector4 socket can be wired without an external author
             // baking the values in attributes. Vector.Rect4 is a friendly alias for the
             // common Crop-rect case (X/Y/W/H).
@@ -231,7 +231,7 @@ namespace Phoenix.Controls.Visualist.Core
 
             // ── Image ops ─────────────────────────────────────────────────────
             //
-            // M52 — Canonical pipeline order (when authors chain all kernels):
+            // Canonical pipeline order (when authors chain all kernels):
             //   Load/LoadUrl → Crop → ColorAdjust → Transform → Tile → Mask → Blend → Display
             //
             // ColorAdjust runs BEFORE Blend (per-source colour grading happens before
@@ -243,11 +243,11 @@ namespace Phoenix.Controls.Visualist.Core
             // The C# evaluator (NodeEvaluator.cs) only walks the metadata; the actual pixel
             // ordering lives in compositor.js. This convention keeps both sides predictable.
 
-            // F6 — Uniform attribute dropped; single Scalar Factor is the only knob.
+            // Uniform attribute dropped; single Scalar Factor is the only knob.
             // Pipeline order: applied wherever wired; Factor defaults to 1 (no-op).
             //   Factor: 0..* (1 = identity, <1 shrinks, >1 enlarges)
             //
-            // P3 — Image.Scale opts into PreviewSource.UpstreamImage so the canvas
+            // Image.Scale opts into PreviewSource.UpstreamImage so the canvas
             // paints a Fusion-style passthrough thumbnail of the upstream image.
             // The thumbnail is intentionally NOT scaled by Factor at design time —
             // the body strip just shows "what's flowing through". Real scaling
@@ -262,7 +262,7 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // M52 — Image.Transform
+            // Image.Transform
             // Pipeline order: AFTER Crop / ColorAdjust, BEFORE Tile / Mask / Blend.
             // Inputs (all optional — fall back to attribute defaults when unwired):
             //   Translate : Vector2  pixel offset (default 0,0)
@@ -290,7 +290,7 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // M52 — Image.ColorAdjust
+            // Image.ColorAdjust
             // Pipeline order: AFTER Crop, BEFORE Transform. Per-source grading.
             //   Hue        : Scalar  degrees (default 0; range 0..360)
             //   Saturation : Scalar  (default 0 = no change; range -1..1, -1 = greyscale, +1 = boost)
@@ -320,7 +320,7 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // M52 — Image.Mask
+            // Image.Mask
             // Pipeline order: AFTER ColorAdjust / Transform, BEFORE Blend.
             // Both inputs are required — NodeEvaluator surfaces an explicit error when
             // Mask is unwired (silent passthrough to unmasked image misleads authors).
@@ -335,12 +335,12 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // M52 / M53 — Image.Blend
+            // Image.Blend
             // Pipeline order: LAST visual op before Display (composes A + B).
             // Both A (bottom) and B (top) are required — evaluator errors when B is unwired.
             //   Opacity : Scalar  (default 1; range 0..1, 0 = invisible top, 1 = full)
             //   Mode    : standard CSS globalCompositeOperation string (default "normal")
-            // M53 — Mode__KnownValues drives the editor dropdown so users can't typo a
+            // Mode__KnownValues drives the editor dropdown so users can't typo a
             // mode like "blurplease" and get a silent fall-through to source-over.
             Add("Image.Blend", "Image",
                 inputs:  new[]
@@ -386,7 +386,7 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // M52 / F12 — Image.Crop
+            // Image.Crop
             // Pipeline order: FIRST after Load (rectangle clip is a coordinate op).
             //   Rect : Vector4  (X, Y, W, H) as 0..1 fractions of the source-image
             //                   bounds, NOT pixels. compositor.js (Image.Crop case in
@@ -394,11 +394,11 @@ namespace Phoenix.Controls.Visualist.Core
             //                   width/height to derive the actual pixel rect; the
             //                   C# evaluator mirrors that math in EvalImageCrop. The
             //                   attribute fallback default is "0,0,1,1" (full-image
-            //                   passthrough). QC50-08 — comment used to say "pixels"
+            //                   passthrough). Previously the comment said "pixels"
             //                   which contradicted the actual semantics on both sides.
             //                   Same fraction convention is used by Mask.* shape
             //                   generators below.
-            // F12 — Vector.Rect4 / Vector4.Constant added above so this socket is wirable.
+            // Vector.Rect4 / Vector4.Constant added above so this socket is wirable.
             Add("Image.Crop", "Image",
                 inputs:  new[] { S("In", SocketDataType.Image), S("Rect", SocketDataType.Vector4) },
                 outputs: O("Out", SocketDataType.Image),
@@ -565,12 +565,12 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // M52 — Image.Tile
+            // Image.Tile
             // Pipeline order: AFTER Transform, BEFORE Mask / Blend.
             // Output dims are forced to widget rect (tile fills the widget bounds).
             //   Repeat : Vector2  (default 1,1; non-integer counts wrap fractionally)
             // Attribute fallbacks RepeatX / RepeatY default to "1" in EvalImageTile.
-            // L41 — Wrap: per-edge tiling behaviour (repeat / mirror / clamp). The
+            // Wrap: per-edge tiling behaviour (repeat / mirror / clamp). The
             // browser kernel (compositor.js evalImageTile) already reads this attr;
             // the C# mirror was the laggard. Stored JSON-string-encoded so the
             // default round-trips identically to the JS `attr(node,'Wrap','"repeat"')`.
@@ -586,13 +586,13 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // ── Sweep 22: procedural mask shape generators ────────────────────
+            // ── Procedural mask shape generators ────────────────────
             // Six pure generator nodes (zero inputs, one Image output) feeding
             // into Image.Mask's Mask socket. All coordinates / radii are
             // normalised 0..1 so a shape is portable across layer resolutions.
-            // Animation: every param is a scalar so the sweep-21 keyframe
+            // Animation: every param is a scalar so the keyframe
             // pipeline picks them up via attrAnimated() in compositor.js.
-            // Bezier/Polygon + ShapeEditor modal land in sweep 23.
+            // Bezier/Polygon + ShapeEditor modal land in a later sweep.
 
             Add("Mask.Rectangle", "Image",
                 inputs:  Empty(),
@@ -672,18 +672,18 @@ namespace Phoenix.Controls.Visualist.Core
                     ["Strength__Range"] = Range01,
                 });
 
-            // ── Sweep 23: Bezier / Polygon / Star mask shapes ─────────────────
+            // ── Bezier / Polygon / Star mask shapes ─────────────────
             // Polygon and Bezier carry a JSON `Vertices` attribute holding the
             // vertex list (variable length up to ShapeData.MaxVertices). The
             // ShapeEditor modal is the only sane editing surface; the inline
             // pill is intentionally suppressed for these by WidgetGraphCanvas.
             // Per-vertex animation lives in WidgetTimeline.Keyframes with the
-            // sweep-23 parameterPath grammar `vertex[N].<axis>`.
+            // parameterPath grammar `vertex[N].<axis>`.
             //
             // Star is parameterised (no vertex list) so it animates via the
             // existing scalar pipeline.
 
-            // QC50-14 — Vertices default sourced from ShapeData.DefaultPolygon /
+            // Vertices default sourced from ShapeData.DefaultPolygon /
             // DefaultBezier and serialised through ShapeData.Serialize. The
             // template now shares a single source of truth with the runtime
             // parser, instead of duplicating a hand-typed JSON literal that
@@ -729,18 +729,18 @@ namespace Phoenix.Controls.Visualist.Core
                 });
 
             // ── Math ops ──────────────────────────────────────────────────────
-            // M54 — Scalar inputs are conventionally 0..1 normalised; outputs may exceed
+            // Scalar inputs are conventionally 0..1 normalised; outputs may exceed
             // the band when the operation produces it (Add, Mul). Authors clamp downstream
             // with Math.Clamp when needed.
             Add("Math.Add",    "Math", inputs: new[] { S("A", SocketDataType.Scalar), S("B", SocketDataType.Scalar) }, outputs: O("Out", SocketDataType.Scalar));
             Add("Math.Sub",    "Math", inputs: new[] { S("A", SocketDataType.Scalar), S("B", SocketDataType.Scalar) }, outputs: O("Out", SocketDataType.Scalar));
             Add("Math.Mul",    "Math", inputs: new[] { S("A", SocketDataType.Scalar), S("B", SocketDataType.Scalar) }, outputs: O("Out", SocketDataType.Scalar));
             Add("Math.Div",    "Math", inputs: new[] { S("A", SocketDataType.Scalar), S("B", SocketDataType.Scalar) }, outputs: O("Out", SocketDataType.Scalar));
-            // M56 — Math.Lerp — Scalar overload (existing behaviour). T is conventionally 0..1.
+            // Math.Lerp — Scalar overload (existing behaviour). T is conventionally 0..1.
             Add("Math.Lerp",   "Math", inputs: new[] { S("A", SocketDataType.Scalar), S("B", SocketDataType.Scalar), S("T", SocketDataType.Scalar) }, outputs: O("Out", SocketDataType.Scalar));
             Add("Math.Clamp",  "Math", inputs: new[] { S("V", SocketDataType.Scalar), S("Min", SocketDataType.Scalar), S("Max", SocketDataType.Scalar) }, outputs: O("Out", SocketDataType.Scalar));
 
-            // M56 — Math.Lerp overloads for Vector2/3/4. Both sides resolve these: the C#
+            // Math.Lerp overloads for Vector2/3/4. Both sides resolve these: the C#
             // NodeEvaluator implements the per-component lerp via LerpVectorN (see the
             // Math.LerpVector2/3/4 cases in NodeEvaluator.cs), and compositor.js is the
             // live browser-side renderer. The math mirrors the scalar Math.Lerp path
@@ -758,7 +758,7 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: O("Out", SocketDataType.Vector4),
                 attrs: new Dictionary<string, string> { ["T__Range"] = Range01 });
 
-            // F11 — Vector.Split / Vector.Combine — the existing Vector2 pair plus new
+            // Vector.Split / Vector.Combine — the existing Vector2 pair plus new
             // Vector3 and Vector4 variants. Naming follows the existing "Vector.Split"
             // pattern with the dimensionality suffixed (Vector3.Split etc.) so they
             // group cleanly in the catalog and don't clash with the Vector2 default.
@@ -780,7 +780,7 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: O("V", SocketDataType.Vector4));
 
             // ── Triggers ──────────────────────────────────────────────────────
-            // F5 / H61 — Visual.OnStartup is repurposed as an event-data source. Outputs
+            // Visual.OnStartup is repurposed as an event-data source. Outputs
             // static metadata when the layer activates (LayerId, Timestamp). Flow remains
             // for graphs that wire to flow-aware downstream nodes (none today, but the
             // socket is reserved for future timeline / sequencer integration).
@@ -793,7 +793,7 @@ namespace Phoenix.Controls.Visualist.Core
                     S("Timestamp", SocketDataType.Float),
                 });
 
-            // F5 / H61 — Visual.OnTrigger exposes the eventData payload that arrives in
+            // Visual.OnTrigger exposes the eventData payload that arrives in
             // RUN_TRIGGER from Hub. compositor.js stashes the live trigger context into
             // module state at trigger start; these outputs read from that.
             Add("Visual.OnTrigger", "Triggers",
@@ -809,11 +809,11 @@ namespace Phoenix.Controls.Visualist.Core
                 attrs:   new Dictionary<string, string> { ["Name"] = "\"\"" });
 
             // ── Captions / Text ───────────────────────────────────────────────
-            // L37 — Caption.LiveCaption — outputs the latest live-caption text from Hub's
+            // Caption.LiveCaption — outputs the latest live-caption text from Hub's
             // LiveCaptionService. Two outputs: Original (raw) and Translated (post-translator,
             // may equal Original when no translator is wired or target lang is empty).
             //
-            // L37 attributes:
+            // Attributes:
             //   TargetLang  : string  empty (default) = pass-through original; non-empty
             //                         requests TranslationService at the layer level.
             //                         compositor.js read of this attribute is a follow-up
@@ -821,12 +821,12 @@ namespace Phoenix.Controls.Visualist.Core
             //   PreviewText : string  design-time placeholder. Used by the canvas thumbnail
             //                         so the widget shows something instead of an empty box
             //                         until a real caption arrives.
-            // QC22-07 — moved from "Inputs" → "Text" so the registration matches the
-            // M65 docstring in WidgetNodeRegistry (and the project docs's "Text covers caption
+            // Moved from "Inputs" → "Text" so the registration matches the
+            // AllowedCategories docstring in WidgetNodeRegistry (and the project docs's "Text covers caption
             // rendering" rationale). Caption.LiveCaption is a text-producing node, not
             // a passive Inputs-style constant — keeping it under Inputs created drift
             // between the documented spec and the actual catalog bucket. The "Text"
-            // category is already in AllowedCategories (see M65 block), so this swap
+            // category is already in AllowedCategories (see the AllowedCategories rationale block), so this swap
             // is a pure recategorisation; downstream consumers key by Title, not
             // Category, so existing wires + serialised graphs round-trip unchanged.
             Add("Caption.LiveCaption", "Text",
@@ -853,14 +853,14 @@ namespace Phoenix.Controls.Visualist.Core
                 inputs:  new[]
                 {
                     S("Text",       SocketDataType.String),
-                    // Audit fix — FontSize is a raw pixel size (default 32), not a
+                    // FontSize is a raw pixel size (default 32), not a
                     // 0..1 normalized value. §4.6 defines Scalar as "0..1 normalized",
                     // so Float is the honest type (both render as a circle pin).
                     S("FontSize",   SocketDataType.Float),
                     S("FontFamily", SocketDataType.String),
                     S("Color",      SocketDataType.Color),
                     S("Alignment",  SocketDataType.String),
-                    // [text-stroke 2026-06-10] Optional outline. StrokeWidth is a
+                    // Optional outline. StrokeWidth is a
                     // raw pixel width (Float, default 0 = no outline); StrokeColor
                     // gets the Inspector colour picker automatically (Color type).
                     // compositor.js strokeText()s before fillText() when width > 0.
@@ -875,7 +875,7 @@ namespace Phoenix.Controls.Visualist.Core
                     ["Color"]                 = "\"#ffffff\"",
                     ["Alignment"]             = "\"center\"",
                     ["Alignment__KnownValues"] = "left,center,right",
-                    // [text-stroke 2026-06-10] Default off (width 0). Black is the
+                    // Default off (width 0). Black is the
                     // conventional outline colour; only used when width > 0.
                     ["StrokeColor"]          = "\"#000000\"",
                     ["StrokeWidth"]          = "0",
@@ -883,7 +883,7 @@ namespace Phoenix.Controls.Visualist.Core
                 });
 
             // ── Sinks ─────────────────────────────────────────────────────────
-            // F16 — Display registered in the catalog so authors can discover it via the
+            // Display registered in the catalog so authors can discover it via the
             // Add-Node menu. Instantiation is short-circuited inside WidgetNodeRegistry.Instantiate,
             // which always returns a fresh DisplaySinkNode.Build() regardless of the template
             // sockets registered here — so the template fields exist purely for catalog
@@ -917,13 +917,13 @@ namespace Phoenix.Controls.Visualist.Core
                     ["Loop"]          = "false",
                 });
 
-            // F15 — Visual.Complete — graph-authored completion sink. When the trigger graph
+            // Visual.Complete — graph-authored completion sink. When the trigger graph
             // reaches this node during evaluation, compositor.js fires VISUAL_COMPLETE back
             // to Hub so wait_for_visual scripts proceed on the Done branch. If a graph has
             // no Visual.Complete, the engine falls back to firing on first Display render.
             // The Image input is for symmetry with Display; the value is not rendered.
             //
-            // F15 — Originally categorised as "Sink" alongside Display, but the semantics
+            // Originally categorised as "Sink" alongside Display, but the semantics
             // differ: Display draws pixels, Visual.Complete signals lifecycle completion.
             // The ideal category is "Signal" or "Lifecycle", but WidgetNodeRegistry's
             // AllowedCategories is the single source of truth for permitted strings and
@@ -958,7 +958,7 @@ namespace Phoenix.Controls.Visualist.Core
                 });
 
             // ── Debug ─────────────────────────────────────────────────────────
-            // H65 / F14 — Viewer is a passthrough: any value flowing in goes straight
+            // Viewer is a passthrough: any value flowing in goes straight
             // to Out, so it can be dropped on a wire without breaking the chain. The
             // canvas paints a Fusion-style live thumbnail in the body by walking
             // upstream from the Viewer's "In" socket to the nearest resolvable Image
@@ -972,8 +972,8 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: new[] { S("Out", SocketDataType.Any) },
                 previewSource: PreviewSource.UpstreamImage);
 
-            //  — Particles.Emit emitter (design-time scaffold).
-            // Follows the sprint-75 WebSource pattern: design-time template
+            // Particles.Emit emitter (design-time scaffold).
+            // Follows the WebSource pattern: design-time template
             // ships now so the editor palette + authored .phxlayer files
             // start using it; the compositor.js runtime case is the separate
             // sweep that actually emits and animates particles.
@@ -990,7 +990,7 @@ namespace Phoenix.Controls.Visualist.Core
             // sweep — the template Title is the contract; swapping the
             // runtime kernel is non-disruptive to authored graphs as long
             // as the socket shape stays stable.
-            // QC50-12 — Vector2 attributes now persist as the canonical
+            // Vector2 attributes now persist as the canonical
             // per-component scheme (PositionX/PositionY, VelocityX/VelocityY)
             // the rest of the Visualist catalog uses for Vector2 sockets
             // (compare Image.Transform: TranslateX/Y, ScaleX/Y). The previous
@@ -1026,7 +1026,7 @@ namespace Phoenix.Controls.Visualist.Core
                     { "Color",    "#ffffffff" },
                 });
 
-            //  — WebSource node template (design-time scaffold).
+            // WebSource node template (design-time scaffold).
             // Goal: an iframe / WebView2 source node so widgets can host
             // arbitrary HTML pages (live pinboards, video feeds, etc.) inside
             // an OBS browser source. The runtime side (compositor.js) doesn't
@@ -1053,7 +1053,7 @@ namespace Phoenix.Controls.Visualist.Core
                 },
                 previewSource: PreviewSource.OwnUrl);
 
-            // ── Math expansion (Track D) ──────────────────────────────────────
+            // ── Math expansion ────────────────────────────────────────────────
             // Numeric scalar kernels extending the Math.Add/Sub/Mul/Div/Lerp/Clamp
             // core above. Each carries its operands as keyframeable scalar attributes
             // (read via attrAnimated in compositor.js); a wired input on the same-named
@@ -1166,7 +1166,7 @@ namespace Phoenix.Controls.Visualist.Core
                     ["Mode__KnownValues"] = "GreaterThan,LessThan,GreaterOrEqual,LessOrEqual,Equal,NotEqual",
                 });
 
-            // ── Time / Animation (Track D) ────────────────────────────────────
+            // ── Time / Animation ──────────────────────────────────────────────
             // Clock-driven scalar sources. compositor.js reads the live clock from
             // triggerContext.timeMs (ms → seconds); the C# design-time mirror has no
             // clock, so it evaluates at t=0. Keyframeable scalar attributes use
@@ -1218,7 +1218,7 @@ namespace Phoenix.Controls.Visualist.Core
                     ["Mode__KnownValues"] = "Linear,EaseIn,EaseOut,EaseInOut,Step",
                 });
 
-            // ── String (Track D) ──────────────────────────────────────────────
+            // ── String ────────────────────────────────────────────────────────
             // Pure string transforms — no Flow socket. String attrs use plain attr
             // (not keyframeable); a wired same-named input overrides the attribute.
             Add("String.Concat", "String",
@@ -1275,7 +1275,7 @@ namespace Phoenix.Controls.Visualist.Core
                     ["With"] = "\"\"",
                 });
 
-            // ── Convert (Track D) ─────────────────────────────────────────────
+            // ── Convert ───────────────────────────────────────────────────────
             // Type bridges between Scalar / String / Color. Scalar inputs are
             // keyframeable (attrAnimated in JS); String/enum attrs use plain attr.
             // NumberToString formats V with the given decimal places.
@@ -1321,7 +1321,7 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: O("Color", SocketDataType.Color),
                 attrs:   new Dictionary<string, string> { ["Hex"] = "\"#ffffff\"" });
 
-            // ── Read-out / Trigger (Track D) ──────────────────────────────────
+            // ── Read-out / Trigger ────────────────────────────────────────────
             // Message.Read — the key gap closer: reads a named field out of the
             // transmitted trigger payload so a graph can render the string a
             // Visual.Trigger sent. compositor.js reads triggerContext.eventData[Key];

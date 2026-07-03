@@ -24,7 +24,7 @@ namespace Phoenix.Controls.Hub.Core
 
     public class ProcessManager
     {
-        // BH-018 cousin — same systemic ??= race that BH-018 calls out for ScriptManager /
+        // Same systemic ??= race that affects ScriptManager /
         // LayerRuntime / LayerRegistry. Concurrent first-touches could double-run the
         // private ctor's side effects. Double-checked locking on _instanceLock; _instance
         // remains settable for symmetry with the rest of the singleton pillar.
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 Id = id,
                 Title = title,
-                // P0-5 — UTC for DST-safe time math. No live consumer compares
+                // UTC for DST-safe time math. No live consumer compares
                 // Process.StartedAt today (HttpTranslator's StartedAt is an
                 // unrelated internal type), so keeping the field as DateTime is
                 // safe; just switching the captured wall-clock to UtcNow avoids
@@ -64,7 +64,7 @@ namespace Phoenix.Controls.Hub.Core
                 StartedAt = DateTime.UtcNow
             };
 
-            // BH-038 — atomic check-and-displace. The previous TryGetValue + assignment
+            // Atomic check-and-displace. The previous TryGetValue + assignment
             // pair was non-atomic; concurrent callers could each pass the check, and
             // the dead `!ReferenceEquals(existing, newProcess)` guard was always true
             // (newProcess is fresh on this stack). AddOrUpdate composes the update
@@ -116,12 +116,12 @@ namespace Phoenix.Controls.Hub.Core
 
         public IEnumerable<Process> GetAllProcesses() => _activeProcesses.Values;
 
-        // M38 — bounded cache. Without this, a long-running process with an active
+        // Bounded cache. Without this, a long-running process with an active
         // interceptor on a high-traffic event type leaks memory until process
         // termination. Cap is generous (1000 payloads / type) but firm.
         private const int MaxCacheEntries = 1000;
 
-        // P2 — drain throttle. RouteEventToInterceptors runs on the WebSocket
+        // Drain throttle. RouteEventToInterceptors runs on the WebSocket
         // receive thread (WS.ParseBotMessage). The old unbounded drain
         // (`while (bag.Count > MaxCacheEntries / 2 ...)`) could take up to ~500
         // items in one call — and each ConcurrentBag.Count is itself O(n) —

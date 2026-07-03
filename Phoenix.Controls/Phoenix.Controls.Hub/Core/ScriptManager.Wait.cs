@@ -34,7 +34,7 @@ namespace Phoenix.Controls.Hub.Core
             // LayerRuntime dispatches RUN_TRIGGER (carrying waitId) to /hud/<layerId>, the browser's
             // compositor.js echoes VISUAL_COMPLETE back, HUDServer parses it, LayerRuntime resolves
             // the wait. Inactive layers (no live /hud/<id> clients) fast-succeed via LayerRuntime.
-            // Sweep 16 — EventData via ArgType.KvPairs Variadic; TimeoutMS bound as Int.
+            // EventData via ArgType.KvPairs Variadic; TimeoutMS bound as Int.
             _engine.RegisterCommand("wait_for_visual", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
                 string layerId     = bound?.GetOrDefault<string>("LayerID", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);

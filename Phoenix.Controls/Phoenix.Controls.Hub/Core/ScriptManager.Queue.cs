@@ -46,7 +46,7 @@ namespace Phoenix.Controls.Hub.Core
                 string eventIdVar = bound?.GetOrDefault<string>("EventIDVar", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 string payloadVar = bound?.GetOrDefault<string>("PayloadVar", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
 
-                // R3 (audit 2026-06-03) — queue.pop did an UNGUARDED read-modify-write on
+                // queue.pop did an UNGUARDED read-modify-write on
                 // global._event_queue while queue.push serializes through the same per-key
                 // RMW lock. A pop racing a push (or a concurrent pop) could drop or
                 // duplicate an entry. Take the same lock around the read + the queue write.

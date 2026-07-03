@@ -7,6 +7,39 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607031 - 2026.07.03
+
+**New**
+- Architect: paired event nodes now stay matched across scripts — add, rename, or retype a value on one side and its partners update instantly, even in other open windows.
+
+**Fixed**
+- Architect: naming an Event Trigger now fills in its paired bubbles right away — the node no longer stays bare after naming it.
+- Architect: a freshly named event node syncs its bubbles with partners in the same script and in other scripts.
+- Architect: an event's arguments and return values stay on their own separate channels — a return no longer turns into a second argument.
+- Architect: event nodes no longer show garbled or overlapping sockets after mixing arguments and return values.
+- Architect: clicking a "+" slot on an event node adds the bubble right away, even when the mouse drifts a little during the click.
+- Architect: pressing an event node near its "+" slot row no longer starts an unintended wire drag.
+- Architect: right-clicking a bubble on an event node opens its socket menu — changing a bubble's type or removing it works from there.
+- Architect: renaming an event bubble sticks and carries over to partner nodes in other scripts.
+- Architect: giving a new event node an existing event's name shapes it to match that event, without wiping the other nodes' values.
+- Architect: loading a script no longer shrinks event nodes — paired nodes keep their fullest set of bubbles.
+- Architect: event nodes damaged by earlier versions repair themselves when their script opens.
+- Architect: cross-file event sync can no longer wipe the bubbles of an already-defined partner node.
+- Improved reliability and stability of event nodes in Architect.
+- Architect: saving a script that wires flow into a macro's Exit node no longer fails and leaves the script outdated.
+- Architect: flow reaching a macro's Exit node now ends the macro cleanly.
+- Architect: values wired into a macro's Exit node now come out of the Macro Call node's outputs.
+- Architect: macro outputs reset on every call — no leftover values from an earlier run.
+- Improved reliability and stability of macros in Architect.
+- Architect: double-clicking a node to edit it no longer makes it jump across the canvas or vanish after loading another script in the same window.
+- Architect: values edited directly on a node are no longer lost when the editor closes as you click elsewhere.
+- Architect: value outputs on text and convert nodes can now connect to more than one node.
+- Architect: comment frames can now be renamed — double-click the frame's title, or right-click it.
+- Architect: pressing a shortcut key while typing in a value box no longer triggers canvas actions behind it.
+- Architect: long Template, Script, and Payload text wraps inside the node instead of stretching over its outputs.
+- Improved reliability and stability of inline node editing in Architect.
+- Architect: working on the canvas no longer floods the System Log with repeated warnings.
+
 ## Hotfix - 1.0.2606302 - 2026.06.30
 
 **Fixed**

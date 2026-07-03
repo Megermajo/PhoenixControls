@@ -14,7 +14,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    ///  — external WebSocket listener that fires
+    /// External WebSocket listener that fires
     /// <c>on_websocket("name")</c> handler blocks when a client posts a message
     /// to <c>/ws/&lt;name&gt;</c>. Sister surface to <see cref="HUDServer"/>
     /// (overlay browser sources) and <see cref="RemoteBridgeServer"/>
@@ -22,8 +22,8 @@ namespace Phoenix.Controls.Hub.Core
     /// streamer-authored panels / dashboards / bridges that don't use the
     /// pairing flow.
     ///
-    /// Authentication: shared-secret token via <c>?token=</c> query parameter
-    /// (QC41-02). The token lives in <see cref="AppConfig.WebSocketServerToken"/>
+    /// Authentication: shared-secret token via <c>?token=</c> query parameter.
+    /// The token lives in <see cref="AppConfig.WebSocketServerToken"/>
     /// and is auto-generated on first launch via <see cref="RandomNumberGenerator"/>.
     /// Mismatch → WebSocket close 1008 (PolicyViolation) without ever dispatching
     /// to a script. Loopback bind by default (see
@@ -43,19 +43,19 @@ namespace Phoenix.Controls.Hub.Core
     /// <c>{event.payload}</c>) so user-friendly contracts can be authored
     /// without a JSON wrapper.
     ///
-    /// Decisions made for  (per the WebSocket Server TODO note):
+    /// Design decisions:
     ///   * Port — <see cref="AppConfig.WebSocketServerPort"/> default 18083.
-    ///   * Auth — QC41-02 introduces required token; pre-fix sprint shipped
+    ///   * Auth — a required token; an earlier implementation shipped
     ///     "loopback is the auth", which silently exposed script execution to
     ///     anyone who could reach the bind host.
     ///   * Routing — per-path (one <c>on_websocket("name"):</c> block per
     ///     <c>/ws/&lt;name&gt;</c>) mirroring HTTP.WebhookListener's
     ///     <c>on_webhook("name"):</c> shape.
-    ///   * Multi-handler dispatch — QC36-12 flipped the contract from
-    ///     first-match-wins to all-match fan-out (now consistent with
-    ///     on_chat / on_event / on_clipboard). Duplicate names are warned
+    ///   * Multi-handler dispatch — the contract is all-match fan-out (not
+    ///     first-match-wins), consistent with
+    ///     on_chat / on_event / on_clipboard. Duplicate names are warned
     ///     about by ScriptRegistry's generalized header-collision detector
-    ///     (QC36-08 — DetectDuplicateHeaderNames), so an operator who
+    ///     (DetectDuplicateHeaderNames), so an operator who
     ///     wanted exclusive dispatch sees a Communication-tier log line
     ///     and can rename one of the colliding scripts.
     /// </summary>
@@ -69,16 +69,16 @@ namespace Phoenix.Controls.Hub.Core
 
         private readonly ConcurrentDictionary<Guid, WebSocket> _sessions = new();
 
-        // QC41-02 — concurrent-script cap. SemaphoreSlim sized from
+        // Concurrent-script cap. SemaphoreSlim sized from
         // AppConfig.MaxConcurrentWebsocketScripts at StartAsync so a chatty
         // bridge spamming /ws/<name> can't spawn unlimited engine invocations.
         // 0 in config means "unlimited" — we model that with int.MaxValue so
         // the lock path stays uniform.
         private SemaphoreSlim? _wsScriptSem;
 
-        // QC41-02 / QC36-11 — fallback cap on the cumulative bytes a single
+        // Fallback cap on the cumulative bytes a single
         // message may aggregate across continuation frames. 1MB matches
-        // HUDServer's QC35-02 default. Now configurable via
+        // HUDServer's default. Now configurable via
         // AppConfig.WebSocketMaxMessageBytes (read at receive-loop time so a
         // mid-flight config change is picked up by the next message); this
         // constant is the clamp when the config value is missing / non-positive.
@@ -92,7 +92,7 @@ namespace Phoenix.Controls.Hub.Core
         public bool IsRunning => _listener is { IsListening: true };
         public string? ActivePrefix => _activePrefix;
 
-        // B44 (audit/winui-regressions-2026-05-24) — live status accessors for
+        // Live status accessors for
         // the Hub StatusStrip badge. IsListening mirrors IsRunning (kept as a
         // separate property so the badge's semantic ("the listener is bound
         // and accepting upgrades") is decoupled from internal naming);
@@ -113,14 +113,14 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (IsRunning) return Task.CompletedTask;
 
-            // QC36-02 — defense-in-depth gate. The primary gate lives in
+            // Defense-in-depth gate. The primary gate lives in
             // HubBootstrapper.StartOptInServices: when AppConfig.WebSocketServerEnabled
             // is false, the service is never constructed at all (lazier resource use
             // — no HttpListener bind, no accept loop). This check is the belt-and-
             // braces: if a future call site constructs the service and reaches
             // StartAsync with the flag off, we log an error (which signals a
             // bootstrap-side bug) and refuse to bind. Without this, the "Settings
-            // checkbox toggled off but server still running" failure mode in QC36-02
+            // checkbox toggled off but server still running" failure mode
             // could re-emerge under a bootstrap regression.
             if (!ConfigManager.Current.WebSocketServerEnabled)
             {
@@ -131,8 +131,8 @@ namespace Phoenix.Controls.Hub.Core
                 return Task.CompletedTask;
             }
 
-            // QC41-02 / [S38] — ensure a strong shared-secret token exists.
-            // Primary mint path runs at ConfigManager.Load (S38) so this is
+            // Ensure a strong shared-secret token exists.
+            // Primary mint path runs at ConfigManager.Load so this is
             // belt-and-braces for tests / hot-reload paths that bypass Load.
             // Idempotent when the token is already valid.
             EnsureWebSocketTokenProvisioned();
@@ -144,7 +144,7 @@ namespace Phoenix.Controls.Hub.Core
                             ? ConfigManager.Current.WebSocketServerPort
                             : 18083;
 
-            // QC41-02 — LAN-bind hardening. A non-loopback host requires an
+            // LAN-bind hardening. A non-loopback host requires an
             // explicit AppConfig.WebSocketServerLanModeEnabled opt-in; without
             // it we downgrade to loopback and log a CriticalError so the
             // operator sees why the bind doesn't match config. Empty / short
@@ -225,13 +225,13 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC41-04 — DisposeAsync is the supported teardown for WinUI / STA
+        /// DisposeAsync is the supported teardown for WinUI / STA
         /// callers. <see cref="StopAsync"/> awaits the accept loop and a
         /// per-socket close handshake drain; calling
         /// <c>.GetAwaiter().GetResult()</c> on the UI thread schedules
         /// continuations on the captured SynchronizationContext and deadlocks
         /// the dispatch loop. Mirrors <see cref="RemoteBridgeServer.DisposeAsync"/>
-        /// and the Bus.Stop pattern from commit 6b713988.
+        /// and the Bus.Stop pattern.
         /// </summary>
         public async ValueTask DisposeAsync()
         {
@@ -240,12 +240,12 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC41-04 — synchronous <see cref="IDisposable.Dispose"/> compatibility
+        /// Synchronous <see cref="IDisposable.Dispose"/> compatibility
         /// shim. The pre-fix implementation was
         /// <c>StopAsync().GetAwaiter().GetResult()</c>, a WinUI deadlock surface
         /// whenever the call originated on the UI thread (Hub shutdown via the
-        /// pillar-launcher path does exactly that). Mirrors Bus.Stop (commit
-        /// 6b713988) by hopping to a worker thread before blocking so the
+        /// pillar-launcher path does exactly that). Mirrors Bus.Stop
+        /// by hopping to a worker thread before blocking so the
         /// caller's SyncContext can keep pumping while StopAsync drains.
         /// Production callers should prefer <see cref="DisposeAsync"/>.
         /// </summary>
@@ -289,7 +289,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // QC41-02 — shared-secret token gate. Reject BEFORE the WebSocket
+            // Shared-secret token gate. Reject BEFORE the WebSocket
             // upgrade so a probe doesn't even see the WS handshake succeed;
             // they get a plain 401 and we never spend ScriptManager cycles on
             // them. CryptographicEquals (FixedTimeEquals on byte arrays) keeps
@@ -312,7 +312,7 @@ namespace Phoenix.Controls.Hub.Core
             catch (Exception ex)
             {
                 GlobalLogger.Error("WebSocketServer", "WS accept failed", ex);
-                // [P1 swarm-audit 2026-05-29] The 401/400/404 paths above all Close()
+                // The 401/400/404 paths above all Close()
                 // the response; this AcceptWebSocketAsync-failure path left it open,
                 // leaking the HttpListenerContext's response stream/connection.
                 try { ctx.Response.Close(); } catch { }
@@ -324,7 +324,7 @@ namespace Phoenix.Controls.Hub.Core
             _sessions[sessionId] = socket;
 
             var buffer = new byte[16 * 1024];
-            // QC36-11 — pull the byte cap from AppConfig at session start so an
+            // Pull the byte cap from AppConfig at session start so an
             // operator who tunes WebSocketMaxMessageBytes via Settings doesn't
             // have to reconnect every WS client to pick it up on NEW sessions.
             // We snapshot once per connection rather than per-fragment so a
@@ -337,7 +337,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
-                    // QC41-02 — accumulate raw UTF-8 bytes in a MemoryStream
+                    // Accumulate raw UTF-8 bytes in a MemoryStream
                     // rather than decoding fragments into a StringBuilder. Two
                     // wins: (1) the size cap is honest (byte count, not UTF-16
                     // char count which lies by up to 4x on emoji-heavy
@@ -362,7 +362,7 @@ namespace Phoenix.Controls.Hub.Core
 
                     if (oversized)
                     {
-                        // QC36-11 — log at Communication tier (not CriticalError) so the
+                        // Log at Communication tier (not CriticalError) so the
                         // operator sees abused/buggy clients without it pinging the
                         // critical-alert UI. The original implementation logged at
                         // CriticalError; this matches the WS-Server tier for client
@@ -399,7 +399,7 @@ namespace Phoenix.Controls.Hub.Core
                         payload = doc.RootElement.Clone();
                     }
 
-                    // QC41-02 — gate script dispatch on the concurrent-script
+                    // Gate script dispatch on the concurrent-script
                     // semaphore. WaitAsync (not TryEnter) so a brief burst
                     // queues rather than dropping invocations; the per-script
                     // timeout in ScriptManager bounds the worst-case stall.
@@ -438,11 +438,11 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // ── QC41-02 token / host helpers ──────────────────────────────────
+        // ── token / host helpers ──────────────────────────────────
 
         /// <summary>
-        /// QC41-02 / [S38] — belt-and-braces token provisioning. The primary
-        /// mint path now lives in <see cref="ConfigManager.Load"/> (S38) so a
+        /// Belt-and-braces token provisioning. The primary
+        /// mint path now lives in <see cref="ConfigManager.Load"/> so a
         /// fresh-install Hub always has a credible token in
         /// <c>config.json</c> before the WebSocketServer ever binds. We still
         /// invoke <see cref="ConfigManager.EnsureWebSocketServerToken"/> here

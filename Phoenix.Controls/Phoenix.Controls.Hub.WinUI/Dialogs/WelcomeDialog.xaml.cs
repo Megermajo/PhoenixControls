@@ -54,7 +54,7 @@ public sealed partial class WelcomeDialog : ContentDialog
 
     private async void OnDialogClosing(ContentDialog sender, ContentDialogClosingEventArgs args)
     {
-        //  Async save so a slow OneDrive-backed AppData write
+        // Async save so a slow OneDrive-backed AppData write
         // doesn't peg the UI thread while the dialog dismiss animation
         // runs. GetDeferral keeps the dialog open until the write
         // completes — without the deferral the closing animation could
@@ -189,7 +189,7 @@ public sealed partial class WelcomeDialog : ContentDialog
 
     private void MarkSeenAndClose()
     {
-        //  Hide() triggers Closing → OnDialogClosing which does
+        // Hide() triggers Closing → OnDialogClosing which does
         // the async save under a deferral. Avoid double-writing here by
         // delegating to that path; setting the flag up front keeps the
         // semantics if Closing was already pending (e.g. ESC followed

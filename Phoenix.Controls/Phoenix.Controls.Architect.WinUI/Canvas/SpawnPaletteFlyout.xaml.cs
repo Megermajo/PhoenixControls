@@ -30,14 +30,14 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 //     pending wire onto the next palette open.
 public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyout
 {
-    //  BulkObservableCollection so ApplyFilter commits the
+    // BulkObservableCollection so ApplyFilter commits the
     // ~150-row catalogue in ONE Reset notification instead of _rows.Clear()
     // followed by ~150 individual Add notifications on every open/keystroke —
     // the "big lag when opening the space (search) menu". ReplaceAll(list).
     private readonly BulkObservableCollection<SpawnRow> _rows = new();
     private List<SpawnRow> _all = new();
 
-    //  The per-category "ALL NODES" tree (header
+    // The per-category "ALL NODES" tree (header
     // rows + template rows, in category order) only depends on _all and the
     // macro-suppression context — neither changes between empty-query renders
     // within one open. Cache it so opening the palette / clearing the search
@@ -47,7 +47,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
 
     // Context — set by LogicCanvasView.Palette before showing the flyout.
     private SocketDataType? _compatibilityFilter;
-    //  Source-side direction lets the COMPATIBLE filter walk the
+    // Source-side direction lets the COMPATIBLE filter walk the
     // template's OUTPUT sockets when the wire-drop originated from an Input
     // socket (Ctrl+left-on-input rewire). Pre-fix the filter only walked
     // template Inputs which silently dropped templates whose matching pin
@@ -62,7 +62,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     // matched-substring highlights as the ListView lazily materialises rows.
     private string _currentQuery = string.Empty;
 
-    // 0.10.0 (arch-perf P1) — UI-thread debounce so a typing burst in the
+    // UI-thread debounce so a typing burst in the
     // SearchBox triggers ApplyFilter exactly once after the user pauses,
     // instead of running the per-keystroke filter pass over the ~132-template
     // catalog. 200 ms is the standard "search-as-you-type" budget that feels
@@ -82,37 +82,36 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     /// </summary>
     public Action? ClosedCleanup { get; set; }
 
-    // Per-flyout recent list, capped at 5. INSTANCE field (was static,
-    // ): each LogicCanvasView constructs its own SpawnPaletteFlyout
+    // Per-flyout recent list, capped at 5. INSTANCE field (was static):
+    // each LogicCanvasView constructs its own SpawnPaletteFlyout
     // and re-uses it across opens, so the per-canvas scoping survives
     // long-running sessions. Pre-fix s_recent was process-global, which
     // leaked recent-spawn history across multi-window Architect: spawning
     // Var.Set in window A would surface it in window B's Recent list even
-    // though that user-session is operating on a different .phxg. Per
-    // feedback_multi_window_default the suite supports multi-window where
-    // it makes sense — a flyout that ignores the window separation
-    // contradicts the rule.
+    // though that user-session is operating on a different .phxg. The
+    // suite supports multi-window where it makes sense — a flyout that
+    // ignores the window separation contradicts the rule.
     private readonly LinkedList<string> _recent = new();
     private const int RecentCap = 5;
 
-    //  s_pinnedTitles and s_newTemplateTitles are process-wide
+    // s_pinnedTitles and s_newTemplateTitles are process-wide
     // read-only static configuration — NOT per-session state. Both are
     // safe across multi-window Architect because no instance ever mutates
     // them; they describe "what node templates exist in the catalogue" and
     // "which of those count as new this release", which is identical for
     // every window. The recent-spawn history (which IS per-session) lives
-    // on _recent above, instance-scoped per QC48-13's primary fix.
+    // on _recent above, instance-scoped.
     private static readonly string[] s_pinnedTitles = { "Event.Trigger", "Event.Executor" };
 
     /// <summary>
     /// Template titles that should render an ember NEW badge in the spawn
-    /// palette. 0.10.0 redesign R6: the badge marks templates introduced in
+    /// palette. The badge marks templates introduced in
     /// the current release window so a returning user can spot them in the
     /// catalog without grep'ing the release notes. Curated in code (not on
     /// NodeTemplate) so the ~140 AddTemplate call sites in NodeRegistry stay
     /// untouched and the marker can be advanced from release to release with
     /// a single-file edit. Empty entries are silently ignored.
-    ///  Read-only static: shared safely across windows.
+    /// Read-only static: shared safely across windows.
     /// </summary>
     private static readonly HashSet<string> s_newTemplateTitles =
         new(StringComparer.OrdinalIgnoreCase)
@@ -122,10 +121,10 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             // anything as "new" prematurely.
         };
 
-    // 0.10.0 theme P2: matched-substring highlight foreground resolved from
+    // Matched-substring highlight foreground resolved from
     // the theme dictionary's Ember200Brush (#F2C77F) so a brass-palette
     // retune flows through the search-highlight automatically. Fallback
-    // preserves the pre-P2 ember-gold literal for designer-time lookups.
+    // preserves the ember-gold literal for designer-time lookups.
     private static readonly Brush s_highlightForeground = ResolveBrush(
         "Ember200Brush",
         ArchitectCanvasPalette.EmberDefaultPreview);
@@ -198,7 +197,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     /// gates Macro.Entry / Macro.Exit out of the template list when one
     /// already exists in the graph.</para>
     ///
-    /// <para><paramref name="sourceDirection"/> —  direction of the
+    /// <para><paramref name="sourceDirection"/> — direction of the
     /// wire-drop source socket. Output (default / null) walks template
     /// inputs for compat; Input walks template outputs so a wire dragged
     /// from a node's input pin still surfaces relevant spawn candidates.</para>
@@ -214,7 +213,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         _isMacroGraph                  = isMacroGraph;
         _hasMacroEntry                 = hasMacroEntry;
         _hasMacroExit                  = hasMacroExit;
-        _categoryTreeCache = null; //  suppression context changed
+        _categoryTreeCache = null; // suppression context changed
     }
 
     /// <summary>
@@ -229,7 +228,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     /// Records that <paramref name="title"/> was just spawned. Pre-T15 the
     /// canvas itself owned Recent; here the flyout owns the list so the
     /// header re-renders without round-tripping through the canvas.
-    /// Instance-scoped (was static, ) so multi-window Architect
+    /// Instance-scoped (was static) so multi-window Architect
     /// doesn't bleed history across windows.
     /// </summary>
     public void TrackRecent(string title)
@@ -242,7 +241,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
 
     private void EnsureLoaded()
     {
-        //  _all caches across the flyout's lifetime — if a hot-reload
+        // _all caches across the flyout's lifetime — if a hot-reload
         // or test-only path ever starts mutating NodeRegistry.GetAllTemplates()
         // after the first open, the new templates won't surface until the
         // flyout is recreated. Production code never mutates the registry at
@@ -250,7 +249,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         // this on a NodeRegistry.Version stamp (or hook a NodeRegistry
         // OnTemplatesChanged event) and clear _all on the change.
         if (_all.Count > 0) return;
-        // 2026-06-08 (Majo) — Databank nodes were filtered out here on the
+        // Majo flagged: Databank nodes were filtered out here on the
         // assumption they spawn via a Databank-panel drag, but that surface isn't
         // reachable, leaving DB nodes uncreatable ("they exist, but are not
         // call-able"). DB nodes are now listed in the search palette like any
@@ -262,7 +261,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             .Select(t => SpawnRow.Template(t))
             .ToList();
         _all = raw;
-        _categoryTreeCache = null; //  catalogue changed
+        _categoryTreeCache = null; // catalogue changed
     }
 
     // Templates that should render as a STANDALONE row at the very top of the
@@ -281,7 +280,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
 
     private void ApplyFilter(string query)
     {
-        //  Build the full row set in a local list, then commit
+        // Build the full row set in a local list, then commit
         // it in ONE BulkObservableCollection.ReplaceAll (single Reset) instead of
         // Clear()+N×Add — the ~150 individual CollectionChanged(Add) notifications
         // per open/keystroke were the "big lag when opening the space (search)
@@ -309,7 +308,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             // we surface only the templates whose first compatible input
             // matches the source type, so the muscle-memory UE behaviour
             // ("drag a wire, get the right nodes") actually works.
-            //  Direction-aware: when the wire originated from an
+            // Direction-aware: when the wire originated from an
             // INPUT socket, walk the template's OUTPUT pins for compat.
             if (_compatibilityFilter is { } src)
             {
@@ -344,8 +343,8 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
                 }
             }
 
-            // 0.10.0 UX P2: per-category sub-headers replace the flat
-            // "ALL NODES" list.  The tree
+            // Per-category sub-headers replace the flat
+            // "ALL NODES" list. The tree
             // depends only on _all + suppression context, so it's built once and
             // reused instead of regrouped on every open / search-clear.
             rows.AddRange(GetCategoryTreeRows());
@@ -369,7 +368,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         }
         foreach (var hit in scored.OrderByDescending(x => x.Score))
             rows.Add(hit.Row);
-        //  A zero-result search left a blank ListView
+        // A zero-result search left a blank ListView
         // with no feedback. Append a non-selectable message row (Header kind, so
         // arrow/Enter nav skips it) so the user knows the query matched nothing.
         if (rows.Count == 0)
@@ -378,7 +377,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     }
 
     /// <summary>
-    ///  Build (once) the per-category "ALL NODES"
+    /// Build (once) the per-category "ALL NODES"
     /// tree: header rows at each category transition plus the template rows, in
     /// the catalogue's category/title sort order, excluding top-level standalone
     /// entries (shown separately) and context-suppressed rows. Cached until _all
@@ -409,9 +408,8 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     /// Context gate — when authoring a macro graph and Macro.Entry already
     /// exists, suppress Macro.Entry from the catalogue (likewise Macro.Exit).
     /// Mirrors the no-duplicate guardrail without dropping a modal dialog
-    /// when the user dragged the second one out (per
-    /// feedback_no_modal_dialogs_for_repeatable_rejections.md — filter the
-    /// affordance out instead of rejecting after the fact).
+    /// when the user dragged the second one out — filter the
+    /// affordance out instead of rejecting after the fact.
     /// </summary>
     private bool IsSuppressedByContext(string title)
     {
@@ -455,10 +453,10 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
                 || display.Contains(q, StringComparison.OrdinalIgnoreCase)))
             return 600;
 
-        //  Use the row's cached, pre-tokenized pool
+        // Use the row's cached, pre-tokenized pool
         // (title + display + category + keywords) instead of re-tokenizing per pass.
         //
-        // [ARCH-PALETTE-DESC-NOISE 2026-06-28] A query token must PREFIX-MATCH a
+        // A query token must PREFIX-MATCH a
         // pool token or the row is rejected. The prior build also accepted a
         // token that merely appeared as a SUBSTRING of the node's DESCRIPTION,
         // which flooded results: typing "bran" matched every node whose
@@ -491,7 +489,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
     /// least one input socket compatible (per
     /// <see cref="NodeRegistry.AreCompatible"/>) with <paramref name="sourceType"/>.
     /// Drives the COMPATIBLE section's row filter.
-    ///  Kept as a thin wrapper around the new direction-aware
+    /// Kept as a thin wrapper around the new direction-aware
     /// <see cref="FirstPinAcceptsType"/> for callers that don't care about
     /// the wire-source direction.
     /// </summary>
@@ -499,7 +497,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         => FirstPinAcceptsType(title, sourceType, sourceWasInput: false);
 
     /// <summary>
-    ///  Direction-aware compat check. When
+    /// Direction-aware compat check. When
     /// <paramref name="sourceWasInput"/> is true the wire originated from an
     /// input socket (Ctrl+left-on-input rewire path) and the compat lookup
     /// must walk template <see cref="NodeTemplate.Outputs"/>; otherwise the
@@ -760,9 +758,9 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         public string Category          { get; init; } = string.Empty;
         public string Description       { get; init; } = string.Empty;
         public List<string> Keywords    { get; init; } = new();
-        // 0.10.0 theme P2: default header brush resolved from
+        // Default header brush resolved from
         // CoalDividerBrush so the coal-3 tier flows through palette
-        // dividers consistently. Fallback preserves the pre-P2 ARGB.
+        // dividers consistently. Fallback preserves the ARGB.
         public Brush HeaderBrush        { get; init; } =
             SpawnPaletteFlyout.ResolveBrush("CoalDividerBrush",
                 Color.FromArgb(0xFF, 0x3A, 0x31, 0x27));
@@ -787,7 +785,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         public Visibility CategoryLabelVis
             => ShowCategoryLabel ? Visibility.Visible : Visibility.Collapsed;
 
-        //  Pre-tokenized search pool (title +
+        // Pre-tokenized search pool (title +
         // category + keywords), computed once per row and cached. Pre-fix
         // MatchesTokens re-tokenized every row's static text on EVERY keystroke
         // (~150 redundant TokenizeQuery calls per filter pass over ~132 rows).
@@ -883,10 +881,10 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             DisplayTitle = title,
             Category     = category,
             FrameKind    = frameKind,
-            // 0.10.0 theme P2: placeholder = ErrBrush tier (dark-red marker
+            // Placeholder = ErrBrush tier (dark-red marker
             // for "this frame is a TODO / blocker"), comment = Ember200 tier
             // (warm amber for a benign annotation). Fallbacks match
-            // pre-P2 ARGB so designer-time renders stay identical.
+            // the ARGB so designer-time renders stay identical.
             HeaderBrush = frameKind == "placeholder"
                 ? SpawnPaletteFlyout.ResolveBrush("ErrBrush",     ArchitectCanvasPalette.SpawnPalettePlaceholderFallback)
                 : SpawnPaletteFlyout.ResolveBrush("Ember200Brush", ArchitectCanvasPalette.SpawnPaletteCommentFallback),

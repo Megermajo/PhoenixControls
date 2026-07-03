@@ -10,17 +10,17 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Architect.WinUI.Dialogs;
 
 /// <summary>
-///  P1-A17 — Architect "Keyboard Shortcuts" reference dialog.
+/// Architect "Keyboard Shortcuts" reference dialog.
 /// <para/>
 /// Restores the pre-T15 <c>MainForm.ShowKeyboardShortcuts()</c> surface
 /// that listed every chord the WinForms canvas + menu bar honoured. The
-/// WinUI rewrite carried the chord set forward (and extended it — Sprint
-/// 34 added Dvorak scancode coverage and F1-node-documentation) but lost
+/// WinUI rewrite carried the chord set forward (and extended it with
+/// Dvorak scancode coverage and F1-node-documentation) but lost
 /// the discoverability surface. The new dialog is reached from:
 /// <list type="bullet">
 ///   <item>Help → Keyboard Shortcuts… in <c>ArchitectChrome</c> (embedded view).</item>
 ///   <item>Help → Keyboard Shortcuts… in <c>ArchitectSiblingWindow</c> (multi-window).</item>
-///   <item>F1 on an empty canvas ( P1-A13 fallback).</item>
+///   <item>F1 on an empty canvas (fallback).</item>
 /// </list>
 /// </summary>
 /// <remarks>
@@ -32,7 +32,7 @@ namespace Phoenix.Controls.Architect.WinUI.Dialogs;
 /// same sprint so the dialog stays trustworthy as a contract.
 /// </remarks>
 //
-// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml / InitializeComponent.
+// This dialog has NO .xaml / InitializeComponent.
 //   A code-constructed ContentDialog defined in a LIBRARY assembly
 //   (Architect.WinUI) throws XamlParseException at Application.LoadComponent when
 //   `new`'d while detached — proven by the 1.0.6 runtime stack trace, which still
@@ -63,10 +63,10 @@ public sealed class KeyboardShortcutsDialog : ContentDialog
     /// <summary>
     /// Canvas column sections — chord vocabulary surfaced inside the
     /// <see cref="Canvas.LogicCanvasView"/> Keyboard / QuickKeys / Pointer
-    /// / DragDrop partials.  scancode-anchored chords
+    /// / DragDrop partials. Scancode-anchored chords
     /// (Ctrl+Z/Y/C/V/X/D/A/S/F/G) read by their QWERTY position regardless
     /// of active layout — the catalog lists the QWERTY label since that's
-    /// the physical key Majo's audit canonicalised as the chord identity.
+    /// the physical key Majo canonicalised as the chord identity.
     /// </summary>
     private static readonly string[] CanvasSections =
     {
@@ -107,7 +107,7 @@ public sealed class KeyboardShortcutsDialog : ContentDialog
         CloseButtonText = "Close";
         DefaultButton = ContentDialogButton.Close;
 
-        //  The four keyed TextBlock styles that lived in
+        // The four keyed TextBlock styles that lived in
         // <ContentDialog.Resources> — rebuilt in code with ONLY literal setters
         // (no {StaticResource}/{ThemeResource}), so the dictionary cannot throw
         // at construction. FontFamily + Foreground are applied in code below

@@ -66,7 +66,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
 
         // Prime VisibleRows from the existing DB content before the first
         // tick so the panel renders the initial 250-row tail immediately.
-        // [P1 swarm-audit 2026-05-29] Observe the priming refresh's faults too.
+        // Observe the priming refresh's faults too.
         _ = RefreshAsync();
         _pollTimer.Start();
     }
@@ -120,7 +120,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
         // queue. Polling is statistically smoothing; one missed tick at
         // 2 Hz is invisible to the user.
         //
-        // [P1 swarm-audit 2026-05-29] The check-then-act on _refreshInFlight
+        // The check-then-act on _refreshInFlight
         // straddled the UI thread (this tick) and the background RefreshAsync
         // continuation, unsynchronized. Guard the compare-and-set under
         // _rowIdLock so exactly one refresh runs; RefreshAsync clears the flag
@@ -132,14 +132,14 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
             _refreshInFlight = true;
         }
 
-        // [P1 swarm-audit 2026-05-29] Observe the fire-and-forget refresh: an
+        // Observe the fire-and-forget refresh: an
         // unhandled fault would otherwise be swallowed and the panel could
         // silently stop tailing. _refreshInFlight is already set above, so call
         // the inner body that assumes ownership and resets the flag.
         _ = RunRefreshGuardedAsync();
     }
 
-    // [P1 swarm-audit 2026-05-29] Wraps the priming refresh + tick refresh so
+    // Wraps the priming refresh + tick refresh so
     // faults are logged instead of becoming unobserved task exceptions.
     private async Task RunRefreshGuardedAsync()
     {
@@ -166,7 +166,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
 
-        // [P1 swarm-audit 2026-05-29] Guarded compare-and-set on the in-flight
+        // Guarded compare-and-set on the in-flight
         // flag (UI-thread ticks and external callers race here). Acquire the
         // gate only for the flag flip; the async body runs unlocked and clears
         // the flag under the same lock in its finally.
@@ -187,7 +187,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// [P1 swarm-audit 2026-05-29] Core refresh body. Assumes the caller has
+    /// Core refresh body. Assumes the caller has
     /// already won the <see cref="_refreshInFlight"/> gate under
     /// <see cref="_rowIdLock"/>; this method owns clearing it in its finally.
     /// All <see cref="_highWaterRowId"/> reads/writes are taken under the lock
@@ -253,7 +253,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
                 if (_disposed) return;
                 _buffer.Clear();
                 _buffer.AddRange(projected);
-                // [P1 swarm-audit 2026-05-29] Guard the high-water write; it is
+                // Guard the high-water write; it is
                 // read off-thread in the fast-path peek above.
                 long newHighWater = projected.Count > 0 ? projected[0].RowId : -1;
                 lock (_rowIdLock) { _highWaterRowId = newHighWater; }
@@ -262,7 +262,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            // [P1 swarm-audit 2026-05-29] Release the in-flight gate under the
+            // Release the in-flight gate under the
             // same lock that guards the compare-and-set entry.
             lock (_rowIdLock) { _refreshInFlight = false; }
         }

@@ -18,7 +18,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.StatusStrip;
 
 public sealed partial class StatusDot : UserControl
 {
-    // M17 (2026-05-14): activation gate. When the host Window goes
+    // Activation gate. When the host Window goes
     // Deactivated we Pause() the pulse; on re-activation we Resume() if the
     // dot is still in a state that wants pulsing. _windowActive mirrors the
     // tracker's last broadcast so UpdatePulse can decide between Begin/Stop
@@ -26,16 +26,16 @@ public sealed partial class StatusDot : UserControl
     private IDisposable? _activationSubscription;
     private bool _windowActive = true;
 
-    // M36 (2026-05-14): Composition-API pulse. Replaced the XAML Storyboard
+    // Composition-API pulse. Replaced the XAML Storyboard
     // (scale + opacity DoubleAnimations on the Ellipse's ScaleTransform) with
     // a Composition ScalarKeyFrameAnimation pair so the pulse runs on the
     // DComp render thread instead of the UI dispatcher. _dotVisual is the
     // hand-off Visual on the Ellipse; _activePulse tracks which animation
     // (if any) is in flight so UpdatePulse can decide between
-    // Stop+Start (state change), no-op+Resume (re-arm after M17 pause), or
+    // Stop+Start (state change), no-op+Resume (re-arm after an activation pause), or
     // straight Stop (target state has no pulse).
     private Visual? _dotVisual;
-    // QC44-03 (2026-05-15): two-pulse mode mirrors ScriptStatusDot — the
+    // Two-pulse mode mirrors ScriptStatusDot — the
     // chrome dot used to only pulse Connected and StopPulseAnimations() on
     // Errored, making Errored visually identical to Disconnected. Errored
     // now gets a distinct red attention pulse so the at-a-glance signal
@@ -56,11 +56,11 @@ public sealed partial class StatusDot : UserControl
     /// <summary>
     /// Raised when the user left-clicks (or taps) the dot. The hosting
     /// <see cref="StatusStripView"/> uses this to open
-    /// <c>SettingsDialog</c> on the relevant Pivot tab — Sprint F #3.
+    /// <c>SettingsDialog</c> on the relevant Pivot tab.
     /// </summary>
     public event EventHandler? Clicked;
 
-    // Perf-review L2 (2026-05-14): shared hand cursor. Previous code called
+    // Shared hand cursor. Previous code called
     // InputSystemCursor.Create per PointerEntered — a real native CreateCursor
     // round-trip plus a leaked IDisposable on every hover. Three dots in the
     // strip and casual mousing across the bottom bar made this audible in
@@ -88,13 +88,13 @@ public sealed partial class StatusDot : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // M36 — bind a Composition Visual to the Ellipse so we can run the
+        // Bind a Composition Visual to the Ellipse so we can run the
         // pulse off the UI dispatcher. The Visual handle is stable for the
         // Ellipse's lifetime; CenterPoint anchors the Scale around the
         // 8×8 ellipse's centre so the pulse scales symmetrically.
         EnsureDotVisual();
 
-        // M17 — subscribe to host-Window activation. The tracker primes
+        // Subscribe to host-Window activation. The tracker primes
         // _windowActive to the current state so a dot loaded into an
         // already-active window starts pulsing immediately if its state
         // says it should.
@@ -138,7 +138,7 @@ public sealed partial class StatusDot : UserControl
     private void OnWindowActivationChanged(bool active)
     {
         _windowActive = active;
-        // M36 — Pause/Resume go through the per-property AnimationController
+        // Pause/Resume go through the per-property AnimationController
         // so the Composition pulse picks up mid-cycle on re-activation
         // instead of restarting from frame 0.
         if (active)
@@ -159,8 +159,8 @@ public sealed partial class StatusDot : UserControl
 
     // Keyboard activation — Tab now reaches the dot (IsTabStop=True on
     // the UserControl); Enter/Space fire the same Clicked event that a
-    // mouse tap does. Pre-fix the dot was mouse-only. Hub UI sweep wires
-    // this via KeyDown="OnRootKeyDown" on the UserControl root in the XAML.
+    // mouse tap does. Pre-fix the dot was mouse-only. This is wired
+    // via KeyDown="OnRootKeyDown" on the UserControl root in the XAML.
     private void OnRootKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Enter || e.Key == VirtualKey.Space)
@@ -239,7 +239,7 @@ public sealed partial class StatusDot : UserControl
     /// Tooltip surface combining label, sub-text, and current state. Bound
     /// by the wrapper Border so hovering a dot tells the user *why* it's
     /// red/yellow without requiring them to dig into the System Log
-    /// (TODO 2026-05-07 round 2 P2 — "status strip dots have no tooltips").
+    /// ("status strip dots have no tooltips").
     /// </summary>
     public string TooltipText
     {
@@ -331,7 +331,7 @@ public sealed partial class StatusDot : UserControl
 
     private void UpdatePulse()
     {
-        // QC44-03 — Errored gets its own attention pulse instead of being
+        // Errored gets its own attention pulse instead of being
         // silently collapsed onto StopPulseAnimations(). Connecting and
         // Degraded stay solid (the colour change via RecomputeBrush is the
         // signal; a pulse on every yellow state would be noise).
@@ -342,7 +342,7 @@ public sealed partial class StatusDot : UserControl
             _                         => ActivePulse.None,
         };
 
-        // M17 — while the host window is deactivated, hold the active pulse
+        // While the host window is deactivated, hold the active pulse
         // paused regardless of target. The Resume path in
         // OnWindowActivationChanged re-enters UpdatePulse on re-activation
         // and the dot picks up its current state.

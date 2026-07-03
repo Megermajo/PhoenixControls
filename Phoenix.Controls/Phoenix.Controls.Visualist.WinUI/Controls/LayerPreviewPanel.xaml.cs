@@ -25,11 +25,9 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 /// <c>EnsureCoreWebView2Async</c> is only awaited the first time
 /// <see cref="LoadLayerAsync"/> runs, so opening an editor that never shows the
 /// preview pays no WebView2 startup cost. All failures log via
-/// <see cref="GlobalLogger"/> and degrade to the placeholder — per
-/// feedback_no_modal_dialogs_for_repeatable_rejections, no modals.</para>
+/// <see cref="GlobalLogger"/> and degrade to the placeholder — no modals.</para>
 ///
-/// <para>Per feedback_visualist_architect_chrome_independence this panel is
-/// Visualist-local.</para>
+/// <para>This panel is Visualist-local.</para>
 /// </summary>
 public sealed partial class LayerPreviewPanel : UserControl
 {
@@ -119,7 +117,7 @@ public sealed partial class LayerPreviewPanel : UserControl
         catch (Exception ex) { GlobalLogger.Error("LayerPreviewPanel", "reload failed", ex); }
     }
 
-    // ── Timeline scrub bridge (Area 5 transport consumer) ────────────────
+    // ── Timeline scrub bridge ────────────────────────────────────────────
     // TimelinePlayback emits scrub/play/stop directly into the WebView2 via
     // PostWebMessageAsJson rather than the Hub bus — a 30Hz bus round-trip
     // would saturate the envelope queue, and scrub is design-time-only.
@@ -154,7 +152,7 @@ public sealed partial class LayerPreviewPanel : UserControl
     private void PostJson(object payload)
     {
         if (!_coreInitialized) return;
-        // K-P2 (audit live-preview lane): explicit guard against a torn-down
+        // Explicit guard against a torn-down
         // WebView2. PostJson is invoked from event handlers (timeline scrub /
         // play, widget-update) that may have been queued before the control
         // unloaded — at which point PreviewWeb (or its CoreWebView2) can be null.

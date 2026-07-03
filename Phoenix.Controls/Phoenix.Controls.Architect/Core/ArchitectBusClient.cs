@@ -28,7 +28,7 @@ namespace Phoenix.Controls.Architect.Core
     /// <summary>
     /// ArchitectBusClient — connects Architect to the Bus as a named client.
     ///
-    ///  Prefers the in-process bridge (<see cref="InProcBus"/>) when
+    /// Prefers the in-process bridge (<see cref="InProcBus"/>) when
     /// Hub has registered one — which is always the case in the post-T15
     /// runtime where Architect.WinUI lives in Hub.WinUI's process. The bridge
     /// short-circuits the localhost WebSocket round trip and the JSON
@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Architect.Core
     ///   DEBUG_VAR_SET    → fires OnVariableSet(varName, value, scriptFile)
     ///   MACRO_SYNC       → fires OnMacroSync(payload)
     /// </summary>
-    public class ArchitectBusClient : IDisposable // [P1 swarm-audit 2026-05-29] dispose _cts / _wsSendLock
+    public class ArchitectBusClient : IDisposable // dispose _cts / _wsSendLock
     {
         private static ArchitectBusClient? _instance;
         public static ArchitectBusClient Instance => _instance ??= new ArchitectBusClient();
@@ -53,7 +53,7 @@ namespace Phoenix.Controls.Architect.Core
         private ClientWebSocket? _ws;
         private readonly string _busUrl = "ws://127.0.0.1:18081/";
         private CancellationTokenSource _cts = new();
-        //  Per-client send semaphore for the WS fallback. ClientWebSocket.SendAsync
+        // Per-client send semaphore for the WS fallback. ClientWebSocket.SendAsync
         // is not thread-safe; pre-fix concurrent canvas-debug-trace + MACRO_REQUEST
         // sends could interleave frames on the same socket → Hub parse error → silent
         // drop. Mirrors the Hub-side _sendLocks pattern.
@@ -66,7 +66,7 @@ namespace Phoenix.Controls.Architect.Core
         // catches up.
         private int _started;
 
-        //  Exponential reconnect backoff with jitter,
+        // Exponential reconnect backoff with jitter,
         // mirroring Hub/Core/WS.cs. Pre-fix every Architect host retried on a
         // flat 5s interval, so multiple host processes that started together
         // stayed phase-locked and re-hit the Bus in lockstep while Hub was down.
@@ -75,7 +75,7 @@ namespace Phoenix.Controls.Architect.Core
         private static readonly Random _backoffJitter = new();
 
         // ── In-process bridge state ──
-        //  When non-null, all inbound traffic flows through this handler
+        // When non-null, all inbound traffic flows through this handler
         // and all outbound traffic publishes via IInProcBusBridge.PublishAsync.
         // The bridge handler is registered exactly once at Start() and unregistered
         // at Stop() so a Restart cycle stays clean.
@@ -132,7 +132,7 @@ namespace Phoenix.Controls.Architect.Core
         /// </summary>
         public string? LastErrorMessage { get; private set; }
 
-        //  OnLogicReloadAck was a one-publisher / zero-subscriber event:
+        // OnLogicReloadAck was a one-publisher / zero-subscriber event:
         // CHANGELOG 0.9.10 advertised LOGIC_RELOAD as Architect Phase E with a
         // round-trip ack, but the consumer never landed. Carrying it kept the
         // dead handler on the receive path. Removed; the LOGIC_RELOAD_ACK branch
@@ -151,14 +151,14 @@ namespace Phoenix.Controls.Architect.Core
         public void Start()
         {
             if (Interlocked.Exchange(ref _started, 1) != 0) return;
-            // [P1 swarm-audit 2026-05-29] dispose the prior CTS before replacing it
+            // dispose the prior CTS before replacing it
             // so a Start/Stop/Start cycle doesn't leak the old token source.
             var oldCts = _cts;
             _cts = new CancellationTokenSource();
             try { oldCts?.Dispose(); } catch { }
             _uiContext = SynchronizationContext.Current;
 
-            //  Prefer the in-process bridge when Hub registered one.
+            // Prefer the in-process bridge when Hub registered one.
             // Hub registers via Bus's constructor (touching Bus.Instance is enough
             // to flip the registry slot). Any access to Bus.Instance from Hub
             // bootstrap is sufficient; in practice HubBootstrapper calls
@@ -228,7 +228,7 @@ namespace Phoenix.Controls.Architect.Core
             if (Interlocked.Exchange(ref _started, 0) == 0) return;
             _cts.Cancel();
 
-            //  Tear down the bridge subscription first so further bus
+            // Tear down the bridge subscription first so further bus
             // traffic stops reaching us before we touch the WS state below.
             var bridge = _bridge;
             var handler = _bridgeHandler;
@@ -275,7 +275,7 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
 
-        // [P1 swarm-audit 2026-05-29] The SemaphoreSlim _wsSendLock and the
+        // The SemaphoreSlim _wsSendLock and the
         // CancellationTokenSource _cts were created at field init / recreated in
         // Start() but never disposed, leaking a handle per client lifetime. Stop()
         // the lifecycle, then dispose both defensively. Safe to call repeatedly.
@@ -290,7 +290,7 @@ namespace Phoenix.Controls.Architect.Core
         /// <summary>Sends a message to Hub via the active transport.</summary>
         public async Task SendAsync(BusMessage msg)
         {
-            //  Prefer the in-proc bridge when it's the active transport.
+            // Prefer the in-proc bridge when it's the active transport.
             // PublishAsync runs Hub-side subscribers + RouteIncomingMessage
             // synchronously then fans to remote WS peers.
             var bridge = _bridge;
@@ -301,19 +301,19 @@ namespace Phoenix.Controls.Architect.Core
                 return;
             }
 
-            // BH-057: snapshot the field once. ConnectLoopAsync swaps _ws between
+            // Snapshot the field once. ConnectLoopAsync swaps _ws between
             // iterations and the finally block disposes the previous instance, so
             // a bare check-then-use sequence here can dereference a freshly-disposed
             // socket during reconnect.
             var ws = _ws;
             if (ws is null || ws.State != WebSocketState.Open) return;
 
-            //  Serialize sends on the WS fallback. The Hub side has
+            // Serialize sends on the WS fallback. The Hub side has
             // had _sendLocks per client since H45; the Architect side never
             // installed the symmetric semaphore, so concurrent canvas-debug
             // + MACRO_REQUEST sends could interleave frames → Hub parse
             // errors → silent drops.
-            // [P1 wave-1] WaitAsync sits outside the try below; a concurrent
+            // WaitAsync sits outside the try below; a concurrent
             // Dispose() can dispose _wsSendLock and make WaitAsync throw
             // ObjectDisposedException with no handler — crashing the caller.
             // Guard the acquire itself and bail on the shutdown race.
@@ -351,7 +351,7 @@ namespace Phoenix.Controls.Architect.Core
         //  IN-PROC BRIDGE HANDLER
         // ─────────────────────────────────────────────────────────────────────
 
-        //  Single entry point for inbound traffic via the bridge. Same
+        // Single entry point for inbound traffic via the bridge. Same
         // routing logic as the WS HandleMessage path (envelope validation +
         // typed dispatch) but receives the BusMessage object directly, skipping
         // the JSON parse step the WS path needs.
@@ -380,7 +380,7 @@ namespace Phoenix.Controls.Architect.Core
             {
                 try
                 {
-                    // [P2 swarm-audit] Publish the new socket atomically so Stop()'s
+                    // Publish the new socket atomically so Stop()'s
                     // Interlocked.Exchange(ref _ws, null) and SendAsync's snapshot can
                     // never observe a half-assigned field. Build on a local first,
                     // configure it, then swap it into the field; use the local for the
@@ -395,7 +395,7 @@ namespace Phoenix.Controls.Architect.Core
                     // status-dot tooltip stops claiming "Connection refused"
                     // once the reconnect lands.
                     LastErrorMessage = null;
-                    //  reset the backoff streak on a
+                    // reset the backoff streak on a
                     // successful (re)connect so the next outage starts at base.
                     System.Threading.Interlocked.Exchange(ref _consecutiveDisconnects, 0);
                     {
@@ -435,7 +435,7 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 if (!ct.IsCancellationRequested)
                 {
-                    //  Exponential backoff (base × 2^n,
+                    // Exponential backoff (base × 2^n,
                     // capped at 60s) with ±25% jitter so multiple Architect hosts
                     // de-correlate instead of hammering the Bus in lockstep while
                     // Hub is down. The config knob is the BASE; n caps at 4 (16×).
@@ -453,7 +453,7 @@ namespace Phoenix.Controls.Architect.Core
                     }
                     await Task.Delay(backoff, ct);
                 }
-                // [P1 wave-1] No Disconnected fire here on the cancellation
+                // No Disconnected fire here on the cancellation
                 // branch: the while loop exits immediately after and the final
                 // block below fires Disconnected exactly once on loop exit.
                 // Firing it here too double-signalled the transition on every
@@ -501,7 +501,7 @@ namespace Phoenix.Controls.Architect.Core
                     while (!result.EndOfMessage);
 
                     if (aggregate.Count == 0) continue;
-                    // [P2 swarm-audit] Deserialize straight off the aggregated bytes via
+                    // Deserialize straight off the aggregated bytes via
                     // a zero-copy span over the List<byte> backing array. Pre-fix this
                     // allocated twice per frame — ToArray() copy + GetString() — which is
                     // pure GC churn under NODE_EXEC bursts / MACRO_SYNC broadcasts.
@@ -559,7 +559,7 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     case "DEBUG_NODE_EXEC":
                     {
-                        //  Short-circuit before the
+                        // Short-circuit before the
                         // JSON parse when no canvas window is subscribed — Hub
                         // emits NODE_EXEC markers throughout every script run, so
                         // parsing each one just to drop it is pure churn when
@@ -575,7 +575,7 @@ namespace Phoenix.Controls.Architect.Core
                     }
                     case "DEBUG_VAR_SET":
                     {
-                        //  subscriber-null check first.
+                        // subscriber-null check first.
                         var handler = OnVariableSet;
                         if (handler is null || string.IsNullOrEmpty(msg.Payload)) break;
                         using var doc = JsonDocument.Parse(msg.Payload);
@@ -588,7 +588,7 @@ namespace Phoenix.Controls.Architect.Core
                     }
                     case "LOGIC_RELOAD_ACK":
                     {
-                        //  OnLogicReloadAck event deleted — no Architect-side
+                        // OnLogicReloadAck event deleted — no Architect-side
                         // consumer ever landed. Absorb the type so Hub emitters don't
                         // surface as "unknown type" errors here.
                         break;

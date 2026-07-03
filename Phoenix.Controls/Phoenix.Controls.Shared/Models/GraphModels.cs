@@ -100,8 +100,8 @@ namespace Phoenix.Controls.Shared.Models
         public bool IsPlaceholder { get; set; } = false;
 
         /// <summary>
-        /// Per-frame z-order within the FrameLayer ( P2-A4 — "Bring to Front" /
-        /// "Send to Back" entries on the frame context menu). Default 0 mirrors pre-fix
+        /// Per-frame z-order within the FrameLayer ("Bring to Front" /
+        /// "Send to Back" entries on the frame context menu). Default 0 mirrors prior
         /// behaviour (insertion-order); higher values paint on top. Architect's
         /// FrameLayer applies this via Canvas.SetZIndex on each frame view.
         /// </summary>
@@ -195,7 +195,7 @@ namespace Phoenix.Controls.Shared.Models
         public float ViewZoom    { get; set; } = 1.0f;
 
         /// <summary>
-        ///  Set by <c>GraphSerializer.LoadGraph</c> when the file on
+        /// Set by <c>GraphSerializer.LoadGraph</c> when the file on
         /// disk was saved by a newer schema version than the running Architect
         /// understands. The canvas may still display the placeholder graph so
         /// the user sees the file opened, but <c>GraphSerializer.SaveGraphAsync</c>
@@ -319,6 +319,16 @@ namespace Phoenix.Controls.Shared.Models
         {
             if (socket == null) return false;
             if (socket.DataType == SocketDataType.Flow) return true;
+            // A concrete data type is authoritative: a socket typed String / Int /
+            // Float / Bool / Collection is NEVER a flow pin, even when it carries a
+            // legacy flow-ish name like "Out" / "True" / "1" (Text.ToLower.Out,
+            // Convert.To*.Out, Flow.Reroute once wildcarded to data, comparison
+            // outputs, …). Classifying those as flow drew their wires in exec style
+            // ("not a correct string pipe") and tripped the single-outgoing-flow-pin
+            // eviction in TryCreateLink, so a data output could feed only one target.
+            // The legacy name list below is a back-compat fallback ONLY for
+            // pre-SocketDataType graphs whose sockets deserialize as Any.
+            if (socket.DataType != SocketDataType.Any) return false;
             return _legacyFlowNames.Contains(socket.Name ?? string.Empty);
         }
 

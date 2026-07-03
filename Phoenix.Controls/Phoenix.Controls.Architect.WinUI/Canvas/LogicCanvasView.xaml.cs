@@ -15,7 +15,7 @@ using Phoenix.Controls.Shared.Services;
 using Windows.Foundation;
 using Windows.System;
 
-// T14b — Phoenix.Controls.Shared.Models.Frame (was SovereignFrame, the
+// Phoenix.Controls.Shared.Models.Frame (was SovereignFrame, the
 // script-graph comment-region model) collides with WinUI's
 // Microsoft.UI.Xaml.Controls.Frame (navigation control). Alias the model
 // type so call sites in this file unambiguously construct the script-graph
@@ -30,12 +30,12 @@ using XamlCanvas = Microsoft.UI.Xaml.Controls.Canvas;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
-// Track 11 — the actual canvas surface that hosts node + wire rendering and
+// The actual canvas surface that hosts node + wire rendering and
 // owns the input state machine (pan / zoom / select / drag / wire-drop /
 // context menus / keyboard shortcuts).
 //
 // Input model (mirrors Canvas.Mouse + .Keyboard from the WinForms
-// project — see WinUI_Parity_Plan.md G2):
+// project):
 //
 //   * left-click on node body  → select (Ctrl adds to multi-select; future)
 //   * left-drag on selected node → translate node, ripple wire recompute
@@ -52,8 +52,8 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 //
 // Multi-select via marquee, quick-key spawn, copy/paste, undo/redo and frame
 // drag/resize remain on the deferred list — landing them is a follow-up
-// sprint after T12 closes the .phxg → .phx round-trip.
-public sealed partial class LogicCanvasView : UserControl
+// once the .phxg → .phx round-trip closes.
+public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Architect.WinUI.Services.EventPairLiveSync.IPeer
 {
     private LogicCanvasViewModel? _vm;
     private UndoRedoController? _history;
@@ -66,7 +66,7 @@ public sealed partial class LogicCanvasView : UserControl
     // container's data context, so every node piled at (0,0). Manual
     // Canvas.SetLeft/Top is the proven pattern (Visualist's
     // WidgetGraphCanvas uses the same).
-    // [Tranche-2b LOD] LAZILY-populated map of full NodeViews. A node only gets a
+    // LAZILY-populated map of full NodeViews. A node only gets a
     // (heavy ~48-149-element) NodeView built once it is first realized FULL (zoomed
     // in + on-screen) — see EnsureFullView in LogicCanvasView.Lod.cs. Nodes that
     // are only ever viewed zoomed-out live as proxies (_nodeProxies) and never
@@ -96,7 +96,7 @@ public sealed partial class LogicCanvasView : UserControl
         DataContextChanged += OnDataContextChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
-        //  Each NodeView repaints its own border on
+        // Each NodeView repaints its own border on
         // ActualThemeChanged; wires can't (LinkViewModel isn't a FrameworkElement),
         // so the canvas nudges every link to repaint its theme-derived stroke
         // when the OS theme / high-contrast mode switches at runtime.
@@ -107,11 +107,11 @@ public sealed partial class LogicCanvasView : UserControl
     {
         if (_vm is null) return;
         foreach (var link in _vm.Links) link.RefreshThemeBrushes();
-        // [Tranche-2b LOD] full NodeViews repaint their own borders on theme change
+        // Full NodeViews repaint their own borders on theme change
         // (NodeView.OnActualThemeChanged); zoomed-out proxies aren't NodeViews, so
         // re-resolve the proxy brushes + repaint the mounted proxies here too.
         RefreshProxyThemeBrushes();
-        // [perf/win2d-immediate-canvas] re-resolve the immediate renderer's palette
+        // Re-resolve the immediate renderer's palette
         // + repaint so the GPU canvas flips theme in lockstep with the retained path.
         RefreshImmediateThemeColors();
     }
@@ -141,21 +141,174 @@ public sealed partial class LogicCanvasView : UserControl
     /// undo entry on the edit-start transition. Pre-fix the TwoWay+
     /// PropertyChanged binding wrote each keystroke directly into
     /// <c>Node.Attributes</c> with no snapshot, so Ctrl+Z after pill edit
-    /// silently rewound past the edit into a prior structural change
-    /// (Architect UX review P0-1).
+    /// silently rewound past the edit into a prior structural change.
     /// </summary>
     public void PushUndoForInlineEdit() => _history?.Push();
 
     /// <summary>
-    /// S29 (P1-A6) seam — exposes the private debounced cross-file Event-pair
-    /// sync to <see cref="NodeView"/> so a socket-label rename on an
-    /// Event.Trigger / Event.Executor host propagates the new payload-shape
-    /// to sibling .phxg files (per <c>feedback_event_pair_socket_sync.md</c>:
-    /// names decoupled, payload sockets synced). Single-line wrapper kept
-    /// intentionally narrow to minimise overlap with  edits to
-    /// this file — touches no existing line, adds one method.
+    /// Called by <see cref="NodeView"/> when an inline <c>EventName</c> pill commit
+    /// renames an Event.Trigger / Event.Executor / Event.Return node. Renaming an
+    /// event changes its pairing identity, so — exactly like the context-menu retype
+    /// path (<c>SetDynamicSocketType</c>) — re-run the Event-pair sync so the node's
+    /// payload-socket shape reaches its now-matching peers in-graph, in other open
+    /// windows, and on disk, then refresh the unpaired red-border error state. The
+    /// event NAME itself never cascades to peers (signal/slot decoupling); only
+    /// socket shape follows the pairing.
     /// </summary>
-    internal void RequestCrossFileEventPairSyncFromNodeView() => ScheduleCrossFileEventPairSync();
+    internal void NotifyEventNameChangedFromNodeView(Node nodeModel)
+    {
+        if (_vm is null || nodeModel is null) return;
+        if (nodeModel.Title is not ("Event.Trigger" or "Event.Executor" or "Event.Return")) return;
+
+        // ADOPT-ON-JOIN: assigning an EventName makes this node JOIN an event. Before
+        // pushing its shape onto peers, let it adopt the event's existing canonical
+        // (per-channel richest) shape — in-graph AND from sibling .phxg files — so a
+        // new/empty node fits the existing definition instead of wiping the defined
+        // peers with its empty shape (the "assign a new executor to an existing event
+        // RESETS everything" bug). After adopting, this node matches the group, so the
+        // pushes below are a no-op for the already-defined peers.
+        //
+        // Only pay the synchronous sibling-.phxg scan when the IN-GRAPH group has no
+        // definer yet — the common same-file case (a peer already defines the event in
+        // this graph) costs zero disk IO, so a large project can't freeze the UI on an
+        // EventName commit. When the definer lives only in another file, scan for it.
+        var crossFilePeers = InGraphEventGroupHasPayload(nodeModel)
+            ? new System.Collections.Generic.List<Node>()
+            : LoadCrossFileEventPeers(nodeModel);
+        PlaceholderActivator.AdoptEventShapeOnJoin(_vm.Graph, nodeModel, crossFilePeers);
+
+        // In-graph: propagate the (now-canonical) socket shape across same-graph peers
+        // that match the EventName (a no-op when the rename orphaned every peer — the
+        // intended signal/slot behaviour). Rebuild this node's OWN view too — unlike a
+        // plain push, adopt can have changed the node's own sockets.
+        PlaceholderActivator.SyncEventPair(_vm.Graph, nodeModel);
+        RebuildSocketsForMutatedNode(nodeModel);
+
+        // Cross-file + live-to-open-windows, then re-evaluate which nodes are now
+        // unpaired (a rename can pair or orphan both this node and its former peer).
+        ScheduleCrossFileEventPairSync();
+        RefreshEventPairErrorState();
+        _vm.OnGraphMutated();
+    }
+
+    /// <summary>
+    /// Called by <see cref="NodeView"/> when an inline socket-label rename commits on an
+    /// Event.Trigger / Event.Executor / Event.Return payload bubble. The bubble NAME is
+    /// part of the pair's wire-format contract (the exporter emits kv args keyed by
+    /// socket name), so the rename must reach the in-graph peers immediately — pre-fix
+    /// the commit only scheduled the debounced CROSS-FILE sync, the in-graph peers kept
+    /// the old name, and the next pair-sync sourced from ANY of them (slot activation,
+    /// context-menu retype, graph load) copied the stale name straight back over the
+    /// user's rename ("bubble names are constantly resetted"). Runs the same tail as the
+    /// context-menu retype (<c>SetDynamicSocketType</c>): in-graph sync → peer view
+    /// rebuild → cross-file sync → unpaired-state refresh → graph-mutated.
+    /// </summary>
+    internal void NotifyEventSocketRenamedFromNodeView(Node nodeModel)
+    {
+        if (_vm is null || nodeModel is null) return;
+        if (nodeModel.Title is not ("Event.Trigger" or "Event.Executor" or "Event.Return")) return;
+        PlaceholderActivator.SyncEventPair(_vm.Graph, nodeModel);
+        RebuildSocketsForMutatedNode(nodeModel);
+        ScheduleCrossFileEventPairSync();
+        RefreshEventPairErrorState();
+        _vm.OnGraphMutated();
+    }
+
+    /// <summary>
+    /// True when an IN-GRAPH Event.* node OTHER than <paramref name="nodeModel"/> shares
+    /// its EventName and already carries at least one payload (arg/return) socket — i.e.
+    /// the event is already defined within this graph, so the join can adopt from a
+    /// same-graph peer and the sibling-file scan can be skipped.
+    /// </summary>
+    private bool InGraphEventGroupHasPayload(Node nodeModel)
+    {
+        if (_vm is null || nodeModel?.Attributes is null
+            || !nodeModel.Attributes.TryGetValue("EventName", out var ev)
+            || string.IsNullOrWhiteSpace(ev))
+            return false;
+        foreach (var n in _vm.Graph.Nodes)
+        {
+            if (ReferenceEquals(n, nodeModel)) continue;
+            if (n.Title is not ("Event.Trigger" or "Event.Executor" or "Event.Return")) continue;
+            if (n.Attributes is null || !n.Attributes.TryGetValue("EventName", out var e2)) continue;
+            if (!e2.Equals(ev, StringComparison.OrdinalIgnoreCase)) continue;
+            if (n.Sockets.Any(s => !s.IsPlaceholder && s.Name != "Flow" && s.Name != "EventName"))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Load Event.Trigger / Event.Executor / Event.Return snapshots sharing
+    /// <paramref name="nodeModel"/>'s EventName from every sibling <c>*.phxg</c> in the
+    /// current file's directory (falling back to the canonical Hub logic folder),
+    /// excluding the current file. Feeds
+    /// <see cref="PlaceholderActivator.AdoptEventShapeOnJoin"/> so a node joining an
+    /// event whose definer lives in ANOTHER file adopts that file's canonical socket
+    /// shape rather than pushing its own (empty) shape onto it. Best-effort + synchronous
+    /// — only invoked (see caller) when the in-graph group has no definer, so the common
+    /// same-file case pays nothing and this one-time scan stays off the hot path.
+    /// </summary>
+    private System.Collections.Generic.List<Node> LoadCrossFileEventPeers(Node nodeModel)
+    {
+        var peers = new System.Collections.Generic.List<Node>();
+        if (nodeModel?.Attributes is null
+            || !nodeModel.Attributes.TryGetValue("EventName", out var ev)
+            || string.IsNullOrWhiteSpace(ev))
+            return peers;
+
+        string projectDir = ResolveEventPeerScanDirectory();
+        if (string.IsNullOrEmpty(projectDir) || !System.IO.Directory.Exists(projectDir)) return peers;
+
+        static string? SafeFull(string p) { try { return System.IO.Path.GetFullPath(p); } catch { return null; } }
+        string? selfFull = string.IsNullOrEmpty(_vm?.LoadedFilePath) ? null : SafeFull(_vm!.LoadedFilePath!);
+
+        string[] files;
+        try { files = System.IO.Directory.GetFiles(projectDir, "*.phxg"); }
+        catch { return peers; }
+
+        foreach (var f in files)
+        {
+            if (selfFull is not null && string.Equals(SafeFull(f), selfFull, StringComparison.OrdinalIgnoreCase))
+                continue;
+            try
+            {
+                var g = GraphSerializer.LoadGraph(f);
+                foreach (var n in g.Nodes)
+                {
+                    if (n.Title is not ("Event.Trigger" or "Event.Executor" or "Event.Return")) continue;
+                    if (n.Attributes is null || !n.Attributes.TryGetValue("EventName", out var e2)) continue;
+                    if (!e2.Equals(ev, StringComparison.OrdinalIgnoreCase)) continue;
+                    peers.Add(n);
+                }
+            }
+            catch { /* skip malformed / locked peer */ }
+        }
+        return peers;
+    }
+
+    /// <summary>
+    /// The directory scanned for sibling <c>.phxg</c> event peers — by BOTH the
+    /// adopt-on-join peer load (<see cref="LoadCrossFileEventPeers"/>) and the
+    /// debounced cross-file push (<see cref="OnCrossFileSyncTimerTick"/>). The two
+    /// MUST resolve identically: the adopt makes the group's shapes equal so the
+    /// push is a no-op for already-defined peers. Historically the adopt preferred
+    /// the open file's directory while the push always hit <c>Paths.HubLogic</c> —
+    /// for a file living elsewhere, a just-named (still empty) node was pushed
+    /// onto HubLogic peers the adopt never consulted, and the excess-drop wiped
+    /// their authored bubbles on disk. Prefer the open file's own directory (its
+    /// true siblings); fall back to the canonical Hub logic folder for unsaved
+    /// graphs.
+    /// </summary>
+    private string ResolveEventPeerScanDirectory()
+    {
+        string? selfDir = string.IsNullOrEmpty(_vm?.LoadedFilePath)
+            ? null
+            : System.IO.Path.GetDirectoryName(_vm!.LoadedFilePath);
+        return !string.IsNullOrEmpty(selfDir) && System.IO.Directory.Exists(selfDir)
+            ? selfDir!
+            : Phoenix.Controls.Shared.Core.Paths.HubLogic;
+    }
 
     /// <summary>Public Undo entry point — used by Hub.MainWindow's menu dispatch
     /// (architect.edit.undo) to drive the same undo controller the canvas's
@@ -266,7 +419,7 @@ public sealed partial class LogicCanvasView : UserControl
         }
     }
 
-    // 2026-06-08 (Majo) — "New Graph" on the Welcome card used to spawn a fresh
+    // "New Graph" on the Welcome card used to spawn a fresh
     // sibling window (which was itself empty → showed the Welcome card again,
     // "the same issue continues"). The hosts now clear the graph IN PLACE when
     // the canvas is blank (see MainView.OnFileNewRequested /
@@ -295,7 +448,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  P1-A16 — Script → Sync Event Peers chrome entry point.
+    /// Script → Sync Event Peers chrome entry point.
     /// Kicks the existing debounced cross-file Event-pair sync (the same
     /// path wire-drop and event-rename edits use). Manual-trigger surface
     /// for the user when they suspect a peer .phxg is out of sync (e.g.
@@ -333,7 +486,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// [P2] Macro reference "Find All" with visual feedback — restores the
+    /// Macro reference "Find All" with visual feedback — restores the
     /// WinForms baseline Canvas.DebugFlash.cs:HighlightMacroCallSites. Walks the
     /// graph for every Macro.Call node whose MacroId matches
     /// <paramref name="macroId"/>, flashes each one, replaces the selection with
@@ -389,7 +542,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// [P2] Canvas-level macro-edit hook — re-syncs every Macro.Call node on
+    /// Canvas-level macro-edit hook — re-syncs every Macro.Call node on
     /// this canvas that references <paramref name="macro"/> to the macro's
     /// current Entry/Exit signature, then rebuilds the socket VMs of the call
     /// nodes whose model sockets actually changed and repaints. This is the
@@ -425,7 +578,7 @@ public sealed partial class LogicCanvasView : UserControl
     public event EventHandler? OpenRequested;
 
     /// <summary>
-    ///  P1-A17 — Raised when F1 fires with no node selected.
+    /// Raised when F1 fires with no node selected.
     /// MainView / ArchitectSiblingWindow forward to
     /// <c>KeyboardShortcutsDialog.ShowAsync(XamlRoot)</c>. Hosts that
     /// don't subscribe silently no-op (e.g. the sub-graph editor window),
@@ -434,7 +587,7 @@ public sealed partial class LogicCanvasView : UserControl
     public event EventHandler? KeyboardShortcutsRequested;
 
     /// <summary>
-    /// B11 (audit/winui-regressions-2026-05-24) — Raised when the user
+    /// Raised when the user
     /// presses F4 (or picks View → Toggle Inspector) on the canvas. The
     /// canvas itself doesn't own the inspector column; MainView /
     /// ArchitectSiblingWindow subscribe and flip the visibility via the
@@ -445,12 +598,12 @@ public sealed partial class LogicCanvasView : UserControl
     public event EventHandler? InspectorToggleRequested;
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #8) — left-button double-tap on a Macro.Call /
+    /// 0.10.0 — left-button double-tap on a Macro.Call /
     /// Process.Spawn node opens the matching sub-graph editor window. Other
     /// hit targets (regular nodes, wires, frames, empty canvas) are no-ops
     /// so the double-tap doesn't accidentally trigger a node action.
     ///
-    ///  P1-A9 — double-tap on a frame label opens the same rename
+    /// Double-tap on a frame label opens the same rename
     /// flyout the right-click context menu uses. The label-hit detection
     /// happens before the node branch so a double-tap that lands on a frame
     /// label inside a node-shaped sub-region (none exists today, but the
@@ -459,16 +612,26 @@ public sealed partial class LogicCanvasView : UserControl
     private void OnHostDoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
         if (_vm is null) return;
-        // [perf/win2d-immediate-canvas] resolve the double-tap target from the
+        // Resolve the double-tap target from the
         // model in immediate mode (no per-node visual elements to walk).
+        var canvasPt = HostToCanvas(e.GetPosition(HostRoot));
         var hit = _useImmediateMode
-            ? ResolveModelHit(HostToCanvas(e.GetPosition(HostRoot)))
+            ? ResolveModelHit(canvasPt)
             : HitTagFrom(e.OriginalSource);
 
-        // Frame label double-tap → rename. The HitTagFrom walk surfaces the
-        // FrameViewModel from the Border's Tag, and the label-hit predicate
-        // checks the inner TextBlock for its "label" tag string.
-        if (hit is FrameViewModel frameHit && IsFrameLabelHit(e.OriginalSource))
+        // Frame header double-tap → rename. The retained path surfaces the
+        // FrameViewModel from the Border's Tag and checks the inner TextBlock's
+        // "label" tag; on the Win2D GPU canvas there is no such element, so
+        // e.OriginalSource is the bare CanvasControl and IsFrameLabelHit always
+        // returned false — the double-tap rename was silently dead there (same
+        // visual-tree trap that broke frame move/resize). In immediate mode use
+        // the canvas-space header band (IsFrameHeaderHitWin2D); ResolveModelHit
+        // already only yields a frame for a header/edge hit, so a resize-edge
+        // double-tap won't spuriously rename.
+        if (hit is FrameViewModel frameHit
+            && (_useImmediateMode
+                    ? IsFrameHeaderHitWin2D(frameHit, canvasPt.X, canvasPt.Y)
+                    : IsFrameLabelHit(e.OriginalSource)))
         {
             try
             {
@@ -492,7 +655,7 @@ public sealed partial class LogicCanvasView : UserControl
                 && !string.IsNullOrEmpty(mid))
             {
                 var macro = _vm.Graph.Macros.FirstOrDefault(m => m.MacroId == mid);
-                //  AVM required for shared undo + rename sync.
+                // AVM required for shared undo + rename sync.
                 if (macro is not null && ArchitectVm is not null)
                 {
                     SubGraphWindow.OpenMacroEditor(macro, ArchitectVm, this);
@@ -505,7 +668,7 @@ public sealed partial class LogicCanvasView : UserControl
                   && !string.IsNullOrEmpty(pid))
             {
                 var proc = _vm.Graph.Processes.FirstOrDefault(p => p.ProcessId == pid);
-                //  AVM required for shared undo + rename sync.
+                // AVM required for shared undo + rename sync.
                 if (proc is not null && ArchitectVm is not null)
                 {
                     SubGraphWindow.OpenProcessEditor(proc, ArchitectVm, this);
@@ -518,7 +681,7 @@ public sealed partial class LogicCanvasView : UserControl
             GlobalLogger.Error("Architect.LogicCanvasView", "OnHostDoubleTapped open editor", ex);
         }
 
-        // [perf/win2d-immediate-canvas M3] In immediate mode, double-tapping a
+        // In immediate mode, double-tapping a
         // plain node (not a Macro.Call / Process.Spawn, handled above) materializes
         // its real, editable NodeView over the GPU canvas so inline pill / socket-
         // rename editing works exactly as in the retained path.
@@ -530,7 +693,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #7) — raised by the Welcome card's "New Graph"
+    /// 0.10.0 — raised by the Welcome card's "New Graph"
     /// button. MainView / ArchitectSiblingWindow subscribe and route to
     /// their existing File → New handler (which, in MainView, spawns a
     /// sibling Architect window per the multi-window spec; in the sibling
@@ -539,7 +702,7 @@ public sealed partial class LogicCanvasView : UserControl
     public event EventHandler? NewRequested;
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #7) — raised by the Welcome card's "Recent"
+    /// 0.10.0 — raised by the Welcome card's "Recent"
     /// button. Routes to the same RecentFilesDialog the chrome's
     /// File → Open Recent menu item uses.
     /// </summary>
@@ -554,7 +717,7 @@ public sealed partial class LogicCanvasView : UserControl
     private void OnWelcomeRecentClicked(object sender, RoutedEventArgs e)
         => OpenRecentRequested?.Invoke(this, EventArgs.Empty);
 
-    // ── P1-A20 () — Welcome card sample picker ────────────────────
+    // ── Welcome card sample picker ─────────────────────────────────────────
     //
     // Pre-T15 WelcomeDialog.cs:63-80 surfaced a Starter / Intermediate /
     // Advanced browser of seed `.phxg` files shipped under
@@ -642,7 +805,7 @@ public sealed partial class LogicCanvasView : UserControl
         return char.ToUpperInvariant(name[0]) + name.Substring(1);
     }
 
-    // 2026-05-22 (arch-bug #welcome-itemssource-race) — re-entrancy guard +
+    // Re-entrancy guard +
     // signature cache for the welcome-card samples picker.
     //
     // The crash: setting WelcomeStarterList.ItemsSource (line 470 in the
@@ -800,8 +963,7 @@ public sealed partial class LogicCanvasView : UserControl
         if (e.ClickedItem is not WelcomeSampleRow row) return;
         if (row.IsMissing)
         {
-            // Grayed row — log + ignore. Repeatable rejection: per
-            // feedback_no_modal_dialogs_for_repeatable_rejections.md, do NOT
+            // Grayed row — log + ignore. Repeatable rejection: do NOT
             // surface a ContentDialog telling the user the file is gone;
             // the dimmed row + tooltip already communicate it.
             GlobalLogger.Log(
@@ -810,7 +972,7 @@ public sealed partial class LogicCanvasView : UserControl
             return;
         }
 
-        // [P2] Copy-to-editable flow. Pre-fix the click raised FileOpenRequested
+        // Copy-to-editable flow. Pre-fix the click raised FileOpenRequested
         // straight at the read-only examples/ source, so editing + saving a
         // sample either failed silently or clobbered the shipped example. Now
         // the sample is copied into an editable samples/ directory first, with a
@@ -872,7 +1034,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// [P2] Ask the user whether to overwrite an existing editable copy of a
+    /// Ask the user whether to overwrite an existing editable copy of a
     /// welcome sample. Returns true to overwrite, false to keep the existing
     /// copy. A bare modal here is acceptable (a deliberate, infrequent decision,
     /// not a repeatable rejection); if no XamlRoot is available (canvas not yet
@@ -904,7 +1066,7 @@ public sealed partial class LogicCanvasView : UserControl
         }
     }
 
-    // 0.10.0 (arch-perf P1) — single CompositionTarget.Rendering subscription
+    // 0.10.0 — single CompositionTarget.Rendering subscription
     // for the frame-coalesced pan + wire-recompute pipeline. Subscribed on
     // Loaded; disposed on Unloaded so a recycled canvas doesn't leak the
     // handler. Tracked here so the unhook is symmetrical with the hook.
@@ -915,7 +1077,7 @@ public sealed partial class LogicCanvasView : UserControl
     private double _pendingPanX;
     private double _pendingPanY;
 
-    //  Wheel coalescer state — wheel handler accumulates pan deltas
+    // Wheel coalescer state — wheel handler accumulates pan deltas
     // and zoom intent here; the rendering tick resolves the cursor-anchored
     // zoom against the LIVE _vm.Zoom/PanX/PanY at apply time so a 120 Hz
     // wheel burst collapses into one transform write per displayed frame.
@@ -944,7 +1106,7 @@ public sealed partial class LogicCanvasView : UserControl
     // tick. Idle canvas pays one bool check per tick.
     private bool _frameOverlapTintsDirty;
 
-    //  Per-tick synchronous budget (ms) for the wire-recompute
+    // Per-tick synchronous budget (ms) for the wire-recompute
     // drain. A clean link is a bool no-op, but a large dirty backlog (a relayout
     // wave that dirtied many wires, or a cold text-measure storm on first
     // realization) could run for seconds in one tick and trip the UI-hang
@@ -959,7 +1121,7 @@ public sealed partial class LogicCanvasView : UserControl
     private long _lastWireDrainSpillLogTicks;
 
     /// <summary>
-    /// 0.10.0 (arch-perf P1) — pointer-move handlers call this to defer
+    /// 0.10.0 — pointer-move handlers call this to defer
     /// applying a freshly-computed pan target to the next render frame.
     /// Calling repeatedly within a frame just overwrites the target — the
     /// last pre-tick value wins, which is what the user actually sees on
@@ -973,7 +1135,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Queue an incremental wheel-pan delta (dx, dy in pixels) for
+    /// Queue an incremental wheel-pan delta (dx, dy in pixels) for
     /// the next CompositionTarget.Rendering tick. Multiple calls within the
     /// same frame accumulate so a smooth-scroll burst still sums to the
     /// expected total pan; the rendering tick applies the accumulated delta
@@ -987,7 +1149,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Queue a wheel-zoom step for the next rendering tick. The
+    /// Queue a wheel-zoom step for the next rendering tick. The
     /// cursor anchor is the wheel-event position so the canvas point under
     /// the cursor stays put through the zoom. Accumulated delta lets a fast
     /// 5-detent burst still produce the full zoom envelope; the rendering
@@ -1025,7 +1187,7 @@ public sealed partial class LogicCanvasView : UserControl
         HostRoot.PointerCanceled      += OnHostPointerCancelled;
         HostRoot.PointerCaptureLost   += OnHostPointerCancelled;
         HostRoot.PointerWheelChanged  += OnHostPointerWheelChanged;
-        // P1-A12 — Pointer-over-host tracking so keyboard Ctrl+0/+/- can
+        // Pointer-over-host tracking so keyboard Ctrl+0/+/- can
         // anchor on the cursor (matching wheel-zoom math at :520-524) when
         // the pointer is over the canvas, and fall back to viewport centre
         // when it isn't. Handlers live in LogicCanvasView.Keyboard.cs.
@@ -1042,7 +1204,12 @@ public sealed partial class LogicCanvasView : UserControl
         // still keep DEL local because the textbox marks it Handled.
         KeyDown                       += OnHostKeyDown;
         KeyUp                         += OnHostKeyUp;
-        //  Suppress the framework's auto bring-into-view when
+        // Join the process-wide Event-pair live-sync fan-out so a paired Event
+        // node edited in ANOTHER open window updates this canvas in-memory
+        // (cross-file bubble sync while both files are open — the disk sync
+        // alone only refreshes CLOSED peers).
+        Phoenix.Controls.Architect.WinUI.Services.EventPairLiveSync.Register(this);
+        // Suppress the framework's auto bring-into-view when
         // an inline pill editor grows (value wraps onto a new line) — otherwise
         // a host ScrollViewer up the tree yanks/zooms the viewport toward the
         // pill. See OnBringIntoViewRequested. Bubbles up from the editor TextBox
@@ -1050,7 +1217,7 @@ public sealed partial class LogicCanvasView : UserControl
         BringIntoViewRequested        += OnBringIntoViewRequested;
         HostRoot.LostFocus            += OnHostLostFocus;
         HostRoot.RightTapped          += OnHostRightTapped;
-        // 0.10.0 (arch-ux-state #8) — double-tap on a Macro.Call /
+        // 0.10.0 — double-tap on a Macro.Call /
         // Process.Spawn node opens the matching SubGraphWindow editor.
         // Pre-0.10.0 the only way in was the right-click menu's
         // "Edit macro graph" / "Edit process graph" item; doubling-up the
@@ -1067,7 +1234,7 @@ public sealed partial class LogicCanvasView : UserControl
         UpdateGridVisibility();
         UpdateEmptyHint();
 
-        // 0.10.0 (arch-perf P1) — single CompositionTarget.Rendering
+        // 0.10.0 — single CompositionTarget.Rendering
         // subscription drives the frame-coalesced pan + wire-recompute
         // pipeline. Idempotent so a re-Loaded canvas (tab swap) doesn't
         // double-subscribe; OnUnloaded tears it down.
@@ -1077,13 +1244,13 @@ public sealed partial class LogicCanvasView : UserControl
             _renderingHooked = true;
         }
 
-        // [perf/win2d-immediate-canvas] The GPU canvas is the default. Activate it
+        // The GPU canvas is the default. Activate it
         // now (collapse the retained paint layers, hook the Win2D draw); auto-falls
         // back to the retained path if Win2D can't initialise on this machine/build.
         ActivateImmediateModeDefault();
     }
 
-    //  When the user types into an inline pill editor and the
+    // When the user types into an inline pill editor and the
     // value wraps to a new line, the TextBox grows and WinUI raises
     // BringIntoViewRequested to pull the now-taller focused control fully into
     // view. With the canvas hosted inside a ScrollViewer up the tree (Hub
@@ -1117,7 +1284,7 @@ public sealed partial class LogicCanvasView : UserControl
             _renderingHooked = false;
         }
 
-        // [P1 swarm-audit 2026-05-29] Symmetric teardown for every HostRoot /
+        // Symmetric teardown for every HostRoot /
         // UserControl handler subscribed in OnLoaded. Pre-fix these were never
         // removed, so a recycled canvas (SubGraphWindow / tab-swap / 0.10.0
         // sibling window) leaked the handlers and, through them, this canvas.
@@ -1134,6 +1301,7 @@ public sealed partial class LogicCanvasView : UserControl
             HostRoot.PointerExited         -= OnHostPointerExited;
             KeyDown                       -= OnHostKeyDown;
             KeyUp                         -= OnHostKeyUp;
+            Phoenix.Controls.Architect.WinUI.Services.EventPairLiveSync.Unregister(this);
             BringIntoViewRequested        -= OnBringIntoViewRequested;
             HostRoot.LostFocus            -= OnHostLostFocus;
             HostRoot.RightTapped          -= OnHostRightTapped;
@@ -1142,18 +1310,18 @@ public sealed partial class LogicCanvasView : UserControl
         }
         catch { /* shutdown best-effort */ }
 
-        // [P1 swarm-audit 2026-05-29] Drag-drop handlers (HostRoot.DragOver /
+        // Drag-drop handlers (HostRoot.DragOver /
         // Drop) were hooked in OnLoaded via HookDragDrop with no unhook —
         // release them here.
         UnhookDragDrop();
 
-        // [P1 swarm-audit 2026-05-29] Edge-pan + drop-status-banner
+        // Edge-pan + drop-status-banner
         // DispatcherTimers — stop, unsubscribe their Tick, and null them so a
         // recycled canvas doesn't leak the timer + its subscription.
         StopEdgePanTimer();
         UnhookDropStatusDismissTimer();
 
-        //  Drop the cross-file sync debounce timer on tear-down so
+        // Drop the cross-file sync debounce timer on tear-down so
         // a SubGraphWindow / tab-swap doesn't leak the DispatcherTimer +
         // its Tick subscription. If a Schedule() call is still in flight,
         // the user closing the canvas is consent enough to skip the sync —
@@ -1165,7 +1333,7 @@ public sealed partial class LogicCanvasView : UserControl
             _crossFileSyncTimer = null;
         }
 
-        // [P2] Drop the shared flash auto-clear sweep timer on tear-down so a
+        // Drop the shared flash auto-clear sweep timer on tear-down so a
         // SubGraphWindow / tab-swap doesn't leak the DispatcherTimer + its Tick
         // subscription. Any in-flight flash expiry is abandoned — the canvas is
         // going away, so clearing IsExecutingFlash is moot.
@@ -1177,14 +1345,14 @@ public sealed partial class LogicCanvasView : UserControl
         }
         _flashExpiries.Clear();
 
-        //  Also drop the marquee overlay — kept parented into
+        // Also drop the marquee overlay — kept parented into
         // OverlayLayer.Children across the canvas's lifetime, would leak
         // per SubGraphWindow once 0.10.0 multi-window restored.
         DetachMarqueeOverlayOnUnload();
     }
 
     /// <summary>
-    /// 0.10.0 (arch-perf P1) — the per-frame work both for canvas pan and
+    /// 0.10.0 — the per-frame work both for canvas pan and
     /// for wire-bezier recompute. Pointer-move handlers queue intent (pan
     /// target via <see cref="QueuePan"/>; per-link dirty flags via
     /// <see cref="LinkViewModel.MarkPathDirty"/>) and this tick applies the
@@ -1196,7 +1364,7 @@ public sealed partial class LogicCanvasView : UserControl
     {
         if (_vm is null) return;
 
-        // [perf/win2d-immediate-canvas] When the immediate-mode GPU canvas is
+        // When the immediate-mode GPU canvas is
         // active, request a repaint at frame cadence (covers pan / zoom / drag /
         // edit). CanvasControl.Invalidate coalesces to one Draw per frame, and
         // this is a cheap no-op when immediate mode is off. Placed before the pan
@@ -1212,12 +1380,12 @@ public sealed partial class LogicCanvasView : UserControl
         using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
             .Begin("Architect.RenderTick");
 
-        //  Drain coalesced debug-trace flashes before the
+        // Drain coalesced debug-trace flashes before the
         // pan fast-path return so execution pulses still appear while panning.
         // Cheap when nothing is pending (one count check).
         DrainPendingFlashes();
 
-        //  Apply wheel-zoom first so cursor-anchored zoom resolves
+        // Apply wheel-zoom first so cursor-anchored zoom resolves
         // against pre-pan canvas coordinates, then bake the wheel-pan delta
         // on top. Drag-pan (_panDirty) wins last because it's a hard target,
         // not a delta — a user actively click-pan-dragging while the wheel
@@ -1243,7 +1411,7 @@ public sealed partial class LogicCanvasView : UserControl
             ApplyViewTransform();
         }
 
-        // arch-perf #pan-freeze — fast path while a click-drag PAN gesture is
+        // Fast path while a click-drag PAN gesture is
         // active. Panning only writes the canvas RenderTransform; it never
         // changes node / frame / wire geometry in canvas-space, so NONE of the
         // per-frame drains below are relevant during a pan. Skipping them keeps
@@ -1259,14 +1427,14 @@ public sealed partial class LogicCanvasView : UserControl
         // once the gesture ends, so nothing is lost — only deferred past the pan.
         if (_drag == DragState.Pan) return;
 
-        // [arch-perf P1-2] Fix 4 — rebuild the dot grid on pan/zoom SETTLE, not
+        // Rebuild the dot grid on pan/zoom SETTLE, not
         // mid-pan. ApplyViewTransform only marks it dirty; the expensive O(dots)
         // build runs here on the first non-pan tick. Placed BEFORE the idle-skip
         // gate so a settle frame (otherwise "idle") still rebuilds the grid.
         // Cheap (one bool check) when not dirty.
         FlushDotGridRebuild();
 
-        // [arch-perf P1-4] Idle-skip — when no drain below has pending work, the
+        // Idle-skip — when no drain below has pending work, the
         // entire per-frame drain (including the O(L) wire walk) is wasted motion
         // on the shared UI thread. Skip it. Every flag here is set by an event
         // handler and read on the next tick (WinUI never splits a frame), so
@@ -1278,15 +1446,15 @@ public sealed partial class LogicCanvasView : UserControl
         if (_drag == DragState.Idle
             && !_snapGuidesDirty && !_frameContentDragDirty && !_frameOverlapTintsDirty
             && !_marqueeApplyDirty && !_wireDropHitTestDirty
-            && !_vm.AnyLinkDirty && !_cullDirty)   // [Tranche-2] _cullDirty is real work — don't idle past a pending cull
+            && !_vm.AnyLinkDirty && !_cullDirty)   // _cullDirty is real work — don't idle past a pending cull
             return;
 
-        //  Drain any pending marquee apply at frame cadence. Cheap
+        // Drain any pending marquee apply at frame cadence. Cheap
         // when no marquee is active (one bool check) — the marquee partial
         // owns the dirty flag + cursor cache.
         DrainMarqueeApply();
 
-        // 2026-05-22 (arch-perf #drag-glitch) — flush coalesced snap-guide
+        // Flush coalesced snap-guide
         // rebuild. PointerMoved sets _snapGuidesDirty rather than rebuilding
         // inline so a high-Hz pointer drag doesn't tear down + recreate the
         // overlay Shapes at 120 Hz. Read-and-clear so a quiet frame is one
@@ -1306,7 +1474,7 @@ public sealed partial class LogicCanvasView : UserControl
         // when no wire drag is active (one bool check inside).
         DrainWireDropHitTest();
 
-        // arch-perf-polish — flush coalesced frame-content drag. PointerMoved
+        // Flush coalesced frame-content drag. PointerMoved
         // on a FrameMove now sets the dirty flag instead of calling
         // UpdateFrameContentDrag(N nodes) inline at pointer-burst cadence;
         // this drain runs the N-node translate pass at most once per
@@ -1320,7 +1488,7 @@ public sealed partial class LogicCanvasView : UserControl
                 FlushFrameContentDragIfDirty();
         }
 
-        // arch-perf P0-4 — drain the coalesced group-drag (multi-node selection
+        // Drain the coalesced group-drag (multi-node selection
         // move). Runs before the wire-recompute loop below so the moved nodes'
         // X/Y PropertyChanged have marked their incident links dirty by the time
         // RecomputeIfDirty walks them. Cheap when no group drag is in flight.
@@ -1348,7 +1516,7 @@ public sealed partial class LogicCanvasView : UserControl
         // number of links touching the moved nodes. Wrapped so a stall here
         // (a pathological recompute on a huge link set) names itself in the
         // watchdog log instead of hiding under the generic 'RenderTick'.
-        //  Time-sliced: caps the synchronous cost per tick at
+        // Time-sliced: caps the synchronous cost per tick at
         // WireDrainBudgetMs so a large dirty backlog can never hold the UI
         // thread long enough to trip the watchdog. Links left dirty when the
         // budget is spent keep _pathDirty=true and drain on the next tick(s) —
@@ -1356,7 +1524,7 @@ public sealed partial class LogicCanvasView : UserControl
         // links are bool no-ops. Only actual recomputes count toward the budget.
         using (Phoenix.Controls.Shared.Services.UiActivityTrace.Begin("Architect.RenderTick.WireRecompute"))
         {
-            // [arch-perf P1-4] Clear the idle-skip aggregator up front: a full
+            // Clear the idle-skip aggregator up front: a full
             // drain below leaves every link clean, so the next idle tick can
             // early-out. A MarkPathDirty landing DURING this drain re-sets it,
             // and a budget spill re-sets it too (below) — so the next tick still
@@ -1383,7 +1551,7 @@ public sealed partial class LogicCanvasView : UserControl
             if (budgetSpent) { LogWireDrainSpill(recomputed); _vm.SetAnyLinkDirty(); }
         }
 
-        // [Tranche-2] Node cull at the tail of the tick (after wire-recompute, so a
+        // Node cull at the tail of the tick (after wire-recompute, so a
         // remounted node's position + its links are already applied). Runs only on a
         // SETTLE tick (_drag == Idle) when virtualization marked it dirty — never
         // mid-gesture. _cullDirty is in the idle-skip gate above so a settle frame
@@ -1403,7 +1571,7 @@ public sealed partial class LogicCanvasView : UserControl
             {
                 _cullDirty = false;
                 _cullSettleFrames = 0;
-                RefreshNodeRealization();   // [Tranche-2b LOD] cull + proxy/full swap
+                RefreshNodeRealization();   // cull + proxy/full swap
             }
             else
             {
@@ -1412,7 +1580,7 @@ public sealed partial class LogicCanvasView : UserControl
         }
     }
 
-    //  Diagnostic for a time-sliced wire-drain spill — a strong
+    // Diagnostic for a time-sliced wire-drain spill — a strong
     // signal that a relayout/measure wave produced an outsized dirty-link
     // backlog (the freeze precursor). Throttled to at most once per ~2s so a
     // sustained backlog can't flood the rolling log.
@@ -1429,7 +1597,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Drain the queued wheel-zoom delta against the live
+    /// Drain the queued wheel-zoom delta against the live
     /// _vm.Zoom/PanX/PanY so the cursor-anchored zoom resolves against the
     /// canvas pose the user actually sees on screen. Idempotent — clears the
     /// dirty flag + accumulator on entry.
@@ -1444,14 +1612,14 @@ public sealed partial class LogicCanvasView : UserControl
         _pendingWheelZoomDelta = 0;
         if (delta == 0 || stepBase <= 0) return;
 
-        //  Floor the divisor. A Zoom of 0 (deserialisation
+        // Floor the divisor. A Zoom of 0 (deserialisation
         // glitch / setter race) makes cx/cy below NaN and poisons PanX/PanY,
         // NaN-ing the entire viewport transform — hit-testing, pan and zoom all
         // break until restart. The keyboard zoom path already floors the same
         // divisor via Math.Max(_vm.Zoom, 0.0001); mirror it here.
         double oldZoom = Math.Max(_vm.Zoom, 0.0001);
         double factor  = Math.Pow(stepBase, delta / 120.0);
-        // [P3] Match the WinForms canvas zoom envelope [0.2, 4.0] — pre-fix this
+        // Match the WinForms canvas zoom envelope [0.2, 4.0] — pre-fix this
         // wheel path clamped to 0.25, tighter than the baseline and the VM's own
         // Zoom-setter clamp, so the wheel couldn't reach the documented minimum.
         double newZoom = Math.Clamp(oldZoom * factor, 0.2, 4.0);
@@ -1477,7 +1645,7 @@ public sealed partial class LogicCanvasView : UserControl
     // the zoom changes enough to matter. Panning WITHIN the built region needs
     // no geometry work at all — ViewSurface's CompositeTransform moves the dots
     // for free, so there is no per-frame churn (honours the UI-thread frame
-    // budget flagged in project_freeze_diagnostics).
+    // budget).
 
     private const double DotScreenSpacingMin = 40.0;  // on-screen dot pitch floor (px) → LOD coarsen below this
     private const double DotScreenRadius     = 1.35;  // on-screen dot radius (px), kept ~constant via /zoom
@@ -1489,7 +1657,7 @@ public sealed partial class LogicCanvasView : UserControl
     private double _gridBuiltStep = -1;
     private double _gridBuiltZoom = -1;
     private double _gridBuiltMinX, _gridBuiltMinY, _gridBuiltMaxX, _gridBuiltMaxY;
-    // arch-perf P1-2 (Fix 4) — decouple the O(dots) dot-grid rebuild from the
+    // Decouple the O(dots) dot-grid rebuild from the
     // pan critical path. ApplyViewTransform / SizeChanged now only flip
     // _dotGridDirty; the actual rebuild runs from OnRenderingTick on the first
     // non-pan (settle) tick. _dotGridRebuilding guards against re-entrancy.
@@ -1560,9 +1728,9 @@ public sealed partial class LogicCanvasView : UserControl
             return;
 
         double r = DotScreenRadius / zoom; // canvas-space radius → ~constant px on screen
-        //  The endless dot field rebuilds here (new in the Jun-2
-        // endless-grid change) on every pan/zoom that leaves the built region —
-        // i.e. exactly during "panning around", the freeze repro. Trace it so a
+        // The endless dot field rebuilds here on every pan/zoom that leaves the
+        // built region — i.e. exactly during "panning around", the freeze repro.
+        // Trace it so a
         // pan-time stall in this O(dots) build names itself in the watchdog
         // instead of hiding under the generic render tick. Bounded by GridMaxDots;
         // the early-out above keeps the common pan frame from entering here.
@@ -1581,14 +1749,14 @@ public sealed partial class LogicCanvasView : UserControl
         _gridBuiltMaxX = maxX; _gridBuiltMaxY = maxY;
     }
 
-    // arch-perf P1-2 (Fix 4) — mark the dot grid for a rebuild on the next
+    // Mark the dot grid for a rebuild on the next
     // settle tick instead of rebuilding inline on the pan critical path. Dead
     // cheap; called every pan/zoom frame from ApplyViewTransform + on resize.
     private void MarkDotGridDirty() => _dotGridDirty = true;
 
     // Drained from OnRenderingTick after the pan fast-path return (so it runs
-    // when a pan/zoom gesture settles, never mid-pan). Re-check 2026-06-10:
-    // clears _dotGridDirty only once RefreshDotGrid has actually run — the
+    // when a pan/zoom gesture settles, never mid-pan). Clears _dotGridDirty
+    // only once RefreshDotGrid has actually run — the
     // GridLayer-null guard returns WITHOUT clearing, so a not-yet-ready layer is
     // retried on a later tick rather than silently left stale. RefreshDotGrid's
     // own coverage early-out is a legitimate "done, still covered" outcome, so
@@ -1626,6 +1794,23 @@ public sealed partial class LogicCanvasView : UserControl
         // .phxg) would otherwise still show the heavy Welcome card.
         if (e.PropertyName == nameof(LogicCanvasViewModel.LoadedFilePath))
             UpdateEmptyHint();
+        // Keep ViewSurface's CompositeTransform glued to the VM's pan/zoom for
+        // EVERY writer, not just the gesture paths that call ApplyViewTransform
+        // themselves. LoadGraph (File → Open into the same VM, undo/redo replay,
+        // recovery restore) writes PanX/PanY/Zoom straight on the VM and nothing
+        // re-applied the transform afterwards. The Win2D canvas hid the drift —
+        // it renders AND hit-tests from the live VM values — so the stale
+        // transform surfaced only when EnterImmediateEdit mounted the editable
+        // NodeView into NodeLayer (which renders through ViewSurface): the node
+        // materialized at un-panned/un-zoomed coordinates — off-screen ("node
+        // disappears") or mid-canvas ("pops to the center") — while the GPU
+        // renderer skipped it as _editNode. Redundant during a drag-pan flush
+        // (which already applies) — ApplyViewTransform is a few field writes,
+        // and the dot-grid/cull work it marks is deferred + band-guarded.
+        if (e.PropertyName is nameof(LogicCanvasViewModel.PanX)
+                            or nameof(LogicCanvasViewModel.PanY)
+                            or nameof(LogicCanvasViewModel.Zoom))
+            ApplyViewTransform();
     }
 
     private void OnDataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
@@ -1642,7 +1827,7 @@ public sealed partial class LogicCanvasView : UserControl
             _vm.RequestRevealNode         = null;
             ClearNodeViews();
             ClearFrameViews();
-            //  — detach the minimap from the prior VM before the
+            // Detach the minimap from the prior VM before the
             // new one binds. Attach() (called below) re-hooks against the
             // incoming VM; without the explicit Detach here the minimap
             // would keep listening to the old VM's node/frame
@@ -1663,7 +1848,7 @@ public sealed partial class LogicCanvasView : UserControl
 
         if (_vm is not null)
         {
-            // [Tranche-2b LOD] compute the cull band + LOD regime BEFORE the bulk
+            // Compute the cull band + LOD regime BEFORE the bulk
             // add so AddNodeView realizes each node at the right level of detail on
             // load — proxies (cheap) when the graph binds zoomed-out, full views
             // only for the on-screen-and-zoomed-in set (the load-freeze win).
@@ -1671,7 +1856,7 @@ public sealed partial class LogicCanvasView : UserControl
             if (_enableNodeVirtualization) { UpdateCullBand(); UpdateLodRegime(); _cullDirty = true; }
             foreach (var f in _vm.Frames) AddFrameView(f);
             foreach (var n in _vm.Nodes)  AddNodeView(n);
-            CapturePerfBaselineSnapshot("graph-bind"); //  Tranche-2
+            CapturePerfBaselineSnapshot("graph-bind");
 
             _vm.Nodes .CollectionChanged += OnNodesChanged;
             _vm.Links .CollectionChanged += OnLinksChanged;
@@ -1707,7 +1892,7 @@ public sealed partial class LogicCanvasView : UserControl
                        apply:   g => _vm.LoadGraph(g));
             _history.CanExecuteChanged += OnHistoryCanExecuteChanged;
 
-            //  — bind the minimap to the new VM. Idempotent
+            // Bind the minimap to the new VM. Idempotent
             // Attach() re-hooks Nodes/Frames collections + Pan/Zoom/Pan
             // PropertyChanged. The CenterRequested handler routes a tap
             // on the minimap surface into CenterViewportOn(canvasX,
@@ -1761,10 +1946,10 @@ public sealed partial class LogicCanvasView : UserControl
                 ClearNodeViews();
                 if (_vm is not null)
                 {
-                    if (_enableNodeVirtualization) { UpdateCullBand(); UpdateLodRegime(); _cullDirty = true; } // [Tranche-2b LOD] realize-at-LOD on reset
+                    if (_enableNodeVirtualization) { UpdateCullBand(); UpdateLodRegime(); _cullDirty = true; } // realize-at-LOD on reset
                     foreach (var vm in _vm.Nodes) AddNodeView(vm);
                 }
-                CapturePerfBaselineSnapshot("graph-reset"); //  Tranche-2
+                CapturePerfBaselineSnapshot("graph-reset");
                 break;
             case NotifyCollectionChangedAction.Replace:
                 if (e.OldItems is not null)
@@ -1800,7 +1985,7 @@ public sealed partial class LogicCanvasView : UserControl
         // Fresh graph → fresh orphan-warning dedupe so a previously-logged
         // orphan name in file A doesn't suppress its sibling in file B.
         _loggedOrphanNames.Clear();
-        // 0.11.x polish / arch-perf P2-2 (Fix 7) — reset the per-node body-size
+        // 0.11.x — reset the per-node body-size
         // cache for the new graph (node ids can collide across .phxg files). The
         // text-width cache is deliberately NOT cleared anymore (content-stable,
         // process-scoped fonts) to avoid a cold-measure storm on reload — see
@@ -1832,7 +2017,7 @@ public sealed partial class LogicCanvasView : UserControl
             // invisible until the user wires another link.
             foreach (var nvm in _vm.Nodes) nvm.RebuildSockets();
 
-            // [P1] Macro.Call parameter-socket refresh on load / spawn. Pre-fix
+            // Macro.Call parameter-socket refresh on load / spawn. Pre-fix
             // OnVmGraphLoaded synced Event.Trigger/Executor pairs but had no
             // equivalent for Macro.Call nodes — a Call node loaded from disk (or
             // dropped via spawn) kept only its bare Flow in/out pair and could
@@ -1845,7 +2030,7 @@ public sealed partial class LogicCanvasView : UserControl
             // repaints. SyncAllMacroCallSockets walks the macro list once.
             SyncAllMacroCallSockets();
 
-            //  Re-derive socket connectivity AFTER the blanket
+            // Re-derive socket connectivity AFTER the blanket
             // RebuildSockets above. LoadGraph already ran SyncSocketConnectivity,
             // but the per-node RebuildSockets here (and SyncAllMacroCallSockets)
             // discard the old SocketViewModel instances and build fresh ones whose
@@ -1862,7 +2047,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// [P1] Sync every Macro.Call node in the loaded graph to its referenced
+    /// Sync every Macro.Call node in the loaded graph to its referenced
     /// macro's current Entry/Exit signature, then rebuild the socket VMs of any
     /// Call node whose model sockets actually changed. Macros are resolved from
     /// the graph's local <see cref="Graph.Macros"/> list (the in-document
@@ -1919,11 +2104,11 @@ public sealed partial class LogicCanvasView : UserControl
     {
         if (!_subscribedNodes.Add(vm)) return;   // already tracked (the single source of "node is known")
         vm.PropertyChanged += OnNodeVmPropChanged;
-        // [perf/win2d-immediate-canvas] In immediate mode the GPU canvas draws
+        // In immediate mode the GPU canvas draws
         // every node; don't realize a retained NodeView (the whole point — no
         // per-node visual tree). The VM is already in _vm.Nodes for the renderer.
         if (_useImmediateMode) return;
-        // [Tranche-2b LOD] Realize at the current level of detail: a full NodeView
+        // Realize at the current level of detail: a full NodeView
         // (zoomed in + on-screen), a lightweight proxy Border (zoomed out + on-
         // screen), or nothing (off-screen). The full NodeView is built LAZILY
         // inside RealizeNode → EnsureFullView, so a bulk load of a zoomed-out graph
@@ -1932,7 +2117,7 @@ public sealed partial class LogicCanvasView : UserControl
         RealizeNode(vm);
     }
 
-    // [Tranche-2] Add the (already-created) NodeView into the visual tree. Resyncs
+    // Add the (already-created) NodeView into the visual tree. Resyncs
     // Canvas.Left/Top from the LIVE vm.X/Y FIRST — a node culled off-screen can have
     // its X/Y mutated (undo / paste / frame-drag) while it was unmounted, so the
     // cached attached-property value is stale; reading vm.X/Y here lands it right.
@@ -1940,12 +2125,13 @@ public sealed partial class LogicCanvasView : UserControl
     {
         if (!_realizedNodes.Add(vm)) return;   // already mounted
         view._isCulling = false;                // a remount must permit a future real teardown
+        view.StampOwnerCanvas(this);            // commit-tail canvas fallback for detached LostFocus
         XamlCanvas.SetLeft(view, vm.X);
         XamlCanvas.SetTop (view, vm.Y);
         NodeLayer.Children.Add(view);
     }
 
-    // [Tranche-2] Remove the NodeView from the visual tree for a viewport cull. The
+    // Remove the NodeView from the visual tree for a viewport cull. The
     // _isCulling flag makes NodeView.OnUnloaded skip its teardown so the view is
     // reused unchanged on remount (keep-alive). The object stays in _nodeViews.
     private void CullUnmountNodeView(NodeViewModel vm, NodeView view)
@@ -1957,7 +2143,7 @@ public sealed partial class LogicCanvasView : UserControl
 
     private void RemoveNodeView(NodeViewModel vm)
     {
-        // [Tranche-2b LOD] A node may exist only as a proxy (never zoomed into), so
+        // A node may exist only as a proxy (never zoomed into), so
         // its presence is tracked by _subscribedNodes, not _nodeViews.
         if (!_subscribedNodes.Remove(vm)) return;
         vm.PropertyChanged -= OnNodeVmPropChanged;
@@ -1980,7 +2166,7 @@ public sealed partial class LogicCanvasView : UserControl
 
     private void ClearNodeViews()
     {
-        // [Tranche-2b LOD] Unsubscribe via the authoritative tracking set —
+        // Unsubscribe via the authoritative tracking set —
         // _nodeViews no longer holds proxy-only nodes (lazy full views), so
         // iterating it alone would leak their PropertyChanged subscriptions.
         foreach (var vm in _subscribedNodes)
@@ -2005,7 +2191,7 @@ public sealed partial class LogicCanvasView : UserControl
     private void OnNodeVmPropChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender is not NodeViewModel vm) return;
-        // [Tranche-2b LOD] Reposition whichever representation is mounted — the
+        // Reposition whichever representation is mounted — the
         // full NodeView and/or the proxy Border. A node may have only a proxy
         // (zoomed out), only a full view, neither (off-screen), and a full view
         // can briefly coexist with a kept-alive proxy across a regime transition.
@@ -2028,7 +2214,7 @@ public sealed partial class LogicCanvasView : UserControl
                 if (_realizedProxy.Contains(vm) && _nodeProxies.TryGetValue(vm, out var ps))
                     ApplyProxySelection(ps, vm);
                 break;
-            // [resize-reanchor] A node that grew / shrank to fit its content moved
+            // A node that grew / shrank to fit its content moved
             // its pins to new edge coordinates. The GPU canvas already repaints
             // every render tick (InvalidateImmediate in OnRenderingTick), so the
             // node body + pins follow automatically — but the incident wires render
@@ -2038,12 +2224,17 @@ public sealed partial class LogicCanvasView : UserControl
             // drag. Flag the node's wires for re-anchor on the next tick.
             case nameof(NodeViewModel.Width):
             case nameof(NodeViewModel.Height):
+                // A node that grew / shrank to fit a newly-activated bubble must also
+                // resize a mounted LOD proxy Border, or the zoomed-out proxy keeps
+                // its old dimensions until the node is re-realized.
+                if (_realizedProxy.Contains(vm) && _nodeProxies.TryGetValue(vm, out var pr))
+                    ConfigureProxy(pr, vm);
                 _vm?.MarkNodeLinksDirty(vm.Id);
                 break;
         }
     }
 
-    // ─── [Tranche-2] Viewport node cull ─────────────────────────────────
+    // ─── Viewport node cull ─────────────────────────────────────────────
 
     // Visible canvas-space rect (inverse of pan+zoom) — same math as
     // RefreshDotGrid. Drives which NodeViews the cull mounts.
@@ -2097,14 +2288,14 @@ public sealed partial class LogicCanvasView : UserControl
     // zoom and transitions it between None / Proxy / Full (the cull is now the
     // None<->Proxy/Full boundary; the LOD is the Proxy<->Full boundary).
 
-    // [Tranche-2b] Ctrl+Alt+F6 KILL-SWITCH for node virtualization + LOD, which is
+    // Ctrl+Alt+F6 KILL-SWITCH for node virtualization + LOD, which is
     // ON by default. Flip it OFF to fall back to the legacy "every node is a full,
     // always-mounted NodeView" path if a pathological graph or an off-screen
     // regression ever appears — the LOD machinery costs nothing when off. Off-
     // screen wire-drop is redirected model-side (ResolveSocketAtCanvasPoint); right-
     // clicking / wiring a node that is currently a zoomed-out proxy or culled off-
     // screen is an accepted limitation (zoom/pan it into view first). The
-    //  snapshot logs the resulting element count for comparison.
+    // perf-baseline snapshot logs the resulting element count for comparison.
     internal void ToggleNodeVirtualization()
     {
         _enableNodeVirtualization = !_enableNodeVirtualization;
@@ -2119,7 +2310,7 @@ public sealed partial class LogicCanvasView : UserControl
             {
                 // Legacy: every node becomes a full, mounted NodeView; drop proxies.
                 foreach (var vm in _vm.Nodes) ApplyNodeReal(vm, NodeReal.Full);
-                // [wire-virt] and every wire visible — the settle-pass link cull no
+                // And every wire visible — the settle-pass link cull no
                 // longer runs, so any wire collapsed by an earlier cull must be restored.
                 foreach (var lvm in _vm.Links) lvm.IsViewportVisible = true;
             }
@@ -2132,13 +2323,13 @@ public sealed partial class LogicCanvasView : UserControl
             "Architect.Canvas", LogLevel.System);
     }
 
-    // ───  Tranche-2 measurement harness ──────────────────
-    // Turns the audit's EXTRAPOLATED per-node element count into a MEASURED one
-    // and gives the virtualization tranche a before/after gate. NEVER per-frame:
+    // ─── Perf-baseline measurement harness ──────────────────────────────
+    // Turns the EXTRAPOLATED per-node element count into a MEASURED one
+    // and gives the virtualization work a before/after gate. NEVER per-frame:
     // each call enqueues a SINGLE Low-priority BFS over the realized NodeLayer
-    // subtree once layout has settled, then logs one  line to the
+    // subtree once layout has settled, then logs one perf-baseline line to the
     // rolling %AppData%/PhoenixControls/logs file. Strip with the rest of the
-    // perf instrumentation ( etc.) once the numbers are captured.
+    // perf instrumentation once the numbers are captured.
     private void CapturePerfBaselineSnapshot(string trigger)
     {
         var queue = DispatcherQueue;
@@ -2180,7 +2371,7 @@ public sealed partial class LogicCanvasView : UserControl
         var view = BuildFrameElement(vm);
         XamlCanvas.SetLeft(view, vm.X);
         XamlCanvas.SetTop (view, vm.Y);
-        //  P2-A4 — Canvas.ZIndex per-frame so "Bring to Front" /
+        // Canvas.ZIndex per-frame so "Bring to Front" /
         // "Send to Back" in the frame context menu honors Frame.ZOrder
         // without rebuilding the children list. Insertion order still
         // breaks ties at ZOrder=0 (matches pre-fix behaviour).
@@ -2241,7 +2432,7 @@ public sealed partial class LogicCanvasView : UserControl
             case nameof(FrameViewModel.IsSelected):
                 ApplyFrameSelectionHalo(border, vm);
                 break;
-            //  P1-A8 — frame color picker fires RaiseAllChanged which
+            // Frame color picker fires RaiseAllChanged which
             // bumps FrameColorHex / FrameFillHex; re-tint the border + fill in
             // place rather than rebuilding the whole frame view. 0.11.x polish
             // — the overlap-tint blue is re-blended on top of the new colour
@@ -2250,13 +2441,13 @@ public sealed partial class LogicCanvasView : UserControl
             case nameof(FrameViewModel.FrameFillHex):
                 _frameOverlapTintsDirty = true;
                 break;
-            //  P2-A4 — Bring to Front / Send to Back mutates ZOrder
+            // Bring to Front / Send to Back mutates ZOrder
             // on the model and the canvas re-applies Canvas.ZIndex so the
             // FrameLayer paints with the new stacking.
             case nameof(FrameViewModel.ZOrder):
                 XamlCanvas.SetZIndex(view, vm.ZOrder);
                 break;
-            //  "Convert to Comment / Placeholder" flips IsPlaceholder
+            // "Convert to Comment / Placeholder" flips IsPlaceholder
             // (via RaiseAllChanged) and the placeholder visuals — hatch overlay,
             // dashed border, transparent Border, "// " title — are built once in
             // BuildFrameElement. Rebuild the frame element in place so the
@@ -2269,7 +2460,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Rebuild a frame's visual element in place — used when a
+    /// Rebuild a frame's visual element in place — used when a
     /// state that BuildFrameElement bakes at construction time changes at
     /// runtime (currently IsPlaceholder, which gates the hatch/dashed/border
     /// treatment). Preserves position + z-order + selection halo.
@@ -2374,7 +2565,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  P1-A8 — repaint the frame border + fill from the VM's current
+    /// Repaint the frame border + fill from the VM's current
     /// FrameColorHex / FrameFillHex. Honors the IsSelected halo (selection
     /// gold wins) by deferring to <see cref="ApplyFrameSelectionHalo"/> when
     /// the frame is the active selection. Mirrors BuildFrameElement's initial
@@ -2404,7 +2595,7 @@ public sealed partial class LogicCanvasView : UserControl
         }
         else
         {
-            //  Placeholder frames keep a transparent Border — their
+            // Placeholder frames keep a transparent Border — their
             // visible border is the dashed overlay Rectangle built in
             // BuildFrameElement, so a solid colour border here would double the
             // outline. Comment frames restore their solid colour border.
@@ -2413,7 +2604,7 @@ public sealed partial class LogicCanvasView : UserControl
                 ? new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
                 : new SolidColorBrush(c);
         }
-        // 2026-05-22 — tint only the tagged elements that actually carry the
+        // Tint only the tagged elements that actually carry the
         // frame colour: the header strip (Tag="header") and the BR resize
         // corner glyph (Tag="resize:bottomright"). The title block now stays
         // bright paper-white regardless of frame color (see BuildFrameElement);
@@ -2459,7 +2650,7 @@ public sealed partial class LogicCanvasView : UserControl
         return Windows.UI.Color.FromArgb(surfaceA, r, g, b);
     }
 
-    // 2026-05-22 — cached bright foreground for the frame title (decoupled
+    // Cached bright foreground for the frame title (decoupled
     // from the frame's border colour so the label stays legible regardless
     // of the user-picked frame tint). Mirrors the cache pattern on
     // ResolveOkBrush / ResolveErrBrush.
@@ -2477,7 +2668,7 @@ public sealed partial class LogicCanvasView : UserControl
     /// frame's own color otherwise. Width also bumps slightly so the
     /// halo reads at a glance against the existing 1.5 px frame border.
     /// </summary>
-    // [P3] Tag used to find / manage the dashed selection-outline overlay
+    // Tag used to find / manage the dashed selection-outline overlay
     // inside a frame's Grid. WinUI Border can't carry a dashed stroke, so the
     // selection outline is a dashed Rectangle overlaid on selection and removed
     // on deselect — making the gold selection ring visually distinct from the
@@ -2537,14 +2728,14 @@ public sealed partial class LogicCanvasView : UserControl
         return null;
     }
 
-    //  P2-A6 — frame resize hit-zone thicknesses. The 10 px corner
-    // boxes match the pre-Sprint-32 single-corner Rectangle; the 6 px edge
+    // Frame resize hit-zone thicknesses. The 10 px corner
+    // boxes match the earlier single-corner Rectangle; the 6 px edge
     // strips are slim enough to leave the bulk of the border free for body-
     // drag, but thick enough to be a stable hit target on a high-DPI display.
     private const double FrameEdgeHandleThickness = 6.0;
     private const double FrameCornerHandleSize    = 10.0;
 
-    // 2026-05-22 (arch-ux #frame-header-grab) — frames are now ONLY draggable
+    // Frames are now ONLY draggable
     // from a visible header strip across the top of the frame. Body clicks
     // select the frame but do not move it. This matches the pre-T15 idiom
     // and prevents accidental drags from corner-of-eye clicks on a large
@@ -2556,8 +2747,8 @@ public sealed partial class LogicCanvasView : UserControl
     private static FrameworkElement BuildFrameElement(FrameViewModel vm)
     {
         // Mirrors the original DataTemplate from LogicCanvasView.xaml: a
-        // titled Border with resize handles.  P2-A6 expands the
-        // single bottom-right 10×10 corner into a full set of 4 edge strips
+        // titled Border with resize handles. The
+        // single bottom-right 10×10 corner is expanded into a full set of 4 edge strips
         // + 4 corner boxes so all eight resize affordances are reachable —
         // matching pre-T15 WinForms Architect. Tag values use the convention
         // `resize:<edge>` so `ResolveFrameResizeEdge` can map a hit element
@@ -2579,7 +2770,7 @@ public sealed partial class LogicCanvasView : UserControl
 
         var grid = new Grid();
 
-        //  Placeholder frame visual indicators — restore the three
+        // Placeholder frame visual indicators — restore the three
         // baseline distinctions (Canvas.PaintBackground.cs) so a placeholder
         // section (nodes skipped on export) reads differently from a comment
         // frame: (1) a ForwardDiagonal hatch overlay, (2) a dashed border, and
@@ -2613,7 +2804,7 @@ public sealed partial class LogicCanvasView : UserControl
             });
         }
 
-        // 2026-05-22 (arch-ux #frame-header-grab) — visible header strip
+        // Visible header strip
         // anchored to the top of the frame. Painted ABOVE the soft fill but
         // BELOW the resize edges so the top 6px stays grabable for resize.
         // The header carries Tag="header" so OnHostPointerPressed can
@@ -2637,7 +2828,7 @@ public sealed partial class LogicCanvasView : UserControl
         };
         grid.Children.Add(headerStrip);
 
-        // 2026-05-22 (arch-ux #frame-name-visibility) — the title used to
+        // The title used to
         // render in the same color as the frame border at FontSize=11 (the
         // border color IS the foreground brush, so it visually melted into
         // the border). Majo flagged it explicitly. Bumped to 14 + a bright
@@ -2658,7 +2849,7 @@ public sealed partial class LogicCanvasView : UserControl
             CharacterSpacing     = 40,
             Foreground           = ResolveFrameTitleBrush(),
             TextTrimming         = TextTrimming.CharacterEllipsis,
-            //  P1-A9 — tag the label so a host-level double-tap can
+            // Tag the label so a host-level double-tap can
             // identify a "clicked the label" gesture and route to the rename
             // flyout. The pointer-pressed handler also treats the label as
             // part of the header so a click on the title text starts a drag.
@@ -2666,7 +2857,7 @@ public sealed partial class LogicCanvasView : UserControl
         };
         try
         {
-            //  "SansFont" is an <x:String> resource — a direct
+            // "SansFont" is an <x:String> resource — a direct
             // cast to FontFamily always throws InvalidCastException (silently
             // swallowed here, so the title never actually got SansFont). Build
             // the FontFamily from the string the way the XAML converter does.
@@ -2768,7 +2959,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Build a faint forward-diagonal hatch overlay sized to a
+    /// Build a faint forward-diagonal hatch overlay sized to a
     /// placeholder frame's interior. Mirrors the WinForms HatchBrush
     /// (ForwardDiagonal) the baseline painted behind placeholder frames so the
     /// "skipped on export" state reads at a glance. Hit-test-invisible and
@@ -2854,7 +3045,7 @@ public sealed partial class LogicCanvasView : UserControl
     private void UpdateEmptyHint()
     {
         bool empty = _vm is null || _vm.Nodes.Count == 0;
-        // 0.10.0 (arch-ux-state #7) — when no graph is loaded AND the canvas
+        // 0.10.0 — when no graph is loaded AND the canvas
         // is empty, swap to the Welcome card (New / Open / Recent action
         // buttons). The bare "LOGIC CANVAS / right-click to spawn" hint
         // still fires for the in-memory empty-graph case (e.g. just hit
@@ -2862,7 +3053,7 @@ public sealed partial class LogicCanvasView : UserControl
         // deliberate New rather than the heavy Welcome card again.
         bool noFile = empty && (_vm?.LoadedFilePath is null);
 
-        // 2026-06-08 — the "blank canvas from New" suppression only applies to
+        // The "blank canvas from New" suppression only applies to
         // the fresh-empty-no-file state. The moment the canvas gains content or
         // a file (!noFile), the suppression is stale: clear it so a later return
         // to empty (e.g. File → Close-X, which is gated on HasOpenDocument and
@@ -2876,7 +3067,7 @@ public sealed partial class LogicCanvasView : UserControl
         EmptyHint.Visibility   = empty && !showWelcome ? Visibility.Visible : Visibility.Collapsed;
         WelcomeCard.Visibility = showWelcome           ? Visibility.Visible : Visibility.Collapsed;
 
-        // P1-A20 () — refresh the Samples picker every time the
+        // Refresh the Samples picker every time the
         // welcome card becomes visible so a between-session file removal /
         // restore reflects on next surface. Cheap (≤10 stat calls); kept
         // gated to showWelcome so we don't pay for it on every node mutation.
@@ -2902,17 +3093,17 @@ public sealed partial class LogicCanvasView : UserControl
         ViewTransform.ScaleY     = _vm.Zoom;
         ViewTransform.TranslateX = _vm.PanX;
         ViewTransform.TranslateY = _vm.PanY;
-        // arch-perf P1-2 (Fix 4) — only MARK the dot grid dirty here; the actual
+        // Only MARK the dot grid dirty here; the actual
         // O(dots) rebuild is deferred to OnRenderingTick's settle drain so a
         // sustained pan that keeps leaving the built region never rebuilds
         // mid-gesture. The grid rides this transform within the built field.
         MarkDotGridDirty();
-        // [Tranche-2] pan/zoom moved the viewport — ask for a re-cull on settle.
-        if (_enableNodeVirtualization) { _cullDirty = true; _cullSettleFrames = 0; } // [Tranche-2] viewport moved → restart the cull settle-debounce
+        // Pan/zoom moved the viewport — ask for a re-cull on settle.
+        if (_enableNodeVirtualization) { _cullDirty = true; _cullSettleFrames = 0; } // viewport moved → restart the cull settle-debounce
     }
 
     /// <summary>
-    ///  — public ApplyViewTransform proxy invoked by
+    /// Public ApplyViewTransform proxy invoked by
     /// <see cref="MiniMapOverlay"/> after its drag-pan gesture writes
     /// PanX/Y to the shared VM. The minimap can't reach the private
     /// ApplyViewTransform directly; this single-line forward keeps the
@@ -2923,7 +3114,7 @@ public sealed partial class LogicCanvasView : UserControl
     internal void ApplyViewTransformForMinimap() => ApplyViewTransform();
 
     /// <summary>
-    ///  — centre the host's pan/zoom on the canvas-space point
+    /// Centre the host's pan/zoom on the canvas-space point
     /// <paramref name="canvasPoint"/>. Used by <see cref="MiniMapOverlay"/>'s
     /// tap-to-jump gesture; keeps the current zoom and writes PanX/Y so
     /// the host viewport's centre lands on the requested canvas coord.
@@ -2941,7 +3132,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  — flip the minimap overlay's Visibility and persist the
+    /// Flip the minimap overlay's Visibility and persist the
     /// new state into <see cref="Phoenix.Controls.Shared.Models.AppConfig.ArchitectMinimapVisible"/>.
     /// Both the chrome menu's "View → Minimap" toggle and the in-overlay
     /// × glyph route through here so the two surfaces stay in sync.
@@ -2964,14 +3155,14 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  — true when the minimap overlay is currently visible.
+    /// True when the minimap overlay is currently visible.
     /// Chrome surfaces poll this on construction to sync their toggle
     /// glyph (e.g. ToggleMenuFlyoutItem.IsChecked).
     /// </summary>
     public bool IsMinimapVisible => MiniMap?.Visibility == Visibility.Visible;
 
     /// <summary>
-    ///  — raised whenever the minimap's visibility flips (chrome
+    /// Raised whenever the minimap's visibility flips (chrome
     /// menu toggle, in-overlay × glyph, programmatic restore from
     /// AppConfig). Chrome menu items subscribe so their IsChecked stays
     /// in sync when the user dismisses via the × glyph.
@@ -2979,7 +3170,7 @@ public sealed partial class LogicCanvasView : UserControl
     public event EventHandler<bool>? MinimapVisibilityChanged;
 
     /// <summary>
-    ///  — sync the minimap overlay's Visibility with whatever the
+    /// Sync the minimap overlay's Visibility with whatever the
     /// persisted state says. Called from the chrome shell's layout-restore
     /// path so first-launch + restart paths land at the same surface.
     /// </summary>
@@ -2991,7 +3182,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  — minimap CenterRequested handler. Centres the canvas
+    /// Minimap CenterRequested handler. Centres the canvas
     /// viewport on the requested canvas-space point.
     /// </summary>
     private void OnMinimapCenterRequested(object? sender, Point canvasPoint)
@@ -3000,7 +3191,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  — minimap HideRequested handler. Hides the overlay and
+    /// Minimap HideRequested handler. Hides the overlay and
     /// persists the visibility flip into AppConfig so the next launch
     /// honours the user's choice.
     /// </summary>
@@ -3092,7 +3283,7 @@ public sealed partial class LogicCanvasView : UserControl
             var hostPoint = e.GetCurrentPoint(null).Position;
             foreach (var el in VisualTreeHelper.FindElementsInHostCoordinates(hostPoint, this))
             {
-                //  Honour z-order. FindElementsInHostCoordinates
+                // Honour z-order. FindElementsInHostCoordinates
                 // returns the hit stack topmost-first. A socket PIN hit-target
                 // (marked CanvasInteraction.IsSocketPin) on top means this press
                 // STARTS A WIRE-DRAG, not an inline edit — so bail BEFORE the
@@ -3117,7 +3308,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Resolve a genuine socket-PIN press. Hit-tests the actual
+    /// Resolve a genuine socket-PIN press. Hit-tests the actual
     /// cursor point and returns the <see cref="SocketViewModel"/> whose pin
     /// hit-target (<see cref="CanvasInteraction.IsSocketPinProperty"/>, set in
     /// <c>NodeView.AddPinElement</c>) is the TOPMOST hit element — i.e. the press
@@ -3156,11 +3347,11 @@ public sealed partial class LogicCanvasView : UserControl
         return null;
     }
 
-    //  Temporary lifecycle trace for the dynamic-bubble (placeholder)
+    // Temporary lifecycle trace for the dynamic-bubble (placeholder)
     // system — drop resolution → activation → call-site sync. Gated by a const so it
     // is a one-line flip to silence/remove once the residual "+ not visible" / no-sync
     // cases are confirmed from a single repro run. Logs to the Hub System Log + rolling
-    // log, the same channel the proven  /  probes used.
+    // log, the same channel the earlier diagnostic probes used.
     internal static bool BubbleDiagEnabled = true;
     internal static void BubbleDiag(string msg)
     {
@@ -3168,10 +3359,26 @@ public sealed partial class LogicCanvasView : UserControl
         GlobalLogger.Log(" " + msg, "Architect.Canvas", LogLevel.System);
     }
 
-    // [Tranche-2] Pin hit radius for the MODEL-side wire-drop fallback below.
+    // Pin hit radius for the MODEL-side wire-drop fallback below.
     private const double WireDropModelHitRadius = 14.0;
 
-    // [Tranche-2] Model-side socket hit-test — the off-screen counterpart to
+    // Slack added on top of a placeholder's measured label width to get the
+    // PRESS reach from its pin anchor (canvas units): label x-pad from the node
+    // edge (14 input / 16 output, DrawNodeBody) + the pin's overhang past the
+    // edge (±7) + a couple px of font-estimate drift. The reach itself is
+    // computed per socket from the SAME NodeGeometry.EstimateTextWidth(label,
+    // 12.0) the renderer right/left-aligns the label with, so the pressable
+    // region always covers exactly the drawn pin + label chrome — no guessed
+    // constant that a longer label or measure drift can outgrow. The DROP band
+    // stays full-row-generous (see ResolveSocketAtCanvasPoint), but at press
+    // time the drawn chrome is the only visible affordance — a full-row press
+    // band let a press anywhere across the node body at a slot row's height
+    // silently start a wire-drag from the placeholder, eating clicks meant for
+    // node select / drag (and, worse, would turn stray body clicks into slot
+    // activations now that a click on the slot adds a bubble).
+    private const double PlaceholderPressSlack = 26.0;
+
+    // Model-side socket hit-test — the off-screen counterpart to
     // ResolvePinUnderCursor. When node virtualization has culled the target node
     // out of the visual tree (it scrolled into view via edge-pan during a wire-drag,
     // so its pin Ellipse isn't realized), the visual probe misses. This resolves the
@@ -3181,7 +3388,16 @@ public sealed partial class LogicCanvasView : UserControl
     // null. O(N·sockets), but only fires on a visual MISS (the mounted fast-path runs
     // first) and only once per drop / per coalesced hover-frame, with a cheap per-node
     // bounds reject up front.
-    private SocketViewModel? ResolveSocketAtCanvasPoint(Point canvasPoint, double radius)
+    // fullPlaceholderRowBand: true (default) keeps the generous full-row
+    // second pass for DROP / hover resolution; false narrows the placeholder
+    // band to the drawn pin + label chrome (PlaceholderPressReach) for PRESS
+    // resolution, so pressing the node body at a slot row's height selects /
+    // drags the node instead of hijacking the press into a placeholder
+    // wire-drag (the "Event nodes feel dead / possessed" 1.0.14–1.0.16
+    // regression — every body press in the two slot-row stripes became a
+    // phantom "+ return" drag that ended in a silent self-loop rejection).
+    private SocketViewModel? ResolveSocketAtCanvasPoint(
+        Point canvasPoint, double radius, bool fullPlaceholderRowBand = true)
     {
         if (_vm is null) return null;
         double best2 = radius * radius;
@@ -3208,7 +3424,7 @@ public sealed partial class LogicCanvasView : UserControl
         }
         if (hit is not null) return hit;
 
-        //  Managed dynamic placeholders ("+ variable" / "+ input"
+        // Managed dynamic placeholders ("+ variable" / "+ input"
         // / "+ output" / "+ return") render their label across the WHOLE row, but their
         // pin is a tiny edge target. On the Win2D canvas there is no Ellipse hit-target,
         // so a natural drop aimed at the "+ variable" LABEL lands >radius from the edge
@@ -3223,24 +3439,48 @@ public sealed partial class LogicCanvasView : UserControl
             if (canvasPoint.X < node.X - radius || canvasPoint.X > node.X + node.Width + radius
                 || canvasPoint.Y < node.Y - radius || canvasPoint.Y > node.Y + node.Height + radius)
                 continue;
-            var rowHit = PlaceholderRowHit(node, node.Inputs, canvasPoint, bandHalf)
-                      ?? PlaceholderRowHit(node, node.Outputs, canvasPoint, bandHalf);
+            // Pick the CLOSEST managed-placeholder row to the drop across BOTH pools,
+            // not the first Input in declaration order. The row bands are
+            // SocketRowHeight tall and adjacent placeholder rows sit one row apart, so
+            // their bands meet at the exact Y boundary between them. An Inputs-first
+            // "?? Outputs" resolve broke the tie by pool-check order, so a pixel-exact
+            // drop on the boundary between an Input placeholder ("+ return" on an
+            // Event.Executor) and the adjacent Output placeholder ("+ variable") wired
+            // the wrong channel. Nearest-anchor is unambiguous and only differs from
+            // the old behaviour within ~1px of the boundary.
+            var rowHit = NearestPlaceholderRow(node, canvasPoint, bandHalf,
+                pressNarrowed: !fullPlaceholderRowBand);
             if (rowHit is not null) return rowHit;
         }
         return null;
 
-        static SocketViewModel? PlaceholderRowHit(
-            NodeViewModel node,
-            System.Collections.Generic.IEnumerable<SocketViewModel> pool,
-            Point pt, double bandHalf)
+        static SocketViewModel? NearestPlaceholderRow(
+            NodeViewModel node, Point pt, double bandHalf, bool pressNarrowed)
         {
-            foreach (var sock in pool)
+            SocketViewModel? best = null;
+            double bestDy = double.MaxValue;
+            void Consider(System.Collections.Generic.IEnumerable<SocketViewModel> pool)
             {
-                if (!sock.IsDynamicPlaceholder) continue;
-                var (_, ay) = sock.Anchor();
-                if (System.Math.Abs(pt.Y - (node.Y + ay)) <= bandHalf) return sock;
+                foreach (var sock in pool)
+                {
+                    if (!sock.IsDynamicPlaceholder) continue;
+                    var (ax, ay) = sock.Anchor();
+                    if (pressNarrowed)
+                    {
+                        // Press must land on the drawn pin + label chrome —
+                        // measured with the renderer's own label estimate so
+                        // the hit-target tracks the visuals exactly.
+                        double reach = NodeGeometry.EstimateTextWidth(sock.Label, 12.0)
+                                     + PlaceholderPressSlack;
+                        if (System.Math.Abs(pt.X - (node.X + ax)) > reach) continue;
+                    }
+                    double dy = System.Math.Abs(pt.Y - (node.Y + ay));
+                    if (dy <= bandHalf && dy < bestDy) { bestDy = dy; best = sock; }
+                }
             }
-            return null;
+            Consider(node.Inputs);
+            Consider(node.Outputs);
+            return best;
         }
     }
 
@@ -3264,7 +3504,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  P2-A6 — map the pointer's <paramref name="source"/> to a
+    /// Map the pointer's <paramref name="source"/> to a
     /// <see cref="FrameResizeEdge"/> by walking the visual tree looking for a
     /// FrameworkElement whose Tag is one of the `resize:<edge>` strings emitted
     /// by <see cref="BuildFrameElement"/>. Returns <see cref="FrameResizeEdge.None"/>
@@ -3288,7 +3528,7 @@ public sealed partial class LogicCanvasView : UserControl
                     "resize:topright"    => FrameResizeEdge.TopRight,
                     "resize:bottomleft"  => FrameResizeEdge.BottomLeft,
                     "resize:bottomright" => FrameResizeEdge.BottomRight,
-                    // Plain "resize" stayed in pre-Sprint-32 callers — treat as
+                    // Plain "resize" stayed in earlier callers — treat as
                     // the historical bottom-right corner so any external test
                     // / mock relying on the bare tag still resizes correctly.
                     "resize"             => FrameResizeEdge.BottomRight,
@@ -3300,7 +3540,7 @@ public sealed partial class LogicCanvasView : UserControl
         return FrameResizeEdge.None;
     }
 
-    // C8 (audit/winui-regressions-2026-05-24) — frame edge-resize
+    // Frame edge-resize
     // discoverability. The eight resize hit-zones around a frame are invisible
     // (only the bottom-right corner carries a visible 0.6-opacity swatch);
     // without a hover cursor change a user can't tell where the edges live.
@@ -3309,7 +3549,7 @@ public sealed partial class LogicCanvasView : UserControl
     private InputSystemCursorShape? _frameEdgeCursorShape;
 
     /// <summary>
-    /// C8 (audit/winui-regressions-2026-05-24) — repaint the host cursor based
+    /// Repaint the host cursor based
     /// on whether <paramref name="source"/> resolves to a frame edge / corner
     /// resize handle. Called from <c>OnHostPointerMoved</c> while in
     /// <c>DragState.Idle</c> (active drags own the cursor); also called from
@@ -3386,7 +3626,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  P1-A9 — true when <paramref name="source"/> sits inside a
+    /// True when <paramref name="source"/> sits inside a
     /// frame label TextBlock (Tag="label"). Used by the double-tap handler to
     /// route a label hit into <see cref="ShowFrameRenameFlyout"/>, mirroring
     /// the rename idiom socket / pre-existing inline rename surfaces use.
@@ -3405,7 +3645,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// 2026-05-22 (arch-ux #frame-header-grab) — true when the pointer source
+    /// True when the pointer source
     /// resolves to either the frame's header strip (Tag="header") or its
     /// label TextBlock (Tag="label"). OnHostPointerPressed gates the
     /// FrameMove drag origin on this so a click on the body just selects;
@@ -3442,7 +3682,7 @@ public sealed partial class LogicCanvasView : UserControl
     /// of the ramp painted against a brush whose Opacity timeline had
     /// already been torn down, so the flash visually truncated.
     /// </summary>
-    //  Pending flash node-ids, drained once per displayed
+    // Pending flash node-ids, drained once per displayed
     // frame in OnRenderingTick. A tight DEBUG_NODE_EXEC loop firing N times for
     // the same node within one frame collapses to a single TriggerFlash (the
     // HashSet dedupes) instead of allocating a fresh Storyboard + brush per
@@ -3463,12 +3703,12 @@ public sealed partial class LogicCanvasView : UserControl
     private const int FlashHoldMs = 440;
 
     /// <summary>
-    ///  Drain the pending-flash set from OnRenderingTick.
+    /// Drain the pending-flash set from OnRenderingTick.
     /// Snapshot + clear first so a re-entrant FlashNode during the drain queues
     /// for the NEXT tick. One TriggerFlash + one auto-clear per node per drained
     /// frame.
     /// </summary>
-    // [P2] Shared flash auto-clear model. Pre-fix every drained flash enqueued
+    // Shared flash auto-clear model. Pre-fix every drained flash enqueued
     // its own `async () => { await Task.Delay(FlashHoldMs); ... }` lambda — under
     // a busy debug session (rapid DEBUG_NODE_EXEC) that allocates an unbounded
     // number of Task + state-machine instances per second. Now a single
@@ -3574,7 +3814,7 @@ public sealed partial class LogicCanvasView : UserControl
         _vm.Graph.Frames.Add(frame);
         var fvm = new FrameViewModel(frame);
         _vm.Frames.Add(fvm);
-        //  Flip dirty-marker — see AddNode for the rationale.
+        // Flip dirty-marker — see AddNode for the rationale.
         _vm.OnGraphMutated();
         return fvm;
     }
@@ -3586,14 +3826,14 @@ public sealed partial class LogicCanvasView : UserControl
         PushUndo();
         _vm.Graph.Frames.Remove(fvm.Model);
         _vm.Frames.Remove(fvm);
-        //  Flip dirty-marker — see AddNode for the rationale.
+        // Flip dirty-marker — see AddNode for the rationale.
         _vm.OnGraphMutated();
     }
 
     public NodeViewModel? AddNode(Node node, double x, double y)
     {
         if (_vm is null || node is null) return null;
-        //  Refuse to add a duplicate Macro/Process Entry/Exit singleton to
+        // Refuse to add a duplicate Macro/Process Entry/Exit singleton to
         // the live graph (the first is allowed; a second would be silently dropped
         // at export and orphan its wiring). Logged inside the guard — never a modal.
         if (WouldDuplicateSubGraphSingleton(_vm.Graph, node.Title)) return null;
@@ -3604,7 +3844,7 @@ public sealed partial class LogicCanvasView : UserControl
         var vm = new NodeViewModel(node);
         _vm.Nodes.Add(vm);
         _vm.Selection = vm;
-        //  Fire GraphMutatedAny so ArchitectViewModel.IsDirty flips
+        // Fire GraphMutatedAny so ArchitectViewModel.IsDirty flips
         // true. Pre-fix every direct-graph-mutator (AddNode / RemoveNode /
         // AddFrame / RemoveFrame / RemoveLink) was a silent dirty-marker
         // hole: only TryCreateLink + a handful of menu paths called
@@ -3642,7 +3882,7 @@ public sealed partial class LogicCanvasView : UserControl
         // dead node side because Graph.FindNodeById returns null after
         // the Nodes.Remove above.
         foreach (var dm in doomedModels) RevertActivatedPlaceholdersForLink(dm);
-        //  Flip dirty-marker — see AddNode for the rationale.
+        // Flip dirty-marker — see AddNode for the rationale.
         _vm.OnGraphMutated();
     }
 
@@ -3667,7 +3907,7 @@ public sealed partial class LogicCanvasView : UserControl
         // (eviction in TryCreateLink calls this for the same reason).
         RevertActivatedPlaceholdersForLink(doomedModel);
 
-        //  Re-resolve wildcard sockets across the graph after the
+        // Re-resolve wildcard sockets across the graph after the
         // disconnect. Pre-fix a wire dropped from a wildcard group (e.g.
         // Logic.If's A/B pair) left the group stuck at its resolved type +
         // colour even once it was fully orphaned; the group should fall back
@@ -3708,7 +3948,7 @@ public sealed partial class LogicCanvasView : UserControl
             ScheduleCrossFileEventPairSync();
             RefreshEventPairErrorState();
         }
-        //  Flip dirty-marker — wire-delete used to skip this so a
+        // Flip dirty-marker — wire-delete used to skip this so a
         // user deleting a wire didn't get an unsaved-work prompt on close.
         _vm.OnGraphMutated();
     }
@@ -3737,7 +3977,7 @@ public sealed partial class LogicCanvasView : UserControl
         BubbleDiag($"activate \"{endpoint.Model.Name}\" on \"{endpointNode.Title}\" " +
             $"← wire from \"{otherEnd.Model.Name}\" ({otherEnd.DataType})");
         PlaceholderActivator.Activate(_vm.Graph, endpointNode.Model, endpoint.Model, otherEnd.Model);
-        // [P1] Activate may have synced sockets onto paired Event.* nodes too,
+        // Activate may have synced sockets onto paired Event.* nodes too,
         // so rebuild the endpoint's VM AND its Event-pair peers — but NOT every
         // node in the graph. Pre-fix the unconditional full-graph
         // `foreach (var nvm in _vm.Nodes) nvm.RebuildSockets()` cleared two
@@ -3749,7 +3989,42 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    /// [P1] Rebuild the socket VMs for exactly the node that
+    /// Wire-less slot activation — a press+release on the same managed
+    /// "+ variable" / "+ return" / "+ input" / "+ output" slot adds the bubble
+    /// in place with the slot's default type (String for variables, the return
+    /// colour for returns — <see cref="PlaceholderActivator.Activate"/> with no
+    /// source socket). Runs the SAME post-activation tail as the wire path
+    /// (<see cref="ActivateIfPlaceholder"/> + <see cref="TryCreateLink"/>'s
+    /// Event epilogue): own-undo snapshot, socket-VM rebuild for the node and
+    /// its in-graph Event peers, graph-mutated (drives autosave, the dirty
+    /// marker AND the sub-graph call-site sync debounce), then the cross-file
+    /// Event-pair sync + unpaired-error refresh. No-op for clicks on real pins
+    /// or unmanaged placeholders. Called from TryCreateLink's same-socket
+    /// short-circuit so both render paths (GPU press-band and retained pin
+    /// hit-target) and the capture-loss salvage all share it.
+    /// </summary>
+    private void TryActivatePlaceholderOnClick(SocketViewModel sock)
+    {
+        if (_vm is null || sock is null) return;
+        var node = FindNodeOwning(sock);
+        if (node is null) return;
+        if (!PlaceholderActivator.IsManagedPlaceholder(node.Model, sock.Model)) return;
+
+        PushUndo();
+        BubbleDiag($"activate \"{sock.Model.Name}\" on \"{node.Title}\" ← click (no wire, default type)");
+        PlaceholderActivator.Activate(_vm.Graph, node.Model, sock.Model, null);
+        RebuildSocketsForMutatedNode(node.Model);
+        _vm.Graph.MarkStructuralChange();
+        _vm.OnGraphMutated();
+        if (TouchesEventPair(node))
+        {
+            ScheduleCrossFileEventPairSync();
+            RefreshEventPairErrorState();
+        }
+    }
+
+    /// <summary>
+    /// Rebuild the socket VMs for exactly the node that
     /// PlaceholderActivator.Activate / RevertIfOrphaned mutated, plus any
     /// Event.Trigger / Event.Executor / Event.Return peers sharing the same
     /// EventName (the activator mirrors socket shape across the pair). Avoids
@@ -3769,6 +4044,7 @@ public sealed partial class LogicCanvasView : UserControl
             && mutated.Attributes.TryGetValue("EventName", out var ev)
             && !string.IsNullOrWhiteSpace(ev))
         {
+            int syncedPeers = 0;
             foreach (var nvm in _vm.Nodes)
             {
                 if (ReferenceEquals(nvm, endpointVm)) continue;
@@ -3778,7 +4054,13 @@ public sealed partial class LogicCanvasView : UserControl
                 if (!m.Attributes.TryGetValue("EventName", out var otherEv)) continue;
                 if (!string.Equals(otherEv, ev, System.StringComparison.OrdinalIgnoreCase)) continue;
                 nvm.RebuildSockets();
+                syncedPeers++;
             }
+            // Fingerprint for the "dynamic-bubble SYNC doesn't work" report — if a
+            // drop activates but this logs "synced 0 in-graph peers" while an
+            // Event.Executor("<ev>") is on the canvas, the peer match (title family
+            // / EventName equality) is the failing link, not the activation.
+            BubbleDiag($"pair-sync \"{mutated.Title}\"(EventName=\"{ev}\") → synced {syncedPeers} in-graph peer(s)");
         }
     }
 
@@ -3814,7 +4096,7 @@ public sealed partial class LogicCanvasView : UserControl
             // No mutation? Don't churn the view.
             if (node.Sockets.Count == beforeCount && (socket.Name ?? string.Empty) == beforeName) return;
 
-            // [P1] Rebuild only the reverted node + its Event-pair peers (the
+            // Rebuild only the reverted node + its Event-pair peers (the
             // shrink may have synced onto paired Event.* nodes), not every node
             // in the graph — same scoping as ActivateIfPlaceholder.
             RebuildSocketsForMutatedNode(node);
@@ -3833,7 +4115,7 @@ public sealed partial class LogicCanvasView : UserControl
     /// log via GlobalLogger and never bubble back into the canvas.
     /// </summary>
     /// <remarks>
-    ///  Debounced at <see cref="CrossFileEventPairSyncDebounceMs"/>
+    /// Debounced at <see cref="CrossFileEventPairSyncDebounceMs"/>
     /// so a burst of wire drops / removals on an Event.Trigger / Event.Executor
     /// node coalesces into one disk walk + JSON parse of every sibling
     /// .phxg. Pre-fix every wire-drop fired SyncAsync immediately — for a
@@ -3854,7 +4136,7 @@ public sealed partial class LogicCanvasView : UserControl
         _crossFileSyncTimer.Start();
     }
 
-    //  Debounce window for cross-file event-pair sync. 350ms is the
+    // Debounce window for cross-file event-pair sync. 350ms is the
     // standard "stopped editing" silence interval — short enough that a user
     // who pauses sees their sibling files refreshed within the perceptible
     // "I just made a change" beat, long enough that a paste-then-undo /
@@ -3893,13 +4175,60 @@ public sealed partial class LogicCanvasView : UserControl
         // shared-mutable graph reference so the background run can't race a
         // concurrent canvas edit.
         var eventSnapshot = EventPairCrossFileSync.SnapshotEventNodes(_vm.Graph);
-        string projectDir = Phoenix.Controls.Shared.Core.Paths.HubLogic;
+        // Live in-memory fan-out to every OTHER open Architect canvas so a paired
+        // Event node open in another window updates IMMEDIATELY (no disk round-
+        // trip / reload). Runs on the UI thread — all canvases share Hub's
+        // dispatcher; cheap (a handful of event-node clones + a per-peer no-op
+        // when the peer holds no matching EventName). The disk sync below still
+        // runs for CLOSED peer files; both apply the same idempotent algorithm.
+        Phoenix.Controls.Architect.WinUI.Services.EventPairLiveSync.Broadcast(this, eventSnapshot);
+        // Same directory the adopt-on-join scan reads — see
+        // ResolveEventPeerScanDirectory for why the two must never diverge.
+        string projectDir = ResolveEventPeerScanDirectory();
         string? currentFile = _vm.LoadedFilePath;
+        // Snapshot the open-peer paths on the UI thread; the disk sync SKIPS them
+        // (they were just handled live in-memory by Broadcast and persist via their
+        // own save) so the background write can't race their save.
+        var openPeers = Phoenix.Controls.Architect.WinUI.Services.EventPairLiveSync.GetOpenPeerFilePaths();
         Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
             () => System.Threading.Tasks.Task.Run(
-                () => EventPairCrossFileSync.SyncAsync(projectDir, currentFile, eventSnapshot)),
+                () => EventPairCrossFileSync.SyncAsync(projectDir, currentFile, eventSnapshot, openPeers)),
             "Architect.Canvas",
             "EventPairCrossFileSync");
+    }
+
+    /// <summary><see cref="Services.EventPairLiveSync.IPeer"/> — the .phxg this
+    /// canvas currently shows, so the disk sync can skip it while it's open.</summary>
+    string? Services.EventPairLiveSync.IPeer.LiveSyncFilePath => _vm?.LoadedFilePath;
+
+    /// <summary>
+    /// <see cref="Services.EventPairLiveSync.IPeer"/> — apply an incoming
+    /// cross-window Event-pair socket delta to THIS canvas's live graph. Invoked
+    /// on the UI thread from another canvas's debounced sync tick. No-op unless
+    /// this graph holds an Event.Trigger / Event.Executor / Event.Return whose
+    /// (Title, EventName) matches the source; otherwise applies the socket
+    /// add / remove / retype and refreshes the affected node + wire views WITHOUT
+    /// resetting this window's pan / zoom / selection. Uses the SAME algorithm as
+    /// the on-disk peer sync so an open peer and a closed one can't diverge.
+    /// </summary>
+    void Services.EventPairLiveSync.IPeer.ApplyIncomingEventPairSync(
+        System.Collections.Generic.IReadOnlyList<Phoenix.Controls.Shared.Models.Node> sourceEventNodes)
+    {
+        if (_vm is null) return;
+        bool changed;
+        try
+        {
+            changed = EventPairCrossFileSync.ApplyEventPairSyncToGraph(sourceEventNodes, _vm.Graph);
+        }
+        catch (System.Exception ex)
+        {
+            GlobalLogger.Error("Architect.Canvas", "ApplyIncomingEventPairSync", ex);
+            return;
+        }
+        if (!changed) return;
+        _vm.RefreshAfterExternalGraphMutation();
+        BubbleDiag($"live cross-window sync applied to \"{_vm.LoadedFilePath ?? "(unsaved)"}\"");
+        if (_useImmediateMode) ImmediateCanvas?.Invalidate();
     }
 
     /// <summary>
@@ -3926,8 +4255,7 @@ public sealed partial class LogicCanvasView : UserControl
     /// 0.10.0 — paired with a soft GlobalLogger warning (one per
     /// orphan name, per session) so the streamer notices the missing
     /// peer even when their canvas is scrolled past the offending node.
-    /// No modal — per feedback_no_modal_dialogs_for_repeatable_rejections.md
-    /// the rejection is silently visible in the log window.
+    /// No modal — the rejection is silently visible in the log window.
     /// </summary>
     private void RefreshEventPairErrorState()
     {
@@ -3972,7 +4300,7 @@ public sealed partial class LogicCanvasView : UserControl
         Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
             () => System.Threading.Tasks.Task.Run(() =>
             {
-                //  Bail early if a newer refresh has
+                // Bail early if a newer refresh has
                 // already superseded this one before we pay for the (potentially
                 // disk-touching) peer-index load. Correctness is still
                 // guaranteed by the apply-time re-check below — this just avoids
@@ -4039,7 +4367,7 @@ public sealed partial class LogicCanvasView : UserControl
 
             n.IsErrorState = wantsError;
 
-            //  Populate ErrorReason so hovering
+            // Populate ErrorReason so hovering
             // the red node explains WHY it's flagged. The red-triangle badge +
             // tooltip mechanism already exists on NodeViewModel/NodeView; pre-fix
             // it was never fed for unpaired-event nodes, so the red border had no
@@ -4092,19 +4420,65 @@ public sealed partial class LogicCanvasView : UserControl
         if (_vm is null || a is null || b is null) return null;
 
         // Each rejection logs via GlobalLogger rather than popping a MessageBox
-        // (per feedback_no_modal_dialogs_for_repeatable_rejections.md).
+        // (repeatable rejection — log, don't modal).
+        //
+        // Same-socket first: a click on a socket row (press+release without
+        // leaving it) arrives here as a zero-length drag with a == b. That is
+        // not an authoring mistake worth logging — and it is also trivially
+        // "same side", so it must short-circuit BEFORE the same-direction log
+        // or every click on a "+ variable" / "+ return" row spams the log.
+        if (ReferenceEquals(a.Model, b.Model))
+        {
+            // On a managed "+ variable" / "+ return" / "+ input" / "+ output"
+            // slot, that press+release IS the gesture: activate the slot in
+            // place (no wire, default type) so the add-slot behaves like the
+            // button it visually is. Everywhere else the click stays a silent
+            // no-op. Wire-less adds are the only way to author an event's
+            // payload shape on the DEFINING side before any consumer exists —
+            // pre-fix the user's natural gesture (click the "+" bubble) was
+            // discarded without feedback and the trigger/executor pair could
+            // only grow via a completed wire to another node's pin.
+            TryActivatePlaceholderOnClick(a);
+            return null;
+        }
+
+        // Placeholder→placeholder on the SAME node is a fumbled click on a
+        // "+" slot, not authoring intent: the drop band is a full-width row
+        // stripe and adjacent "+ variable"/"+ return" bands meet at the row
+        // boundary, so a few pixels of mouse drift between press and release
+        // resolved the release into the NEIGHBOURING slot — which then died
+        // in the same-direction / self-loop rejections and the user's click
+        // silently did nothing (SystemHistory: repeated "self-loop on node
+        // 'Event.Executor'" rejects while trying to add a bubble). Treat it
+        // as the click it was and activate the PRESSED slot (a = the drag
+        // source). Cross-node placeholder pairs still fall through to the
+        // normal rejection paths below.
+        if (a.Model.IsPlaceholder && b.Model.IsPlaceholder)
+        {
+            var na = FindNodeOwning(a);
+            if (na is not null && ReferenceEquals(na, FindNodeOwning(b)))
+            {
+                TryActivatePlaceholderOnClick(a);
+                return null;
+            }
+        }
+
         if (a.Direction == b.Direction)
         {
+            // A drag between two managed placeholders on the same side of two
+            // DIFFERENT nodes is never an authoring intent — reject silently,
+            // same rationale as the same-socket case. (Same-node pairs were
+            // already converted to a slot activation above.)
+            if (a.Model.IsPlaceholder && b.Model.IsPlaceholder) return null;
             GlobalLogger.Log(
                 $"Wire rejected: both endpoints on the same side ({a.Direction})",
                 source: "Architect.Canvas",
                 level: LogLevel.System);
             return null;
         }
-        if (ReferenceEquals(a.Model, b.Model)) return null;     // same socket — silent
 
         var (src, dst) = a.Direction == SocketType.Output ? (a, b) : (b, a);
-        //  Managed dynamic placeholders
+        // Managed dynamic placeholders
         // ("+ variable" / "+ return" / "+ input" / "+ output" on Event.* / Macro.* /
         // Process.* / Visual.Trigger) ADOPT the dropped wire's type when they activate
         // (PlaceholderActivator.Activate inherits the source socket's colour/type), so
@@ -4140,7 +4514,7 @@ public sealed partial class LogicCanvasView : UserControl
             return null;
         }
 
-        //  Look up the parent nodes via Graph.FindSocketById (O(1)
+        // Look up the parent nodes via Graph.FindSocketById (O(1)
         // dict-backed in Graph) instead of the previous LINQ scan over every
         // node × every socket. We still need the NodeViewModel (not the raw
         // Node model) for downstream NotifyDataTypeChanged scoping + the
@@ -4174,7 +4548,7 @@ public sealed partial class LogicCanvasView : UserControl
             return null;
         }
 
-        //  Exact-duplicate guard. Re-dropping a wire between the
+        // Exact-duplicate guard. Re-dropping a wire between the
         // SAME source output and the SAME destination input is a no-op — never
         // create a twin. Checked BEFORE PushUndo so a redundant drop doesn't
         // leave a wasted undo step. This is also what keeps the flow-merge path
@@ -4193,7 +4567,7 @@ public sealed partial class LogicCanvasView : UserControl
         // for the same user action.
         PushUndo();
 
-        //  Destination-input capacity rule, split by pin kind:
+        // Destination-input capacity rule, split by pin kind:
         //
         //   * DATA inputs hold at most ONE wire — a node reads a single value per
         //     input, so a new connection REPLACES (evicts) any prior one.
@@ -4212,7 +4586,7 @@ public sealed partial class LogicCanvasView : UserControl
         System.Collections.Generic.List<Link>? evictedModels = null;
         if (!dstIsFlow)
         {
-            //  Manual single-pass collect of prior wires that terminate
+            // Manual single-pass collect of prior wires that terminate
             // on the destination socket (the ones we're about to evict). Pre-fix
             // built `_vm.Links.Where(...).ToList()` per wire-create — a List<T>
             // allocation + LINQ enumerator on the interactive hot path. The
@@ -4226,7 +4600,7 @@ public sealed partial class LogicCanvasView : UserControl
                 _vm.Links.RemoveAt(i);
                 (evictedModels ??= new System.Collections.Generic.List<Link>(1)).Add(p.Model);
             }
-            //  A data input socket holds at most one
+            // A data input socket holds at most one
             // wire, so the new connection silently replaced any prior one. Log the
             // eviction so the user (and the System Log) can see a wire was
             // displaced rather than silently vanishing — same non-modal channel
@@ -4243,7 +4617,7 @@ public sealed partial class LogicCanvasView : UserControl
             }
         }
 
-        //  Single-outgoing-flow-pin enforcement. A Flow OUTPUT socket
+        // Single-outgoing-flow-pin enforcement. A Flow OUTPUT socket
         // may drive at most one downstream wire — execution flow is a single
         // chain, not a fan-out. The destination-eviction loop above only handles
         // the input side; the WinForms baseline also disconnected any prior wire
@@ -4314,15 +4688,15 @@ public sealed partial class LogicCanvasView : UserControl
         // Resolve wildcard sockets across the graph (Logic.If's A/B group, etc.)
         // — same call Canvas runs after every wire mutation. Then nudge
         // every SocketViewModel so pin colours reflect the new types in the view.
-        // 0.11.x polish — wrapped in UiActivityTrace so the watchdog's stall
+        // 0.11.x — wrapped in UiActivityTrace so the watchdog's stall
         // message identifies this path when a large graph cascade hangs the
-        // UI thread (suspect for the 8s freeze Majo reported on 2026-05-28).
+        // UI thread (suspect for the reported 8s freeze).
         using (Phoenix.Controls.Shared.Services.UiActivityTrace
             .Begin("Architect.WildcardCascade"))
         {
             try { NodeRegistry.ResolveWildcardCascade(_vm.Graph); } catch { /* best effort */ }
         }
-        //  Scope the SocketViewModel pin-colour nudge to the nodes
+        // Scope the SocketViewModel pin-colour nudge to the nodes
         // that actually participate in the new link (fromNode + toNode) plus,
         // for any evicted prior wire, the nodes its endpoints sat on. The
         // full-graph sweep was correct but wasteful — wildcard cascade
@@ -4350,7 +4724,7 @@ public sealed partial class LogicCanvasView : UserControl
     }
 
     /// <summary>
-    ///  Notify pin-colour bindings for the nodes touched by a wire
+    /// Notify pin-colour bindings for the nodes touched by a wire
     /// create / evict — fromNode, toNode, plus the node-VM owner of each
     /// endpoint of any evicted prior link. The wildcard cascade is graph-
     /// wide but only mutates sockets along link chains; the full-graph

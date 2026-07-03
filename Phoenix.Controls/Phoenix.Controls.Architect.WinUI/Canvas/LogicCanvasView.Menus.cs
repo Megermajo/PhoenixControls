@@ -68,7 +68,7 @@ public sealed partial class LogicCanvasView
         };
         if (!string.IsNullOrEmpty(acceleratorHint))
             item.KeyboardAcceleratorTextOverride = acceleratorHint;
-        //  Semantic color coding — the pre-T15 ContextMenus set explicit
+        // Semantic color coding — the pre-T15 ContextMenus set explicit
         // ForeColor (docs = light blue/ember, delete = red, frames = gold) for
         // glance recognition. Resolve the theme brush defensively; on miss the
         // item keeps the default MenuFlyoutItem foreground so the menu still
@@ -226,11 +226,27 @@ public sealed partial class LogicCanvasView
             return;
         }
 
-        // [perf/win2d-immediate-canvas] resolve the right-click target from the
+        // Resolve the right-click target from the
         // model in immediate mode (no per-node visual elements to walk).
-        var hit = _useImmediateMode
-            ? ResolveModelHit(HostToCanvas(hostPoint))
-            : HitTagFrom(e.OriginalSource);
+        // Sockets FIRST: ResolveModelHit only returns node / wire / frame, so
+        // on the GPU canvas the `case SocketViewModel` below was dead code —
+        // the per-socket menu (the ONLY home of "Set Type" / "Remove Socket"
+        // for dynamic event bubbles) was unreachable and every right-click on
+        // a bubble fell through to the node menu. Same GPU-vs-retained
+        // divergence class as the frame-header fix below: the retained path
+        // resolved sockets through tagged pin elements that don't exist on
+        // the Win2D canvas, so the socket arm silently died with them.
+        object? hit;
+        if (_useImmediateMode)
+        {
+            var canvasPt = HostToCanvas(hostPoint);
+            hit = (object?)ResolveSocketForMenuAtCanvasPoint(canvasPt)
+                  ?? ResolveModelHit(canvasPt);
+        }
+        else
+        {
+            hit = HitTagFrom(e.OriginalSource);
+        }
 
         switch (hit)
         {
@@ -254,7 +270,15 @@ public sealed partial class LogicCanvasView
                 // without first dismissing a frame-only menu. Mirrors the
                 // pointer-press header-vs-body split that already gates
                 // the move-drag gesture.
-                if (IsFrameHeaderHit(e.OriginalSource))
+                //
+                // On the Win2D GPU canvas IsFrameHeaderHit walks a visual tree
+                // that doesn't exist (e.OriginalSource is the bare CanvasControl),
+                // so it always returned false and the frame menu — the only place
+                // "Rename…" lives — never appeared. In immediate mode a frame hit
+                // from ResolveModelHit is already a deliberate header/edge click
+                // (body clicks resolve to null → the empty-canvas menu via
+                // default), so route it straight to the frame menu.
+                if (_useImmediateMode || IsFrameHeaderHit(e.OriginalSource))
                 {
                     ShowFrameMenu(f, hostPoint);
                 }
@@ -307,7 +331,59 @@ public sealed partial class LogicCanvasView
         return null;
     }
 
-    // [S1-P2 BOTH-RUNS] Cache the grouped+ordered template list so the spawn
+    /// <summary>
+    /// Model-side socket resolution for the RIGHT-CLICK menu on the Win2D
+    /// canvas. Two passes: the exact pin hit (same resolver the wire paths
+    /// use, with the placeholder band narrowed to the drawn chrome so a body
+    /// right-click at a slot row's height doesn't read as a placeholder), then
+    /// the LABEL chrome of the row under the cursor on the topmost node — a
+    /// bubble's natural right-click target is its label, which sits inboard of
+    /// the 14px pin radius, so a pin-only pass left the socket menu reachable
+    /// only by pixel-hunting the pin. Reach mirrors the renderer's own label
+    /// math (<see cref="NodeGeometry.EstimateTextWidth"/> + the placeholder
+    /// press slack) so the target tracks the visuals. Returns null when the
+    /// press is on no row chrome — the caller falls back to
+    /// <see cref="ResolveModelHit"/> (node / wire / frame / empty canvas).
+    /// </summary>
+    private SocketViewModel? ResolveSocketForMenuAtCanvasPoint(Point canvasPoint)
+    {
+        var sock = ResolveSocketAtCanvasPoint(canvasPoint, WireDropModelHitRadius,
+            fullPlaceholderRowBand: false);
+        if (sock is not null) return sock;
+        if (_vm is null) return null;
+
+        for (int i = _vm.Nodes.Count - 1; i >= 0; i--)
+        {
+            var n = _vm.Nodes[i];
+            if (canvasPoint.X < n.X || canvasPoint.X > n.X + n.Width
+                || canvasPoint.Y < n.Y || canvasPoint.Y > n.Y + n.Height)
+                continue;
+
+            double bandHalf = NodeGeometry.SocketRowHeight / 2.0;
+            SocketViewModel? best = null;
+            double bestDy = double.MaxValue;
+            void Consider(System.Collections.Generic.IEnumerable<SocketViewModel> pool)
+            {
+                foreach (var s in pool)
+                {
+                    var (ax, ay) = s.Anchor();
+                    double reach = NodeGeometry.EstimateTextWidth(s.Label, 12.0)
+                                 + PlaceholderPressSlack;
+                    if (Math.Abs(canvasPoint.X - (n.X + ax)) > reach) continue;
+                    double dy = Math.Abs(canvasPoint.Y - (n.Y + ay));
+                    if (dy <= bandHalf && dy < bestDy) { bestDy = dy; best = s; }
+                }
+            }
+            Consider(n.Inputs);
+            Consider(n.Outputs);
+            // Topmost node containing the point decides — null falls back to
+            // the node menu via ResolveModelHit, never to a node underneath.
+            return best;
+        }
+        return null;
+    }
+
+    // Cache the grouped+ordered template list so the spawn
     // cascade isn't recomputed (GetAllTemplates → GroupBy → OrderBy over 100+
     // templates) on every empty-canvas right-click. NodeRegistry's template set
     // is process-static (built once at type init), so a one-time snapshot is
@@ -321,7 +397,7 @@ public sealed partial class LogicCanvasView
     {
         if (_spawnCascadeGroupsCache is not null) return _spawnCascadeGroupsCache;
         _spawnCascadeGroupsCache = NodeRegistry.GetPaletteTemplates()
-            // 2026-06-08 (Majo) — Databank no longer excluded: the intended
+            // Majo — Databank no longer excluded: the intended
             // Databank-panel drag spawn isn't reachable, so DB nodes were
             // uncreatable. They now appear in the right-click "Spawn ►" cascade
             // like any category. Macros stays excluded (Macro.Call has the Macros
@@ -336,7 +412,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// 0.10.8 readability sweep #9 — emit the cascading "Spawn ►" submenu
+    /// 0.10.8 — emit the cascading "Spawn ►" submenu
     /// hierarchy into <paramref name="flyout"/>. Restores the pre-WinUI
     /// right-click idiom: one MenuFlyoutSubItem per NodeRegistry category,
     /// each containing one MenuFlyoutItem per template. Click on a leaf
@@ -381,13 +457,13 @@ public sealed partial class LogicCanvasView
             new System.Drawing.Point((int)canvas.X, (int)canvas.Y));
         if (node is null) return;
         AddNode(node, canvas.X, canvas.Y);
-        //  Track this template as a recent spawn so the empty-canvas
+        // Track this template as a recent spawn so the empty-canvas
         // menu's RECENT section surfaces it next time.
         TrackRecentNode(templateTitle);
     }
 
     // ─── Recent-nodes section (empty-canvas spawn menu) ─────────────────────
-    //  Restores the pre-T15 right-click "Recent" affordance the WinUI
+    // Restores the pre-T15 right-click "Recent" affordance the WinUI
     // port only kept in the Space-bar palette. Bounded MRU list of template
     // titles; ShowEmptyCanvasMenu renders up to RecentMax of them under a
     // RECENT header so frequently-spawned node types are one click away from
@@ -406,7 +482,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Emit a RECENT header + up to <see cref="RecentMax"/> recent
+    /// Emit a RECENT header + up to <see cref="RecentMax"/> recent
     /// template entries at the top of the empty-canvas spawn menu. No-op (emits
     /// nothing) when no node has been spawned this session so the menu stays
     /// compact. Each leaf spawns at the captured right-click point, same as the
@@ -474,13 +550,13 @@ public sealed partial class LogicCanvasView
 
         var flyout = NewStyledMenuFlyout("SPAWN NODE");
 
-        //  Recent-nodes section first (when non-empty) so frequently-
+        // Recent-nodes section first (when non-empty) so frequently-
         // spawned templates are one click away ahead of the category cascade.
         BuildRecentNodesSection(flyout, capturedPoint);
 
         // No selection — spawn cascade + search + find + comment frame.
         // The cascade is the pre-WinUI "browse by category" affordance the
-        // 0.10.8 readability sweep restored; it stays the primary spawn
+        // 0.10.8 release restored; it stays the primary spawn
         // entry-point for users who'd rather click through than type.
         BuildSpawnCategoryCascade(flyout, capturedPoint);
         flyout.Items.Add(new MenuFlyoutSeparator());
@@ -490,7 +566,7 @@ public sealed partial class LogicCanvasView
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        //  Frames = gold (semantic glance color, per pre-T15 ForeColor).
+        // Frames = gold (semantic glance color, per pre-T15 ForeColor).
         flyout.Items.Add(NewMenuItem("Add Comment Frame", GlyphNew, () =>
         {
             var canvas = HostToCanvas(capturedPoint);
@@ -578,7 +654,7 @@ public sealed partial class LogicCanvasView
     /// True when the system clipboard currently carries a sub-graph payload
     /// authored on a prior Ctrl+C / Ctrl+X. Falls back to the in-process
     /// snapshot when the OS clipboard probe throws (locked / virtualised).
-    ///  — was `static`; now instance because the in-process fallback
+    /// Was `static`; now instance because the in-process fallback
     /// is scoped per-Window (see <see cref="LogicCanvasView.GetFallbackSnapshot"/>)
     /// so the resolution needs <c>this.XamlRoot</c> to find the right slot.
     /// </summary>
@@ -599,7 +675,7 @@ public sealed partial class LogicCanvasView
     {
         var flyout = NewStyledMenuFlyout(frame.IsPlaceholder ? "PLACEHOLDER FRAME" : "COMMENT FRAME");
 
-        // 0.10.0 (arch-ux-state #11) — Rename + Convert are per-frame
+        // Rename + Convert are per-frame
         // affordances; hide on multi. Delete options stay but the
         // labels / handlers reflect the cross-kind total selection count.
         int total = (_vm?.SelectedNodes.Count ?? 0)
@@ -615,18 +691,17 @@ public sealed partial class LogicCanvasView
                 GlyphRefresh,
                 () => ToggleFramePlaceholder(frame)));
 
-            //  P1-A8 — frame color picker. Pre-T15's WinForms canvas
+            // Frame color picker. Pre-T15's WinForms canvas
             // exposed a "Color…" entry that opened a swatch dialog; the WinUI
             // rewrite shipped without it (frames could only inherit the
             // Comment / Placeholder defaults via the toggle above). This
             // entry opens a ColorPicker flyout anchored at the cursor and
             // commits the user's pick with one undo entry. Palette swatches
-            // come from PhoenixDark.xaml; per
-            // feedback_visualist_architect_chrome_independence the picker UI
+            // come from PhoenixDark.xaml; the picker UI
             // lives entirely inside Architect — no Shared/UI lift.
             flyout.Items.Add(NewMenuItem("Color…", GlyphEdit, () => ShowFrameColorPicker(frame, hostPoint)));
 
-            //  P2-A4 — Bring to Front / Send to Back. Mutates
+            // Bring to Front / Send to Back. Mutates
             // Frame.ZOrder; the FrameLayer applies Canvas.ZIndex on the
             // matching frame view so the stacking takes effect without a
             // rebuild. "Front" / "Back" reckon against the OTHER frames'
@@ -656,7 +731,7 @@ public sealed partial class LogicCanvasView
     {
         var box = new TextBox { Text = frame.Label, MinWidth = 200 };
         var flyout = new Flyout { Content = box };
-        //  Mirror the `committed` sentinel pattern from
+        // Mirror the `committed` sentinel pattern from
         // PromotePillToVariable so Esc rolls back the typed change instead of
         // committing it on Closed. Enter sets committed=false (i.e. we DO want
         // to commit, but mark "intent recorded" so the Closed event doesn't
@@ -736,14 +811,13 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  P1-A8 — frame Color picker. Opens a ColorPicker hosted in a
+    /// Frame Color picker. Opens a ColorPicker hosted in a
     /// Flyout anchored at <paramref name="hostPoint"/>. Commits the picked
     /// colour into <see cref="FrameViewModel.Model"/>.FrameColor with a
     /// single undo entry on the flyout's Closed event. The picker shows
     /// alpha-disabled + saturated-color sliders by default; palette swatches
     /// are populated from PhoenixDark.xaml-derived constants so the seed
-    /// colours read on-theme. Per
-    /// feedback_visualist_architect_chrome_independence the picker UI stays
+    /// colours read on-theme. The picker UI stays
     /// inside Architect.WinUI — Visualist owns its own picker if/when it
     /// needs one.
     /// </summary>
@@ -803,7 +877,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  P2-A4 — promote <paramref name="frame"/> above every other
+    /// Promote <paramref name="frame"/> above every other
     /// frame on the canvas by setting its ZOrder to max(otherZ) + 1. Single
     /// undo entry. No-op when there are no other frames or the frame is
     /// already on top.
@@ -825,7 +899,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  P2-A4 — demote <paramref name="frame"/> below every other
+    /// Demote <paramref name="frame"/> below every other
     /// frame by setting its ZOrder to min(otherZ) - 1. Single undo entry.
     /// </summary>
     private void SendFrameToBack(FrameViewModel frame)
@@ -879,7 +953,7 @@ public sealed partial class LogicCanvasView
         if (eyebrow.Length > 24) eyebrow = eyebrow[..23] + "…";
         var flyout = NewStyledMenuFlyout(eyebrow);
 
-        // 0.10.0 (arch-ux-state #11) — multi-selection awareness. Every
+        // Multi-selection awareness. Every
         // action's label / behaviour branches on the selection count:
         //   * Single-only actions (Edit subgraph, Documentation, Convert
         //     to Compact, Disable Connection Warnings) hide when count ≥ 2.
@@ -900,12 +974,12 @@ public sealed partial class LogicCanvasView
         if (!multiNode)
         {
             var docTitle = string.IsNullOrEmpty(node.Title) ? "Documentation" : $"{node.Title} documentation";
-            //  Docs = ember (semantic glance color, per pre-T15 ForeColor).
+            // Docs = ember (semantic glance color, per pre-T15 ForeColor).
             flyout.Items.Add(NewMenuItem(docTitle, GlyphDocs, () => OpenNodeDocumentationFor(node.Title),
                 foregroundBrushKey: "Ember200Brush"));
         }
 
-        // B12 (audit/winui-regressions-2026-05-24) — Rename. Single-only;
+        // Rename. Single-only;
         // a multi-set rename has no clear target. Reuses NodeViewModel's
         // BeginTitleEdit so commit / rollback semantics line up with the
         // double-tap and F2 rename entries (the EditableTitle TwoWay
@@ -936,7 +1010,7 @@ public sealed partial class LogicCanvasView
         }, "Ctrl+D"));
 
         // Align actions appear when there's a multi-selection.
-        //  P2-A1 — Center (horizontal midpoint) + Middle (vertical
+        // Center (horizontal midpoint) + Middle (vertical
         // midpoint) added to the pre-existing Left / Right / Top / Bottom
         // set so the WinUI canvas matches the pre-T15 six-option submenu.
         if (multiNode)
@@ -951,7 +1025,7 @@ public sealed partial class LogicCanvasView
             AddAlign("Bottom", () => AlignSelected(AlignAxis.Bottom));
             flyout.Items.Add(alignSub);
 
-            //  P2-A2 — Distribute Horizontally / Vertically. Only
+            // Distribute Horizontally / Vertically. Only
             // meaningful with 3+ nodes (with 2 there's nothing to distribute
             // between the endpoints); hide the submenu when selCount < 3.
             if (selCount >= 3)
@@ -1000,13 +1074,13 @@ public sealed partial class LogicCanvasView
             }
         }
 
-        //  P2-A3 — Disable / Enable Node toggle. Sits above the
+        // Disable / Enable Node toggle. Sits above the
         // Delete separator on both single + multi paths. Label flips to
         // "Enable Node" when already disabled. Multi-selection branch: the
         // ToggleNodeDisabled helper applies "make these match" semantics
         // against the right-clicked node's state.
         //
-        // TODO sprint31-followup: ScriptManager should skip nodes flagged __disabled
+        // TODO(skip-disabled-nodes): ScriptManager should skip nodes flagged __disabled
         {
             bool currentlyDisabled = node.IsDisabled;
             string disableText;
@@ -1035,7 +1109,7 @@ public sealed partial class LogicCanvasView
         string delText = total > 1
             ? $"Delete {total} item(s)"
             : "Delete";
-        //  Delete = red (semantic glance color, per pre-T15 ForeColor).
+        // Delete = red (semantic glance color, per pre-T15 ForeColor).
         flyout.Items.Add(NewMenuItem(delText, GlyphDelete, () =>
         {
             if (total > 1) DeleteSelection();
@@ -1058,11 +1132,11 @@ public sealed partial class LogicCanvasView
             {
                 if (!node.Model.Attributes.TryGetValue("MacroId", out var mid) || string.IsNullOrEmpty(mid)) return;
                 var macro = _vm.Graph.Macros.FirstOrDefault(m => m.MacroId == mid);
-                //  AVM required for shared undo + rename sync.
+                // AVM required for shared undo + rename sync.
                 if (macro is not null && ArchitectVm is not null)
                     SubGraphWindow.OpenMacroEditor(macro, ArchitectVm, this);
             }));
-            //  Find References — discovers every Macro.Call carrying the
+            // Find References — discovers every Macro.Call carrying the
             // same MacroId, selects + flashes them, and frames them into view.
             // Restores the pre-T15 HighlightMacroCallSites right-click action.
             flyout.Items.Add(NewMenuItem("Find references", GlyphSearch, () =>
@@ -1078,7 +1152,7 @@ public sealed partial class LogicCanvasView
             {
                 if (!node.Model.Attributes.TryGetValue("ProcessId", out var pid) || string.IsNullOrEmpty(pid)) return;
                 var proc = _vm.Graph.Processes.FirstOrDefault(p => p.ProcessId == pid);
-                //  AVM required for shared undo + rename sync.
+                // AVM required for shared undo + rename sync.
                 if (proc is not null && ArchitectVm is not null)
                     SubGraphWindow.OpenProcessEditor(proc, ArchitectVm, this);
             }));
@@ -1087,7 +1161,7 @@ public sealed partial class LogicCanvasView
         return false;
     }
 
-    //  P2-A1 — Center / Middle added to the pre-existing
+    // Center / Middle added to the pre-existing
     // Left / Right / Top / Bottom set. Center = horizontal midpoint of the
     // selection's bounding box; Middle = vertical midpoint. Both anchor at
     // the midpoint between the min-edge and the max-edge of the selection
@@ -1130,7 +1204,7 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    //  P2-A2 — Distribute Horizontally / Vertically. Sort the
+    // Distribute Horizontally / Vertically. Sort the
     // selection by the axis, then space the inner nodes at equal gaps
     // between the min-edge and max-edge anchors. Single undo entry per call.
     private enum DistributeAxis { Horizontal, Vertical }
@@ -1182,13 +1256,13 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    //  P2-A3 — Disable / Enable Node toggle. Flips the
+    // Disable / Enable Node toggle. Flips the
     // <c>__disabled</c> attribute on the node model; NodeView paints
     // disabled nodes at reduced opacity. Multi-selection: toggle every node
     // in the selection in a single undo entry. The script engine's
     // consumption of the flag is deferred — see the follow-up comment below.
     //
-    // TODO sprint31-followup: ScriptManager should skip nodes flagged __disabled
+    // TODO(skip-disabled-nodes): ScriptManager should skip nodes flagged __disabled
     private void ToggleNodeDisabled(NodeViewModel node, bool multiNode)
     {
         if (_vm is null) return;
@@ -1247,7 +1321,7 @@ public sealed partial class LogicCanvasView
         var macro = new Macro { Name = "NewMacro" };
         var entry = NodeRegistry.CreateNode("Macro.Entry", new System.Drawing.Point(80, 160));
         var exit  = NodeRegistry.CreateNode("Macro.Exit",  new System.Drawing.Point(520, 160));
-        //  Singleton guard — CollapseSelectionToMacro builds a FRESH
+        // Singleton guard — CollapseSelectionToMacro builds a FRESH
         // macro.Graph, so a duplicate Entry/Exit can only arise if the selected
         // set itself already contains one (collapsing a selection that spans a
         // Macro.Entry). Guard each add against the macro's own graph; reject the
@@ -1260,7 +1334,7 @@ public sealed partial class LogicCanvasView
 
         foreach (var n in selection)
         {
-            //  A selected node that is itself a Macro.Entry/Exit would
+            // A selected node that is itself a Macro.Entry/Exit would
             // collide with the fresh pair just added; reject moving a duplicate
             // singleton into the new macro graph.
             if (WouldDuplicateSubGraphSingleton(macro.Graph, n.Model.Title))
@@ -1274,7 +1348,7 @@ public sealed partial class LogicCanvasView
         }
         foreach (var n in selection) graph.Nodes.Remove(n.Model);
 
-        //  Place the Macro.Call at the geometric CENTRE of what it
+        // Place the Macro.Call at the geometric CENTRE of what it
         // replaced (centroid of the selection's per-node midpoints), not the
         // top-left Min corner — the pre-T15 Canvas.Macros used centre-of-mass so
         // the collapsed node sits visually where the group was.
@@ -1286,7 +1360,7 @@ public sealed partial class LogicCanvasView
         call.Attributes["MacroId"]   = macro.MacroId;
         call.Attributes["MacroName"] = macro.Name;
 
-        // [S1-P0 BOTH-RUNS] Promote external connections to named macro slots
+        // Promote external connections to named macro slots
         // AND re-wire the actual Link objects onto the Macro.Call's sockets.
         // Pre-fix the InputNames/OutputNames were populated but the inbound /
         // outbound Link objects still pointed at the now-deleted internal node
@@ -1323,7 +1397,7 @@ public sealed partial class LogicCanvasView
             outboundSlotForLink.Add((lk, unique));
         }
 
-        // [S1-P0 BOTH-RUNS] Build the Macro.Call's data sockets from the
+        // Build the Macro.Call's data sockets from the
         // promoted slot names so the re-wire below has real socket ids to point
         // at. Inputs (left edge) = InputNames, outputs (right edge) = OutputNames.
         // The names are unique per direction (UniquifyName above), so a single
@@ -1360,7 +1434,7 @@ public sealed partial class LogicCanvasView
         _vm.Graph.MarkStructuralChange();
         _vm.OnGraphMutated();
 
-        //  Re-select the newly-created Macro.Call so a follow-up
+        // Re-select the newly-created Macro.Call so a follow-up
         // Ctrl+D / Del / drag operates on the just-collapsed group. LoadGraph
         // rebuilds every VM, so we have to look it up by id rather than
         // re-using a pre-LoadGraph reference.
@@ -1374,7 +1448,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Build the data sockets on a freshly-collapsed Macro.Call from
+    /// Build the data sockets on a freshly-collapsed Macro.Call from
     /// the promoted slot names and fill the name→socketId maps the link re-wire
     /// uses. Preserves any template-default Flow sockets (the Macro.Call
     /// template ships a Flow in + Flow out) and appends one Input socket per
@@ -1495,7 +1569,7 @@ public sealed partial class LogicCanvasView
     /// 0.13.x — the native singleton TreeView window was retired in favour of
     /// the shared WebView2 DocViewer (Hub-hosted) reached via
     /// <c>NodeDocumentationWindow.OpenOrFocus</c> → <c>DocViewerHost</c>. The
-    /// old  canvas-focus-regrab-on-close hook went with it: the viewer
+    /// old canvas-focus-regrab-on-close hook went with it: the viewer
     /// is a separate Hub window Architect no longer owns the lifetime of, and
     /// clicking back onto the canvas restores focus naturally.
     /// </summary>
@@ -1517,7 +1591,7 @@ public sealed partial class LogicCanvasView
     {
         var flyout = NewStyledMenuFlyout("WIRE");
 
-        // 0.10.0 (arch-ux-state #11) — multi-aware. Insert / Straighten are
+        // Multi-aware. Insert / Straighten are
         // per-wire affordances and only make sense single-selected; hide on
         // multi. Delete branches its label to reflect the cross-kind total
         // and routes to DeleteSelection when multi.
@@ -1535,7 +1609,7 @@ public sealed partial class LogicCanvasView
         if (!multi)
         {
             flyout.Items.Add(new MenuFlyoutSeparator());
-            //  Thread the right-click hostPoint through so the
+            // Thread the right-click hostPoint through so the
             // reroute lands under the cursor instead of at the geometric
             // midpoint between the two endpoint nodes.
             var capturedHostPoint = hostPoint;
@@ -1557,7 +1631,7 @@ public sealed partial class LogicCanvasView
         var toSock   = toNode  .Sockets.Find(s => s.Id == link.Model.ToSocketId);
         if (fromSock is null || toSock is null) return;
 
-        //  Anchor the reroute at the right-click point in canvas
+        // Anchor the reroute at the right-click point in canvas
         // space; pre-fix the reroute landed at the midpoint between the two
         // endpoint NODE locations, which on a long wire whose bezier was
         // already routed through a different region could be far from where
@@ -1597,14 +1671,14 @@ public sealed partial class LogicCanvasView
         graph.Links.Add(inLink);
         graph.Links.Add(outLink);
 
-        //  Incremental splice (drop the spliced wire's VM, add
+        // Incremental splice (drop the spliced wire's VM, add
         // the reroute node + its two new links) instead of LoadGraph rebuilding
         // every VM + a double socket walk — the reroute-insert lag. The model
         // link was removed above (graph.Links.Remove); removedLinks drops its VM.
         var rerouteVm = _vm.ApplyIncrementalReroute(
             reroute, new[] { inLink, outLink }, new[] { link.Model });
 
-        //  Re-select the new reroute VM so the user can drag it / wire
+        // Re-select the new reroute VM so the user can drag it / wire
         // from it without hunting for it.
         if (rerouteVm is not null)
             _vm.SetMultiSelection(new[] { rerouteVm });
@@ -1783,7 +1857,7 @@ public sealed partial class LogicCanvasView
         {
             var dlg = Phoenix.Controls.Architect.WinUI.Dialogs.VarChainTraceDialog
                 .ForGraph(XamlRoot, _vm.Graph, varName);
-            //  Clicking a writer/reader row reveals (selects
+            // Clicking a writer/reader row reveals (selects
             // + frames + flashes) that node on this canvas; the dialog hides
             // itself so the node is visible.
             dlg.NavigateToNode = id =>
@@ -1873,7 +1947,7 @@ public sealed partial class LogicCanvasView
             flyout.Items.Add(NewMenuItem("Promote to graph variable", GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: true,  hostPoint)));
         }
 
-        //  Set Type + Remove Socket are universal socket actions — the
+        // Set Type + Remove Socket are universal socket actions — the
         // pre-T15 Canvas.ContextMenus added them to EVERY socket right-click on
         // ANY node type (String.Append, Math.Add, conditionals, etc.), not just
         // dynamic-event hosts. Only Disable Connection Warnings stays gated to
@@ -1922,7 +1996,7 @@ public sealed partial class LogicCanvasView
         sock.Model.DataType = t;
         sock.Model.Color    = NodeRegistry.ColorFromDataType(t);
         sock.NotifyDataTypeChanged();
-        //  Mirror the type/color change onto the paired Event.* node's
+        // Mirror the type/color change onto the paired Event.* node's
         // corresponding socket. The pre-T15 Canvas.ContextMenus called
         // SyncEventPair after every socket DataType/Color edit; without it the
         // trigger and executor diverge on data type when changed via the menu.
@@ -1933,6 +2007,15 @@ public sealed partial class LogicCanvasView
         // Refresh the paired node's view if the sync mutated its sockets — the
         // peer's NodeViewModel needs to rebuild to reflect the new type/name.
         RefreshPairedEventNodeViews(node);
+        // Propagate the retype to paired Event nodes in OTHER .phxg files too
+        // (live to open windows + on disk for closed ones). The wire-drop /
+        // wire-remove paths already do this (TryCreateLink / RemoveLink); this
+        // context-menu retype path was the gap that left cross-file peers stale.
+        if (TouchesEventPair(node))
+        {
+            ScheduleCrossFileEventPairSync();
+            RefreshEventPairErrorState();
+        }
         _vm.OnGraphMutated();
     }
 
@@ -1944,18 +2027,28 @@ public sealed partial class LogicCanvasView
         foreach (var lk in doomed) RemoveLink(lk, pushUndo: false);
         node.Model.Sockets.Remove(sock.Model);
         node.RebuildSockets();
-        //  Sync the paired Event.* node so removing a socket on one half
+        // Sync the paired Event.* node so removing a socket on one half
         // shrinks the other half's socket list too. The pre-T15
         // Canvas.ContextMenus called SyncEventPair after node.Sockets.Remove.
         // No-op for non-event titles.
         PlaceholderActivator.SyncEventPair(_vm.Graph, node.Model);
         RefreshPairedEventNodeViews(node);
+        // Propagate the socket removal to paired Event nodes in OTHER .phxg
+        // files (live to open windows + on disk for closed ones). RemoveLink
+        // above only schedules the cross-file sync when the removed socket had
+        // a wire; an unwired bubble removed via the context menu would leave
+        // cross-file peers stale without this.
+        if (TouchesEventPair(node))
+        {
+            ScheduleCrossFileEventPairSync();
+            RefreshEventPairErrorState();
+        }
         _vm.Graph.MarkStructuralChange();
         _vm.OnGraphMutated();
     }
 
     /// <summary>
-    ///  After a SyncEventPair mutation rooted at <paramref name="source"/>,
+    /// After a SyncEventPair mutation rooted at <paramref name="source"/>,
     /// rebuild the NodeView socket lists of every OTHER Event.Trigger /
     /// Event.Executor / Event.Return node sharing the same EventName so the
     /// peer's rendered sockets reflect the synced model. The source node's own
@@ -1998,7 +2091,7 @@ public sealed partial class LogicCanvasView
     // ─── Node finder Flyout (Ctrl+F) ────────────────────────────────────
 
     /// <summary>
-    ///  Strongly-typed ItemsSource record for the Find Node flyout
+    /// Strongly-typed ItemsSource record for the Find Node flyout
     /// — pre-fix the binding shape was a flat anonymous type which under
     /// PublishAot stops surfacing properties through
     /// <c>GetProperty("Vm")</c> reflection (anonymous-type metadata is
@@ -2008,7 +2101,7 @@ public sealed partial class LogicCanvasView
     /// </summary>
     private sealed record FinderItem(string Label, NodeViewModel Vm);
 
-    // C11 (audit/winui-regressions-2026-05-24) — F3 / Shift+F3 iteration state.
+    // F3 / Shift+F3 iteration state.
     // The Find flyout populates these on every TextChanged so the keyboard
     // chord can walk forward / backward through the live filtered set even
     // after the flyout has dismissed. Cleared on graph swap by the same
@@ -2017,7 +2110,7 @@ public sealed partial class LogicCanvasView
     private int _findCursor = -1;
 
     /// <summary>
-    /// C11 (audit/winui-regressions-2026-05-24) — F3 advance (next match).
+    /// F3 advance (next match).
     /// Called from <c>LogicCanvasView.Keyboard.cs</c>'s F3 / Shift+F3 handler.
     /// When the match set is empty (cold canvas, search box was never typed
     /// into, last search produced no hits) we re-open the Find flyout so the
@@ -2068,7 +2161,7 @@ public sealed partial class LogicCanvasView
     /// Closed → refocus the canvas (mirrors the SpawnPaletteFlyout pattern
     /// in LogicCanvasView.Palette.cs) so DEL / arrow / Ctrl+S keep working.
     ///
-    /// C11 (audit/winui-regressions-2026-05-24) — also writes the filtered
+    /// Also writes the filtered
     /// node set into <see cref="_findMatches"/> on every TextChanged so the
     /// F3 / Shift+F3 chord can iterate the same list after the flyout closes.
     /// </summary>
@@ -2079,7 +2172,7 @@ public sealed partial class LogicCanvasView
         // Build FinderItem records: prefer "Title — pillName" when the node
         // carries an editable name (e.g. Macro.Call's MacroName) so
         // duplicate-titled nodes are distinguishable in the list.
-        //  Strongly-typed records replace the pre-fix anonymous
+        // Strongly-typed records replace the pre-fix anonymous
         // tuples; ItemsSource binds against FinderItem directly.
         var entries = _vm.Nodes
             .Select(n => new FinderItem(BuildFinderLabel(n), n))
@@ -2104,7 +2197,7 @@ public sealed partial class LogicCanvasView
         // dropdown the moment the user starts typing.
         box.ItemsSource = entries;
 
-        // C11 (audit/winui-regressions-2026-05-24) — seed the F3 iteration
+        // Seed the F3 iteration
         // state with the full unfiltered set so a fresh F3 immediately after
         // opening the flyout (no typing yet) still has somewhere to go.
         _findMatches = entries.Select(t => t.Vm).ToList();
@@ -2126,7 +2219,7 @@ public sealed partial class LogicCanvasView
                     .ToList();
             }
             box.ItemsSource = filtered;
-            // C11 — keep the F3 walker pointed at the current filtered set.
+            // Keep the F3 walker pointed at the current filtered set.
             // Reset the cursor on every keystroke so the next F3 starts from
             // the head of the new result list rather than an index that may
             // no longer exist.
@@ -2147,7 +2240,7 @@ public sealed partial class LogicCanvasView
                 _vm.SetMultiSelection(new[] { target });
                 FrameSelection();
                 FlashNode(target.Model.Id);
-                // C11 — sync the iteration cursor to the picked match so a
+                // Sync the iteration cursor to the picked match so a
                 // post-pick F3 / Shift+F3 walks from here rather than the
                 // head of the list.
                 int idx = _findMatches.IndexOf(target);
@@ -2165,7 +2258,7 @@ public sealed partial class LogicCanvasView
 
         box.SuggestionChosen += (_, args) =>
         {
-            //  Direct cast to FinderItem — no reflection lookup,
+            // Direct cast to FinderItem — no reflection lookup,
             // AOT-safe.
             if (args.SelectedItem is FinderItem chosen)
                 RevealAndClose(chosen.Vm);

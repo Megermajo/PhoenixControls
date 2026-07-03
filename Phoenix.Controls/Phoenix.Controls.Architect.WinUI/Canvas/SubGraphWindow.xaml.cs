@@ -25,7 +25,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // Lookup table — macro/process id → already-open SubGraphWindow — keeps a
 // second double-click on the same Macro.Call from spawning a duplicate.
 //
-// Sprint G — three lifecycle additions:
+// Three lifecycle additions:
 //   1. Title rename sync. The window subscribes to ArchitectViewModel's
 //      MacroRenamed / ProcessRenamed events so an in-place rename via the
 //      left rail flips the open editor's eyebrow + title without any
@@ -39,7 +39,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 //      its own position + size across sessions.
 public sealed partial class SubGraphWindow : Window
 {
-    //  ConcurrentDictionary so any future dispatcher-hop callers
+    // ConcurrentDictionary so any future dispatcher-hop callers
     // (e.g. a bus-driven open from a non-UI thread) don't race on the
     // single shared open-window registry.
     private static readonly ConcurrentDictionary<string, SubGraphWindow> s_open = new();
@@ -64,7 +64,7 @@ public sealed partial class SubGraphWindow : Window
     private bool _hasEdits;
     private bool _suppressEditTracking;
     private bool _confirmedClose;
-    //  Base OS-window title without the dirty
+    // Base OS-window title without the dirty
     // bullet; RefreshWindowTitleDirty prepends "• " when _hasEdits so an
     // unsaved sub-graph editor is identifiable from the TASKBAR (the in-window
     // DirtyMarker dot only shows inside the window). Mirrors ArchitectSiblingWindow.
@@ -72,7 +72,7 @@ public sealed partial class SubGraphWindow : Window
     private bool _promptInFlight;
     private LogicCanvasViewModel? _innerVm;
 
-    //  Debounced live push of the edited Entry/Exit signature
+    // Debounced live push of the edited Entry/Exit signature
     // to the parent canvas's Macro.Call / Process.Start nodes WHILE this editor is
     // open — pre-fix the sync fired only on window close, so a bubble added to a
     // Macro.Entry / Process.Entry didn't reach its call sites until the sub-graph
@@ -90,14 +90,14 @@ public sealed partial class SubGraphWindow : Window
     private const double InspectorDockedMinWidth     = 240.0;
     private const double InspectorRolledUpWidth      = 32.0;
 
-    // PERF (perf/architect-blockers, HIGH): cached so OnClosed can unsubscribe
+    // PERF: cached so OnClosed can unsubscribe
     // the AppWindow.Closing handler. Pre-cache, the subscription was wired in
     // WireWindowStateAndCloseGate but never torn down — opening + closing five
     // sub-graphs left five zombie handler subscriptions pinning the closed
     // windows alive through AppWindow's event list.
     private Microsoft.UI.Windowing.AppWindow? _appWindow;
 
-    //  Optional back-reference to the canvas that spawned this
+    // Optional back-reference to the canvas that spawned this
     // sub-graph editor (typically the LeftRail's variables / processes /
     // macros pop-out launch site on the originating LogicCanvasView).
     // When set, OnClosed re-focuses the canvas before tearing down inner
@@ -110,7 +110,7 @@ public sealed partial class SubGraphWindow : Window
     private LogicCanvasView? _originCanvas;
 
     /// <summary>
-    ///  Caller-supplied back-reference to the canvas that
+    /// Caller-supplied back-reference to the canvas that
     /// launched this sub-graph editor. Set immediately after construction
     /// (before <c>Activate</c>) so the Closed handler can hand keyboard
     /// focus back to the originating canvas. Optional — leaving it null
@@ -175,7 +175,7 @@ public sealed partial class SubGraphWindow : Window
 
         try
         {
-            // B18 (audit/winui-regressions-2026-05-24) — bring the parent
+            // Bring the parent
             // Architect window to front before driving the reveal so the
             // user sees the framing + flash. Best-effort: when no sibling
             // window owns this AVM (the embedded-in-Hub MainView path),
@@ -239,7 +239,7 @@ public sealed partial class SubGraphWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
-        //  Re-grab focus on the originating canvas BEFORE the
+        // Re-grab focus on the originating canvas BEFORE the
         // rest of the teardown runs. Mirrors LogicCanvasView's
         // RestoreCanvasFocus() pattern (the same call used by the
         // NodeDocumentationWindow close-regrab hook in
@@ -251,7 +251,7 @@ public sealed partial class SubGraphWindow : Window
         try { _originCanvas?.RestoreCanvasFocus(); }
         catch { /* shutdown best-effort */ }
 
-        //  Final geometry write synchronously on
+        // Final geometry write synchronously on
         // the terminal close. OnAppWindowClosing already persisted (async); this
         // sync flush guarantees the write lands even if the host process
         // Environment.Exit(0)s immediately after, killing the queued Task.Run.
@@ -267,7 +267,7 @@ public sealed partial class SubGraphWindow : Window
         if (!string.IsNullOrEmpty(_trackingKey)) s_open.TryRemove(_trackingKey, out _);
 
         // Tear down the inner canvas's VM so any per-VM subscriptions
-        // get unhooked (TODO 2026-05-07 round 2 P0 #4). Clearing the
+        // get unhooked. Clearing the
         // DataContext also lets the LogicCanvasView release its
         // template-bound child VMs for GC; without it, opening + closing
         // five sub-graphs in a session leaves five orphan VM trees
@@ -284,7 +284,7 @@ public sealed partial class SubGraphWindow : Window
         }
         catch { /* shutdown best-effort */ }
 
-        // [S8 P1 BOTH-RUNS] Sub-graph editor close → re-sync the parent
+        // Sub-graph editor close → re-sync the parent
         // canvas's call-site nodes to the just-edited signature. While this
         // window was open the user may have added / removed / renamed
         // Entry/Exit sockets on the macro / process; the inner VM mutated the
@@ -333,13 +333,13 @@ public sealed partial class SubGraphWindow : Window
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #9) — design-time cycle detection. Walks the
+    /// 0.10.0 — design-time cycle detection. Walks the
     /// inner graph's Macro.Call nodes and surfaces a warning when any
     /// MacroId equals the current editor's _macroId OR a macro id already
     /// in the open editor's call-stack (every other SubGraphWindow whose
     /// _macroId/_processId is on the path leading here). The result is
     /// logged via GlobalLogger and the dirty marker pulses red — no modal
-    /// per <c>feedback_no_modal_dialogs_for_repeatable_rejections.md</c>.
+    /// for a repeatable rejection.
     /// </summary>
     private void DetectAndReportCycles()
     {
@@ -447,7 +447,7 @@ public sealed partial class SubGraphWindow : Window
     /// <summary>
     /// Show (or focus) a macro editor for the given <paramref name="macro"/>.
     /// Idempotent — re-opening the same macro brings the existing window front.
-    ///  <paramref name="architectVm"/> is required — passing null
+    /// <paramref name="architectVm"/> is required — passing null
     /// would silently break shared-undo (the canvas would build a per-window
     /// History controller instead of the AVM-shared one) and disable rename
     /// sync / graph-replaced rebind. Every real call site already has the
@@ -459,7 +459,7 @@ public sealed partial class SubGraphWindow : Window
         if (architectVm is null) throw new ArgumentNullException(nameof(architectVm));
         if (s_open.TryGetValue("macro:" + macro.MacroId, out var existing))
         {
-            //  Refresh the origin canvas on a re-open hit too — a second
+            // Refresh the origin canvas on a re-open hit too — a second
             // open from a different canvas (multi-window Architect) should refocus
             // that canvas on close, not the older one.
             if (originCanvas is not null) existing.OriginCanvas = originCanvas;
@@ -471,7 +471,7 @@ public sealed partial class SubGraphWindow : Window
         win._macroId      = macro.MacroId;
         win._isMacro      = true;
         win._architectVm  = architectVm;
-        //  Carry the origin canvas through so the Closed handler
+        // Carry the origin canvas through so the Closed handler
         // can re-grab focus on the canvas that launched this editor.
         win.OriginCanvas  = originCanvas;
         // Guid-keyed state per 0.10.0 task spec — pre-T15 keys by name drifted
@@ -486,7 +486,7 @@ public sealed partial class SubGraphWindow : Window
         win.UpdateBreadcrumbFromParent();
 
         var vm = new LogicCanvasViewModel();
-        //  Wildcard cascade now runs inside GraphSerializer.LoadGraph
+        // Wildcard cascade now runs inside GraphSerializer.LoadGraph
         // (recursive walk over nested macros/processes), so by the time the
         // .phxg has been opened every embedded macro.Graph has already been
         // resolved. The pre-fix per-window call here was redundant for parent-
@@ -522,7 +522,7 @@ public sealed partial class SubGraphWindow : Window
     }
 
     /// <summary>Show (or focus) a process editor for the given <paramref name="process"/>.
-    ///  <paramref name="architectVm"/> is required — see
+    /// <paramref name="architectVm"/> is required — see
     /// <see cref="OpenMacroEditor"/> for the shared-undo / rename-sync reasoning.</summary>
     public static void OpenProcessEditor(Process process, ArchitectViewModel architectVm, LogicCanvasView? originCanvas = null)
     {
@@ -530,7 +530,7 @@ public sealed partial class SubGraphWindow : Window
         if (architectVm is null) throw new ArgumentNullException(nameof(architectVm));
         if (s_open.TryGetValue("process:" + process.ProcessId, out var existing))
         {
-            //  See OpenMacroEditor's origin-canvas refresh comment.
+            // See OpenMacroEditor's origin-canvas refresh comment.
             if (originCanvas is not null) existing.OriginCanvas = originCanvas;
             existing.Activate();
             return;
@@ -540,7 +540,7 @@ public sealed partial class SubGraphWindow : Window
         win._processId    = process.ProcessId;
         win._isMacro      = false;
         win._architectVm  = architectVm;
-        //  Carry the origin canvas through so the Closed handler
+        // Carry the origin canvas through so the Closed handler
         // can re-grab focus on the canvas that launched this editor.
         win.OriginCanvas  = originCanvas;
         // Guid-keyed state per 0.10.0 task spec — see OpenMacroEditor comment.
@@ -552,7 +552,7 @@ public sealed partial class SubGraphWindow : Window
         win.UpdateBreadcrumbFromParent();
 
         var vm = new LogicCanvasViewModel();
-        //  See macro-editor comment above — wildcard cascade is now
+        // See macro-editor comment above — wildcard cascade is now
         // handled inside GraphSerializer.LoadGraph for the entire .phxg tree.
         // 0.10.0 — same ArchitectVm-before-DataContext order as macro editor.
         win.Canvas.ArchitectVm = architectVm;
@@ -630,9 +630,9 @@ public sealed partial class SubGraphWindow : Window
         }
     }
 
-    // ─── arch-ux: short panel open/close width animation ───────────────────
-    // Per-window copy (chrome helpers stay per-window per
-    // feedback_visualist_architect_chrome_independence.md). Width-only tween of
+    // ─── short panel open/close width animation ───────────────────
+    // Per-window copy (chrome helpers stay per-window so each pillar owns
+    // its own chrome). Width-only tween of
     // the inspector column over ~170 ms (ease-out cubic).
     private const double PanelAnimMs = 170.0;
     private Microsoft.UI.Xaml.DispatcherTimer? _inspectorWidthTween;
@@ -766,7 +766,7 @@ public sealed partial class SubGraphWindow : Window
     // ── Edit tracking ──────────────────────────────────────────────────
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #13) — when the user drops a .phxg onto a
+    /// 0.10.0 — when the user drops a .phxg onto a
     /// SubGraphWindow's canvas, open it in a NEW sibling Architect window
     /// instead of swallowing the drop. Per the multi-window paradigm,
     /// drag-drop never clobbers the current canvas. Extra files in the
@@ -782,7 +782,7 @@ public sealed partial class SubGraphWindow : Window
 
     private void OnCanvasFileOpenRequested(object? sender, string path)
     {
-        //  OpenFile is async; the canvas drop-handler contract is
+        // OpenFile is async; the canvas drop-handler contract is
         // sync void, so fire-and-forget through AsyncErrorBoundary to keep
         // load faults visible in the log without changing the event shape.
         _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
@@ -802,7 +802,7 @@ public sealed partial class SubGraphWindow : Window
     {
         vm.GraphMutatedAny -= OnInnerGraphMutated;
         vm.GraphMutatedAny += OnInnerGraphMutated;
-        // 0.10.0 (arch-ux-state #9) — run a cycle check on every mutation
+        // Run a cycle check on every mutation
         // so the badge reacts to a user dropping a Macro.Call(self) on
         // the canvas in real time. Plus a one-shot on Open below.
         DetectAndReportCycles();
@@ -822,17 +822,17 @@ public sealed partial class SubGraphWindow : Window
             if (dq is null || dq.HasThreadAccess) ApplyDirtyMarker();
             else dq.TryEnqueue(ApplyDirtyMarker);
         }
-        //  Push the edited Entry/Exit signature to the parent
+        // Push the edited Entry/Exit signature to the parent
         // canvas's call-site nodes live (debounced) so Macro.Call / Process.Start track
         // bubble adds/removes without waiting for the sub-graph window to close.
         ScheduleLiveCallSiteSync();
-        // 0.10.0 (arch-ux-state #9) — re-run cycle detection after every
+        // Re-run cycle detection after every
         // inner-graph mutation so a freshly-added Macro.Call surfaces
         // immediately. DetectAndReportCycles is best-effort + cheap (O(N)).
         DetectAndReportCycles();
     }
 
-    //  (Re)start the debounce timer; on tick, push the current
+    // (Re)start the debounce timer; on tick, push the current
     // signature to the parent canvas's call-site nodes. Non-repeating, restarted on
     // every inner mutation so the push lands ~CallSiteSyncDebounceMs after edits quiet.
     private void ScheduleLiveCallSiteSync()
@@ -850,7 +850,7 @@ public sealed partial class SubGraphWindow : Window
         _callSiteSyncTimer.Start();
     }
 
-    //  Push the just-edited macro/process Entry/Exit signature
+    // Push the just-edited macro/process Entry/Exit signature
     // out to its Macro.Call / Process.Start call-site nodes on the parent canvas.
     // Shared by the live debounce tick (ScheduleLiveCallSiteSync) and OnClosed (final
     // sync). Best-effort — a refresh fault must never block editing or teardown. The
@@ -889,11 +889,11 @@ public sealed partial class SubGraphWindow : Window
                 : Visibility.Collapsed;
         }
         catch { /* shutdown best-effort */ }
-        //  keep the taskbar title's bullet in sync.
+        // keep the taskbar title's bullet in sync.
         RefreshWindowTitleDirty();
     }
 
-    //  Apply the OS-window title with a leading
+    // Apply the OS-window title with a leading
     // "• " when the sub-graph has unsaved edits.
     private void RefreshWindowTitleDirty()
     {
@@ -1004,7 +1004,7 @@ public sealed partial class SubGraphWindow : Window
             try
             {
                 _baseWindowTitle   = $"Architect — {label}: {newName}";
-                RefreshWindowTitleDirty(); //  keep the bullet on rename
+                RefreshWindowTitleDirty(); // keep the bullet on rename
                 TitleDisplay.Text  = newName ?? string.Empty;
             }
             catch (Exception ex)
@@ -1085,7 +1085,7 @@ public sealed partial class SubGraphWindow : Window
                 "SubGraphWindow", LogLevel.Debug);
         }
 
-        // 0.10.0 (arch-ux-state #12) — same 720×400 hard floor as the sibling
+        // 0.10.0 — same 720×400 hard floor as the sibling
         // window. The sub-graph editor's chrome / breadcrumb / inspector pane
         // all need the same minimum legibility as the main canvas.
         try
@@ -1264,9 +1264,8 @@ public sealed partial class SubGraphWindow : Window
     /// as if the snapshot had failed — same fallback the existing code
     /// already had for serialise faults.
     ///
-    /// PERF (perf/architect-blockers, HIGH ride-along, zone-05): pre-cache
-    /// SafeSnapshot ran synchronously inside the canvas hot-path before
-    /// the window content rendered.
+    /// PERF: pre-cache, SafeSnapshot ran synchronously inside the canvas
+    /// hot-path before the window content rendered.
     /// </summary>
     private void StartSnapshotAsync(object subject)
     {

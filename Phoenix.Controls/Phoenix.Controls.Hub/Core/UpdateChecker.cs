@@ -93,7 +93,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly HttpClient _http;
         private readonly string _userAgent;
         private CancellationTokenSource _cts = new();
-        // BH — round-2 audit: serialize concurrent CheckAsync calls so the
+        // Serialize concurrent CheckAsync calls so the
         // startup background check doesn't race a user clicking Check Now.
         // Without this gate, two overlapping checks both write LastStatus +
         // fire StatusChanged — slow-finisher's stale data wins, and the UI
@@ -122,14 +122,14 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task<UpdateStatus> CheckAsync(CancellationToken ct = default)
         {
-            // BH — disposed-checker short-circuit. ShutdownAsync calls Dispose,
+            // Disposed-checker short-circuit. ShutdownAsync calls Dispose,
             // which disposes _http; an in-flight CheckAsync would otherwise crash
             // on the next GetAsync. Cheap pre-check + still safe via the catch
             // below if Dispose races between here and the linked-CTS creation.
             if (Volatile.Read(ref _disposed) != 0)
                 return new UpdateStatus.NetworkError("Disposed");
 
-            // BH — round-2 audit: serialize concurrent CheckAsync calls. If the
+            // Serialize concurrent CheckAsync calls. If the
             // gate has been disposed (Dispose ran while we were waiting), the
             // outer try/catch turns the ObjectDisposedException into a
             // NetworkError, which is the right state to surface during shutdown.
@@ -144,7 +144,7 @@ namespace Phoenix.Controls.Hub.Core
             CancellationTokenSource? linked = null;
             try
             {
-                // BH — Cancel() races CheckAsync. Snapshot _cts under the same
+                // Cancel() races CheckAsync. Snapshot _cts under the same
                 // lock the swapper uses, then build the linked CTS off the
                 // snapshot. Without this, a swap-then-dispose between the field
                 // read and `.Token` access throws ObjectDisposedException out of
@@ -172,7 +172,7 @@ namespace Phoenix.Controls.Hub.Core
 
             LastStatus = status;
 
-            // BH — broadcast each subscriber via GetInvocationList so a single
+            // Broadcast each subscriber via GetInvocationList so a single
             // bad handler doesn't skip later subscribers. Mirrors the
             // Bus.OnMessageReceived pattern.
             Action<UpdateStatus>? handlers = StatusChanged;
@@ -288,7 +288,7 @@ namespace Phoenix.Controls.Hub.Core
 
             LastStatus = status;
 
-            // BH — fire StatusChanged the same way CheckAsync does, so subscribers
+            // Fire StatusChanged the same way CheckAsync does, so subscribers
             // are notified when a force-download completes (mirrors the
             // Bus.OnMessageReceived GetInvocationList pattern).
             Action<UpdateStatus>? handlers = StatusChanged;
@@ -326,8 +326,8 @@ namespace Phoenix.Controls.Hub.Core
         {
             string url = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
 
-            // QC08-10: bounded retry envelope mirroring the download path.
-            // HUB-UX-D6 contract: 1 s / 2 s / 4 s backoff, four attempts total,
+            // Bounded retry envelope mirroring the download path:
+            // 1 s / 2 s / 4 s backoff, four attempts total,
             // BUT 404/401/403 short-circuit immediately because retrying a
             // missing/forbidden release URL just wastes the polling budget.
             int[] backoffsMs = { 1_000, 2_000, 4_000 };
@@ -418,7 +418,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC08-10 helper: cancellable delay used by the GetLatestRelease retry
+        /// Cancellable delay used by the GetLatestRelease retry
         /// envelope so a CheckAsync cancellation doesn't have to wait out the
         /// full backoff slot. Plain Task.Delay would honour the CT but throw —
         /// we already do try/catch around the loop body, so this is just a
@@ -682,7 +682,7 @@ namespace Phoenix.Controls.Hub.Core
                 // detected by the Updater on next launch via
                 // <see cref="IsSentinelStale"/> and silently cleaned.
                 //
-                // QC09-04: if WriteSentinel throws, the Updater would launch
+                // If WriteSentinel throws, the Updater would launch
                 // with NO sentinel — its await_hub_exit phase has nothing to
                 // key off and the swap can race Hub's still-running file
                 // handles. Abort the launch rather than soft-bricking the
@@ -711,7 +711,7 @@ namespace Phoenix.Controls.Hub.Core
                     CreateNoWindow  = false, // Show the console so the user sees progress.
                     WorkingDirectory = installRoot,
                 };
-                // BH — use ArgumentList instead of Arguments string. Manual
+                // Use ArgumentList instead of Arguments string. Manual
                 // double-quoting breaks when installRoot ends in a backslash:
                 // `\"C:\foo\\\"` collapses the closing quote and the next arg
                 // gets glued to the path. ArgumentList runs Win32-spec quoting
@@ -810,7 +810,7 @@ namespace Phoenix.Controls.Hub.Core
         /// <summary>
         /// Writes the Hub-exit sentinel. Atomic via .tmp + Move-overwrite so a
         /// reader (the spawned Updater) never sees a half-written file.
-        /// QC39-01 contract: the sentinel identifies Hub by the (PID, StartTime)
+        /// The sentinel identifies Hub by the (PID, StartTime)
         /// tuple, not PID alone — Windows recycles PIDs, and a recycled PID can
         /// either prematurely satisfy "Hub gone" (swap-while-Hub-alive) or
         /// keep the wait alive for the full timeout when the wrong process
@@ -836,7 +836,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  Sentinel age (in minutes) after which a Win32-blocked
+        /// Sentinel age (in minutes) after which a Win32-blocked
         /// PID probe is treated as stale. The timestamp guard is the safety
         /// net for hostile AV environments where <c>Process.GetProcessById</c>
         /// throws <see cref="System.ComponentModel.Win32Exception"/> with
@@ -858,7 +858,7 @@ namespace Phoenix.Controls.Hub.Core
         /// Caller (<see cref="ClearStaleSentinel"/>) silently deletes such files
         /// on next Hub launch.
         ///
-        ///  Win32Exception / access-denied probes (hostile AV,
+        /// Win32Exception / access-denied probes (hostile AV,
         /// elevated targets) no longer return false unconditionally — that
         /// bricked the sentinel-clear path on machines where the PID probe
         /// can never succeed, leaving a stuck sentinel that nothing could
@@ -884,7 +884,7 @@ namespace Phoenix.Controls.Hub.Core
                     ? stEl.GetString()
                     : null;
 
-                //  Snapshot the sentinel's own write-time before
+                // Snapshot the sentinel's own write-time before
                 // probing. Used by the Win32-exception fallback below; safe
                 // to compute even on the happy path because it's a cheap
                 // string parse and avoids re-reading the JsonDocument.
@@ -896,7 +896,7 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     using var proc = System.Diagnostics.Process.GetProcessById(recordedPid);
                     if (proc.HasExited) return true;
-                    // QC39-01: tuple mismatch ⇒ PID was recycled to a different
+                    // Tuple mismatch ⇒ PID was recycled to a different
                     // process. Treat as stale so the sentinel-clear path runs.
                     if (recordedStart is not null)
                     {
@@ -913,7 +913,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (ArgumentException) { return true; } // PID not running.
                 catch (System.ComponentModel.Win32Exception ex)
                 {
-                    //  AV / elevation / sandbox blocked the PID
+                    // AV / elevation / sandbox blocked the PID
                     // handle. Fall back to the timestamp guard: anything
                     // older than the threshold is treated as stale so a
                     // long-abandoned sentinel still auto-expires.
@@ -940,7 +940,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  True when the sentinel's recorded write-time is older
+        /// True when the sentinel's recorded write-time is older
         /// than <see cref="SentinelStaleAfterMinutes"/>. Safety net for
         /// the PID probe — used when <c>Process.GetProcessById</c> can't
         /// be evaluated (Win32Exception / UnauthorizedAccessException) so

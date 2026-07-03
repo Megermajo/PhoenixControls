@@ -195,7 +195,7 @@ namespace Phoenix.Controls.Shared.Services
                 string name   = Path.GetFileName(filePath);
                 string target = Path.Combine(dst, name);
                 if (File.Exists(target)) continue;
-                // [P1 swarm-audit 2026-05-29] File.Copy can throw
+                // File.Copy can throw
                 // NotSupported/Argument/UnauthorizedAccess/IO uncaught and crash
                 // the whole migration. Log the offending file and continue so one
                 // bad child doesn't abort copying the rest of the tree.
@@ -216,7 +216,7 @@ namespace Phoenix.Controls.Shared.Services
             {
                 string name   = Path.GetFileName(dirPath);
                 string target = Path.Combine(dst, name);
-                // [P1 swarm-audit 2026-05-29] Guard the recursive descent the same
+                // Guard the recursive descent the same
                 // way as File.Copy above so a permission-denied / in-use child dir
                 // doesn't abort copying the rest of the tree (crash-safe degradation).
                 try

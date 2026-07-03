@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly RemoteAuthManager _auth;
         private readonly RemoteSessionRegistry _sessions;
 
-        // QC41-01 — per-IP sliding-window rate limit on /pair/complete. A single
+        // Per-IP sliding-window rate limit on /pair/complete. A single
         // 6-digit code has ~1M brute-force space; without throttling a LAN
         // attacker can burn through the keyspace inside the TTL window. Cap at
         // 10 attempts per minute per source IP; on exceed return 429 so the
@@ -111,12 +111,12 @@ namespace Phoenix.Controls.Hub.Core
                 $"RemoteBridgeServer listening on {prefix}",
                 "RemoteBridge", LogLevel.System);
 
-            // QC41-02 — pairing IDs and bearer tokens travel over this socket
+            // Pairing IDs and bearer tokens travel over this socket
             // verbatim. Loopback-only deployments are safe (no network egress);
             // any non-loopback bind without HTTPS leaks the bearer to anyone
             // sniffing the LAN/Wi-Fi segment.
             //
-            // [QC18-S2 P2] AppConfig.RemotePairingRequiresHttps (added by this
+            // AppConfig.RemotePairingRequiresHttps (added by this
             // sprint, default true) now hard-refuses to start when this would
             // be unsafe. Operator can flip the toggle off to permit plaintext-on-
             // LAN (NOT recommended); otherwise they must configure
@@ -198,7 +198,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC41-04 — DisposeAsync is the supported teardown for WinUI/STA
+        /// DisposeAsync is the supported teardown for WinUI/STA
         /// callers. <see cref="StopAsync"/> awaits a WS accept loop and a
         /// session-broadcast drain, both of which schedule continuations on the
         /// captured SynchronizationContext; calling <c>.GetAwaiter().GetResult()</c>
@@ -212,7 +212,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC41-04 — synchronous <see cref="IDisposable.Dispose"/> compatibility
+        /// Synchronous <see cref="IDisposable.Dispose"/> compatibility
         /// shim. The previous implementation was
         /// <c>StopAsync().GetAwaiter().GetResult()</c>, a WinUI deadlock surface
         /// whenever the call originated on the UI thread (Hub shutdown via the
@@ -346,7 +346,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task HandlePairCompleteAsync(HttpListenerContext ctx)
         {
-            // QC41-01 — per-IP rate limit. Apply BEFORE body parse so a
+            // Per-IP rate limit. Apply BEFORE body parse so a
             // body-less brute-force loop doesn't get a free pass on the
             // single-use grant CAS.
             string remoteIp = ctx.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
@@ -375,7 +375,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC41-01 — sliding-window rate-limit gate for <c>/pair/complete</c>.
+        /// Sliding-window rate-limit gate for <c>/pair/complete</c>.
         /// Returns <c>true</c> when the attempt is within budget and has been
         /// recorded; returns <c>false</c> when the IP has exceeded
         /// <see cref="PairCompleteMaxAttemptsPerMinute"/> in the most recent
@@ -642,7 +642,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task HandleGiveawayDrawAsync(HttpListenerContext ctx, string deviceId)
         {
-            // [P1 swarm-audit 2026-05-29] Unlike its siblings (HandleGiveawayEnterAsync,
+            // Unlike its siblings (HandleGiveawayEnterAsync,
             // HandleDbInsertAsync, …), the body here had no try/catch — a DB fault
             // (CreateUserTable / GetTableData / SetCell) escaped as an unhandled
             // exception in the request pump instead of an audited 500. Wrap the body to
@@ -878,7 +878,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC41-04 — per-socket SendAsync timeout. A stalled Viewer (paused
+        /// Per-socket SendAsync timeout. A stalled Viewer (paused
         /// devtools, network half-close) would otherwise pin <c>SendAsync</c>
         /// forever holding the per-session <see cref="RemoteSession.SendLock"/>.
         /// </summary>

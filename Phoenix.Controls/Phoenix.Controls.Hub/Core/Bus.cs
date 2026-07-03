@@ -36,13 +36,13 @@ namespace Phoenix.Controls.Hub.Core
         // socket. Acquired around each send and released in finally.
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _sendLocks = new();
 
-        // H45 — serialize the per-client snapshot+swap on reconnect so the new
+        // Serialize the per-client snapshot+swap on reconnect so the new
         // handler installs (ws, sendLock) atomically. The OLD handler's finally
         // identity-checks before evicting; this gate makes "old vs new" coherent
         // even when accept races the previous loop's unwind.
         private readonly object _reconnectGate = new object();
 
-        // M69 — track in-flight HandleClientAsync tasks so Stop() can drain them
+        // Track in-flight HandleClientAsync tasks so Stop() can drain them
         // before disposing _sendLocks. Without this, Stop() races the handler's
         // finally block: Stop().Clear() can dispose semaphores the finally is
         // about to TryRemove or the WaitAsync inside BroadcastAsync is mid-flight
@@ -53,7 +53,7 @@ namespace Phoenix.Controls.Hub.Core
         // Tracks pending WaitForVisual / WaitForEvent completions: key = waitId, value = TaskCompletionSource
         private readonly ConcurrentDictionary<string, TaskCompletionSource<BusMessage>> _pendingWaits = new();
 
-        // QC32-02 — anonymous-id population counter. Each connection that arrives
+        // Anonymous-id population counter. Each connection that arrives
         // without a query-string `id` (or with an id that fails validation) gets
         // a synthetic `client_xxxxxxxxxxxx`. Without a ceiling, a hostile loopback
         // peer could open + immediately drop sockets in a tight loop to bloat the
@@ -66,7 +66,7 @@ namespace Phoenix.Controls.Hub.Core
         private const int MaxAnonymousClients = 32;
         private int _anonymousClientCount;
 
-        // QC32-02 — id length cap and charset filter. Matches the documented
+        // Id length cap and charset filter. Matches the documented
         // shape of well-known ids ("Architect", "Visualist", "client_<hex>"):
         // ASCII letters, digits, underscore, hyphen, up to 64 chars.
         private const int MaxClientIdLength = 64;
@@ -74,15 +74,15 @@ namespace Phoenix.Controls.Hub.Core
             new System.Text.RegularExpressions.Regex(@"\A[A-Za-z0-9_\-]{1,64}\z",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
 
-        // QC32-03 — keep-alive on each accepted WebSocket so a half-open peer
+        // Keep-alive on each accepted WebSocket so a half-open peer
         // (privileged peer killed by SIGKILL / network partition / VM suspend)
-        // is detected within ~60 s rather than holding the BH-017 anti-
+        // is detected within ~60 s rather than holding the anti-
         // displacement slot until Hub itself restarts. The browser-direct
         // WebSockets on HUDServer use the same interval per their own keep-
         // alive setup. Kept as a TimeSpan field for ease of tuning.
         private static readonly TimeSpan WebSocketKeepAlive = TimeSpan.FromSeconds(30);
 
-        // Inefficiency #14 — prefix index for prefix-scanning wait keys.
+        // Prefix index for prefix-scanning wait keys.
         //
         // RouteIncomingMessage used to snapshot the entire _pendingWaits dictionary
         // via ToArray() per inbound message and linear-scan for keys matching
@@ -104,7 +104,7 @@ namespace Phoenix.Controls.Hub.Core
         }
         private Action<BusMessage>? _onMessageReceived;
         private readonly object _msgHandlerGate = new object();
-        // Inefficiency #14 — cached invocation list for OnMessageReceived. Avoids the
+        // Cached invocation list for OnMessageReceived. Avoids the
         // per-message GetInvocationList() Delegate[] allocation. Rebuilt under
         // _msgHandlerGate on subscribe/unsubscribe; readers do a Volatile.Read so the
         // dispatch loop never needs to take the gate. Empty array (not null) when no
@@ -144,11 +144,11 @@ namespace Phoenix.Controls.Hub.Core
             Volatile.Write(ref _onClientConnectionChangedCache, typed);
         }
 
-        // M72 — fan event invocations through per-handler try/catch so a single
+        // Fan event invocations through per-handler try/catch so a single
         // misbehaving subscriber can't take down the receive loop or block any
         // peers from running. Mirrors the OnMessageReceived pattern below.
         //
-        // Inefficiency #14 — read the cached invocation array via Volatile.Read
+        // Read the cached invocation array via Volatile.Read
         // rather than re-allocating a fresh Delegate[] from GetInvocationList()
         // on every call. The cache is refreshed on subscribe/unsubscribe under
         // its handler gate, so readers never need to lock.
@@ -184,16 +184,16 @@ namespace Phoenix.Controls.Hub.Core
         public bool IsArchitectConnected  => _clients.ContainsKey("Architect");
         public int  ConnectedClientCount  => _clients.Count;
 
-        // P2 — Status-strip readiness probe. True when the HttpListener owns its
+        // Status-strip readiness probe. True when the HttpListener owns its
         // prefix and the StartAsync accept loop is live (i.e. ready to accept new
         // bus client handshakes). Goes false during graceful shutdown.
         public bool IsListening => _httpListener?.IsListening ?? false;
 
-        // L52 — Bus.HUDServer property was dead code: assigned by the (deleted)
+        // Bus.HUDServer property was dead code: assigned by the (deleted)
         // WinForms shell and never read. HUD_BROADCAST routing happens through
         // HubHost.HUD directly, so the property is removed.
 
-        //  In-process subscriber list — Architect (and any future
+        // In-process subscriber list — Architect (and any future
         // peer that lives in Hub's process) subscribes here via the
         // InProcBus bridge, skipping the localhost-WebSocket hop. Fanned at
         // the end of BroadcastAsync alongside the remote-client send loop.
@@ -217,7 +217,7 @@ namespace Phoenix.Controls.Hub.Core
         private Bus(int port = 18081)
         {
             _port = port;
-            //  Self-register so in-process peers can publish + subscribe
+            // Self-register so in-process peers can publish + subscribe
             // without the localhost-WebSocket round trip. Registration happens at
             // Bus.Instance first access; ArchitectBusClient probes InProcBus.IsRegistered
             // at Start() to decide between in-proc and WebSocket transport.
@@ -226,7 +226,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  Adapter that exposes Bus as an in-process publish /
+        /// Adapter that exposes Bus as an in-process publish /
         /// subscribe surface. Bridges Architect-side BusMessage traffic
         /// straight through Bus's routing without serialising to JSON +
         /// crossing the loopback WebSocket. Externally identical wire
@@ -239,14 +239,14 @@ namespace Phoenix.Controls.Hub.Core
             private readonly Bus _bus;
             public BusInProcBridgeImpl(Bus bus) { _bus = bus; }
 
-            // P1-11 — IInProcBusBridge.PublishAsync's interface signature lives in
-            // Shared/InProcBus.cs (out of scope for ). We keep this method
+            // IInProcBusBridge.PublishAsync's interface signature lives in
+            // Shared/InProcBus.cs. We keep this method
             // matching the interface and delegate to a CT-aware private helper so
-            // future callers (or a later sprint that widens the interface) can pass
+            // future callers (or a later change that widens the interface) can pass
             // a token without another shim. The interface-required entry point
             // forwards CancellationToken.None.
             //
-            // TODO sprint1-followup: widen IInProcBusBridge.PublishAsync to take a
+            // TODO: widen IInProcBusBridge.PublishAsync to take a
             // CancellationToken = default so callers can thread shutdown tokens all
             // the way to ws.SendAsync.
             public Task PublishAsync(BusMessage msg) => PublishAsyncCore(msg, CancellationToken.None);
@@ -286,7 +286,7 @@ namespace Phoenix.Controls.Hub.Core
                 //    here — Architect is the publisher and shouldn't see its
                 //    own outbound MACRO_REQUEST as an inbound message.
                 //
-                // P1-11 — pass the CT through so shutdown / a wedged peer can
+                // Pass the CT through so shutdown / a wedged peer can
                 // interrupt a hung ws.SendAsync rather than wait the full
                 // ClientSendLockTimeout.
                 try { await _bus.BroadcastToRemoteAsync(msg, ct).ConfigureAwait(false); }
@@ -319,7 +319,7 @@ namespace Phoenix.Controls.Hub.Core
 
         public async Task StartAsync(CancellationToken ct = default)
         {
-            // Hub_CodeReview #8 — make StartAsync safe to call after a previous Stop().
+            // Make StartAsync safe to call after a previous Stop().
             // The old listener was overwritten without disposing, leaking the socket and
             // leaving _stopped at 1 forever, which made the next bus message handler an
             // immediate no-op.
@@ -329,7 +329,7 @@ namespace Phoenix.Controls.Hub.Core
                 _httpListener = null;
             }
 
-            // [P1 swarm-audit 2026-05-29] If Prefixes.Add()/Start() throws (port in use,
+            // If Prefixes.Add()/Start() throws (port in use,
             // ACL denied, etc.) the freshly-created HttpListener would leak its OS handle.
             // Dispose + null it on failure before rethrowing so a failed StartAsync leaves
             // no orphaned listener behind.
@@ -355,12 +355,12 @@ namespace Phoenix.Controls.Hub.Core
                     var context = await _httpListener.GetContextAsync();
                     if (context.Request.IsWebSocketRequest)
                     {
-                        // M69 — register the handler task so Stop() can await
+                        // Register the handler task so Stop() can await
                         // outstanding handlers before disposing _sendLocks. The
                         // continuation auto-evicts on completion so the dictionary
                         // never grows unbounded under healthy churn.
                         //
-                        // QC32-04 — order is load-bearing: TryAdd must precede
+                        // Order is load-bearing: TryAdd must precede
                         // ContinueWith. The continuation's only job is to remove
                         // the task entry from _handlerTasks; if a synchronous
                         // continuation fires (e.g. the handler has already faulted
@@ -397,9 +397,9 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task HandleClientAsync(HttpListenerContext context, CancellationToken ct)
         {
-            // QC32-03 — set the keep-alive interval on the accepted WebSocket so
+            // Set the keep-alive interval on the accepted WebSocket so
             // a half-open peer is detected within ~30 s. Without this, the
-            // BH-017 anti-displacement guard could hold a privileged slot
+            // anti-displacement guard could hold a privileged slot
             // forever after a network partition; the only recovery would be a
             // manual Hub restart.
             var wsContext = await context.AcceptWebSocketAsync(
@@ -408,7 +408,7 @@ namespace Phoenix.Controls.Hub.Core
                 keepAliveInterval: WebSocketKeepAlive).ConfigureAwait(false);
             var ws = wsContext.WebSocket;
 
-            // QC32-02 — validate the query-string id BEFORE accepting it.
+            // Validate the query-string id BEFORE accepting it.
             // Rejection here aborts the socket and returns; the previous
             // verbatim-accept path would log-inject `[CriticalError]` lines
             // (the id is interpolated into the connect/disconnect log) and
@@ -435,7 +435,7 @@ namespace Phoenix.Controls.Hub.Core
                 clientId = rawId;
             }
 
-            // QC32-01 — reserved names belong to the bus / browser plumbing. Any
+            // Reserved names belong to the bus / browser plumbing. Any
             // peer claiming "Hub" could permanently mute legitimate triggers
             // (DispatchVisualTrigger uses Source=="Hub" as the echo-skip guard);
             // "Browser" could forge VISUAL_COMPLETE provenance. Rejection is
@@ -451,7 +451,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // QC32-02 — anonymous-client ceiling. A hostile loopback peer can
+            // Anonymous-client ceiling. A hostile loopback peer can
             // open + drop anonymous connections faster than the handler's
             // finally block evicts the entry; without a cap, _clients +
             // _sendLocks bloat without bound. Privileged / named-id peers are
@@ -471,7 +471,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
             }
 
-            // BH-017 — refuse a second connection that claims a privileged identity.
+            // Refuse a second connection that claims a privileged identity.
             // Previously the snapshot+swap below treated all reconnects identically,
             // so any local process could `?id=Architect` and the existing Architect
             // peer would be Abort()'d off the bus. Loopback-only limits the threat
@@ -493,7 +493,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // H45 — atomic snapshot+swap on reconnect.
+            // Atomic snapshot+swap on reconnect.
             //
             // The earlier fix already aborted the prior socket and identity-checked
             // eviction in the OLD handler's finally. That narrowed the race but left
@@ -546,12 +546,12 @@ namespace Phoenix.Controls.Hub.Core
                 }, "Bus", $"reconnect drain for {clientId}");
             }
 
-            // M72 — fire OnClientConnectionChanged through per-handler try/catch
+            // Fire OnClientConnectionChanged through per-handler try/catch
             // so a throwing subscriber can't take out this handler at startup.
             InvokeClientConnectionChanged(clientId, true);
             GlobalLogger.Log($"Bus client connected: {clientId}", "Bus", LogLevel.Communication);
 
-            // H44 — accumulate fragmented frames; previously a single 32 KB ReceiveAsync
+            // Accumulate fragmented frames; previously a single 32 KB ReceiveAsync
             // truncated any message larger than the buffer. Now we buffer until
             // EndOfMessage and decode the full payload.
             const int MaxBusMessageBytes = 4 * 1024 * 1024; // hard DoS cap
@@ -592,8 +592,8 @@ namespace Phoenix.Controls.Hub.Core
                         var msg = JsonSerializer.Deserialize<BusMessage>(json);
                         if (msg != null)
                         {
-                            // [QC18-S2 P2] Per-field length caps. The aggregate
-                            // MaxBusMessageBytes guard above (H44, 4 MiB) defends
+                            // Per-field length caps. The aggregate
+                            // MaxBusMessageBytes guard above (4 MiB) defends
                             // against payload bloat but lets a tiny envelope ship
                             // arbitrarily-long Type / Target strings that downstream
                             // consumers (log lines, RouteIncomingMessage's prefix-key
@@ -615,7 +615,7 @@ namespace Phoenix.Controls.Hub.Core
                                 continue;
                             }
                             msg.Source = clientId;
-                            // L54 — clock-drift defence. The wire envelope's SentAt is
+                            // Clock-drift defence. The wire envelope's SentAt is
                             // populated by the sender's local clock (Architect/Visualist
                             // can be on machines with arbitrary skew, or even just NTP-
                             // adjusting mid-session). Downstream consumers — log timestamps,
@@ -632,7 +632,7 @@ namespace Phoenix.Controls.Hub.Core
                             // Iterate handlers individually so one throwing subscriber
                             // can't kill the receive loop or starve later handlers.
                             //
-                            // Inefficiency #14 — read the cached invocation array via
+                            // Read the cached invocation array via
                             // Volatile.Read instead of GetInvocationList()'s per-message
                             // Delegate[] allocation. Subscribe/unsubscribe rebuild the
                             // cache under _msgHandlerGate via the custom event accessors.
@@ -666,17 +666,17 @@ namespace Phoenix.Controls.Hub.Core
             }
             finally
             {
-                // H45 — only this handler's own (ws, sendLock) pair gets reaped.
+                // Only this handler's own (ws, sendLock) pair gets reaped.
                 // A newer connection from the same id may already have taken over
                 // and installed a fresh sendLock; evicting either would silently
                 // break the live connection. The reconnect path above is what
                 // disposes the OLD sendLock, so we don't re-do it here.
                 //
-                // M69 — atomic compare-and-remove on _sendLocks.
+                // Atomic compare-and-remove on _sendLocks.
                 //
                 // We snapshot OUR sendLock under _reconnectGate at the top of
                 // HandleClientAsync (it's the one installed alongside our ws).
-                // The plain TryRemove(key, out) overload pre-M69 was a TOCTOU:
+                // The plain TryRemove(key, out) overload was previously a TOCTOU:
                 // a reconnect could swap a fresh lock in between our gate-held
                 // _clients identity check and the dictionary remove, and we'd
                 // dispose someone else's lock.
@@ -723,14 +723,14 @@ namespace Phoenix.Controls.Hub.Core
                     GlobalLogger.Log($"Bus client disconnected: {clientId}", "Bus", LogLevel.Communication);
                 }
 
-                // QC32-02 — release the anonymous-client slot now that the entry
+                // Release the anonymous-client slot now that the entry
                 // has been (potentially) evicted from _clients. Done unconditionally
                 // on the isAnonymous flag rather than gated on `removed` because a
                 // reconnect race may have already taken our slot — the anonymous
                 // count still reflects "this connection attempt is done."
                 if (isAnonymous) Interlocked.Decrement(ref _anonymousClientCount);
 
-                // QC02-02 — ConfigureAwait(false) so a shutdown path that awaits
+                // ConfigureAwait(false) so a shutdown path that awaits
                 // outstanding handlers (Bus.StopAsync's drain block) doesn't
                 // bounce the continuation back to the original SyncContext.
                 if (ws.State != WebSocketState.Closed)
@@ -767,17 +767,17 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// Hub_CodeReview #15 — Fired when an OBS scene change is broadcast via
+        /// Fired when an OBS scene change is broadcast via
         /// <see cref="BroadcastSceneChangedAsync"/>. The argument is the scene name.
         ///
-        /// Mirrors the OnVisualistReady / OnClientConnectionChanged pattern from sweep 3:
+        /// Mirrors the OnVisualistReady / OnClientConnectionChanged pattern:
         /// gives future Hub-internal scene-aware features (e.g. auto-pause widgets when
         /// leaving a streaming scene) a clean subscription surface without piggy-backing
         /// on the wire-level broadcast. Currently has no Hub-side subscribers — this is
         /// intentional. External clients (Architect) still receive the SCENE_CHANGED bus
         /// message via the normal client fan-out.
         ///
-        /// TODO #15: when a real Hub subscriber is added, prefer this event over
+        /// TODO: when a real Hub subscriber is added, prefer this event over
         /// inspecting raw bus traffic through OnMessageReceived.
         /// </summary>
         public event Action<string>? OnSceneChanged
@@ -808,7 +808,7 @@ namespace Phoenix.Controls.Hub.Core
             // Drain every waiter whose prefix matches the message — both
             // specific-payload waits and wildcard-payload waits.
             //
-            // Inefficiency #14 — O(1) prefix lookup via _waitPrefixIndex instead of
+            // O(1) prefix lookup via _waitPrefixIndex instead of
             // a per-message ToArray() snapshot + linear StartsWith scan over every
             // pending wait. The two prefix buckets we need to drain are looked up
             // directly; matched entries are removed atomically from both _pendingWaits
@@ -836,7 +836,7 @@ namespace Phoenix.Controls.Hub.Core
                     break;
 
                 case "VISUAL_COMPLETE":
-                    // M70 — bus-relayed VISUAL_COMPLETE. The browser-direct path is
+                    // Bus-relayed VISUAL_COMPLETE. The browser-direct path is
                     // already wired through HUDServer → LayerRuntime → ResolveVisualWait,
                     // but a relay (e.g. Visualist forwards a completion through the bus)
                     // wasn't being matched. Look for a waitId in the payload — accept
@@ -866,13 +866,13 @@ namespace Phoenix.Controls.Hub.Core
                 case "LOGIC_RELOAD":
                     ScriptRegistry.Instance.Refresh();
                     GlobalLogger.Log($"LOGIC_RELOAD received from {msg.Source} — scripts refreshed.", "Bus", LogLevel.System);
-                    // M31 (2026-05-14): route the ACK broadcast through SafeRunAsync.
+                    // Route the ACK broadcast through SafeRunAsync.
                     // The bare `_ = BroadcastAsync(...)` swallowed any fault inside
                     // the broadcast loop; if a peer's send threw and the loop
                     // tried to log via GlobalLogger.Error from inside the bus
                     // receive thread, that exception would escape unobserved.
                     {
-                        // [P1 swarm-audit 2026-05-29] Coalesce the possibly-null inbound
+                        // Coalesce the possibly-null inbound
                         // payload before it feeds BusMessage.Payload — matches the
                         // `?? "[]"` / `?? "{}"` idioms used by the neighbouring cases.
                         string ackPayload = msg.Payload ?? "{}";
@@ -890,7 +890,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 case "MACRO_SYNC":
                 {
-                    // M73 — MergeMacroLibrary does synchronous File.ReadAllText/WriteAllText
+                    // MergeMacroLibrary does synchronous File.ReadAllText/WriteAllText
                     // under a process-wide lock. Running it on the bus receive thread blocks
                     // every subsequent message until disk IO completes (worse under macro-sync
                     // bursts since the gate serializes them). Offload to a worker; the merge
@@ -916,7 +916,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 case "MACRO_REMOVE":
                 {
-                    // M73 — same offload rationale as MACRO_SYNC above.
+                    // Same offload rationale as MACRO_SYNC above.
                     string srcLabel  = msg.Source;
                     string? removeId = msg.Payload?.Trim();
                     _ = AsyncErrorBoundary.SafeRunAsync(async () =>
@@ -930,7 +930,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 case "MACRO_REQUEST":
                 {
-                    // M73 — File.ReadAllText also blocks the receive loop. Same offload pattern.
+                    // File.ReadAllText also blocks the receive loop. Same offload pattern.
                     string requesterLabel = msg.Source;
                     _ = AsyncErrorBoundary.SafeRunAsync(async () =>
                     {
@@ -941,7 +941,7 @@ namespace Phoenix.Controls.Hub.Core
                     break;
                 }
 
-                // P0-4 () — Acknowledge AI_CHUNK and WIDGET_TIMEOUT in the
+                // Acknowledge AI_CHUNK and WIDGET_TIMEOUT in the
                 // routing table even though they need no transport-side dispatch.
                 //
                 // Both are emitted with Target = "*" from Hub-internal callers
@@ -964,7 +964,7 @@ namespace Phoenix.Controls.Hub.Core
                     break;
             }
 
-            // Route bus messages to on_bus({Type}): script blocks. M29 — bus.target
+            // Route bus messages to on_bus({Type}): script blocks. bus.target
             // is now exposed alongside bus.source so the Bus.OnMessage Source/Target
             // wildcard guards (emitted by ScriptExporter) can compare against it.
             // Defensive null coalesce — Target defaults to "" on the model but a
@@ -981,7 +981,7 @@ namespace Phoenix.Controls.Hub.Core
                 "Bus", $"on_bus({msg.Type})");
         }
 
-        // Inefficiency #14 — register a prefix-keyed wait so RouteIncomingMessage
+        // Register a prefix-keyed wait so RouteIncomingMessage
         // can find it via O(1) bucket lookup instead of scanning every pending wait.
         // The bucket keys reference _pendingWaits entries; removal of a wait must go
         // through UnregisterEventWait so both the dictionary and the bucket stay in sync.
@@ -1008,7 +1008,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (!_waitPrefixIndex.TryGetValue(prefix, out var bucket) || bucket.IsEmpty) return;
 
-            // Perf-review M12 (2026-05-14): the previous `bucket.Keys.ToArray()`
+            // The previous `bucket.Keys.ToArray()`
             // allocated a fresh array per inbound message even when no
             // waiters were present in the bucket. Buckets are typically tiny
             // (often empty after the IsEmpty fast-path above misses a race);
@@ -1074,7 +1074,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     catch (Exception ex)
                     {
-                        // Hub_CodeReview #10 — empty catch was swallowing JSON deserialization
+                        // The empty catch was swallowing JSON deserialization
                         // errors silently, leaving callers to debug "why is the macro library
                         // empty?" with zero log entries. Record the failure.
                         GlobalLogger.Error("Bus",
@@ -1102,7 +1102,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 string merged = JsonSerializer.Serialize(library);
 
-                // Hub_CodeReview #10b — the on-disk file exists but failed to
+                // The on-disk file exists but failed to
                 // deserialize (corrupt). Writing here would overwrite it with
                 // (incoming merged into empty), permanently dropping every macro
                 // the corrupt file still holds. Skip the write and return the
@@ -1127,7 +1127,7 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // H14 — bounded wait for a Bus peer's send slot. A paused-debugger or
+        // Bounded wait for a Bus peer's send slot. A paused-debugger or
         // a peer whose dispatcher is wedged can hold the per-client semaphore
         // indefinitely, which would otherwise stall BroadcastAsync (and every
         // queue/script awaiting the broadcast). Five seconds is well past any
@@ -1136,7 +1136,7 @@ namespace Phoenix.Controls.Hub.Core
         // so the operator sees the stalled peer without flooding the syslog.
         private static readonly TimeSpan DefaultClientSendLockTimeout = TimeSpan.FromSeconds(5);
 
-        // M69 — test seam. The 5s default above is correct for production, but a
+        // Test seam. The 5s default above is correct for production, but a
         // unit test that deliberately drives concurrent Stop() + Broadcast() must
         // wait out that full bound × every in-flight broadcast, forcing an oversized
         // WaitAsync budget that flakes under suite contention. This volatile override
@@ -1163,7 +1163,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// TEST-ONLY seam (M69). Pins the per-client send-lock acquisition timeout
+        /// TEST-ONLY seam. Pins the per-client send-lock acquisition timeout
         /// so a concurrency test can use a tight WaitAsync budget instead of waiting
         /// out the 5s production default for every in-flight broadcast. Pass
         /// <c>null</c> (or a non-positive span) to restore the production default.
@@ -1178,22 +1178,22 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>Broadcast a message to all connected clients (or a specific target).
-        ///  Also fans to in-process subscribers via the InProcBus bridge so
+        /// Also fans to in-process subscribers via the InProcBus bridge so
         /// Architect-in-Hub-process sees broadcasts without paying the localhost-WebSocket
         /// hop.
         ///
-        /// P1-11 — accepts an optional CancellationToken so a caller that wants
+        /// Accepts an optional CancellationToken so a caller that wants
         /// shutdown to interrupt a hung ws.SendAsync can thread one through; existing
         /// callers (most of Hub) continue to pass nothing and get pre-fix semantics
         /// (token defaults to none, ClientSendLockTimeout is still the upper bound).
         ///
-        /// P1-13 — guards against `_stopped`: in-flight broadcasts called after
+        /// Guards against `_stopped`: in-flight broadcasts called after
         /// Bus.StopAsync used to silently no-op (clients/sendLocks already cleared).
         /// We now log+return at Communication tier so the drop is visible during
         /// shutdown debugging.</summary>
         public async Task BroadcastAsync(BusMessage msg, CancellationToken ct = default)
         {
-            // P1-13 — stop-guard. After StopAsync flips _stopped, _clients and
+            // Stop-guard. After StopAsync flips _stopped, _clients and
             // _sendLocks are cleared and the inner loop has nothing to fan to.
             // Pre-fix the broadcast appeared to succeed (no exception, no log) which
             // masks send paths that fire during teardown. Surface the drop at
@@ -1208,7 +1208,7 @@ namespace Phoenix.Controls.Hub.Core
 
             await BroadcastToRemoteAsync(msg, ct).ConfigureAwait(false);
 
-            //  In-proc subscriber fan. Architect (and any future in-proc
+            // In-proc subscriber fan. Architect (and any future in-proc
             // peer) sees the same envelope a remote WebSocket peer would, without
             // serialisation + loopback overhead. Try/catch per subscriber so a
             // misbehaving in-proc consumer can't poison the broadcast for everyone.
@@ -1225,14 +1225,14 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  Remote-only fan: serialises and writes the envelope to each
+        /// Remote-only fan: serialises and writes the envelope to each
         /// matching connected WebSocket peer. Used internally by
         /// <see cref="BroadcastAsync"/> and by the in-proc bridge's PublishAsync
         /// (which fires its own subscriber fanout via Hub-side OnMessageReceived
         /// before invoking this, so the in-proc subscriber list is intentionally
         /// skipped here to avoid echoing the publisher's own message back to itself).
         ///
-        /// P1-11 — <paramref name="ct"/> is threaded down to ws.SendAsync; a hung
+        /// <paramref name="ct"/> is threaded down to ws.SendAsync; a hung
         /// peer can be interrupted by signalling the token rather than burning
         /// the full ClientSendLockTimeout. Defaulting to none preserves pre-fix
         /// semantics for callers that don't supply one.
@@ -1243,7 +1243,7 @@ namespace Phoenix.Controls.Hub.Core
             byte[] bytes = Encoding.UTF8.GetBytes(json);
             var segment = new ArraySegment<byte>(bytes);
 
-            // BH-016 — record the (id, ws, sendLock) triplet at decision time so the
+            // Record the (id, ws, sendLock) triplet at decision time so the
             // post-loop cleanup can use ICollection<KVP>.Remove (which only deletes
             // when the slot still holds the same value). The previous bare TryRemove(id)
             // would happily evict a fresh peer's send-lock and ws if a reconnect race
@@ -1253,7 +1253,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 var target = msg.Target ?? "*";
                 if (target != "*" && target != id) continue;
-                // QC02-03 — TryGetValue (not GetOrAdd). HandleClientAsync owns
+                // TryGetValue (not GetOrAdd). HandleClientAsync owns
                 // the SemaphoreSlim lifecycle (installs on connect, disposes on
                 // disconnect under _reconnectGate); the previous GetOrAdd here
                 // re-introduced a fresh semaphore for a clientId whose entry
@@ -1277,7 +1277,7 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     try
                     {
-                        // H14 — bounded WaitAsync. A peer whose previous send is
+                        // Bounded WaitAsync. A peer whose previous send is
                         // stuck (paused debugger, ws.SendAsync wedged) used to
                         // block this loop forever, stranding every other peer
                         // for the same broadcast. With a timeout we record the
@@ -1296,7 +1296,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     catch (ObjectDisposedException ode)
                     {
-                        // H45 — the per-client semaphore was disposed by the reconnect path
+                        // The per-client semaphore was disposed by the reconnect path
                         // (or by Stop()) between GetOrAdd and WaitAsync. The OLD ws is no
                         // longer the canonical one for this clientId; skip the send rather
                         // than crash the broadcast loop. Logged at Communication-tier
@@ -1309,13 +1309,13 @@ namespace Phoenix.Controls.Hub.Core
                     }
 
                     if (ws.State == WebSocketState.Open)
-                        // P1-11 — propagate the caller's ct so shutdown can interrupt
+                        // Propagate the caller's ct so shutdown can interrupt
                         // a peer whose recv side is hung; pre-fix this always used
                         // CancellationToken.None and a wedged send pinned the per-
                         // client send slot until the WebSocket itself timed out.
                         await ws.SendAsync(segment, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
                     else
-                        // H45 — socket is no longer Open (Aborted/Closed/CloseSent/None).
+                        // Socket is no longer Open (Aborted/Closed/CloseSent/None).
                         // Either the reconnect path swapped a placeholder in, or the
                         // remote tore down. Evict here so the dead clientId doesn't
                         // accumulate forever; the next reconnect will re-register.
@@ -1331,7 +1331,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                 }
             }
-            // BH-016 — KVP-scoped removal. ConcurrentDictionary's IDictionary view's
+            // KVP-scoped removal. ConcurrentDictionary's IDictionary view's
             // Remove(KeyValuePair) only succeeds when the slot still holds the same
             // value, so a reconnect that re-installed (id → freshWs/freshLock) is left
             // alone and the dead pair is the only thing evicted.
@@ -1346,7 +1346,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// BH-017 / QC32-01 — well-known / reserved client ids.
+        /// Well-known / reserved client ids.
         ///
         /// Architect and Visualist are the canonical Phoenix Controls peers.
         /// Any local process that knows the name can otherwise displace the
@@ -1354,7 +1354,7 @@ namespace Phoenix.Controls.Hub.Core
         /// non-displaceable, so subsequent connections with the same id are
         /// refused while the incumbent is alive.
         ///
-        /// QC32-01 — "Hub" and "Browser" are additionally reserved (never
+        /// "Hub" and "Browser" are additionally reserved (never
         /// accepted as a client id). DispatchVisualTrigger and
         /// DispatchWidgetLiveUpdate both use <c>msg.Source == "Hub"</c> as the
         /// echo-skip guard, and ResolveVisualWait stamps <c>Source = "Browser"</c>
@@ -1394,7 +1394,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (string.Equals(msg.Source, "Hub", StringComparison.Ordinal)) return;
 
                 var eventData = JsonSerializer.SerializeToElement(payload.EventData ?? new Dictionary<string, string>());
-                // [QC18-S2 P1] Route the LayerRuntime enqueue through AsyncErrorBoundary.
+                // Route the LayerRuntime enqueue through AsyncErrorBoundary.
                 // Pre-fix this bare _ = ...EnqueueTriggerAsync(...) was the only
                 // fire-and-forget in DispatchVisualTrigger that bypassed the standard
                 // boundary; a fault inside EnqueueTriggerAsync (e.g. a dispatcher-throw
@@ -1453,7 +1453,7 @@ namespace Phoenix.Controls.Hub.Core
                 // root.Clone() is required because the JsonDocument is disposed
                 // before the async dispatcher runs.
                 var cloned = root.Clone();
-                // [QC18-S2 P1] Route the dispatcher call through AsyncErrorBoundary.
+                // Route the dispatcher call through AsyncErrorBoundary.
                 // The dispatcher target is HUDServer.SendToLayerAsync which can throw
                 // on a torn-down socket; pre-fix the fault would land on the
                 // UnobservedTaskException pump with no Bus-side breadcrumb.
@@ -1487,7 +1487,7 @@ namespace Phoenix.Controls.Hub.Core
             var tcs = new TaskCompletionSource<BusMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingWaits[waitId] = tcs;
 
-            // [QC18-S2 P1] Reap _pendingWaits via try/finally instead of the inline
+            // Reap _pendingWaits via try/finally instead of the inline
             // TryRemove below. Pre-fix a throw from BroadcastAsync — e.g.
             // ObjectDisposedException during Bus.StopAsync, or a reconnect-storm fault
             // — would propagate out of this method while leaving the (waitId → tcs)
@@ -1525,7 +1525,7 @@ namespace Phoenix.Controls.Hub.Core
                 // Wait for: (a) VISUAL_COMPLETE arrives via ResolveVisualWait → tcs resolves; or
                 //           (b) the queue's path completes (timeout / inactive-layer fast-succeed); or
                 //           (c) the outer timeoutMs; or
-                //           (d) caller cancels via the script CT (H11).
+                //           (d) caller cancels via the script CT.
                 using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 var delayTask = Task.Delay(timeoutMs, delayCts.Token);
                 var completed = await Task.WhenAny(tcs.Task, queueTask, delayTask).ConfigureAwait(false);
@@ -1588,7 +1588,7 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>Broadcasts an OBS scene change event to the bus.
         ///
-        /// Hub_CodeReview #15 — IMPORTANT: this is FAN-OUT ONLY. There is no Hub-side
+        /// IMPORTANT: this is FAN-OUT ONLY. There is no Hub-side
         /// consumer for SCENE_CHANGED today; the bus simply ships the message to every
         /// connected external client (Architect dashboards, etc). Do NOT call this method
         /// from a future Hub-internal feature expecting an in-process handler to react —
@@ -1600,7 +1600,7 @@ namespace Phoenix.Controls.Hub.Core
         /// or calling this method directly. The event surface is intentionally provided
         /// so future scene-aware features can hook in without changing fan-out semantics.
         ///
-        /// TODO #15: surface as in-process event if Hub gains a scene-aware feature
+        /// TODO: surface as in-process event if Hub gains a scene-aware feature
         /// (the OnSceneChanged event below is the agreed-upon hook point).
         /// </summary>
         public Task BroadcastSceneChangedAsync(string sceneName)
@@ -1610,7 +1610,7 @@ namespace Phoenix.Controls.Hub.Core
             // to the caller's logger context. Per-handler try/catch matches the pattern
             // used in HandleClientAsync's OnMessageReceived dispatch.
             //
-            // Inefficiency #14 — Volatile.Read of the cached array; no per-call
+            // Volatile.Read of the cached array; no per-call
             // GetInvocationList() allocation.
             var handlers = Volatile.Read(ref _onSceneChangedCache);
             for (int i = 0; i < handlers.Length; i++)
@@ -1651,7 +1651,7 @@ namespace Phoenix.Controls.Hub.Core
             };
 
             var elem = JsonSerializer.SerializeToElement(triggerPayload.EventData);
-            // [QC18-S2 P1] Same wrap as DispatchVisualTrigger — the bare _ = ...EnqueueTriggerAsync
+            // Same wrap as DispatchVisualTrigger — the bare _ = ...EnqueueTriggerAsync
             // was the third fire-and-forget in Bus.cs that bypassed AsyncErrorBoundary
             // (peers at LOGIC_RELOAD_ACK / MACRO_SYNC / MACRO_REMOVE / MACRO_REQUEST
             // already wrap correctly).
@@ -1677,7 +1677,7 @@ namespace Phoenix.Controls.Hub.Core
         /// Waits for a specific bus event type to arrive. Used by the
         /// <c>wait_for_event()</c> script command.
         ///
-        /// QC02-01 — <paramref name="payloadFilter"/> selects which messages of
+        /// <paramref name="payloadFilter"/> selects which messages of
         /// the given <paramref name="eventType"/> can resolve this wait:
         ///   <list type="bullet">
         ///   <item><description><c>"*"</c> or empty (default) — wildcard, accepts
@@ -1702,7 +1702,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task<BusMessage?> WaitForEventAsync(string eventType, string payloadFilter, int timeoutMs = 10000, CancellationToken ct = default)
         {
-            // QC02-04 — honour a pre-cancelled token before any allocation. Without
+            // Honour a pre-cancelled token before any allocation. Without
             // this, a cancelled ct paired with an immediate-resolve message would
             // return RanToCompletion and bypass the script engine's cancellation
             // contract (the chained _executionCt expects every long-running await
@@ -1716,14 +1716,14 @@ namespace Phoenix.Controls.Hub.Core
             // overwrote the first via the indexer-assignment.
             string prefix  = $"{eventType}:{filter}:";
             string waitKey = $"{prefix}{Guid.NewGuid():N}";
-            // M71 — RunContinuationsAsynchronously so resolving the wait doesn't run the
+            // RunContinuationsAsynchronously so resolving the wait doesn't run the
             // script's continuation on the bus receive thread.
             var tcs = new TaskCompletionSource<BusMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-            // Inefficiency #14 — register the wait in both the dictionary and the
+            // Register the wait in both the dictionary and the
             // prefix index so RouteIncomingMessage finds it via O(1) bucket lookup.
             RegisterEventWait(waitKey, prefix, tcs);
 
-            // H11 — link the script CT so timeout / cancel from the engine cuts the wait.
+            // Link the script CT so timeout / cancel from the engine cuts the wait.
             using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var delayTask = Task.Delay(timeoutMs, delayCts.Token);
             var completed = await Task.WhenAny(tcs.Task, delayTask).ConfigureAwait(false);
@@ -1743,7 +1743,7 @@ namespace Phoenix.Controls.Hub.Core
         private int _stopped;
 
         /// <summary>
-        /// QC02-02 — async teardown. The pre-fix Stop() blocked on
+        /// Async teardown. The pre-fix Stop() blocked on
         /// <c>Task.WhenAny(...).GetAwaiter().GetResult()</c> while it drained
         /// in-flight HandleClientAsync tasks; on the UI thread that's a
         /// classic SyncContext-deadlock candidate, and even on a thread-pool
@@ -1760,7 +1760,7 @@ namespace Phoenix.Controls.Hub.Core
 
             try { _httpListener?.Stop(); }  catch (ObjectDisposedException) { } catch (Exception ex) { GlobalLogger.Error("Bus", "stop error", ex); }
             try { _httpListener?.Close(); } catch { }
-            // [P1 swarm-audit 2026-05-29] Stop()/Close() don't release every resource an
+            // Stop()/Close() don't release every resource an
             // HttpListener holds; explicitly Dispose() (an explicit IDisposable impl) so
             // the listener is fully torn down before the next StartAsync recreates it.
             try { (_httpListener as IDisposable)?.Dispose(); } catch { }
@@ -1768,7 +1768,7 @@ namespace Phoenix.Controls.Hub.Core
             // Cancel any awaiters so scripts blocked on wait_for_visual / wait_for_event
             // unblock cleanly during shutdown.
             //
-            // P1-12 — snapshot before TrySetCanceled + Clear. The old enumerate-then-
+            // Snapshot before TrySetCanceled + Clear. The old enumerate-then-
             // Clear pattern raced concurrent TryAdds: a wait registered between the
             // foreach and the Clear was orphaned (cancellation skipped because the
             // foreach already finished, but the entry still got wiped). Snapshotting
@@ -1777,7 +1777,7 @@ namespace Phoenix.Controls.Hub.Core
             var pendingSnapshot = _pendingWaits.ToArray();
             foreach (var kvp in pendingSnapshot) kvp.Value.TrySetCanceled();
             _pendingWaits.Clear();
-            // Inefficiency #14 — drop prefix index buckets in lockstep with the
+            // Drop prefix index buckets in lockstep with the
             // dictionary they shadow.
             _waitPrefixIndex.Clear();
 
@@ -1790,11 +1790,11 @@ namespace Phoenix.Controls.Hub.Core
             }
             _clients.Clear();
 
-            // M69 — wait for in-flight HandleClientAsync tasks to finish their
+            // Wait for in-flight HandleClientAsync tasks to finish their
             // finally blocks before we tear down _sendLocks. The Abort() above
             // unblocks their ReceiveAsync, but the finally still needs to run
             // (it identity-evicts its own _sendLocks entry). Disposing the
-            // dictionary out from under that finally is the original M69 race.
+            // dictionary out from under that finally is the original race.
             //
             // Snapshot the live tasks (the ContinueWith in StartAsync auto-prunes
             // the dictionary, so we tolerate a few entries already gone). Bound
@@ -1802,7 +1802,7 @@ namespace Phoenix.Controls.Hub.Core
             // CloseAsync) we still proceed to dispose so Stop() never deadlocks
             // shutdown.
             //
-            // QC02-02 — the drain is now awaited with ConfigureAwait(false)
+            // The drain is now awaited with ConfigureAwait(false)
             // instead of blocked through GetAwaiter().GetResult(). Behaviour
             // is identical (still bounded by 2 s, still proceeds with dispose
             // on timeout) — the change just stops pinning the caller's thread.
@@ -1845,7 +1845,7 @@ namespace Phoenix.Controls.Hub.Core
         /// <summary>
         /// Synchronous compatibility facade — see <see cref="StopAsync"/>.
         /// Off-thread .GetResult() avoids the UI-thread SyncContext deadlock
-        /// of the pre-QC02-02 in-process Stop(). No callers exist today; new
+        /// of the previous in-process Stop(). No callers exist today; new
         /// shutdown wiring should await StopAsync directly.
         /// </summary>
         public void Stop() => Task.Run(StopAsync).GetAwaiter().GetResult();

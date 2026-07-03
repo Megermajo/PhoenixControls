@@ -1,11 +1,11 @@
 namespace Phoenix.Controls.Shared.WinUI.Contracts;
 
 // Top-level container for everything Hub.WinUI panels consume.
-// Track 4 implements this by bridging to the existing WinForms Hub
+// The bridge implements this against the existing WinForms Hub
 // services (Bus / HUDServer / WS / ScriptManager /
-// GlobalLogger). Panels (Track 3) bind directly to the sub-interfaces.
+// GlobalLogger). Panels bind directly to the sub-interfaces.
 //
-//  Contract requires IAsyncDisposable so the host (MainWindow's
+// Contract requires IAsyncDisposable so the host (MainWindow's
 // Closed handler) can hand-walk one entry point and have every sub-service
 // — most of which subscribe to Bus / GlobalLogger / WS for the process
 // lifetime — get a chance to detach. The production HubServices already
@@ -74,7 +74,7 @@ public interface IGiveawaySource
     event System.EventHandler<long>? EntrantsChanged;
 }
 
-// HUB-UX-D7 (2026-05-14) — pop-outs fan out, no primary-subscriber gate.
+// Pop-outs fan out, no primary-subscriber gate.
 //
 // The previous IPrimarySubscriberGate contract limited each source to a
 // single VM rendering its rows; the decision to allow N pop-outs of the
@@ -93,7 +93,7 @@ public interface ILiveFeedSource
     IReadOnlyList<LiveFeedEntry> Snapshot();              // initial render
     event EventHandler<LiveFeedEntry> EntryAdded;         // append-only stream
 
-    //  Filtering is per-VM, not per-source. Each LiveFeedViewModel
+    // Filtering is per-VM, not per-source. Each LiveFeedViewModel
     // keeps its own _buffer + _selectedFilter so two pop-outs of the same
     // panel can run independent filters without trampling each other —
     // the source slot was a global trap (calling SetFilter from one
@@ -133,15 +133,15 @@ public interface IConnectionStatus
     ConnectionState StreamerBot { get; }
     ConnectionState HudOverlay  { get; }
     ConnectionState IpcBus      { get; }
-    //  Visualist / Architect bus-client status was dropped here in
-    // R5 — post-T15 they're sibling libraries embedded in Hub.WinUI, not
+    // Visualist / Architect bus-client status was dropped here —
+    // post-T15 they're sibling libraries embedded in Hub.WinUI, not
     // separate processes, so the bus-handshake signal that used to mean
     // "Architect is up" no longer has a meaningful UX surface. The aggregator
     // (ConnectionStatus.cs) keeps watching the bus-client events for future
     // surfaces, but the contract slot is gone until a consumer materialises.
     //
-    //  StateChanged is typed with a payload describing which channel
-    // changed and the previous/current state, instead of the pre-R5 bare
+    // StateChanged is typed with a payload describing which channel
+    // changed and the previous/current state, instead of the earlier bare
     // EventHandler with EventArgs.Empty. The producer fans one event per
     // changed channel inside a single Sample() tick — subscribers see one
     // fire per real transition rather than a coalesced "something flipped"

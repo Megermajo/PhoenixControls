@@ -13,7 +13,7 @@ using WinRT.Interop;
 namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 
 /// <summary>
-/// B26 (audit/winui-regressions-2026-05-24) — Visualist sibling window.
+/// Visualist sibling window.
 /// Each instance hosts its own <see cref="MainView"/> and therefore its
 /// own <c>VisualistViewModel</c>, which gives per-window isolation for:
 ///   • The active <c>LayerDocument</c> (the document the user is editing).
@@ -26,8 +26,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 /// instead of spawning a duplicate. Untitled (not-yet-saved) siblings are
 /// not deduped: there's no path to coalesce on until the user saves.
 ///
-/// Per <c>feedback_visualist_architect_chrome_independence.md</c> this
-/// window's chrome is Visualist-owned — no Architect primitives are
+/// This window's chrome is Visualist-owned — no Architect primitives are
 /// imported (the MenuBar layout mirrors the Architect sibling in spirit
 /// but is copied, not referenced). The sibling carries a File / Edit /
 /// View / Window menu strip (restored from the pre-T15
@@ -42,8 +41,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 /// File-menu note: the WinForms baseline ended with "Exit (Alt+F4)" which
 /// closed the whole MDI shell; siblings are not top-level app windows, so
 /// that item is replaced by "Close Window (Ctrl+W)" which closes only this
-/// sibling. (Lane N audit-fix 2026-06-08 added the missing New Layer +
-/// Import Media items dropped by the Lane E restore.)
+/// sibling. (A later fix added the missing New Layer +
+/// Import Media items dropped by the earlier menu restore.)
 /// </summary>
 public sealed partial class VisualistSiblingWindow : Window
 {
@@ -65,7 +64,7 @@ public sealed partial class VisualistSiblingWindow : Window
             // for siblings — they don't have access to Hub.IHubServices.Layers
             // (that's owned by the embedded MainView in Hub.MainWindow).
             // Live-presence dots on the rail will be inactive in sibling
-            // windows; the full B26 follow-up sprint can plumb a shared
+            // windows; a follow-up can plumb a shared
             // ILayerRegistrySource through the registry.
             _mainView = new MainView(this, layerSource: null);
             RootGrid.Children.Add(_mainView);
@@ -149,8 +148,8 @@ public sealed partial class VisualistSiblingWindow : Window
 
     private void OnFileNewClicked(object sender, RoutedEventArgs e)
     {
-        // Lane N audit-fix (2026-06-08): File → New Layer was missing from the
-        // Lane E menu restore. MainView.NewLayer() is async void (its inner
+        // File → New Layer was missing from the
+        // earlier menu restore. MainView.NewLayer() is async void (its inner
         // preset-picker is fire-and-forget with faults routed through
         // GlobalLogger), so no Task to discard here — same entry point Hub's
         // MenuDefinition.Visualist dispatches (token visualist.file.newLayer).
@@ -166,8 +165,8 @@ public sealed partial class VisualistSiblingWindow : Window
 
     private void OnFileImportMediaClicked(object sender, RoutedEventArgs e)
     {
-        // Lane N audit-fix (2026-06-08): File → Import Media was missing from
-        // the Lane E menu restore. MainView.ImportMediaAsync() returns Task —
+        // File → Import Media was missing from
+        // the earlier menu restore. MainView.ImportMediaAsync() returns Task —
         // discard it (fire-and-forget) the same way OnViewMediaLibraryClicked
         // handles ShowMediaLibraryAsync. Token visualist.file.importMedia.
         try { _ = _mainView?.ImportMediaAsync(); }
@@ -294,7 +293,7 @@ public sealed partial class VisualistSiblingWindow : Window
             if (!File.Exists(path))
             {
                 // Prune the stale entry and surface a log line rather than a
-                // modal (feedback_no_modal_dialogs_for_repeatable_rejections).
+                // modal dialog.
                 Services.RecentFiles.Remove(path);
                 StatusLeft.Text = $"Recent entry missing: {Path.GetFileName(path)}";
                 GlobalLogger.Log(
@@ -389,7 +388,7 @@ public sealed partial class VisualistSiblingWindow : Window
     }
 
     /// <summary>
-    /// B26 — Load <paramref name="absolutePath"/> into the hosted MainView.
+    /// Load <paramref name="absolutePath"/> into the hosted MainView.
     /// Returns true on success. Called by <see cref="VisualistWindowRegistry.OpenFileAsync"/>
     /// after constructing the empty window so the load + registry-track
     /// can fail-close cleanly when the file is invalid.
@@ -423,7 +422,7 @@ public sealed partial class VisualistSiblingWindow : Window
     public bool IsDirty => _mainView?.IsDirty ?? false;
 
     /// <summary>
-    /// B26 — accessor for the hosted MainView so the registry's cross-
+    /// Accessor for the hosted MainView so the registry's cross-
     /// window file-routing path can rebind the window's key after a Save
     /// As. Kept narrow (returns the MainView, not its VM) so future
     /// callers don't accidentally grow new cross-pillar dependencies.

@@ -27,14 +27,14 @@ namespace Phoenix.Controls.Visualist.Core
             public string? ErrorMessage   { get; set; }
 
             /// <summary>
-            /// C10 / F7 — name of the kernel that produced this metadata (e.g.
+            /// Name of the kernel that produced this metadata (e.g.
             /// "Image.Mask", "Image.Blend"). Used by tests to assert graph
             /// traversal walked through the expected kernel.
             /// </summary>
             public string? Kernel         { get; set; }
 
             /// <summary>
-            /// C10 / F7 — kernel-specific attributes captured at evaluation time
+            /// Kernel-specific attributes captured at evaluation time
             /// (e.g. Image.Blend's Mode, Image.Mask's Mode). Tests assert against
             /// these so the design-time mirror matches the JS-side behavior.
             /// </summary>
@@ -67,8 +67,8 @@ namespace Phoenix.Controls.Visualist.Core
             Error,
         }
 
-        // PreviewSeam: wired during the live-thumbnail sprint (Sprint A,
-        // 0.10.0 redesign bundle). EvaluatePreviews + PreviewSnapshot are
+        // PreviewSeam: wired during the live-thumbnail work.
+        // EvaluatePreviews + PreviewSnapshot are
         // the engine-side surface for the canvas's per-node body preview
         // strip. WidgetGraphCanvas.RefreshPreviews() (Visualist.WinUI)
         // invokes EvaluatePreviews after Rebuild() and after every
@@ -77,7 +77,6 @@ namespace Phoenix.Controls.Visualist.Core
         // snapshot into WidgetGraphNodeView.SetPreview, which forwards to
         // the per-node ThumbnailHost (Visualist.WinUI/Controls/ThumbnailHost.xaml)
         // for bitmap / swatch / placeholder / error-tint rendering.
-        // Originally tracked as QC22-06 / QC23-02.
         /// <summary>
         /// Per-node body-preview snapshot. Computed by <see cref="EvaluatePreviews"/>
         /// at graph-load / graph-mutation time and consumed by the canvas paint
@@ -292,7 +291,7 @@ namespace Phoenix.Controls.Visualist.Core
         private static EvalResult EvaluateCore(Graph graph, LayerResolution layerResolution, WidgetRect widgetRect)
         {
             var result = new EvalResult();
-            // M67 — per-evaluation memoization. Mirrors compositor.js's per-render
+            // Per-evaluation memoization. Mirrors compositor.js's per-render
             // Evaluator cache so the C# evaluator and the JS compositor agree on
             // diamond-graphs (a node feeding two downstream branches is computed
             // once, not twice).
@@ -312,7 +311,7 @@ namespace Phoenix.Controls.Visualist.Core
                 }
             }
 
-            // C11 — Visual.Complete sink: evaluate (and walk into VisitedNodeIds) any
+            // Visual.Complete sink: evaluate (and walk into VisitedNodeIds) any
             // upstream graph that ends at the Complete sink, mirroring compositor.js's
             // evalAnyInputOf(Complete) probe. Result isn't surfaced as ImageMetadata
             // (Complete is just a flow signal), but the visited-node bookkeeping must
@@ -339,7 +338,7 @@ namespace Phoenix.Controls.Visualist.Core
             return result;
         }
 
-        // Memoization wrapper around EvalImage (M67).
+        // Memoization wrapper around EvalImage.
         private static ImageMetadata? EvalImageMemoized(
             Graph graph, string nodeId, string socketId,
             LayerResolution layerRes, WidgetRect widgetRect,
@@ -390,7 +389,7 @@ namespace Phoenix.Controls.Visualist.Core
                 "Image.Tile"        => EvalImageTile(graph, node, layerRes, widgetRect, visiting, visited),
                 "Image.Blend"       => EvalImageBlend(graph, node, layerRes, widgetRect, visiting, visited),
                 "Image.Combine"     => EvalImageCombine(graph, node, layerRes, widgetRect, visiting, visited),
-                // Sweep 22 — procedural mask shape generators. The C# mirror is a
+                // Procedural mask shape generators. The C# mirror is a
                 // metadata walker (no real canvas), so each kernel just stamps a
                 // layer-sized ImageMetadata so downstream Image.Mask + Display
                 // dimension propagation works during graph-traversal tests.
@@ -400,11 +399,11 @@ namespace Phoenix.Controls.Visualist.Core
                 "Mask.LinearGradient" => EvalMaskShapeStub(layerRes, "Mask.LinearGradient"),
                 "Mask.RadialGradient" => EvalMaskShapeStub(layerRes, "Mask.RadialGradient"),
                 "Mask.Vignette"       => EvalMaskShapeStub(layerRes, "Mask.Vignette"),
-                // Sweep 23 — vertex-list and parameterised shape generators.
+                // Vertex-list and parameterised shape generators.
                 "Mask.Polygon"        => EvalMaskShapeStub(layerRes, "Mask.Polygon"),
                 "Mask.Bezier"         => EvalMaskShapeStub(layerRes, "Mask.Bezier"),
                 "Mask.Star"           => EvalMaskShapeStub(layerRes, "Mask.Star"),
-                // H65 / F14 — Viewer passes the upstream image through unchanged.
+                // Viewer passes the upstream image through unchanged.
                 "Viewer"            => EvalImagePassthrough(graph, node, "In",    layerRes, widgetRect, visiting, visited),
                 // Result.If — barrier between an Image source and Display. Reads
                 // eventData[When] and compares to Equals; passes In through on match,
@@ -413,7 +412,7 @@ namespace Phoenix.Controls.Visualist.Core
                 // mistakes (mis-typed When attr) surface in GlobalLogger.
                 "Result.If"         => EvalResultIf(graph, node, layerRes, widgetRect, visiting, visited),
 
-                // #7 — design-time stubs for templates registered in
+                // Design-time stubs for templates registered in
                 // WidgetNodeRegistry that previously hit the HasError default.
                 // The graph-walk needs to *propagate* dimensions through these
                 // nodes during design-time tests; the actual pixel render happens
@@ -422,7 +421,7 @@ namespace Phoenix.Controls.Visualist.Core
                 // fail on legitimate templates. Source is empty (the runtime
                 // resolves real bytes; design time is a metadata walker).
 
-                // QC50-11 — Color.Constant is a typed Color producer (its
+                // Color.Constant is a typed Color producer (its
                 // template output socket is SocketDataType.Color). Previously
                 // this evaluator returned a 1×1 ImageMetadata stub so a wire
                 // that landed on an Image-shaped consumer wouldn't error the
@@ -475,7 +474,7 @@ namespace Phoenix.Controls.Visualist.Core
                 // Audio.Load / Audio.Play — audio nodes have no image output.
                 // The graph-walker only reaches them if the user wired audio
                 // into a non-audio image-consumer; per the file-header "no
-                // silent passthrough" rule (L932-935), surface this as a loud
+                // silent passthrough" rule, surface this as a loud
                 // HasError so the author sees the type mismatch at design time
                 // instead of an invisible 0×0 stub that the JS runtime would
                 // also drop on the floor.
@@ -492,7 +491,7 @@ namespace Phoenix.Controls.Visualist.Core
                     Kernel       = "Audio.Play",
                 },
 
-                // /76 templates — Particles.Emit and WebSource are
+                // Particles.Emit and WebSource are
                 // registered in WidgetNodeRegistry (Image / Inputs categories)
                 // but the runtime kernels live in compositor.js. Stamp
                 // widget-rect dimensions so design-time dim propagation
@@ -511,7 +510,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         /// <summary>
-        /// M66 — Image.Load width/height divergence between C# and JS.
+        /// Image.Load width/height divergence between C# and JS.
         ///
         /// The C# design-time mirror has no real bitmap to inspect, so it returns the
         /// widget-rect dimensions as the "what the layout will reserve for this image"
@@ -520,7 +519,7 @@ namespace Phoenix.Controls.Visualist.Core
         /// real bitmap has decoded. Two runtimes, two contracts, and the values cannot
         /// be reconciled at design-time without actually loading the bitmap from disk
         /// (which the design-time mirror deliberately avoids — it's a metadata walker,
-        /// not a renderer). Sweep 2 attempted to align by returning <c>(0, 0)</c> as an
+        /// not a renderer). An earlier attempt aligned by returning <c>(0, 0)</c> as an
         /// "intrinsic-pending" sentinel and reverted because the pre-existing
         /// <c>NodeEvaluationTests.Image_Load_Then_Display_Resolves_Source_And_WidgetSize</c>
         /// (and the cascade of Image.Scale tests it anchors) pins the widget-rect
@@ -545,7 +544,7 @@ namespace Phoenix.Controls.Visualist.Core
 
         private static ImageMetadata EvalImageLoadUrl(Node node, WidgetRect widgetRect)
         {
-            // #7d — match compositor.js, which routes the URL through the Hub's
+            // Match compositor.js, which routes the URL through the Hub's
             // /asset/url?u= proxy endpoint instead of loading the bare URL directly.
             // Tests that assert on Source compare to the JS-shaped value, and a
             // graph-walk verifying "what URL will the OBS browser actually fetch"
@@ -563,7 +562,7 @@ namespace Phoenix.Controls.Visualist.Core
             };
         }
 
-        // Sweep 22 — common stub for Mask.* shape generators. Real rendering is
+        // Common stub for Mask.* shape generators. Real rendering is
         // browser-side in compositor.js (Canvas2D); the C# mirror just stamps the
         // output dims so downstream Image.Mask / Display see a valid layer-sized
         // mask source. No params are validated here — graph-traversal tests don't
@@ -593,7 +592,7 @@ namespace Phoenix.Controls.Visualist.Core
             if (upstream is null || upstream.HasError) return upstream;
 
             // Factor: scalar input or attribute fallback.
-            // #7a — JS / C# parity. compositor.js falls back silently to the Factor
+            // JS / C# parity. compositor.js falls back silently to the Factor
             // attribute when the Factor socket's Math chain returns null (cycle,
             // missing upstream), surfacing the error via node._errorGlyph rather
             // than blocking the render. C# previously hard-errored here, so a graph
@@ -614,7 +613,7 @@ namespace Phoenix.Controls.Visualist.Core
                     Phoenix.Controls.Shared.Models.LogLevel.System);
             }
             double factor = wired ?? ParseDouble(node.Attributes.GetValueOrDefault("Factor", "1"));
-            // QC50-03: clamp Factor to a strictly positive minimum so an
+            // Clamp Factor to a strictly positive minimum so an
             // Image.Scale with Factor=0 (or negative, which round() would
             // also collapse to 0) doesn't emit a 0×0 metadata that downstream
             // Display / dim-propagation tests then interpret as "no image".
@@ -633,7 +632,7 @@ namespace Phoenix.Controls.Visualist.Core
             };
         }
 
-        // F9 — layerRes threaded through so Math.Resolution can return the layer's
+        // layerRes threaded through so Math.Resolution can return the layer's
         // dimensions when reached via an upstream scalar walk.
         private static double? ResolveScalarSocket(Graph graph, Node node, string socketName,
             LayerResolution layerRes,
@@ -665,7 +664,7 @@ namespace Phoenix.Controls.Visualist.Core
                     case "Math.Add":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => a + b);
                     case "Math.Sub":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => a - b);
                     case "Math.Mul":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => a * b);
-                    // Audit fix — match compositor.js EXACTLY. The browser runtime
+                    // Match compositor.js EXACTLY. The browser runtime
                     // (the source of truth for what the streamer sees) does
                     // `b === 0 ? 0 : a / b` (evalMathBinary). This C# design-time
                     // mirror previously returned NaN and the comment wrongly claimed
@@ -689,12 +688,12 @@ namespace Phoenix.Controls.Visualist.Core
                         return System.Math.Clamp(v.Value, mn.Value, mx.Value);
                     }
                     case "Math.Resolution":
-                        // C10 / F9 — the C# eval mirror only walks scalar/image graphs;
+                        // The C# eval mirror only walks scalar/image graphs;
                         // Vector outputs aren't consumed here, so collapse the Size vector
                         // to its width component (most common scaling math: resolution.x / 2).
                         return (double)layerRes.Width;
 
-                    // ── Track D — numeric Math nodes ────────────────────────
+                    // ── Numeric Math nodes ──────────────────────────────────
                     // Each reads its scalar input(s) wired-wins-over-attr via
                     // ResolveScalarOrAttr (the same helper Image.Scale's Factor /
                     // Image.Blur's Radius use), then applies the spec's C# semantics.
@@ -778,7 +777,7 @@ namespace Phoenix.Controls.Visualist.Core
                         return ok ? 1.0 : 0.0;
                     }
 
-                    // ── Track D — Time / animation nodes (design-time t = 0) ─
+                    // ── Time / animation nodes (design-time t = 0) ──────────
                     // The C# mirror has no clock, so timeMs/1000 collapses to t = 0.
                     // The JS side reads triggerContext.timeMs; here every time-driven
                     // term is evaluated at the origin.
@@ -823,7 +822,7 @@ namespace Phoenix.Controls.Visualist.Core
                         return KeyframeInterpolation.ApplyCurve(tIn, curve);
                     }
 
-                    // ── Track D — scalar-output Convert / String readers ────
+                    // ── Scalar-output Convert / String readers ──────────────
                     // Convert.StringToNumber reads a String input (wired-wins over the
                     // In attribute); parseFloat with NaN/empty -> 0. String.Length reads
                     // a String input and returns its character count.
@@ -838,7 +837,7 @@ namespace Phoenix.Controls.Visualist.Core
                         return s.Length;
                     }
 
-                    // F11 — Vector*.Split nodes expose per-component scalar outputs (X/Y[/Z[/W]]).
+                    // Vector*.Split nodes expose per-component scalar outputs (X/Y[/Z[/W]]).
                     // When walked from a downstream scalar consumer, look up which named output
                     // socket the link is using, evaluate the upstream Vector input, then return
                     // the requested component. Mirrors the existing Vector.Split (Vector2)
@@ -854,7 +853,7 @@ namespace Phoenix.Controls.Visualist.Core
                         // Resolve the upstream Vector input ("V") to its component values.
                         // Pass the Split's natural width so a scalar wired into V broadcasts
                         // to a vector of the right size (mirrors compositor.js evalVectorNSplit
-                        // L42 broadcast — Scalar→VectorN parity).
+                        // broadcast — Scalar→VectorN parity).
                         int splitLen = src.Title switch
                         {
                             "Vector.Split"  => 2,
@@ -874,7 +873,7 @@ namespace Phoenix.Controls.Visualist.Core
                         };
                     }
 
-                    // F12 — constants exposing per-component scalar attributes. Allow scalar
+                    // Constants exposing per-component scalar attributes. Allow scalar
                     // walks that grab one component (rare, but consistent with Split). Tests
                     // typically read these via the vector evaluator, but this keeps parity
                     // with the JS side which lets you evaluate any output as the typed value.
@@ -889,11 +888,11 @@ namespace Phoenix.Controls.Visualist.Core
             finally { visiting.Remove(nodeId); }
         }
 
-        // ── F11 / F12 / M56 — Vector evaluator ──────────────────────────────────
+        // ── Vector evaluator ────────────────────────────────────────────────────
         //
         // The vector evaluator mirrors the scalar walker: it walks upstream from a
         // node's vector output socket, returning a `double[]` of length 2/3/4. It
-        // is intentionally narrow — it covers only the kernels added in sweep 3:
+        // is intentionally narrow — it covers only these kernels:
         //   • Vector2/3/4.Constant (read X/Y[/Z[/W]] attrs)
         //   • Vector.Rect4         (read X/Y/W/H attrs as a 4-vector)
         //   • Vector3/4.Combine    (read N scalar inputs)
@@ -901,7 +900,7 @@ namespace Phoenix.Controls.Visualist.Core
         //   • Math.Resolution      (returns layer width/height as a 2-vector)
         // The Vector2.Combine path stays scalar-only at present; the C# walker
         // doesn't need it as no downstream image kernel pulls a Vector2 from it
-        // through code paths we currently mirror. F11 still registers the template
+        // through code paths we currently mirror. The template is still registered
         // so it serializes correctly in graph files.
 
         /// <summary>
@@ -917,7 +916,7 @@ namespace Phoenix.Controls.Visualist.Core
             return EvalVectorNode(graph, nodeId, layerResolution, visiting, visited);
         }
 
-        // Track D — public entry points mirroring EvaluateVectorOutput for the
+        // Public entry points mirroring EvaluateVectorOutput for the
         // scalar and string walkers. The Math / Time numeric nodes resolve as
         // scalars; the String / Convert(color)/Message.Read nodes resolve as
         // strings (Color is carried as a "#rrggbbaa" hex string, matching
@@ -978,7 +977,7 @@ namespace Phoenix.Controls.Visualist.Core
                 return vec;
             }
 
-            // L42 broadcast — Scalar→VectorN widening parity with compositor.js.
+            // Scalar→VectorN widening parity with compositor.js.
             // When the upstream isn't a recognised vector kernel (e.g. Scalar.Constant,
             // Math.Add, Math.Lerp on scalar inputs), evaluate it as a scalar and broadcast
             // the value across all components of the expected vector width. Without this,
@@ -991,7 +990,7 @@ namespace Phoenix.Controls.Visualist.Core
             return null;
         }
 
-        // L42 broadcast helper — mirrors compositor.js's _broadcastToVector{2,3,4}.
+        // Broadcast helper — mirrors compositor.js's _broadcastToVector{2,3,4}.
         // A scalar fed into a VectorN socket widens to (s, s, …, s).
         private static double[] BroadcastScalarToVector(double s, int n)
         {
@@ -1035,7 +1034,7 @@ namespace Phoenix.Controls.Visualist.Core
                             ParseDouble(src.Attributes.GetValueOrDefault("Z", "0")),
                             ParseDouble(src.Attributes.GetValueOrDefault("W", "0")),
                         };
-                    // F12 — Vector.Rect4 is a friendly alias for Vector4.Constant whose
+                    // Vector.Rect4 is a friendly alias for Vector4.Constant whose
                     // attributes name the four components X/Y/W/H (matches Image.Crop's
                     // Rect socket convention). The output is a 4-vector in [X, Y, W, H] order.
                     case "Vector.Rect4":
@@ -1047,7 +1046,7 @@ namespace Phoenix.Controls.Visualist.Core
                             ParseDouble(src.Attributes.GetValueOrDefault("H", "0")),
                         };
 
-                    // ── Vector combiners (F11) ──────────────────────────────
+                    // ── Vector combiners ────────────────────────────────────
                     case "Vector.Combine":
                     {
                         double? x = ResolveScalarSocket(graph, src, "X", layerRes, visiting, visited);
@@ -1073,7 +1072,7 @@ namespace Phoenix.Controls.Visualist.Core
                         return new[] { x.Value, y.Value, z.Value, w.Value };
                     }
 
-                    // ── Per-component lerps (M56) ───────────────────────────
+                    // ── Per-component lerps ─────────────────────────────────
                     // Mirrors the scalar Math.Lerp path: a + (b - a) * t, applied per
                     // component. T is a scalar shared across all components.
                     case "Math.LerpVector2":
@@ -1083,7 +1082,7 @@ namespace Phoenix.Controls.Visualist.Core
                     case "Math.LerpVector4":
                         return LerpVectorN(graph, src, expectedLength: 4, layerRes, visiting, visited);
 
-                    // ── Layer resolution (F9 vector parity) ─────────────────
+                    // ── Layer resolution (vector parity) ────────────────────
                     case "Math.Resolution":
                         return new[] { (double)layerRes.Width, (double)layerRes.Height };
                 }
@@ -1117,7 +1116,7 @@ namespace Phoenix.Controls.Visualist.Core
             return op(a.Value, b.Value);
         }
 
-        // ── Track D — String / Convert(color) / Message.Read evaluator ──────────
+        // ── String / Convert(color) / Message.Read evaluator ────────────────────
         //
         // The widget evaluator previously had no String walker (see the Result.If
         // attribute-read workaround). This walker mirrors EvalScalarNode: it walks
@@ -1235,7 +1234,7 @@ namespace Phoenix.Controls.Visualist.Core
             finally { visiting.Remove(nodeId); }
         }
 
-        // Track D — String socket resolver with attribute fallback. Honours the
+        // String socket resolver with attribute fallback. Honours the
         // "wired socket wins" contract: walk the String link if present (and it
         // resolves), then fall back to the (quote-stripped) attribute. Mirrors
         // ResolveScalarOrAttr for the string world.
@@ -1257,12 +1256,12 @@ namespace Phoenix.Controls.Visualist.Core
             return StripQuotes(node.Attributes.GetValueOrDefault(attrKey, defaultValue));
         }
 
-        // Track D — clamp a (possibly fractional / out-of-range) channel value to a
+        // Clamp a (possibly fractional / out-of-range) channel value to a
         // 0..255 integer for Convert.ColorFromRGBA hex assembly.
         private static int ClampByte(double v) =>
             (int)System.Math.Clamp(System.Math.Round(v, MidpointRounding.AwayFromZero), 0, 255);
 
-        // Track D — normalise / validate a hex color string for Convert.HexToColor.
+        // Normalise / validate a hex color string for Convert.HexToColor.
         // Accepts #rgb, #rrggbb, #rrggbbaa (with or without a leading '#'); anything
         // else falls back to "#ffffff". #rgb is expanded to #rrggbb. Mirrors the JS
         // side's normalise/validate-or-default behaviour.
@@ -1280,7 +1279,7 @@ namespace Phoenix.Controls.Visualist.Core
             return "#" + h.ToLowerInvariant();
         }
 
-        // #7 — Used by templates that may or may not be wired to an upstream
+        // Used by templates that may or may not be wired to an upstream
         // image (e.g. Text.Translate). When wired: passthrough. When not wired:
         // stamp a widget-sized stub so the graph walk doesn't error. Avoids
         // the previous HasError-on-unwired-input behavior for templates whose
@@ -1298,13 +1297,13 @@ namespace Phoenix.Controls.Visualist.Core
             return EvalImage(graph, link.FromNodeId, link.FromSocketId, layerRes, widgetRect, visiting, visited);
         }
 
-        // #7c / QC50-08 — Image.Crop dimension parity with compositor.js.
+        // Image.Crop dimension parity with compositor.js.
         // The previous C# evaluator used EvalImagePassthrough for Image.Crop, which
         // returned the upstream dims unchanged. JS shrinks to the cropped Rect.
         // Mirror the JS dim calc here so design-time previews match runtime layout.
         //
         // Rect is a Vector4 (x,y,w,h) of 0..1 fractions of the upstream image —
-        // NOT pixels. This was the QC50-08 discrepancy: the template's comment
+        // NOT pixels. This was the discrepancy: the template's comment
         // historically claimed "source-image pixels" but both the JS kernel
         // (compositor.js evalNodeOutput / case 'Image.Crop') and this evaluator
         // multiply the rect by source w/h. The browser is the source of truth
@@ -1312,7 +1311,7 @@ namespace Phoenix.Controls.Visualist.Core
         //
         // The fraction convention is the canonical contract across NodeTemplates.cs,
         // this evaluator, and compositor.js (both the runtime evaluator and the
-        // manipulator's parseFractionRect — see QC50-08 manipulator fix).
+        // manipulator's parseFractionRect).
         //
         // Rect resolves either via the wired "Rect" socket or — when unwired —
         // the "Rect" attribute as comma-separated "x,y,w,h" (default "0,0,1,1",
@@ -1338,7 +1337,7 @@ namespace Phoenix.Controls.Visualist.Core
                 };
             }
 
-            // QC50-10: an empty or malformed Rect attribute (e.g. ",,,") parses
+            // An empty or malformed Rect attribute (e.g. ",,,") parses
             // to [0,0,0,0] and previously collapsed the crop to a 1×1 sliver
             // via the Math.Max(1, …) floors below. That's an opaque failure —
             // authors see no image. Detect the all-zero width/height case and
@@ -1380,7 +1379,7 @@ namespace Phoenix.Controls.Visualist.Core
             return EvalImage(graph, link.FromNodeId, link.FromSocketId, layerRes, widgetRect, visiting, visited);
         }
 
-        // ── C10 / F7 — Image kernel evaluators ──────────────────────────────────
+        // ── Image kernel evaluators ─────────────────────────────────────────────
         //
         // The C# evaluator does not perform real pixel work — it's the design-time
         // mirror of compositor.js used to validate graph traversal + metadata flow.
@@ -1392,7 +1391,7 @@ namespace Phoenix.Controls.Visualist.Core
         //      matching the JS side's `null + console.warn` policy. Silent
         //      passthrough is the failure mode this fix exists to remove.
 
-        // QC50-04 / QC50-06 — Image.Transform reads its wired Vector2/Scalar
+        // Image.Transform reads its wired Vector2/Scalar
         // sockets (Translate/Scale/Rotate) first, falling back to the static
         // attribute defaults (TranslateX/Y, ScaleX/Y, Rotation) only when the
         // socket is unwired. The previous implementation only read the
@@ -1434,7 +1433,7 @@ namespace Phoenix.Controls.Visualist.Core
             };
         }
 
-        // QC50-06 — Image.ColorAdjust resolves each scalar socket (Brightness /
+        // Image.ColorAdjust resolves each scalar socket (Brightness /
         // Contrast / Saturation / Hue) through the upstream graph before
         // falling back to the attribute default. Mirrors compositor.js's
         // _evalScalarSocket-driven path so design-time previews track the
@@ -1467,12 +1466,12 @@ namespace Phoenix.Controls.Visualist.Core
             };
         }
 
-        // ── QC50-04..07 shared helpers ──────────────────────────────────────
+        // ── Shared helpers ──────────────────────────────────────────────────
         // Both helpers honour the "wired socket wins" contract from
         // compositor.js: walk the link if present, then fall back to the
         // attribute(s). Unwired sockets that can't resolve (cycle, broken
         // upstream) fall through to the attribute too — same lenient
-        // behaviour Image.Scale uses for its Factor socket (see #7a comment).
+        // behaviour Image.Scale uses for its Factor socket.
 
         private static double ResolveScalarOrAttr(
             Graph graph, Node node, string socketName, string attrKey, double defaultValue,
@@ -1525,7 +1524,7 @@ namespace Phoenix.Controls.Visualist.Core
             return (x, y);
         }
 
-        // QC50-07 sweep — Image.Blur / Gaussian / Mosaic / Shadow / Glow / Distort
+        // Image.Blur / Gaussian / Mosaic / Shadow / Glow / Distort
         // all expose Scalar inputs on their templates but historically only read
         // the attribute default. Each kernel now mirrors the JS side
         // (compositor.js _evalScalarSocket) so an upstream Math chain or
@@ -1724,7 +1723,7 @@ namespace Phoenix.Controls.Visualist.Core
                 Kernel = "Image.Mask",
                 KernelAttributes =
                 {
-                    // #7b — strip enclosing quotes to mirror compositor.js
+                    // Strip enclosing quotes to mirror compositor.js
                     // (`stripQuotes(attr(node, 'Mode', '"alpha"'))`). Without this,
                     // a Mode attribute persisted as `"alpha"` ships through with
                     // literal escaped quotes and the JS kernel picks the default branch.
@@ -1756,7 +1755,7 @@ namespace Phoenix.Controls.Visualist.Core
             if (a is null) return b;   // empty bottom → just the top layer
 
             string mode = StripQuotes(node.Attributes.GetValueOrDefault("Mode", "normal"));
-            // C10 / F7 — sanity-check Mode against the standard CSS blend list,
+            // Sanity-check Mode against the standard CSS blend list,
             // matching the JS side's fallback behavior. Invalid modes still
             // succeed with a sane default rather than erroring; the JS side
             // logs a console.warn and falls back to source-over.
@@ -1765,7 +1764,7 @@ namespace Phoenix.Controls.Visualist.Core
                 mode = "normal";
             }
 
-            // QC50-07 sweep — Opacity socket honours wired upstream first.
+            // Opacity socket honours wired upstream first.
             double opacity = ResolveScalarOrAttr(graph, node, "Opacity", "Opacity", 1, layerRes, visiting, visited);
 
             return new ImageMetadata
@@ -1807,7 +1806,7 @@ namespace Phoenix.Controls.Visualist.Core
                 mode = "normal";
             }
 
-            // QC50-07 sweep — Opacity socket honours wired upstream first.
+            // Opacity socket honours wired upstream first.
             double opacity = ResolveScalarOrAttr(graph, node, "Opacity", "Opacity", 1, layerRes, visiting, visited);
 
             return new ImageMetadata
@@ -1832,7 +1831,7 @@ namespace Phoenix.Controls.Visualist.Core
             "alpha-key", "luminance-key", "inv-luminance",
         };
 
-        // QC50-05 — Image.Tile reads its Repeat Vector2 socket first, then
+        // Image.Tile reads its Repeat Vector2 socket first, then
         // falls back to the per-axis attribute (RepeatX / RepeatY). The JS
         // side does the same thing already (see compositor.js evalImageTile),
         // so the C# evaluator was the laggard.
@@ -1846,7 +1845,7 @@ namespace Phoenix.Controls.Visualist.Core
             (double rx, double ry) = ResolveVector2OrAttrPair(
                 graph, node, "Repeat", "RepeatX", "RepeatY", 1, 1, layerRes, visiting, visited);
 
-            // L41 — Wrap parity with compositor.js. The browser kernel reads
+            // Wrap parity with compositor.js. The browser kernel reads
             // `stripQuotes(attr(node, 'Wrap', '"repeat"'))` and branches on
             // repeat / mirror / clamp, warning + falling back to 'repeat' on an
             // unknown value. Mirror that here so the design-time KernelAttributes
@@ -1878,7 +1877,7 @@ namespace Phoenix.Controls.Visualist.Core
             };
         }
 
-        // L41 — Image.Tile per-edge wrap modes. Matches the set compositor.js
+        // Image.Tile per-edge wrap modes. Matches the set compositor.js
         // validates against (repeat / mirror / clamp); anything else falls back
         // to 'repeat' with a design-time warn.
         private static readonly HashSet<string> _validTileWrapModes = new(System.StringComparer.OrdinalIgnoreCase)
@@ -1886,7 +1885,7 @@ namespace Phoenix.Controls.Visualist.Core
             "repeat", "mirror", "clamp",
         };
 
-        // C10 / F7 — standard CSS blend modes accepted by canvas
+        // Standard CSS blend modes accepted by canvas
         // globalCompositeOperation. Matches the list compositor.js validates against.
         private static readonly HashSet<string> _validBlendModes = new(System.StringComparer.OrdinalIgnoreCase)
         {
@@ -1918,7 +1917,7 @@ namespace Phoenix.Controls.Visualist.Core
         // Result.If — gate the upstream Image when eventData[When] equals the Equals
         // attribute (or wired Equals input).
         //
-        // QC22-09 (2026-05-16) — the two "no image flowed through this leg" cases
+        // The two "no image flowed through this leg" cases
         // are now distinguishable to the design-time test surface (and the canvas
         // preview):
         //
@@ -1980,7 +1979,7 @@ namespace Phoenix.Controls.Visualist.Core
             if (argMissing)
             {
                 LogMissingArg(node, when);
-                // QC22-09 — surface arg-missing as a HasError ImageMetadata so the
+                // Surface arg-missing as a HasError ImageMetadata so the
                 // design-time test surface and the canvas preview can distinguish
                 // it from a legitimate value-mismatch gate (which still returns
                 // null below). Tests assert against ErrorMessage; the canvas

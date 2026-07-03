@@ -53,10 +53,10 @@ public sealed partial class ArchitectSiblingWindow : Window
         _viewModel = new ArchitectViewModel();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
 
-        // Three-way wiring — canvas hosts the graph, rail mirrors it. Sprint
-        // 26 #10 — the docked inspector card is replaced by a floating
+        // Three-way wiring — canvas hosts the graph, rail mirrors it. The
+        // docked inspector card is replaced by a floating
         // InspectorWindow opened from the rail header. Identical to
-        // MainView's post-Sprint-26 wiring so the sibling window has parity
+        // MainView's wiring so the sibling window has parity
         // with the embedded view (modulo the absent pillar tabs + databank).
         // Databank tab is intentionally NOT exposed on sibling windows: the
         // databank is a project-wide singleton and editing it from multiple
@@ -65,11 +65,11 @@ public sealed partial class ArchitectSiblingWindow : Window
         CanvasView.ArchitectVm = _viewModel;
         Rail.SetCanvasContext(_viewModel.LogicCanvas);
         Rail.SetArchitectContext(_viewModel);
-        //  Hand the canvas view back to the rail so SubGraphWindow
+        // Hand the canvas view back to the rail so SubGraphWindow
         // editors launched from rail rows refocus this canvas on close.
         Rail.SetCanvasView(CanvasView);
 
-        //  #10 — rail collapse + floating Inspector window. Both
+        // Rail collapse + floating Inspector window. Both
         // toggles persist their state through ConfigManager so a user who
         // likes a tight canvas-first layout doesn't have to re-collapse on
         // every restart. ApplyPersistedRailAndInspectorState (run after the
@@ -85,7 +85,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         // dropping a .phxg already open elsewhere just focuses that window.
         CanvasView.FileOpenRequested += (_, path) => SpawnOrFocusSibling(path);
 
-        //  Welcome card buttons must work inside sibling windows
+        // Welcome card buttons must work inside sibling windows
         // too — pre-fix the sibling subscribed only to OpenRequested, so the
         // empty-state "New Graph" / "Recent…" cards silently dropped. Both
         // route to the same handlers the menu uses; "New" always spawns a
@@ -93,11 +93,11 @@ public sealed partial class ArchitectSiblingWindow : Window
         CanvasView.NewRequested        += (_, _) => OnFileNewClicked(this, new RoutedEventArgs());
         CanvasView.OpenRecentRequested += async (_, _) => await OpenRecentFromCanvasAsync();
 
-        //  P1-A17 — F1-without-selection raises this event so the
-        // shell can pop the Keyboard Shortcuts dialog (per  P1-A13).
+        // F1-without-selection raises this event so the
+        // shell can pop the Keyboard Shortcuts dialog.
         CanvasView.KeyboardShortcutsRequested += async (_, _) => await ShowKeyboardShortcutsDialogAsync();
 
-        // B11 (audit/winui-regressions-2026-05-24) — F4 inspector toggle
+        // F4 inspector toggle
         // on the canvas bridges into the rail-driven
         // OnInspectorToggleRequested handler so the sibling window picks
         // up the same floating-InspectorWindow open/close path the rail
@@ -109,7 +109,7 @@ public sealed partial class ArchitectSiblingWindow : Window
 
         _viewModel.NodeFlashRequested += nodeId => CanvasView.FlashNode(nodeId);
 
-        //  Grey out the Edit-menu undo/redo items when
+        // Grey out the Edit-menu undo/redo items when
         // the stack is empty (push-based via the canvas's UndoRedoChanged).
         CanvasView.UndoRedoChanged += OnSiblingUndoRedoChanged;
         RefreshEditMenuEnabled();
@@ -119,8 +119,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         // .phx export failure surface — parity with MainView. Without this
         // a sibling window's "Save" silently succeeds for the .phxg even when
         // the .phx sister-file export fails, and Hub keeps running the old
-        // script (Architect UX review P1-32, same regression repaired in
-        // MainView).
+        // script (same regression repaired in MainView).
         _viewModel.PhxExportFailed += (_, _) =>
         {
             if (DispatcherQueue is null) return;
@@ -130,9 +129,9 @@ public sealed partial class ArchitectSiblingWindow : Window
         };
 
         // .phxg load failures surface as a status-bar message; pre-T15 they
-        // popped a MessageBox, but feedback_no_modal_dialogs_for_repeatable_rejections
-        // says no modals for repeatable conditions. The InfoBar pattern from
-        // MainView could ride on a future sweep; for sibling windows the
+        // popped a MessageBox, but repeatable conditions should not pop a
+        // modal. The InfoBar pattern from
+        // MainView could ride on a future pass; for sibling windows the
         // status bar is the lightweight surface.
         GraphSerializer.OnLoadFailed += OnLoadFailed;
 
@@ -175,7 +174,7 @@ public sealed partial class ArchitectSiblingWindow : Window
             if (_appWindow is not null)
             {
                 _appWindow.Closing += OnAppWindowClosing;
-                //  Apply a hard minimum-size floor via
+                // Apply a hard minimum-size floor via
                 // the WM_GETMINMAXINFO subclass (the "follow-up sweep" tool that
                 // already exists and SubGraphWindow uses). Pre-fix the sibling
                 // window had no floor — the user could drag it down to an
@@ -203,8 +202,8 @@ public sealed partial class ArchitectSiblingWindow : Window
         // graph snapshot (the service is per-AVM by ctor). Survivor scan is
         // intentionally NOT run here: MainView already runs it once at
         // process start, and re-running per sibling would double-report
-        // every recoverable file. Architect UX review P0-3 originally
-        // wired only the embedded MainView; the sibling-window restoration
+        // every recoverable file. The original wiring covered only the
+        // embedded MainView; the sibling-window restoration
         // surfaced this gap.
         if (_autosave is null && DispatcherQueue is not null)
         {
@@ -219,12 +218,12 @@ public sealed partial class ArchitectSiblingWindow : Window
             }
         }
 
-        //  #10 — replay persisted rail-collapsed + inspector-visible
+        // Replay persisted rail-collapsed + inspector-visible
         // flags into the visible chrome. Runs after the AppWindow has settled
         // so any future inspector-window spawn has an XamlRoot to anchor on.
         ApplyPersistedRailAndInspectorState();
 
-        //  — replay persisted minimap visibility into the canvas
+        // Replay persisted minimap visibility into the canvas
         // overlay AND mirror the sibling-window menu toggle so the chrome
         // glyph reflects the actual on-screen state. CanvasView
         // MinimapVisibilityChanged keeps the toggle in sync if the user
@@ -246,14 +245,13 @@ public sealed partial class ArchitectSiblingWindow : Window
         RefreshStatusCounts();
     }
 
-    // ───  #10 — rail collapse + floating Inspector window ──────
+    // ─── Rail collapse + floating Inspector window ──────
 
     private const double RailExpandedWidth   = 220.0;
     private const double RailCollapsedWidth  = 32.0;
 
-    // ─── arch-ux: short panel open/close width animation ───────────────────
-    // Per-window copy (chrome helpers stay per-window per
-    // feedback_visualist_architect_chrome_independence.md). Width-only tween of
+    // ─── short panel open/close width animation ───────────────────
+    // Per-window copy (chrome helpers stay per-window). Width-only tween of
     // a Grid column over ~170 ms (ease-out cubic) — does not re-measure the
     // absolutely-positioned canvas nodes, so it stays cheap on large graphs.
     private const double PanelAnimMs = 170.0;
@@ -397,13 +395,12 @@ public sealed partial class ArchitectSiblingWindow : Window
         }
     }
 
-    // ─── 0.11.x polish — docked inspector column controls ───────────────
+    // ─── Docked inspector column controls ───────────────
     //
     // Mirrors MainView's ApplyInspectorVisibleToColumn / chevron handlers.
     // Width-default constants are duplicated rather than lifted to a shared
-    // module per feedback_visualist_architect_chrome_independence.md (chrome
-    // helpers stay per-window). The InspectorRolledUpWidth value is the
-    // same 32 DIP MainView uses for its chevron strip.
+    // module (chrome helpers stay per-window). The InspectorRolledUpWidth
+    // value is the same 32 DIP MainView uses for its chevron strip.
 
     private const double InspectorDockedDefaultWidth = 320.0;
     private const double InspectorDockedMinWidth     = 240.0;
@@ -495,8 +492,8 @@ public sealed partial class ArchitectSiblingWindow : Window
         {
             var cfg = ConfigManager.Current;
             cfg.ArchitectRailCollapsed = desiredCollapsed;
-            // [S9-433 freeze sweep] SaveDeferred offloads the config write to a
-            // background thread — parity with MainView's '[freeze sweep]' calls.
+            // SaveDeferred offloads the config write to a
+            // background thread — parity with MainView's deferred-write calls.
             ConfigManager.SaveDeferred(Paths.AppConfigJson);
         }
         catch (Exception ex)
@@ -507,7 +504,7 @@ public sealed partial class ArchitectSiblingWindow : Window
     }
 
     /// <summary>
-    /// B11 (audit/winui-regressions-2026-05-24) — Bridge for the F4
+    /// Bridge for the F4
     /// canvas chord and the chrome View → Toggle Inspector menu item.
     /// Reads the currently-persisted visibility (so a stale toggle from a
     /// previous session is consistent) and flips it, then funnels through
@@ -557,7 +554,7 @@ public sealed partial class ArchitectSiblingWindow : Window
     /// (ArchitectViewModel.OpenAsync already routes the cause through
     /// GraphSerializer.OnLoadFailed → status bar).
     ///
-    ///  Was synchronous; now awaits ArchitectViewModel.OpenAsync so
+    /// Was synchronous; now awaits ArchitectViewModel.OpenAsync so
     /// the GraphSerializer load + wildcard cascade no longer block the UI
     /// thread (and the deadlock-prone sync shim could be deleted).
     /// </summary>
@@ -567,14 +564,14 @@ public sealed partial class ArchitectSiblingWindow : Window
         bool ok = await _viewModel.OpenAsync(absolutePath).ConfigureAwait(true);
         if (ok)
         {
-            // [S9-433 freeze sweep] TouchDeferred offloads the recent-files
+            // TouchDeferred offloads the recent-files
             // disk write to a background thread — parity with MainView (which
             // already uses the deferred variant). Synchronous Touch() here ran
             // a blocking JSON read+write on the UI thread right after the load
             // and froze under OneDrive / AV latency.
             RecentFiles.TouchDeferred(absolutePath);
-            //  Multi-window restore — record this sibling in the
-            // RecentSiblings store so Hub's MainWindow.Loaded () can
+            // Multi-window restore — record this sibling in the
+            // RecentSiblings store so Hub's MainWindow.Loaded can
             // replay it on next boot. Untitled / not-yet-saved siblings are
             // skipped (the store filters empty paths).
             RecentSiblingsStore.Touch(absolutePath);
@@ -590,7 +587,7 @@ public sealed partial class ArchitectSiblingWindow : Window
     public bool IsDirty => _viewModel.IsDirty;
 
     /// <summary>
-    /// B18 (audit/winui-regressions-2026-05-24) — internal-by-spirit
+    /// Internal-by-spirit
     /// accessor used by <see cref="ArchitectWindowRegistry.ActivateOwnerOf"/>
     /// to match a SubGraphWindow's parent AVM against its sibling Window.
     /// Public so a partial class / cross-namespace helper can read it
@@ -601,17 +598,17 @@ public sealed partial class ArchitectSiblingWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         // Persist final geometry on real close (cancelled closes already
-        // persisted in OnAppWindowClosing). 
+        // persisted in OnAppWindowClosing).
         // flushSync so the write lands even if the host process exits
         // immediately after this terminal close (Environment.Exit would kill a
         // queued async write).
         try { SiblingWindowStateStore.Persist(this, ResolvePersistKey(), flushSync: true); }
         catch { /* best-effort */ }
 
-        //  Drop from the multi-window restore store so a
+        // Drop from the multi-window restore store so a
         // deliberately-closed sibling doesn't re-open on next Hub boot.
         // Crashes / forced exits leave the entry behind on purpose — that's
-        // the "restore last session" behaviour  boot replay relies on.
+        // the "restore last session" behaviour the boot replay relies on.
         try
         {
             string? path = _viewModel.LoadedFilePath;
@@ -634,14 +631,14 @@ public sealed partial class ArchitectSiblingWindow : Window
 
         try { Chrome.Unbind(); } catch { /* best-effort */ }
 
-        //  #10 — unhook rail-driven toggles + close the floating
+        // Unhook rail-driven toggles + close the floating
         // Inspector window (only when THIS sibling owned the open inspector;
         // a different sibling may have re-bound the singleton in the
         // meantime). The InspectorWindow.CloseIfOpen call is benign when no
         // window is up.
         try { Rail.RailCollapseToggled      -= OnRailCollapseToggled; }      catch { /* best-effort */ }
         try { Rail.InspectorToggleRequested -= OnInspectorToggleRequested; } catch { /* best-effort */ }
-        // B11 — unhook F4 canvas inspector toggle bridge.
+        // Unhook F4 canvas inspector toggle bridge.
         try { CanvasView.InspectorToggleRequested -= OnCanvasInspectorToggleRequested; } catch { /* best-effort */ }
         try { CanvasView.UndoRedoChanged -= OnSiblingUndoRedoChanged; } catch { /* best-effort */ }
         try
@@ -729,7 +726,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         {
             UpdateCaptionFromState();
         }
-        //  Keep the Live Debug toggle in sync with the VM so
+        // Keep the Live Debug toggle in sync with the VM so
         // chord-driven toggles (Ctrl+Shift+D via the menu accelerator) or
         // any other surface flipping the flag re-paint the checkbox.
         if (e.PropertyName == nameof(ArchitectViewModel.LiveDebugEnabled))
@@ -824,7 +821,7 @@ public sealed partial class ArchitectSiblingWindow : Window
 
     private void OnFileNewClicked(object sender, RoutedEventArgs e)
     {
-        // 2026-06-08 (Majo) — a POPULATED sibling canvas spawns another sibling
+        // A POPULATED sibling canvas spawns another sibling
         // (never clobber it, per the 0.10.0 multi-window model). But a BLANK
         // sibling (Welcome card up) starts the new graph IN PLACE — otherwise
         // the Welcome card's "New Graph" button on a blank sibling spawns an
@@ -866,7 +863,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         return Task.CompletedTask;
     }
 
-    //  Reusable helper invoked by both the File → Open Recent menu
+    // Reusable helper invoked by both the File → Open Recent menu
     // and the WelcomeCard's "Recent…" button — same dialog + spawn flow.
     private async Task OpenRecentFromCanvasAsync()
     {
@@ -920,9 +917,9 @@ public sealed partial class ArchitectSiblingWindow : Window
 
     private void SpawnOrFocusSibling(string path)
     {
-        //  OpenFile is async; caller (recent-files menu, canvas drop)
+        // OpenFile is async; caller (recent-files menu, canvas drop)
         // is sync void, so fire-and-forget through AsyncErrorBoundary.
-        //  Route through SpawnOrFocusSiblingAsync (not OpenFileAsync
+        // Route through SpawnOrFocusSiblingAsync (not OpenFileAsync
         // directly) so a parse / I/O / window-creation failure surfaces as a
         // red status line. Pre-fix the bare OpenFileAsync result was discarded
         // (_ =) and OnLoadFailed's LoadedFilePath-equality filter rejected
@@ -935,7 +932,7 @@ public sealed partial class ArchitectSiblingWindow : Window
     }
 
     /// <summary>
-    ///  Awaitable spawn-or-focus. Returns true when the target window
+    /// Awaitable spawn-or-focus. Returns true when the target window
     /// is open + focused; false (with a red status line on THIS window) when
     /// the open failed. The status line lives on the originating window so the
     /// user gets feedback even though the failed sibling never displayed.
@@ -970,9 +967,9 @@ public sealed partial class ArchitectSiblingWindow : Window
             if (!string.IsNullOrEmpty(_viewModel.LoadedFilePath))
             {
                 await _viewModel.SaveAsync();
-                // [S9-433 freeze sweep] deferred recent-files write — see LoadGraphAsync.
+                // Deferred recent-files write — see LoadGraphAsync.
                 RecentFiles.TouchDeferred(_viewModel.LoadedFilePath!);
-                //  Refresh the multi-window restore entry so its
+                // Refresh the multi-window restore entry so its
                 // LastOpenUtc timestamp tracks active editing — Hub's replay
                 // walks newest-first.
                 RecentSiblingsStore.Touch(_viewModel.LoadedFilePath!);
@@ -1018,9 +1015,9 @@ public sealed partial class ArchitectSiblingWindow : Window
                 new[] { ("Phoenix Graph", ".phxg") });
             if (string.IsNullOrEmpty(path)) return;
             await _viewModel.SaveAsync(path);
-            // [S9-433 freeze sweep] deferred recent-files write — see LoadGraphAsync.
+            // Deferred recent-files write — see LoadGraphAsync.
             RecentFiles.TouchDeferred(path);
-            //  Save As migrates the persisted-restore entry to the
+            // Save As migrates the persisted-restore entry to the
             // new path so a Hub restart re-opens the file under its new name.
             RecentSiblingsStore.Touch(path);
             RememberArchitectDir(path);
@@ -1038,10 +1035,8 @@ public sealed partial class ArchitectSiblingWindow : Window
     /// <summary>
     /// Per-sibling save-validation flow. Mirrors MainView's behaviour:
     /// errors block save behind a modal; warnings flow into System Log
-    /// and the status bar turns yellow but the save proceeds (per
-    /// feedback_no_modal_dialogs_for_repeatable_rejections — warning-only
-    /// modals on every save were a confirmed regression flagged at
-    /// Architect UX review P0-2).
+    /// and the status bar turns yellow but the save proceeds (warning-only
+    /// modals on every save were a confirmed regression).
     /// </summary>
     private async Task<bool> ConfirmSaveValidationAsync()
     {
@@ -1067,7 +1062,7 @@ public sealed partial class ArchitectSiblingWindow : Window
                 var root = (Content as FrameworkElement)?.XamlRoot;
                 if (root is not null)
                 {
-                    //  Dialog button contract: Primary="Save anyway",
+                    // Dialog button contract: Primary="Save anyway",
                     // Secondary="Cancel" (matches WinUI convention — Primary =
                     // the affirmative action). Result==Primary means proceed.
                     var dlg = Dialogs.SaveValidationDialog.ForResults(root, results);
@@ -1102,7 +1097,7 @@ public sealed partial class ArchitectSiblingWindow : Window
                 SetStatus("Save the graph first; export needs a path.", ArchitectStatusLight.Yellow);
                 return;
             }
-            // 0.11.x freeze sweep — async export path; pre-fix this ran
+            // Async export path; pre-fix this ran
             // the exporter walk + disk write on the UI thread.
             await _viewModel.ExportPhxBesideAsync(_viewModel.LoadedFilePath!).ConfigureAwait(true);
             SetStatus($"Exported {Path.GetFileNameWithoutExtension(_viewModel.LoadedFilePath)}.phx.",
@@ -1120,7 +1115,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         try { Close(); } catch { /* best-effort */ }
     }
 
-    // TODO §2 resolution — File → Welcome parity with the embedded
+    // File → Welcome parity with the embedded
     // ArchitectChrome. Force-shows the always-available Welcome card overlay on
     // the canvas. Non-destructive: the open graph stays loaded behind the card
     // (RequestShowWelcomeFromShell never mutates or closes it).
@@ -1137,7 +1132,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         try { Close(); } catch { /* best-effort */ }
     }
 
-    //  Reflect the stack depth onto this sibling
+    // Reflect the stack depth onto this sibling
     // window's own Edit menu.
     private void OnSiblingUndoRedoChanged(object? sender, EventArgs e) => RefreshEditMenuEnabled();
     private void RefreshEditMenuEnabled()
@@ -1159,7 +1154,7 @@ public sealed partial class ArchitectSiblingWindow : Window
     private void OnEditFindClicked(object sender, RoutedEventArgs e)
         => CanvasView.RequestFindNodeFromShell();
 
-    //  Group + Comment Frame parity with ArchitectChrome's chords.
+    // Group + Comment Frame parity with ArchitectChrome's chords.
     private void OnEditGroupClicked(object sender, RoutedEventArgs e)
         => CanvasView.RequestGroupFromShell();
 
@@ -1175,7 +1170,7 @@ public sealed partial class ArchitectSiblingWindow : Window
             _viewModel.LogicCanvas.ShowGrid = t.IsChecked;
     }
 
-    //  — Minimap visibility toggle. Mirrors the MainView path:
+    // Minimap visibility toggle. Mirrors the MainView path:
     // SetMinimapVisible flips Visibility AND persists into AppConfig.
     // CanvasView.MinimapVisibilityChanged fires back when the in-overlay
     // × glyph is used, so we subscribe in OnActivatedOnce to keep the
@@ -1192,7 +1187,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         catch { /* best-effort */ }
     }
 
-    //  Live Debug toggle — flips ArchitectViewModel.LiveDebugEnabled,
+    // Live Debug toggle — flips ArchitectViewModel.LiveDebugEnabled,
     // which the canvas's NODE_EXEC subscriber and the bus client both watch.
     // The ToggleMenuFlyoutItem.IsChecked reflects the persisted state; keep
     // it in sync via the VM PropertyChanged path in OnViewModelPropertyChanged.
@@ -1202,13 +1197,13 @@ public sealed partial class ArchitectSiblingWindow : Window
             _viewModel.SetLiveDebugEnabled(t.IsChecked);
     }
 
-    //  Spawn-palette parity — mirrors ArchitectChrome's Ctrl+Space.
+    // Spawn-palette parity — mirrors ArchitectChrome's Ctrl+Space.
     private void OnViewSpawnPaletteClicked(object sender, RoutedEventArgs e)
         => CanvasView.RequestSpawnAtViewCenterFromShell();
 
     private void OnHelpNodeRefClicked(object sender, RoutedEventArgs e)
     {
-        // QC18-12 era refactor: NodeDocumentationDialog (modal ContentDialog) was
+        // NodeDocumentationDialog (modal ContentDialog) was
         // replaced by NodeDocumentationWindow (top-level singleton Window) so it
         // doesn't block canvas interaction. Use the OpenOrFocus helper the rest
         // of the suite (MainView, LogicCanvasView.Menus) already routes through.
@@ -1222,7 +1217,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         }
     }
 
-    //  P1-A16 — Script → Sync Event Peers. Routes through the
+    // Script → Sync Event Peers. Routes through the
     // canvas's existing debounced cross-file sync timer; the same path
     // wire-drop / event-rename edits use.
     private void OnScriptSyncEventPeersClicked(object sender, RoutedEventArgs e)
@@ -1239,14 +1234,14 @@ public sealed partial class ArchitectSiblingWindow : Window
         }
     }
 
-    //  P1-A17 — Help → Keyboard Shortcuts… opens the dialog.
+    // Help → Keyboard Shortcuts… opens the dialog.
     private async void OnHelpShortcutsClicked(object sender, RoutedEventArgs e)
         => await ShowKeyboardShortcutsDialogAsync();
 
     /// <summary>
     /// Shared dialog-launch helper — called by Help → Keyboard Shortcuts…
     /// and by the canvas's <c>KeyboardShortcutsRequested</c> event
-    /// (raised by F1-without-selection per  P1-A13).
+    /// (raised by F1-without-selection).
     /// </summary>
     private async System.Threading.Tasks.Task ShowKeyboardShortcutsDialogAsync()
     {
@@ -1254,16 +1249,16 @@ public sealed partial class ArchitectSiblingWindow : Window
         await Phoenix.Controls.Architect.WinUI.Dialogs.KeyboardShortcutsDialog.ShowAsync(root!);
     }
 
-    // ───  Restore / Bookmarks parity with embedded ArchitectChrome ──
+    // ─── Restore / Bookmarks parity with embedded ArchitectChrome ──
 
     /// <summary>
-    ///  File → Restore previous version… — picker over the rolling
+    /// File → Restore previous version… — picker over the rolling
     /// .phxg.bak[1-3] backups beside the loaded file. Mirrors
     /// MainView.RestoreFromBackupAsync (the embedded-chrome path); the body is
-    /// duplicated here per feedback_visualist_architect_chrome_independence.md
-    /// (chrome/window helpers stay per-window) rather than lifted to a shared
-    /// module. No-backup / no-file cases log via GlobalLogger (not a modal)
-    /// per feedback_no_modal_dialogs_for_repeatable_rejections.
+    /// duplicated here (chrome/window helpers stay per-window) rather than
+    /// lifted to a shared
+    /// module. No-backup / no-file cases log via GlobalLogger (not a modal,
+    /// since the rejection is repeatable).
     /// </summary>
     private async void OnFileRestoreClicked(object sender, RoutedEventArgs e)
     {
@@ -1304,7 +1299,7 @@ public sealed partial class ArchitectSiblingWindow : Window
                 {
                     Content = label,
                     Tag = b,
-                    //  "MonoFont" is an <x:String> resource — cast to
+                    // "MonoFont" is an <x:String> resource — cast to
                     // FontFamily throws; build from the string like the XAML converter.
                     FontFamily = Application.Current.Resources["MonoFont"] is string monoFamily
                                  ? new Microsoft.UI.Xaml.Media.FontFamily(monoFamily)
@@ -1354,7 +1349,7 @@ public sealed partial class ArchitectSiblingWindow : Window
     }
 
     /// <summary>
-    ///  View → Bookmarks legend… — opens the 9-slot bookmark legend
+    /// View → Bookmarks legend… — opens the 9-slot bookmark legend
     /// flyout on the canvas (Ctrl/Alt+1..9 chord hints). Same canvas method
     /// the embedded ArchitectChrome routes through, restoring sibling-window
     /// menu parity.
@@ -1387,7 +1382,7 @@ public sealed partial class ArchitectSiblingWindow : Window
             var cfg = ConfigManager.Current;
             if (string.Equals(cfg.LastArchitectOpenDir, dir, StringComparison.OrdinalIgnoreCase)) return;
             cfg.LastArchitectOpenDir = dir;
-            // [S9-433 freeze sweep] deferred config write — see OnRailCollapseToggled.
+            // Deferred config write — see OnRailCollapseToggled.
             ConfigManager.SaveDeferred(Paths.AppConfigJson);
         }
         catch (Exception ex)

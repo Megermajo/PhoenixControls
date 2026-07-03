@@ -11,7 +11,7 @@ using Phoenix.Controls.ViewerServer;
 namespace Phoenix.Controls.Hub.WinUI.Services;
 
 /// <summary>
-/// QC27-01 — Hub-side implementation of <see cref="IHubReadModel"/>. Wraps
+/// Hub-side implementation of <see cref="IHubReadModel"/>. Wraps
 /// the already-running <see cref="IHubServices"/> (LiveFeed / Chat /
 /// ScriptHost / SystemLog / ConnectionStatus) plus the connection-flavour
 /// signals so the v2 <see cref="ViewerServer"/> can serve a bootstrap
@@ -39,7 +39,7 @@ internal sealed class HubViewerReadModel : IHubReadModel, IDisposable
     private readonly EventHandler<ChatMessage>         _onChat;
     private readonly EventHandler<ScriptStatus>        _onScript;
     private readonly EventHandler<SystemLogEntry>      _onSyslog;
-    //  Payload-typed connection-status handler. The Viewer read-model
+    // Payload-typed connection-status handler. The Viewer read-model
     // re-snapshots all three channels each fire, so e.Channel isn't routed on
     // here — but the type has to match the IConnectionStatus.StateChanged
     // contract.

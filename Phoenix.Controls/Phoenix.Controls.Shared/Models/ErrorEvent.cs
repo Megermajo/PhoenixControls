@@ -10,7 +10,7 @@ namespace Phoenix.Controls.Shared.Models
     {
         public DateTime  Timestamp { get; init; } = DateTime.Now;
 
-        //  Offset-aware companion to Timestamp. See the parallel
+        // Offset-aware companion to Timestamp. See the parallel
         // comment on Log.TimestampOffset: DateTime serializes without a
         // timezone offset, so any on-wire JSON consumer should prefer
         // TimestampOffset. GlobalLogger.Error sets both fields from a

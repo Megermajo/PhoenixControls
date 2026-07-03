@@ -11,22 +11,21 @@ using Windows.UI;
 namespace Phoenix.Controls.Visualist.WinUI.Controls;
 
 /// <summary>
-/// Sprint A — live preview thumbnail surface for Visualist nodes. The
+/// Live preview thumbnail surface for Visualist nodes. The
 /// host of a <see cref="WidgetGraphNodeView"/> hands this control a
 /// <see cref="NodeEvaluator.PreviewSnapshot"/> produced by
 /// <see cref="NodeEvaluator.EvaluatePreviews"/> and the control flips
 /// between bitmap / colour swatch / placeholder / error tint without
 /// performing any graph work of its own.
 ///
-/// Chrome stays per-pillar (see feedback_visualist_architect_chrome_independence.md):
-/// the control lives under Phoenix.Controls.Visualist.WinUI.Controls and
+/// Chrome stays per-pillar: the control lives under
+/// Phoenix.Controls.Visualist.WinUI.Controls and
 /// MUST NOT be promoted to Shared. Architect deliberately has no
 /// analogue — Fusion-style "the node IS the image" is Visualist-only.
 ///
 /// All calls into this control are expected to occur on the UI thread
 /// (the dispatcher that owns the canvas); bitmap loading is best-effort
-/// and silent on failure (no modal dialogs per
-/// feedback_no_modal_dialogs_for_repeatable_rejections.md — degraded
+/// and silent on failure (no modal dialogs — degraded
 /// previews route through GlobalLogger instead).
 /// </summary>
 public sealed partial class ThumbnailHost : UserControl
@@ -149,7 +148,7 @@ public sealed partial class ThumbnailHost : UserControl
     }
 
     // Best-effort bitmap loader. Accepts absolute paths and http(s) URIs, AND
-    // (R21) media-root-relative paths — which is what MediaPickerDialog stores
+    // media-root-relative paths — which is what MediaPickerDialog stores
     // for Image.Load nodes. Previously a relative path fell straight through to
     // false, so the node-body preview was permanently blank for the most common
     // image source. We resolve relative paths against the Hub media root and
@@ -166,7 +165,7 @@ public sealed partial class ThumbnailHost : UserControl
                 bmp = new BitmapImage(uri);
                 return true;
             }
-            // R21 — relative media path (e.g. "images/foo.png"), relative to the
+            // Relative media path (e.g. "images/foo.png"), relative to the
             // Hub media root that MediaPickerDialog / Import write into. Resolve
             // in the WinUI host (not the engine) so both the OwnPath and the
             // UpstreamImage NodeEvaluator branches render.
@@ -177,13 +176,12 @@ public sealed partial class ThumbnailHost : UserControl
                 bmp = new BitmapImage(new Uri(full));
                 return true;
             }
-            // K-P2 (audit live-preview lane): the relative media path resolved
+            // The relative media path resolved
             // but the file isn't on disk. The node strip falls back to the
             // generic "(image unavailable)" hint, which hides WHY — was the
             // HubMedia root wrong, or is the file truly missing? Emit a breadcrumb
             // with the resolved full path so a user diagnosing a media-import
-            // failure can see exactly where we looked. Debug level + no modal,
-            // per feedback_no_modal_dialogs_for_repeatable_rejections.
+            // failure can see exactly where we looked. Debug level + no modal.
             GlobalLogger.Log(
                 $"Image load: relative path '{source}' resolved to '{full}' but file not found.",
                 "ThumbnailHost", LogLevel.Debug);

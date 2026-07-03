@@ -12,7 +12,7 @@ namespace Phoenix.Controls.Hub.WinUI.Controls;
 
 // Tiled flat-top hex grid, stroke-only. Sized to fill its parent on
 // SizeChanged. Designed as a discreet decorative overlay for the Hub
-// workspace background (HUB-UX-D2) — never neon, never hit-testable.
+// workspace background — never neon, never hit-testable.
 //
 // WinUI 3 has no DrawingBrush / TileBrush equivalent, so a static SVG
 // asset can't be tiled without re-rasterising. Painting Path elements
@@ -25,7 +25,7 @@ namespace Phoenix.Controls.Hub.WinUI.Controls;
 // fire on SizeChanged, so steady-state cost is zero.
 public sealed partial class HexPatternOverlay : UserControl
 {
-    //  UI-thread debounce so a SizeChanged storm during a window
+    // UI-thread debounce so a SizeChanged storm during a window
     // resize-drag triggers RebuildGrid exactly once after the user settles,
     // instead of running the ~2200-Path allocation on every intermediate
     // frame. 150 ms sits in the TODO.md spec window (100–200 ms): long
@@ -61,7 +61,7 @@ public sealed partial class HexPatternOverlay : UserControl
             new PropertyMetadata(28.0, OnGridParamChanged));
 
     // Stroke colour. Defaults to coal-paper at ~7% alpha — discreet by
-    // design (HUB-UX-D2 specified alpha ~5–8%).
+    // design (alpha ~5–8%).
     public Brush StrokeBrush
     {
         get => (Brush)GetValue(StrokeBrushProperty);

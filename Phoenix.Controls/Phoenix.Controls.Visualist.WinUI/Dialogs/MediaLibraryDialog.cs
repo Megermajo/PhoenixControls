@@ -15,10 +15,9 @@ using Phoenix.Controls.Visualist.WinUI.Services;
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 
 /// <summary>
-/// Sprint C — Visualist media-library browse + delete surface. Reintroduces
+/// Visualist media-library browse + delete surface. Reintroduces
 /// the affordance pre-0.9.0 Visualist shipped (CHANGELOG 0.6.4 "delete
-/// media files from the library panel"). Per
-/// <c>feedback_visualist_architect_chrome_independence.md</c> this dialog
+/// media files from the library panel"). This dialog
 /// lives in the Visualist pillar and owns its own chrome tokens — no
 /// Shared/UI/ helpers.
 ///
@@ -36,14 +35,14 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 ///
 /// <para>
 /// The confirmation step is a nested <see cref="ContentDialog"/> — exempt
-/// from <c>feedback_no_modal_dialogs_for_repeatable_rejections.md</c>
+/// from the no-modal-dialogs-for-repeatable-rejections guideline
 /// because file deletion is irreversible and one of the listed exceptions.
 /// All other rejection paths (already-gone, blocked-by-references, IO
 /// failure) route through <see cref="GlobalLogger"/>.
 /// </para>
 ///
 /// <para>
-/// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml /
+/// This dialog has NO .xaml /
 /// InitializeComponent. A code-constructed ContentDialog defined in a LIBRARY
 /// assembly (Visualist.WinUI) throws XamlParseException at
 /// Application.LoadComponent when `new`'d while detached — proven by the 1.0.6

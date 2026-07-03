@@ -4,7 +4,7 @@ using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.Core
 {
-    //  — connectors carve. Bundles three small cross-cutting
+    // Connectors carve. Bundles three small cross-cutting
     // bands plus one stray Flow Control template that lives between
     // the Process band and the Databank band:
     //   * BUS / IPC      — Bus.Send / Bus.Broadcast (CadetBlue connectors).
@@ -32,7 +32,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) });
 
             // ── QUEUE ────────────────────────────────────────────────────
-            // M21 — tooltip wording: this isn't an "internal event queue", it's a Var
+            // Tooltip wording: this isn't an "internal event queue", it's a Var
             // pipe-string under the hood (one var per queue, '|' separated entries). Naming the
             // backing store helps users understand persistence + cross-script visibility.
             AddTemplate("Queue.Push",   "Queue", Color.DarkCyan,

@@ -7,7 +7,7 @@ using Phoenix.Controls.Shared.Models;
 namespace Phoenix.Controls.Architect.Core
 {
     /// <summary>
-    ///  — first half of Priority-1 var-chain visualization.
+    /// First half of Priority-1 var-chain visualization.
     /// Pure-data analyzer: given a graph and a variable name (with or
     /// without the {curly}-brace), returns the set of nodes that
     /// <em>write</em> the var (Var.Set / Public.Set / DB.SetVariable
@@ -65,7 +65,7 @@ namespace Phoenix.Controls.Architect.Core
 
             foreach (var n in graph.Nodes)
             {
-                if (n == null) continue; // [P1 swarm-audit 2026-05-29] guard null node before deref
+                if (n == null) continue; // guard null node before deref
                 if (IsWriter(n, trimmed) && addedWriters.Add(n.Id))
                     trace.Writers.Add(n);
                 if (IsReader(n, trimmed) && addedReaders.Add(n.Id))
@@ -77,8 +77,8 @@ namespace Phoenix.Controls.Architect.Core
 
         private static bool IsWriter(Node n, string varName)
         {
-            if (n == null) return false; // [P1 swarm-audit 2026-05-29] guard null node before deref
-            if (n.Attributes == null) return false; // [P1] Attributes can be null after JSON deserialization — guard before every TryGetValue/foreach deref
+            if (n == null) return false; // guard null node before deref
+            if (n.Attributes == null) return false; // Attributes can be null after JSON deserialization — guard before every TryGetValue/foreach deref
             // Direct producers — Var.Set / Var.Inc / Var.Toggle / Public.Set
             // bind by attribute.
             if (n.Title is "Var.Set" or "Var.Inc" or "Var.Toggle"
@@ -145,10 +145,10 @@ namespace Phoenix.Controls.Architect.Core
                 // Twitch event sources.
                 ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand" },
                 ["Twitch.Subscription"]     = new[] { "user.name", "user.sub_months", "user.tier" },
-                // D8 — user.tier added: Twitch.Resub's template exposes a Tier output
+                // user.tier added: Twitch.Resub's template exposes a Tier output
                 // (maps to {user.tier}); the analyzer was missing it.
                 ["Twitch.Resub"]            = new[] { "user.name", "user.sub_months", "user.message", "user.tier" },
-                // D8 — user.is_anonymous added to GiftSub / GiftBomb: both templates
+                // user.is_anonymous added to GiftSub / GiftBomb: both templates
                 // expose an IsAnonymous output (maps to {user.is_anonymous}) for the
                 // "thank the gifter" gate; the analyzer was missing it.
                 ["Twitch.GiftSub"]          = new[] { "user.gifter", "user.recipient", "user.tier", "user.is_anonymous" },
@@ -166,7 +166,7 @@ namespace Phoenix.Controls.Architect.Core
                 // synced to this same set — keep both on bus.* if you touch either.
                 ["Bus.OnMessage"]           = new[] { "bus.type", "bus.payload", "bus.source", "bus.target" },
                 ["HTTP.WebhookListener"]    = new[] { "event.payload", "event.body", "event.method", "event.path" },
-                // D8 — WS.Server entry added, mirroring HTTP.WebhookListener. The engine
+                // WS.Server entry added, mirroring HTTP.WebhookListener. The engine
                 // binds event.body / event.payload / event.path (no method — WS frames
                 // carry no HTTP verb) in ScriptManager.ExecuteOnWebSocketScriptsAsync.
                 ["WS.Server"]               = new[] { "event.payload", "event.body", "event.path" },
@@ -197,16 +197,16 @@ namespace Phoenix.Controls.Architect.Core
                 ["HTTP.Delete"]    = new[] { "result.http_status", "result.http_body", "result.http_error" },
                 ["HTTP.Api"]       = new[] { "result.api_response", "result.api_error" },
                 ["HTTP.ParseJson"] = new[] { "result.json_value" },
-                // AI / Audio. (Audit fix — keyed by the real node titles; the
+                // AI / Audio. (Keyed by the real node titles; the
                 // prior "AI.GenerateText" key matched no node, so var-chain
                 // analysis never saw any AI result var.)
                 ["AI.Prompt"]          = new[] { "result.ai_response", "result.ai_error" },
                 ["AI.VisionDescribe"]  = new[] { "result.ai_response", "result.ai_error" },
-                // QC37 — AI.StreamText also writes the stream-close / failure
+                // AI.StreamText also writes the stream-close / failure
                 // sentinels (result.ai_done / result.ai_error_kind /
                 // result.ai_retry_after), now surfaced as wireable outputs.
                 ["AI.StreamText"]      = new[] { "result.ai_response", "result.ai_error", "result.ai_done", "result.ai_error_kind", "result.ai_retry_after" },
-                // QC37 — result.ai_done flips when the tool call completes.
+                // result.ai_done flips when the tool call completes.
                 ["AI.WithTools"]       = new[] { "result.ai_response", "result.ai_tool_calls", "result.ai_error", "result.ai_done" },
                 ["AI.Moderate"]        = new[] { "result.ai_flagged",  "result.ai_category", "result.ai_error" },
                 ["AI.GenerateImage"]   = new[] { "result.ai_image_url", "result.ai_image_error" },
@@ -240,7 +240,7 @@ namespace Phoenix.Controls.Architect.Core
 
         private static bool IsReader(Node n, string varName)
         {
-            if (n.Attributes == null) return false; // [P2] Attributes can be null after JSON deserialization — match IsWriter's guard before every foreach/TryGetValue deref
+            if (n.Attributes == null) return false; // Attributes can be null after JSON deserialization — match IsWriter's guard before every foreach/TryGetValue deref
             // A node "reads" the var if any of its attribute values contains
             // {varname} (case-insensitive). Catches inline pill content,
             // multi-line Templates, etc.
@@ -287,8 +287,8 @@ namespace Phoenix.Controls.Architect.Core
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var n in graph.Nodes)
             {
-                if (n == null) continue; // [P1 swarm-audit 2026-05-29] guard null node before deref
-                if (n.Attributes == null) continue; // [P2] Attributes can be null after JSON deserialization — guard before every foreach/TryGetValue deref in this loop body
+                if (n == null) continue; // guard null node before deref
+                if (n.Attributes == null) continue; // Attributes can be null after JSON deserialization — guard before every foreach/TryGetValue deref in this loop body
                 // Read side — every {var} reference in any attribute.
                 foreach (var kv in n.Attributes)
                 {
@@ -306,7 +306,7 @@ namespace Phoenix.Controls.Architect.Core
                     && !string.IsNullOrWhiteSpace(kn))
                     seen.Add("public." + kn.Trim());
 
-                //  Curated result-emitter names — union in for every
+                // Curated result-emitter names — union in for every
                 // event / source node actually present in the graph so the
                 // Trace-Variable picker surfaces user.message / user.name /
                 // result.http_status / loop.index / etc. without forcing the

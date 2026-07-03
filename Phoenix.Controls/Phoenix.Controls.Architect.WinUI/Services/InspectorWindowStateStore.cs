@@ -14,7 +14,7 @@ using WinRT.Interop;
 namespace Phoenix.Controls.Architect.WinUI.Services;
 
 /// <summary>
-///  #10 — per-restart geometry persistence for Architect's
+/// Per-restart geometry persistence for Architect's
 /// floating <see cref="Phoenix.Controls.Architect.WinUI.Hosting.InspectorWindow"/>.
 /// Single JSON file at <c>%AppData%/PhoenixControls/Architect/inspector-state.json</c>
 /// — only one inspector window can exist at a time, so unlike

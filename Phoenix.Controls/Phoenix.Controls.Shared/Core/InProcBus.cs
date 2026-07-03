@@ -5,7 +5,7 @@ using Phoenix.Controls.Shared.Models;
 namespace Phoenix.Controls.Shared.Core
 {
     /// <summary>
-    ///  Process-local bridge to the Hub's Bus, so Architect (which
+    /// Process-local bridge to the Hub's Bus, so Architect (which
     /// can't ProjectReference Hub) can publish + subscribe to bus messages
     /// without paying the localhost-WebSocket round trip — post-T15 the
     /// Architect runtime is hosted inside Hub.WinUI's process, yet every

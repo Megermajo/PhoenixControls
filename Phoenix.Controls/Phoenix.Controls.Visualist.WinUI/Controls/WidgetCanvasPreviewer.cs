@@ -49,11 +49,9 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 /// <see cref="VisualistUserConfig.CanvasWidgetPreviewEnabled"/> is off, when the
 /// layer is unsaved (no layerId for Hub to serve), or when WebView2 init fails.
 /// Every failure path logs via <see cref="GlobalLogger"/> and degrades to the
-/// existing labeled-rectangle rendering — per
-/// feedback_no_modal_dialogs_for_repeatable_rejections, no modals.</para>
+/// existing labeled-rectangle rendering — no modals.</para>
 ///
-/// <para>Per feedback_visualist_architect_chrome_independence this capture
-/// engine is Visualist-local; Architect has no analogue.</para>
+/// <para>This capture engine is Visualist-local; Architect has no analogue.</para>
 ///
 /// <para>Lifecycle: one previewer per <see cref="Canvas.LayerCanvasView"/>.
 /// <see cref="Dispose"/> closes the hidden window + WebView2 and stops the timer.
@@ -93,13 +91,13 @@ public sealed class WidgetCanvasPreviewer : IDisposable
     // does. RecoverIfFailed re-navigates off it when the layer next reloads.
     private bool _lastNavOk;
 
-    // K (audit live-preview lane) — single in-flight init Task so concurrent
+    // Single in-flight init Task so concurrent
     // AttachAsync / ResumeAsync calls (rapid layer switches) COALESCE onto one
     // WebView2 bring-up instead of the second caller bailing out while the first
     // is still initialising. Held only for the duration of EnsureCoreAsync.
     private Task? _coreInitTask;
 
-    // K (audit live-preview lane) — monotonic attach token. Each AttachAsync
+    // Monotonic attach token. Each AttachAsync
     // bumps this and captures its value; after awaiting init it only drives the
     // navigate/timer if it's still the latest attach. A stale attach that was
     // superseded mid-init (user clicked through several layers) no-ops instead
@@ -146,7 +144,7 @@ public sealed class WidgetCanvasPreviewer : IDisposable
     {
         if (_disposed) return;
 
-        // K (audit live-preview lane) — claim this attach. The token lets a
+        // Claim this attach. The token lets a
         // superseded attach (a newer AttachAsync arrived while we awaited init)
         // bail before navigating the WebView2 to a now-stale layer.
         int myGeneration = ++_attachGeneration;
@@ -434,7 +432,7 @@ public sealed class WidgetCanvasPreviewer : IDisposable
         }
     }
 
-    // K (audit live-preview lane) — coalescing wrapper. The first caller starts
+    // Coalescing wrapper. The first caller starts
     // the real bring-up and parks the Task in _coreInitTask; any caller that
     // arrives while init is in flight awaits that SAME Task instead of returning
     // early (the old _coreInitializing guard let the racing AttachAsync fall
@@ -469,7 +467,7 @@ public sealed class WidgetCanvasPreviewer : IDisposable
             {
                 _hostWindow = new Window { Title = "Phoenix Visualist — hidden preview host" };
                 _webView    = new Microsoft.UI.Xaml.Controls.WebView2();
-                // Transparent capture (bug #1 — layer-canvas widget preview showed a
+                // Transparent capture (layer-canvas widget preview showed a
                 // WHITE background instead of the overlay's transparency). WebView2's
                 // DefaultBackgroundColor defaults to opaque WHITE, so CapturePreviewAsync
                 // flattens every transparent pixel of the compositor overlay onto white;
@@ -574,7 +572,7 @@ public sealed class WidgetCanvasPreviewer : IDisposable
                 reader.ReadBytes(png);
             }
 
-            // FNV-1a idle-skip (#16 from the baseline). If the captured PNG is
+            // FNV-1a idle-skip (from the baseline). If the captured PNG is
             // byte-identical to the previous tick (static layer, idle widget),
             // skip the publish + decode churn entirely. The 250ms timer keeps
             // ticking for change-detection but the per-frame allocation drops to
@@ -603,7 +601,7 @@ public sealed class WidgetCanvasPreviewer : IDisposable
         }
     }
 
-    // #16 — last captured PNG bytes' FNV-1a hash, compared each tick before the
+    // Last captured PNG bytes' FNV-1a hash, compared each tick before the
     // publish/decode step so unchanged frames don't churn.
     private ulong _lastFrameHash;
     private static ulong Fnv1a64(ReadOnlySpan<byte> bytes)

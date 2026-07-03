@@ -97,7 +97,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                         string sinceStart = lastStart == DateTime.MinValue
                             ? "n/a"
                             : $"{(DateTime.UtcNow - lastStart).TotalSeconds:F1}s ago";
-                        //  Disambiguate loop-vs-post-loop. The
+                        // Disambiguate loop-vs-post-loop. The
                         // latched LastActivity is the last path to call Begin —
                         // NOT proof its scope is still running (Dispose leaves
                         // the name latched). OpenScopeDepth > 0 means that scope

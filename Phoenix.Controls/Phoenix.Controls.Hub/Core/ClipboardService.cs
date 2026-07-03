@@ -8,7 +8,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    ///  — clipboard-update listener. Subscribes to WM_CLIPBOARDUPDATE
+    /// Clipboard-update listener. Subscribes to WM_CLIPBOARDUPDATE
     /// on a hidden NativeWindow via Win32 AddClipboardFormatListener, then
     /// fires <see cref="ScriptManager.ExecuteOnClipboardScriptsAsync"/> for
     /// every script that declares an <c>on_clipboard:</c> block. Matches the
@@ -63,7 +63,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private void HandleClipboardUpdate()
         {
-            // QC36-04 — sensitive-content opt-out gates. Password managers / IDEs
+            // Sensitive-content opt-out gates. Password managers / IDEs
             // that copy credentials, OTP codes, or other secret material flag the
             // clipboard payload via either:
             //   (a) the documented "Clipboard Viewer Ignore" format (KeePass /
@@ -93,7 +93,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] Stay on LogLevel.System (informational —
+                // Stay on LogLevel.System (informational —
                 // the probe is best-effort and the caller proceeds) but use the
                 // Exception-carrying Log overload so the InnerException chain
                 // and stack reach the ring buffer. Label names the operation.
@@ -112,7 +112,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] STA / clipboard-locked failures
+                // STA / clipboard-locked failures
                 // are recoverable (we pass an empty string downstream) so the
                 // entry stays at LogLevel.System; pass the exception through
                 // the Log overload to preserve the chain + stack.
@@ -120,7 +120,7 @@ namespace Phoenix.Controls.Hub.Core
                     "ClipboardService", LogLevel.System, ex);
             }
 
-            // QC36-04 — cap payload size so a copied multi-megabyte file blob doesn't
+            // Cap payload size so a copied multi-megabyte file blob doesn't
             // balloon the script var table or saturate the bus. The cap is sourced
             // from AppConfig.ClipboardMaxLengthBytes (default 4096 chars) so an
             // operator with a legitimate long-snippet use case can tune it without
@@ -128,9 +128,9 @@ namespace Phoenix.Controls.Hub.Core
             // NOTE: cap is measured in DECODED CHARACTERS, not raw bytes; for
             // ASCII-heavy clipboard text the two are equivalent. A future revision
             // could measure UTF-8 bytes if non-Latin payloads start showing up.
-            // TODO QC36-04-followup: optional regex-shape credential detection
+            // TODO: optional regex-shape credential detection
             // (JWT / Stripe sk_live_ / Slack xoxb- / base32 TOTP seeds) was
-            // explicitly deferred from this sweep; revisit when the on_clipboard
+            // explicitly deferred; revisit when the on_clipboard
             // header gets its first power-user shipping in a sample graph.
             int cfgCap = ConfigManager.Current?.ClipboardMaxLengthBytes ?? DefaultMaxClipboardTextLength;
             int cap    = cfgCap > 0 ? cfgCap : DefaultMaxClipboardTextLength;
@@ -150,7 +150,7 @@ namespace Phoenix.Controls.Hub.Core
                 "ClipboardService", "dispatch");
         }
 
-        // QC36-04 — fallback cap when AppConfig.ClipboardMaxLengthBytes is unset /
+        // Fallback cap when AppConfig.ClipboardMaxLengthBytes is unset /
         // non-positive. 4KB matches typical pastebin / IRC URL-shortener limits and
         // is plenty for the on_clipboard text-snippet use case.
         private const int DefaultMaxClipboardTextLength = 4 * 1024;
@@ -171,7 +171,7 @@ namespace Phoenix.Controls.Hub.Core
             return IsClipboardFormatAvailable(_cachedIgnoreFormat);
         }
 
-        // QC36-04 — CF_PRIVATEFIRST..CF_PRIVATELAST sweep. Win32 reserves the range
+        // CF_PRIVATEFIRST..CF_PRIVATELAST sweep. Win32 reserves the range
         // 0x0200..0x02FF for application-private clipboard formats; a copy event
         // that advertises any of these formats is signalling "this is private —
         // skip". Many password managers / financial apps use this range alongside
@@ -200,7 +200,7 @@ namespace Phoenix.Controls.Hub.Core
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
-        // QC36-04 — IsClipboardFormatAvailable + RegisterClipboardFormat for
+        // IsClipboardFormatAvailable + RegisterClipboardFormat for
         // the Clipboard Viewer Ignore opt-out check and the CF_PRIVATE* sweep.
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool IsClipboardFormatAvailable(uint format);

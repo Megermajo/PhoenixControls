@@ -36,7 +36,7 @@ namespace Phoenix.Controls.Hub.Core
         // log + drop. Add() blocks indefinitely when full, which would freeze
         // the upstream message handler under a chat flood.
         //
-        // QC06-04 — non-readonly so Initialize() can recreate it after a Stop().
+        // Non-readonly so Initialize() can recreate it after a Stop().
         // Stop() Disposes the queue (BlockingCollection.Dispose marks it dead);
         // without replacement, Stop()-then-Initialize() would TryAdd onto a
         // disposed queue and throw. The Interlocked CAS in Initialize ensures
@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Hub.Core
         private const int ScriptQueueCapacity = 1_000;
         private BlockingCollection<ChatMessage> _scriptQueue = new BlockingCollection<ChatMessage>(ScriptQueueCapacity);
 
-        // H51 — diagnostics surface for queue overflow. Counter is monotonic for the
+        // Diagnostics surface for queue overflow. Counter is monotonic for the
         // process lifetime; consumers (Diagnostics window) display it as
         // "messages dropped since startup".
         private long _droppedQueueMessages;
@@ -60,7 +60,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly System.Collections.Generic.LinkedList<ChatMessage> _recentChatBuffer = new();
         private readonly object _recentChatLock = new();
 
-        // L64 — SB authentication state. When the configured Streamer.bot password
+        // SB authentication state. When the configured Streamer.bot password
         // is non-empty we send the v0.2 Authenticate handshake on first connect.
         // If auth fails (server rejects), we suppress further reconnect attempts
         // rather than spinning forever against bad creds (the silent-infinite-
@@ -78,7 +78,7 @@ namespace Phoenix.Controls.Hub.Core
         private IDisposable? _disconnectionSub;
         private IDisposable? _messageReceivedSub;
 
-        // BH-014 — cached parse of `AppConfig.BotUsername` (comma-separated). Previously
+        // Cached parse of `AppConfig.BotUsername` (comma-separated). Previously
         // IsBlockedAccount and IsBroadcasterActor each split-and-allocated a fresh
         // HashSet on every chat message, which produced significant GC pressure under
         // chat floods. The cache is keyed by the source string itself: the hot path
@@ -111,13 +111,13 @@ namespace Phoenix.Controls.Hub.Core
             _client = null!;  // Initialized in Initialize()
         }
 
-        // Hub_CodeReview #9 — guard against re-entrant Initialize. The previous call
+        // Guard against re-entrant Initialize. The previous call
         // launched a fresh ProcessScriptQueueAsync each time and leaked the old _client
         // when reconfiguring. Now we dispose the prior client and only start the
         // consumer once per process lifetime.
         private int _consumerStarted;
 
-        // M30 (2026-05-14): handle on the consumer task so Stop() can await
+        // Handle on the consumer task so Stop() can await
         // its exit before disposing _scriptQueue. Without this, the consumer's
         // GetConsumingEnumerable foreach can be mid-iteration when the
         // BlockingCollection.Dispose() runs, surfacing ObjectDisposedException
@@ -128,7 +128,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             LoadSettings();
 
-            // QC06-04 — reset the Stop() latch so a Stop()-then-Initialize() cycle
+            // Reset the Stop() latch so a Stop()-then-Initialize() cycle
             // (e.g. settings reload, manual reconnect, future hot-restart) actually
             // produces a working WS. Pre-fix, _stopped stayed pinned at 1 forever
             // after the first Stop, which turned every subsequent Stop into a no-op
@@ -142,12 +142,12 @@ namespace Phoenix.Controls.Hub.Core
             // safe under a hypothetical concurrent Stop racing this Initialize.
             Interlocked.Exchange(ref _stopped, 0);
             Interlocked.Exchange(ref _consumerStarted, 0);
-            // QC06-12 — re-arm the role-tag-map one-shot so a settings-reload
+            // Re-arm the role-tag-map one-shot so a settings-reload
             // (which re-invokes Initialize) leaves a fresh breadcrumb in the log
             // tied to the new reconnect cycle.
             Interlocked.Exchange(ref _roleTagMapLogged, 0);
 
-            // BH-012 — clear the fatal-auth latch before each round-trip. Without this,
+            // Clear the fatal-auth latch before each round-trip. Without this,
             // after Majo fixes the SB password and the UI re-invokes Initialize, the
             // next disconnect's handler (line ~127) still sees `_authFailedFatal=true`
             // and disables reconnect with the misleading "auth was rejected"
@@ -162,7 +162,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 try { _client?.Dispose(); } catch { }
 
-                // M16 (2026-05-14): pin ClientWebSocket.Options.KeepAliveInterval
+                // Pin ClientWebSocket.Options.KeepAliveInterval
                 // explicitly. .NET's default is 30s which would normally do, but
                 // relying on the implicit value means a future framework change
                 // could silently shift our reconnect cadence. We also disable the
@@ -192,7 +192,7 @@ namespace Phoenix.Controls.Hub.Core
             // duplicate handler accumulation if Initialize() is called more than once.
             _reconnectionSub?.Dispose();
             _reconnectionSub = _client.ReconnectionHappened.Subscribe(info => {
-              // [P1 swarm-audit 2026-05-29] Outer guard. An unhandled throw from
+              // Outer guard. An unhandled throw from
               // EmitRoleTagMapDiagnosticOnce / TryBeginStreamerBotAuth /
               // SubscribeToEvents would terminate the Rx subscription thread and
               // silently kill auto-reconnect. Inner ops keep their own try/catch;
@@ -205,14 +205,14 @@ namespace Phoenix.Controls.Hub.Core
                 GlobalLogger.Log($"WebSocket Connected/Reconnected to {_url}", "WS", LogLevel.Communication);
                 OnConnectionStatusChanged?.Invoke(true);
 
-                // QC06-12 — replaces the per-chat [RoleDebug] spam with a single
+                // Replaces the per-chat [RoleDebug] spam with a single
                 // role-tag-map sample on connect. Documents the expected role-int
                 // ↔ flag mapping so an operator opening the SystemLog after a
                 // restart can see what schema the engine is decoding against,
                 // without buying it on every chat line.
                 EmitRoleTagMapDiagnosticOnce();
 
-                // L64 — fire the SB auth handshake BEFORE any subscriptions if a
+                // Fire the SB auth handshake BEFORE any subscriptions if a
                 // password is configured. SB v0.2 Authenticate is a simple
                 // {request:"Authenticate", id, authentication} envelope; on failure
                 // SB returns an error response we correlate by id (see ParseBotMessage).
@@ -231,7 +231,7 @@ namespace Phoenix.Controls.Hub.Core
 
             _disconnectionSub?.Dispose();
             _disconnectionSub = _client.DisconnectionHappened.Subscribe(info => {
-              // [P1 swarm-audit 2026-05-29] Outer guard — see reconnection handler.
+              // Outer guard — see reconnection handler.
               // OnConnectionStatusChanged?.Invoke(false) and the backoff math below
               // are otherwise unprotected; an unhandled throw kills the Rx thread.
               try {
@@ -261,7 +261,7 @@ namespace Phoenix.Controls.Hub.Core
                 double delay = Math.Max(baseSeconds, baseSeconds * (1.0 + jitterPct));
                 try { _client.ErrorReconnectTimeout = TimeSpan.FromSeconds(delay); } catch { }
 
-                // L64 — if auth has been declared fatally rejected, stop the
+                // If auth has been declared fatally rejected, stop the
                 // reconnect loop. Without this the Websocket.Client's automatic
                 // reconnector would keep slamming SB with bad creds forever and
                 // we'd silently appear "connecting" in the UI.
@@ -276,7 +276,7 @@ namespace Phoenix.Controls.Hub.Core
             });
 
             _messageReceivedSub?.Dispose();
-            // L66 — WebSocket fragmentation/coalescing assumption.
+            // WebSocket fragmentation/coalescing assumption.
             //
             // Streamer.bot can split a large frame across multiple WebSocket
             // continuation frames at the wire level. We deliberately do NOT
@@ -294,7 +294,7 @@ namespace Phoenix.Controls.Hub.Core
             // text-only handler; we log it at Communication level so the drop
             // is visible without spamming on every frame.
             _messageReceivedSub = _client.MessageReceived.Subscribe(msg => {
-                // [P0 swarm-audit 2026-05-29] The Rx subscriber runs on the
+                // The Rx subscriber runs on the
                 // Websocket.Client receive thread. An unhandled throw from a
                 // downstream subscriber (OnMessageReceived) or from ParseBotMessage
                 // terminates that Rx subscription thread and silently severs the
@@ -334,7 +334,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
             });
 
-            // QC06-04 — replace the script queue if a previous Stop() disposed it.
+            // Replace the script queue if a previous Stop() disposed it.
             // BlockingCollection cannot be revived after Dispose; the
             // GetConsumingEnumerable loop in ProcessScriptQueueAsync also returns
             // immediately on a completed queue, so a fresh instance is required to
@@ -347,8 +347,8 @@ namespace Phoenix.Controls.Hub.Core
             }
 
             // Single-shot consumer guard — second Initialize() call must not spawn
-            // a parallel ProcessScriptQueueAsync that would race the first. M30
-            // captures the task handle so Stop() can drain it before disposing
+            // a parallel ProcessScriptQueueAsync that would race the first. We
+            // capture the task handle so Stop() can drain it before disposing
             // the BlockingCollection.
             if (System.Threading.Interlocked.Exchange(ref _consumerStarted, 1) == 0)
                 _consumerTask = Task.Run(() => ProcessScriptQueueAsync());
@@ -360,7 +360,7 @@ namespace Phoenix.Controls.Hub.Core
             _url   = ConfigManager.Current.StreamerBotUrl;
             HUDPort = ConfigManager.Current.HUDServerPort;
 
-            // BH-014 — eagerly rebuild the cache here so the very first chat message
+            // Eagerly rebuild the cache here so the very first chat message
             // after settings reload doesn't pay the rebuild cost. IsBlockedAccount also
             // rebuilds lazily when it observes a BotUsername change, so mutations made
             // outside ConfigManager.Load (tests, future hot-reload paths) still see
@@ -383,24 +383,24 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // QC06-05 — the legacy reflection-then-switch TryGetConfig{String,Bool}
+        // The legacy reflection-then-switch TryGetConfig{String,Bool}
         // wrappers were retired: every call site now reads ConfigManager.Current
         // directly via the strongly-typed AppConfig property. Removing the
         // wrappers drops the per-chat-line property-name allocation + switch and
         // lets the JIT inline the property reads.
 
-        // L64 — kicks off the SB Authenticate handshake when (and only when) a
+        // Kicks off the SB Authenticate handshake when (and only when) a
         // non-empty password is configured. Returns true if the handshake was
         // dispatched (so the reconnect callback should NOT also invoke
         // SubscribeToEvents — that runs from the auth-success path instead).
-        // QC06-05 — direct AppConfig property read (was reflection-via-helper).
+        // Direct AppConfig property read (was reflection-via-helper).
         private bool TryBeginStreamerBotAuth()
         {
             string password = ConfigManager.Current?.StreamerBotPassword ?? string.Empty;
             if (string.IsNullOrEmpty(password))
                 return false;
 
-            // QC06-07 — let JsonSerializer handle escaping. The hand-rolled
+            // Let JsonSerializer handle escaping. The hand-rolled
             // `\\` and `\"` replacements missed every other JSON control
             // character (newline, tab, lone backslash sequences, U+0000..U+001F,
             // unpaired surrogates), so a password with such a code point used
@@ -426,17 +426,16 @@ namespace Phoenix.Controls.Hub.Core
             return true;
         }
 
-        // L64 — resolves the Authenticate response. SB returns either
+        // Resolves the Authenticate response. SB returns either
         //   {"id":"phoenix-authenticate","status":"ok", ...}
         // or
         //   {"id":"phoenix-authenticate","status":"error","error":"..."}.
         // On success we proceed to SubscribeToEvents like the no-auth path.
-        // On failure we log a CriticalError and (only on hard rejection per
-        // M15) set _authFailedFatal so the disconnection handler can disable
-        // reconnect (preventing the silent infinite reconnect that L64 was
-        // filed against).
+        // On failure we log a CriticalError and (only on hard rejection) set
+        // _authFailedFatal so the disconnection handler can disable
+        // reconnect (preventing the silent infinite reconnect).
         //
-        // M15 (2026-05-14): only latch _authFailedFatal on an unmistakable
+        // Only latch _authFailedFatal on an unmistakable
         // credential rejection — not on any non-"ok" status. A malformed
         // response, a parse-only error, or a transient SB-side fault would
         // otherwise wedge reconnect forever even when the configured
@@ -466,7 +465,7 @@ namespace Phoenix.Controls.Hub.Core
                 // Tear the active socket down so the DisconnectionHappened handler
                 // can flip IsReconnectionEnabled = false. We can't toggle it from
                 // here because the reconnection loop is driven off disconnect.
-                // BH-013 — route through AsyncErrorBoundary.SafeRunAsync to match the
+                // Route through AsyncErrorBoundary.SafeRunAsync to match the
                 // sibling fire-forget Stop calls in this file (lines 293/396/401/433).
                 AsyncErrorBoundary.SafeRunAsync(
                     () => _client.Stop(WebSocketCloseStatus.NormalClosure, "auth rejected"),
@@ -474,7 +473,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             else
             {
-                // M15 — non-credential failure (malformed envelope / parse-only
+                // Non-credential failure (malformed envelope / parse-only
                 // error / transient SB fault). Don't latch fatal; the existing
                 // disconnect backoff retries the handshake on the next reconnect.
                 GlobalLogger.Log(
@@ -484,7 +483,7 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // M15 — recognise the credential-rejection wire signatures. SB uses a
+        // Recognise the credential-rejection wire signatures. SB uses a
         // few different phrasings across releases ("Invalid", "invalid
         // credentials", "Authentication failed", "Unauthorized"). We
         // deliberately match a small allowlist of substrings rather than
@@ -538,7 +537,7 @@ namespace Phoenix.Controls.Hub.Core
                         // 2. Handle specific ChatMessage logic for the UI and Script Queue
                         if (eventSource == "Twitch" && eventType == "ChatMessage")
                         {
-                            // M79 — Twitch.ChatMessage with no `data.message` was previously
+                            // Twitch.ChatMessage with no `data.message` was previously
                             // returned-early silently, which made it look like the message had
                             // been processed when in fact the chat handler never saw it. The
                             // safer behavior is to log + drop with an explicit reason so the
@@ -555,7 +554,7 @@ namespace Phoenix.Controls.Hub.Core
                                 return;
                             }
 
-                            // QC06-01 / QC10-01 — role-prefix-badge reliability fix (NAMED REGRESSION).
+                            // Role-prefix-badge reliability fix.
                             // Streamer.bot inconsistently populates `data.moderator` / `data.subscriber`
                             // / `data.vip` vs the integer `data.role` (broadcaster=4, mod=3, vip=2,
                             // sub=1, viewer=0). Pre-fix, mods/VIPs whose SB payload used `role:3`
@@ -563,7 +562,7 @@ namespace Phoenix.Controls.Hub.Core
                             // and through the role-color resolver. The reliable behavior is the
                             // UNION: derive each flag from (role-int >= threshold) OR (legacy
                             // boolean field) so either schema variant produces the right badge.
-                            // See feedback_chat_role_coloring.md for the load-bearing requirement.
+                            // The correct badge for either payload shape is a load-bearing requirement.
                             var roleFlags = ResolveChatRoleFlags(data);
                             var msg = new ChatMessage
                             {
@@ -574,7 +573,7 @@ namespace Phoenix.Controls.Hub.Core
                                 IsMod         = roleFlags.IsMod,
                                 IsSub         = roleFlags.IsSub,
                                 IsVip         = roleFlags.IsVip,
-                                // L67 — Streamer.bot has used at least three field names for the
+                                // Streamer.bot has used at least three field names for the
                                 // cumulative subscription-months counter across releases:
                                 //   `cumMonths` (current SB schema)
                                 //   `cumulativeMonths` (older SB)
@@ -584,19 +583,19 @@ namespace Phoenix.Controls.Hub.Core
                                 // we notice payload-shape drift without spamming the log.
                                 SubMonths     = ResolveSubMonths(data, eventType),
                             };
-                            // QC06-12 — per-chat [RoleDebug] log was retired. Under busy chat
+                            // Per-chat [RoleDebug] log was retired. Under busy chat
                             // it burned every slot in the 2000-entry log ring within seconds,
                             // crowding out the System / Critical events Majo actually needs to
                             // see. The role-flag resolution is now exercised by
                             // BugFixSweep7_SovereignWS_Tests; for live diagnosis, log a single
                             // role-tag-map sample on connect (see EmitRoleTagMapDiagnosticOnce).
 
-                            // H52 — bot self-trigger guard runs BEFORE OnChatMessage fires so
+                            // Bot self-trigger guard runs BEFORE OnChatMessage fires so
                             // ChatViewWindow doesn't render the bot's own line. Previously
                             // the chat panel still flashed the message before the engine
                             // dropped it.
                             //
-                            // QC06-03 — match on Twitch `login` + `userId` (immutable) instead
+                            // Match on Twitch `login` + `userId` (immutable) instead
                             // of `displayName` alone. Twitch display names can be stylized or
                             // non-ASCII (e.g. uppercase, Japanese characters) while the login
                             // is always the lowercase ASCII handle. Comparing only displayName
@@ -620,7 +619,7 @@ namespace Phoenix.Controls.Hub.Core
                                 return;
                             }
 
-                            // QC36-07 — broadcaster self-fire guard for chat. Off by default
+                            // Broadcaster self-fire guard for chat. Off by default
                             // (chat-based testing — "type !command in my own chat to verify"
                             // is a common workflow), but when AppConfig.SuppressBroadcasterChat
                             // is on we route the chat actor through IsBroadcasterActor so a
@@ -628,7 +627,7 @@ namespace Phoenix.Controls.Hub.Core
                             // subscribers or the script queue. Pre-fix the chat path only
                             // checked IsBlockedAccount against the bot list — broadcaster-as-
                             // actor was silently accepted, which is the right default but
-                            // gave users no opt-in to mute it. Mirrors the M31 non-chat
+                            // gave users no opt-in to mute it. Mirrors the non-chat
                             // guard's per-event-type toggle pattern.
                             if (ConfigManager.Current?.SuppressBroadcasterChat == true
                                 && IsBroadcasterActor(data))
@@ -639,7 +638,7 @@ namespace Phoenix.Controls.Hub.Core
                                 return;
                             }
 
-                            // Perf-review H21 (2026-05-14): per-handler try/catch.
+                            // Per-handler try/catch.
                             // Previously a throwing subscriber severed the rest of the
                             // chain — UI panel, script wait_for_next, etc. — and the
                             // exception bubbled into the WS receive pump. Match Bus's
@@ -660,11 +659,11 @@ namespace Phoenix.Controls.Hub.Core
                             RecordRecentChat(msg);
 
                             // Queue for logic execution to ensure persistence safety.
-                            // H51 — bump dropped-message counter visibly so the Diagnostics window
+                            // Bump dropped-message counter visibly so the Diagnostics window
                             // (and the configurable ScriptQueueOverflow event) can surface it.
                             // Drops are still rate-limited via the bounded BlockingCollection.
                             //
-                            // Perf-review H22 (2026-05-14): rate-limit the drop log. Under
+                            // Rate-limit the drop log. Under
                             // sustained chat flood the prior code emitted one CriticalError
                             // GlobalLogger.Log per drop, amplifying back-pressure (each Log
                             // call took the GlobalLogger _historyLock + formatted a string,
@@ -704,7 +703,7 @@ namespace Phoenix.Controls.Hub.Core
                         // 3. OBS scene change → broadcast to Visualist via Bus
                         //    AND fan out to the script engine for .phx execution.
                         //
-                        // ── M82: dual-routing rationale ────────────────────────────────────
+                        // ── Dual-routing rationale ────────────────────────────────────
                         // OBS.SceneChanged is the only event we intentionally route down two
                         // independent paths:
                         //
@@ -741,7 +740,7 @@ namespace Phoenix.Controls.Hub.Core
                         // 4. Route all other events to the script engine for .phx execution
                         else if (root.TryGetProperty("data", out var eventData))
                         {
-                            // M31 — broadcaster-self-trigger guard for non-chat events.
+                            // Broadcaster-self-trigger guard for non-chat events.
                             // Before the script engine sees Twitch.Follow / Twitch.PointRedeem
                             // (and the SB-named alias Twitch.RewardRedemption), drop the event
                             // if the actor is the broadcaster account. Without this, an
@@ -751,7 +750,7 @@ namespace Phoenix.Controls.Hub.Core
                             // Suppression is configurable per event type; defaults to ON for
                             // Follow / PointRedeem because these are the documented self-fire
                             // pain points. Toggle via the AppConfig flags (read by reflection
-                            // until the next sweep adds them to AppConfig.cs):
+                            // until they are added to AppConfig.cs):
                             //   SuppressBroadcasterFollow      — Twitch.Follow
                             //   SuppressBroadcasterRedeem      — Twitch.PointRedeem / RewardRedemption
                             if (ShouldSuppressBroadcasterEvent(fullEventType, eventData))
@@ -766,12 +765,12 @@ namespace Phoenix.Controls.Hub.Core
                             // Map Streamer.bot event names to Phoenix event types
                             string phoenixEvent = $"{eventSource}.{eventType}";
 
-                            // QC36-06 — raid-viewer spoof warning. Twitch IRC USERNOTICE
+                            // Raid-viewer spoof warning. Twitch IRC USERNOTICE
                             // / EventSub forward the raider-supplied viewer count
                             // verbatim, and SB's "Test Trigger" UI lets the operator type
                             // any integer. Scripts that gate a reward on
                             // user.viewers > 100 are easily bypassed. We don't change the
-                            // trust model (no Helix verification — that's QC36-06-followup),
+                            // trust model (no Helix verification — that's a follow-up),
                             // but we log a Communication-tier warning when the claimed
                             // viewer count is implausibly large so the operator sees
                             // suspicious payloads in the log. Threshold: 10000 viewers is
@@ -815,11 +814,11 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // H52 + M31 — shared bot/broadcaster name set used by chat self-guard
-        // and the M31 broadcaster-self-trigger guard. The bot username is
+        // Shared bot/broadcaster name set used by chat self-guard
+        // and the broadcaster-self-trigger guard. The bot username is
         // operator-configured via AppConfig.BotUsername (comma-separated list
         // for solo setups using both bot and broadcaster accounts).
-        // BH-014 — fast path is a string-equality check against the cache key;
+        // Fast path is a string-equality check against the cache key;
         // when the underlying BotUsername changes (LoadSettings, tests, future
         // hot-reload), the cache is lazily rebuilt under lock.
         internal bool IsBlockedAccount(string username)
@@ -836,7 +835,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC06-03 — bot self-trigger guard for chat events. Twitch displayName is
+        /// Bot self-trigger guard for chat events. Twitch displayName is
         /// operator-styled (can be uppercase / non-ASCII), so comparing only that
         /// missed stylized bot accounts. The hardened guard runs a strength-ranked
         /// fallback chain:
@@ -872,7 +871,7 @@ namespace Phoenix.Controls.Hub.Core
             if (!string.IsNullOrWhiteSpace(login) && IsBlockedAccount(login))
                 return true;
 
-            // 4. WEAK — displayName fallback. Preserves pre-QC06-03 behavior so
+            // 4. WEAK — displayName fallback. Preserves the prior behavior so
             //    ASCII-name bots whose configured BotUsername equals the display
             //    name still match, but logs a Debug breadcrumb so the operator
             //    can see the weak match and add a BotUserId/login to upgrade it.
@@ -888,7 +887,7 @@ namespace Phoenix.Controls.Hub.Core
             return false;
         }
 
-        // M31 — actor-vs-broadcaster check for non-chat events.
+        // Actor-vs-broadcaster check for non-chat events.
         // The actor's name is read from the SB event payload (displayName /
         // userName / user_name / login / userLogin), and the actor's twitch id
         // from (userId / user_id). Either one matching the configured broadcaster
@@ -919,7 +918,7 @@ namespace Phoenix.Controls.Hub.Core
                 actorId = idEl2.GetString();
 
             // Compare to configured broadcaster identity.
-            // QC06-05 — direct AppConfig property reads (was reflection-via-helper).
+            // Direct AppConfig property reads (was reflection-via-helper).
             var cfg = ConfigManager.Current;
             string? bcastName = cfg?.BroadcasterUsername;
             string? bcastId   = cfg?.BroadcasterUserId;
@@ -942,14 +941,13 @@ namespace Phoenix.Controls.Hub.Core
             return false;
         }
 
-        // QC36-06 — surface a Communication-tier warning when an incoming
+        // Surface a Communication-tier warning when an incoming
         // Twitch.Raid event claims an implausibly large viewer count. SB
         // forwards the count verbatim from Twitch's USERNOTICE /
         // EventSub envelope, which is broadcaster-controlled at the raider
         // side and trivially editable from SB's Test Trigger UI. We do NOT
-        // change the trust model here (no Helix cross-check — out of scope
-        // for this sweep; see the raid-template note for the Helix-followup
-        // breadcrumb). Threshold 10000 is "above any plausible non-celebrity
+        // change the trust model here (no Helix cross-check — deferred as a
+        // follow-up). Threshold 10000 is "above any plausible non-celebrity
         // raid"; below that we stay silent to avoid log noise on a real big
         // raid. Errors are swallowed — the warning is best-effort observability.
         private const long RaidViewerSpoofWarnThreshold = 10000;
@@ -979,12 +977,12 @@ namespace Phoenix.Controls.Hub.Core
             catch { /* best-effort observability — never block dispatch */ }
         }
 
-        // M31 — gate: combines per-event-type config toggles with the
+        // Gate: combines per-event-type config toggles with the
         // broadcaster-actor identity check. Defaults are ON for Follow /
         // PointRedeem / RewardRedemption per the brief.
         internal bool ShouldSuppressBroadcasterEvent(string fullEventType, System.Text.Json.JsonElement data)
         {
-            // QC06-05 — direct AppConfig property reads (was reflection-via-helper).
+            // Direct AppConfig property reads (was reflection-via-helper).
             var cfg = ConfigManager.Current;
             bool eligible;
             switch (fullEventType)
@@ -1119,10 +1117,10 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task ProcessScriptQueueAsync()
         {
-            // [QC18-S2 P1] Wrap the GetConsumingEnumerable foreach in an outer
+            // Wrap the GetConsumingEnumerable foreach in an outer
             // try/catch. The pre-fix try/catch sat INSIDE the foreach, so an
             // exception from GetConsumingEnumerable itself (e.g. the
-            // settings-reload race the M30 comment anticipates: Dispose() on the
+            // settings-reload race where Dispose() runs on the
             // BlockingCollection mid-enumeration → ObjectDisposedException) would
             // terminate the consumer silently. With _consumerStarted pinned at 1
             // by Initialize(), the next Initialize() call would skip restart and
@@ -1192,7 +1190,7 @@ namespace Phoenix.Controls.Hub.Core
         private int _stopped;
 
         /// <summary>
-        /// QC06-08 — async teardown so a UI-thread shutdown path (HubBootstrapper.
+        /// Async teardown so a UI-thread shutdown path (HubBootstrapper.
         /// ShutdownAsync, future Hub close handlers) doesn't block on the
         /// Websocket.Client's synchronous Dispose. The library's Dispose path
         /// joins its internal worker thread, which can take up to ~3 s on a
@@ -1218,7 +1216,7 @@ namespace Phoenix.Controls.Hub.Core
             foreach (var (_, tcs) in _pendingRequests) tcs.TrySetCanceled();
             _pendingRequests.Clear();
 
-            // M30 (2026-05-14): wait for ProcessScriptQueueAsync to exit before
+            // Wait for ProcessScriptQueueAsync to exit before
             // disposing _scriptQueue. CompleteAdding above unblocks the
             // GetConsumingEnumerable foreach when the queue drains; the loop
             // then returns naturally. Without the drain, Dispose() could race
@@ -1245,9 +1243,9 @@ namespace Phoenix.Controls.Hub.Core
                 }
             }
 
-            // Hub_CodeReview #9 — dispose the BlockingCollection so its underlying
+            // Dispose the BlockingCollection so its underlying
             // ConcurrentQueue + waiters are released. The consumer loop has either
-            // exited (M30 drain above) or timed out; either way no further
+            // exited (drain above) or timed out; either way no further
             // iteration is in flight from this side.
             try { _scriptQueue.Dispose(); } catch { }
 
@@ -1270,7 +1268,7 @@ namespace Phoenix.Controls.Hub.Core
                     try { _client?.Dispose(); } catch (Exception ex) { GlobalLogger.Error("WS", "client dispose error", ex); }
                 }
 
-                // Hub_CodeReview #9 — dispose the BlockingCollection so its underlying
+                // Dispose the BlockingCollection so its underlying
                 // ConcurrentQueue + waiters are released. The consumer loop has already
                 // exited via CompleteAdding above; calling Dispose after consumers drain
                 // is safe.
@@ -1309,8 +1307,8 @@ namespace Phoenix.Controls.Hub.Core
         /// All callers awaiting an SB response should use this so the format stays uniform
         /// in logs and the dispatcher.
         ///
-        /// MINE-10 — default prefix flipped from the legacy "sov-" (Sovereign-era brand
-        /// drift) to "phx-" (Phoenix Controls). Streamer.bot treats request ids as
+        /// The default prefix is "phx-" (Phoenix Controls), flipped from the legacy
+        /// "sov-" brand drift. Streamer.bot treats request ids as
         /// opaque correlation keys; no integration depends on the literal prefix.
         /// </summary>
         public static string NewRequestId(string prefix = "phx")
@@ -1352,7 +1350,7 @@ namespace Phoenix.Controls.Hub.Core
             // can leak out of the public Send surface during shutdown or settings reload.
             lock (_clientLock)
             {
-                // BH-015 — guard against the pre-Initialize NRE. `_client = null!` in the
+                // Guard against the pre-Initialize NRE. `_client = null!` in the
                 // ctor sets the trap; only Initialize() populates the field. Public
                 // surface = callable from outside, so the safe response is to log + drop
                 // (mirroring the !IsRunning branch below) instead of crashing the caller.
@@ -1379,14 +1377,14 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // QC06-12 — the legacy `RoleDebugLogging` compile-time gate has been
+        // The legacy `RoleDebugLogging` compile-time gate has been
         // removed alongside the per-chat [RoleDebug] log it controlled. The
         // role-flag resolver is covered by unit tests, and a one-shot
         // role-tag-map sample fires from the reconnect callback for live
         // diagnosis (see the connect handler).
 
         /// <summary>
-        /// QC06-01 / QC10-01 — derives the four chat role flags from a Streamer.bot
+        /// Derives the four chat role flags from a Streamer.bot
         /// chat payload using the union of (role-int threshold) and (legacy boolean
         /// field). Either schema variant on its own produces the correct badge.
         ///
@@ -1396,7 +1394,7 @@ namespace Phoenix.Controls.Hub.Core
         /// <c>vip</c>. Streamer.bot does not ship a `broadcaster` boolean — only the
         /// role-int conveys that identity.
         ///
-        /// The fix is load-bearing per <c>feedback_chat_role_coloring.md</c>: the
+        /// The fix is load-bearing: the
         /// previous code read each boolean in isolation, so a payload that used
         /// <c>role:3</c> without booleans collapsed a moderator to "Viewer".
         /// </summary>
@@ -1430,7 +1428,7 @@ namespace Phoenix.Controls.Hub.Core
             return new ChatRoleFlags(isBroadcaster, isMod, isVip, isSub);
         }
 
-        // QC06-12 — one-shot latch so reconnect storms don't multiply the
+        // One-shot latch so reconnect storms don't multiply the
         // role-tag-map diagnostic. Reset on Initialize so settings reload
         // logs it again, which is a useful "I changed config and reconnected"
         // breadcrumb.
@@ -1446,7 +1444,7 @@ namespace Phoenix.Controls.Hub.Core
                 "WS", LogLevel.Debug);
         }
 
-        // L67 — one-time-warning latch for missing cumulative-months fields on
+        // One-time-warning latch for missing cumulative-months fields on
         // sub gift events. Process-lifetime flag (not per-payload) so a noisy
         // upstream payload-shape change logs once and stops, rather than
         // flooding the Debug log on every gift sub.
@@ -1488,7 +1486,7 @@ namespace Phoenix.Controls.Hub.Core
             return 0;
         }
 
-        // QC36-03 — Twitch / YouTube / OBS / General event subscription set.
+        // Twitch / YouTube / OBS / General event subscription set.
         //
         // Single source of truth so Subscribe and UnSubscribe stay in lockstep
         // (a drift here used to leak subscriptions on the Streamer.bot side
@@ -1508,9 +1506,8 @@ namespace Phoenix.Controls.Hub.Core
         //   OBS:     SceneChanged.
         //
         // Per-reward redemptions, Charity, Goals, Shoutouts, Bans, Timeouts,
-        // and Channel.Update are intentionally NOT added here — see
-        // overnight slice-02 NOTES.md for the exact-event-name ambiguity that
-        // kept them out of this pass.
+        // and Channel.Update are intentionally NOT added here — the
+        // exact-event-name ambiguity kept them out of this pass.
         private static readonly string[] TwitchEvents = new[]
         {
             "ChatMessage", "Cheer", "Sub", "Resub", "GiftSub", "GiftBomb",

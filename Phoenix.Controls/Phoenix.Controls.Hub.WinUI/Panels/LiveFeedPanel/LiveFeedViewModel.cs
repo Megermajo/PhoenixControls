@@ -19,39 +19,39 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     private const int MaxRows = 5000;
 
     private readonly ILiveFeedSource _source;
-    // C1 (2026-05-14): per-VM dispatcher pump, ctor-injected by PanelFactory.
+    // per-VM dispatcher pump, ctor-injected by PanelFactory.
     private readonly UiDispatcherPump _ui;
-    //  _buffer holds every row the VM has ingested, unfiltered.
+    // _buffer holds every row the VM has ingested, unfiltered.
     // Rows is the filter-visible subset rendered in the panel. On chip
     // toggle RebuildVisibleRows() clears Rows and re-applies the predicate
     // against _buffer — without this, prior-filter rows stayed on screen
     // after the user changed chips. Mirrors SystemLogViewModel's buffer /
     // VisibleRows split. The VM does its own filtering rather than relying
     // on ILiveFeedSource.SetFilter (which is a shared slot across pop-outs
-    // per QC14-09 and would corrupt the buffer for other observers).
+    // and would corrupt the buffer for other observers).
     private readonly List<LiveFeedRowVm> _buffer = new();
     private LiveFeedFilter _selectedFilter = LiveFeedFilter.All;
-    // B3 (audit 2026-05-24) — Errors chip is selectable independently of
-    // the LiveFeedFilter enum because the enum lives in Records.cs (out
-    // of this sprint's edit scope). When _errorsChipSelected is true the
-    // filter predicate returns IsError rows only; the existing chip
-    // selectors clear the flag because they're meant to be exclusive.
+    // Errors chip is selectable independently of
+    // the LiveFeedFilter enum because the enum lives in Records.cs. When
+    // _errorsChipSelected is true the filter predicate returns IsError rows
+    // only; the existing chip selectors clear the flag because they're meant
+    // to be exclusive.
     private bool _errorsChipSelected;
-    // C5 (audit 2026-05-24) — per-user filter wired from the row's right-
+    // per-user filter wired from the row's right-
     // click "Filter to user: <Username>" menu. Empty string disables the
     // filter; otherwise rows pass only when Who matches (case-insensitive,
     // exact). Persistence is intentionally session-only — operators set
     // this to narrow during incident response and expect a fresh feed on
     // restart.
     private string? _userFilter;
-    // C5 — handler for GlobalLogger.OnLogEntry. Subscribed alongside the
+    // handler for GlobalLogger.OnLogEntry. Subscribed alongside the
     // existing source.EntryAdded so the panel can surface CriticalError
-    // entries inline with stream activity (B3). Held in a field so the
+    // entries inline with stream activity. Held in a field so the
     // -= in Dispose can unsubscribe deterministically.
     private readonly Action<Log> _onLog;
     private bool _disposed;
 
-    // Perf-review C3/H6 (2026-05-14): dispatcher-hop coalescing. EntryAdded
+    // dispatcher-hop coalescing. EntryAdded
     // fires once per bus message; raid bursts can land 200+/sec. Accumulate
     // pending rows on the producer side and enqueue a single FlushPending
     // callback per dispatcher tick — subsequent arrivals join the in-flight
@@ -65,9 +65,9 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
         _source = source;
         _ui = new UiDispatcherPump(dispatcher);
 
-        // C5 (audit 2026-05-24) — restore persisted chip state. Strings
+        // restore persisted chip state. Strings
         // come from AppConfig.LiveFeedActiveChips and map to either the
-        // LiveFeedFilter enum or the "Errors" sentinel (B3). An empty /
+        // LiveFeedFilter enum or the "Errors" sentinel. An empty /
         // missing list leaves the default "All" selection in place so old
         // configs migrate silently.
         var cfg = ConfigManager.Current;
@@ -90,17 +90,16 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
             }
         }
 
-        // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber receives every
+        // fan-out: every subscriber receives every
         // row. Adding to EntryAdded IS the subscribe; the matching -= in
         // Dispose IS the unsubscribe. No primary-subscriber gate.
         _source.EntryAdded += OnEntryAdded;
 
-        // B3 (audit 2026-05-24) — subscribe to GlobalLogger.OnLogEntry so
+        // Subscribe to GlobalLogger.OnLogEntry so
         // CriticalError entries land in the LiveFeed alongside stream
         // events. We do this here at the VM (not in LiveFeedSource —
-        // that file is in Services/ which is out of this sprint's edit
-        // scope) so each pop-out gets its own subscription that survives
-        // the original panel being torn down.
+        // that file is in Services/) so each pop-out gets its own
+        // subscription that survives the original panel being torn down.
         _onLog = entry =>
         {
             if (entry.Level != LogLevel.CriticalError) return;
@@ -130,7 +129,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// B3 — appends an error row (sourced from GlobalLogger.CriticalError)
+    /// Appends an error row (sourced from GlobalLogger.CriticalError)
     /// into the panel's buffer + visible rows under the same trim policy
     /// as the normal source-ingress path. Marshalled onto the UI thread
     /// by the caller via <c>_ui.Post</c>.
@@ -162,7 +161,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     /// the feed with a filter chip — the "waiting for activity" first-launch
     /// surface. An active filter that excludes everything intentionally
     /// hides the placeholder so the operator can see that they filtered
-    /// the feed (rather than the feed having gone dark). 
+    /// the feed (rather than the feed having gone dark).
     /// </summary>
     public bool IsEmpty => _buffer.Count == 0 && _selectedFilter == LiveFeedFilter.All;
 
@@ -184,7 +183,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C5 (audit 2026-05-24) — clear the panel's local buffer + visible
+    /// Clear the panel's local buffer + visible
     /// rows. Mirrors SystemLogViewModel.ClearBuffer; upstream sources
     /// keep accumulating and ingress re-populates naturally.
     /// </summary>
@@ -197,7 +196,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C5 (audit 2026-05-24) — per-user filter wired from the row's
+    /// Per-user filter wired from the row's
     /// right-click "Filter to user" menu. Setting rebuilds Rows so the
     /// new predicate lands immediately. Persistence is session-only.
     /// </summary>
@@ -220,7 +219,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     public bool HasUserFilter => !string.IsNullOrEmpty(_userFilter);
 
     /// <summary>
-    /// B3 (audit 2026-05-24) — "Errors" chip selector. Selects the chip
+    /// "Errors" chip selector. Selects the chip
     /// and mutates the buffer-aware filter so only error rows surface.
     /// Exclusive with the LiveFeedFilter chip set per the All / Subs /
     /// Raids / Visual / Redeem / Follow precedent.
@@ -249,7 +248,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     public ObservableCollection<LiveFeedRowVm> Rows { get; } = new();
 
     /// <summary>
-    ///  Runtime theme-swap hook. Drops the static brush caches and
+    /// Runtime theme-swap hook. Drops the static brush caches and
     /// re-resolves IconBrush on every buffered row so x:Bind OneWay picks up
     /// the new theme without rebuilding the row VMs. Iterates _buffer (the
     /// full ingested set), not Rows, so filtered-out rows also refresh —
@@ -267,18 +266,18 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
         get => _selectedFilter;
         set
         {
-            // B3 — picking any enum-backed chip deselects Errors. We
+            // Picking any enum-backed chip deselects Errors. We
             // mutate the flag first so the chip state's setter sees the
             // post-toggle baseline.
             bool errorsChanged = _errorsChipSelected;
             _errorsChipSelected = false;
             if (Set(ref _selectedFilter, value) || errorsChanged)
             {
-                //  On filter change, rebuild Rows from _buffer so
+                // On filter change, rebuild Rows from _buffer so
                 // stale rows from the previous filter drop off-screen.
                 RebuildVisibleRows();
-                // C5 (audit 2026-05-24) — persist the active chip so the
-                // panel restores its filter set on restart.
+                // persist the active chip so the panel restores its
+                // filter set on restart.
                 PersistChipState();
                 Raise(nameof(IsAllSelected));
                 Raise(nameof(IsSubsSelected));
@@ -287,7 +286,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
                 Raise(nameof(IsRedeemSelected));
                 Raise(nameof(IsFollowSelected));
                 Raise(nameof(IsErrorsSelected));
-                //  Empty-state surface is filter-aware.
+                // Empty-state surface is filter-aware.
                 Raise(nameof(IsEmpty));
                 Raise(nameof(EmptyStateVisibility));
             }
@@ -295,7 +294,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C5 (audit 2026-05-24) — write the active chip to AppConfig and
+    /// Write the active chip to AppConfig and
     /// persist. We store a single chip name; the panel is single-select
     /// today and an empty list deserialises to "All" by default in the
     /// ctor restore path.
@@ -324,9 +323,9 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     public bool IsSubsSelected   => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Subs;
     public bool IsRaidsSelected  => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Raids;
     public bool IsVisualSelected => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Visual;
-    //  Redeem + Follow chip selectors. Pairs with the Records.cs
-    // enum values added in the same QC item — every LiveFeedKind the source
-    // can emit now has a chip in the panel header.
+    // Redeem + Follow chip selectors. Pairs with the Records.cs
+    // enum values — every LiveFeedKind the source can emit now has a chip
+    // in the panel header.
     public bool IsRedeemSelected => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Redeem;
     public bool IsFollowSelected => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Follow;
 
@@ -339,7 +338,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
 
     private void OnEntryAdded(object? sender, LiveFeedEntry entry)
     {
-        // HUB-UX-D7 (2026-05-14) — fan-out: this VM is one of N subscribers.
+        // fan-out: this VM is one of N subscribers.
         // Each one renders its own copy of the row in its own Window.
         var row = new LiveFeedRowVm(entry);
         bool needsSchedule;
@@ -351,7 +350,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
         }
         if (!needsSchedule) return;
 
-        // Perf-review H1: HasThreadAccess fast-path baked into Post.
+        // HasThreadAccess fast-path baked into Post.
         _ui.Post(FlushPending);
     }
 
@@ -382,7 +381,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    ///  Rebuilds the visible <see cref="Rows"/> collection from
+    /// Rebuilds the visible <see cref="Rows"/> collection from
     /// <c>_buffer</c> under the current <see cref="SelectedFilter"/>.
     /// Mirrors <c>SystemLogViewModel.RebuildVisibleRows</c>.
     /// </summary>
@@ -404,7 +403,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     /// </summary>
     private bool RowMatchesFilter(LiveFeedRowVm row)
     {
-        // B3 — Errors chip surfaces ONLY error rows (and otherwise hides
+        // Errors chip surfaces ONLY error rows (and otherwise hides
         // every stream/visual row). The other chips only see non-error
         // rows so a long error tail doesn't drown out the normal feed.
         if (_errorsChipSelected)
@@ -428,7 +427,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
             if (!kindMatches) return false;
         }
 
-        // C5 — per-user narrow. Empty filter passes everything; otherwise
+        // per-user narrow. Empty filter passes everything; otherwise
         // exact-match (case-insensitive) against the row's Who field.
         if (_userFilter is { Length: > 0 }
             && !string.Equals(row.Who, _userFilter, StringComparison.OrdinalIgnoreCase))

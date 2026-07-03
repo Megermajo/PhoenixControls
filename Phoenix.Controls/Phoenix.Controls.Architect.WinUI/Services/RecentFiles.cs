@@ -100,7 +100,7 @@ public static class RecentFiles
     public static void Remove(string absolutePath)
     {
         if (string.IsNullOrWhiteSpace(absolutePath)) return;
-        // [P1 swarm-audit] Acquire _ioGate around the Load → RemoveAll → Save
+        // Acquire _ioGate around the Load → RemoveAll → Save
         // for the same reason Touch() does (lines 48-70): a removal racing a
         // concurrent Touch()/TouchDeferred() on another window could Load stale
         // state and Save it back, silently dropping the Touch's MRU update (or
@@ -139,7 +139,7 @@ public static class RecentFiles
 
     private const string PinnedFileName = "recent-files.pinned.json";
 
-    // [P1 swarm-audit 2026-05-29] Serialises the pinned-list load-modify-save
+    // Serialises the pinned-list load-modify-save
     // sequence in SetPinned. Pre-fix two concurrent SetPinned calls (e.g. two
     // sibling Architect windows toggling pins) could both LoadPinned the same
     // on-disk state, mutate independent copies, and the second File.WriteAllText
@@ -178,7 +178,7 @@ public static class RecentFiles
     public static bool IsPinned(string absolutePath)
     {
         if (string.IsNullOrWhiteSpace(absolutePath)) return false;
-        // [P1 swarm-audit] Read pinned state under s_pinnedLock so this read
+        // Read pinned state under s_pinnedLock so this read
         // can't observe a torn/stale snapshot while SetPinned() is mid
         // load-modify-save under the same lock (lines 167-191).
         lock (s_pinnedLock)
@@ -190,7 +190,7 @@ public static class RecentFiles
     public static void SetPinned(string absolutePath, bool pinned)
     {
         if (string.IsNullOrWhiteSpace(absolutePath)) return;
-        // [P1 swarm-audit 2026-05-29] Hold s_pinnedLock across the whole
+        // Hold s_pinnedLock across the whole
         // load-modify-save so concurrent toggles can't clobber each other.
         lock (s_pinnedLock)
         {

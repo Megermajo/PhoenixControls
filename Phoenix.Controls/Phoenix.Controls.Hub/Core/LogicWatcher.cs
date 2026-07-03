@@ -24,7 +24,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly PathDebouncer _debouncer = new();
         private int _disposed;
 
-        //  FSW hardening for OneDrive working trees.
+        // FSW hardening for OneDrive working trees.
         //
         // Default InternalBufferSize is 8 KB — small enough that a bulk-save
         // burst (e.g. Architect re-exporting every .phx after a graph rename)
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Hub.Core
 
         public LogicWatcher()
         {
-            // [P1 swarm-audit 2026-05-29] ConfigManager.Current.LogicDirectory may
+            // ConfigManager.Current.LogicDirectory may
             // be null (missing/blank config key); default to "data/logic" so the
             // Path.IsPathRooted / Path.Combine below never deref a null.
             string rel = ConfigManager.Current.LogicDirectory ?? "data/logic";
@@ -100,14 +100,14 @@ namespace Phoenix.Controls.Hub.Core
 
         public void Start()
         {
-            // QC04-11 — Start() must be idempotent. Calling it a second time
+            // Start() must be idempotent. Calling it a second time
             // (e.g. on settings-driven hot reconfigure of LogicDirectory) used
             // to leak the previous FileSystemWatcher: a fresh _watcher was
             // assigned over the field, the old one kept raising events on the
             // dead Refresh path, and Dispose() only tore down whichever one
             // was current at the time. Tear the prior watcher down here so
             // repeated Start() calls converge on a single live watcher.
-            // [P1 swarm-audit 2026-05-29] Serialize the _watcher mutations under
+            // Serialize the _watcher mutations under
             // _recreateLock (the same lock TryRecreateWatcher already holds) so a
             // re-Start can't interleave with an in-flight Error-driven recreate.
             lock (_recreateLock)
@@ -124,7 +124,7 @@ namespace Phoenix.Controls.Hub.Core
             GlobalLogger.Log($"Phoenix Logic Watcher is active on: {_logicPath}", "LogicWatcher");
         }
 
-        //  Factored out so the Error-recovery path can rebuild the
+        // Factored out so the Error-recovery path can rebuild the
         // FSW with the same wiring as the initial Start() call.
         private FileSystemWatcher BuildWatcher()
         {
@@ -146,7 +146,7 @@ namespace Phoenix.Controls.Hub.Core
             };
             watcher.Changed += (s, e) =>
             {
-                // QC04-08 — WaitForFileStable + RotateBackup do up to ~3s of
+                // WaitForFileStable + RotateBackup do up to ~3s of
                 // Thread.Sleep + sync File.Copy. Running them on the FSW
                 // callback thread blocks ALL further FileSystemWatcher
                 // notifications on this folder for the duration. Offload to a
@@ -154,7 +154,7 @@ namespace Phoenix.Controls.Hub.Core
                 // correctly. We still schedule the refresh via the debouncer
                 // so multiple Changed events for one logical save coalesce.
                 string capturedPath = e.FullPath;
-                // [P1 swarm-audit 2026-05-29] Route the offloaded backup+refresh
+                // Route the offloaded backup+refresh
                 // through AsyncErrorBoundary so a fault inside BackupAndScheduleRefresh
                 // lands in GlobalLogger.Error like every other fire-and-forget in Hub,
                 // instead of escaping as an unobserved Task exception.
@@ -172,7 +172,7 @@ namespace Phoenix.Controls.Hub.Core
                 ScheduleRefresh();
             };
 
-            //  OneDrive transient hiccups (handle invalidation,
+            // OneDrive transient hiccups (handle invalidation,
             // buffer overflow during bulk save) silently end script reload
             // unless Error is wired. Log via GlobalLogger.Error so the stack
             // trace survives, then attempt one throttled recreate.
@@ -190,7 +190,7 @@ namespace Phoenix.Controls.Hub.Core
             // Many native FSW errors arrive as Win32Exception under the hood
             // (ERROR_NOTIFY_ENUM_DIR = 1022 on buffer overflow). We let
             // GlobalLogger format whatever the runtime hands us; the
-            //  AggregateException/InnerException walk in Error()
+            // AggregateException/InnerException walk in Error()
             // means a wrapped exception still surfaces with full context.
             GlobalLogger.Error(
                 "LogicWatcher",
@@ -264,7 +264,7 @@ namespace Phoenix.Controls.Hub.Core
                     GlobalLogger.Error("LogicWatcher", "Refresh failed", ex);
                     return;
                 }
-                // [P1 swarm-audit] OnRefresh runs on the PathDebouncer's timer
+                // OnRefresh runs on the PathDebouncer's timer
                 // callback thread; SchedulerService.Reload() does synchronous
                 // Directory.GetFiles() + File.ReadAllText() that would block the
                 // timer thread (stalling all further debounce callbacks). Offload
@@ -282,7 +282,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private void BackupAndScheduleRefresh(string changedPath)
         {
-            // QC04-08 — disposed-check at task entry. A Stop() that arrives
+            // Disposed-check at task entry. A Stop() that arrives
             // between the FSW callback and the offloaded task firing must abort
             // the sleeps + sync IO before they accumulate on a dead watcher.
             if (Volatile.Read(ref _disposed) != 0) return;
@@ -391,7 +391,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] Route through GlobalLogger.Error so
+                // Route through GlobalLogger.Error so
                 // the InnerException chain + stack are captured in the
                 // SystemHistory ring buffer. Label names the failing file so
                 // the row stays scannable.
@@ -410,7 +410,7 @@ namespace Phoenix.Controls.Hub.Core
             try { File.WriteAllBytes(path, bytes); }
             catch (Exception ex)
             {
-                // [ / P1-24+P1-25] Carry the full exception (stack +
+                // Carry the full exception (stack +
                 // InnerException) so I/O-permission errors stay diagnosable;
                 // label names the .bak file the write was targeting.
                 GlobalLogger.Error("LogicWatcher", $"bak write '{Path.GetFileName(path)}' failed", ex);
@@ -425,7 +425,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
-            // [P1 swarm-audit 2026-05-29] Guard the _watcher teardown under
+            // Guard the _watcher teardown under
             // _recreateLock and re-check null inside the lock — closes the
             // check-then-act race with a concurrent TryRecreateWatcher that
             // disposes + reassigns _watcher under the same lock.

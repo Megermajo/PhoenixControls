@@ -27,7 +27,7 @@ namespace Phoenix.Controls.Hub.Core.Translation
             get { lock (_lock) return _active; }
             set
             {
-                // [P1 swarm-audit 2026-05-29] The previous translator was dropped without
+                // The previous translator was dropped without
                 // disposal — HttpTranslator owns a per-instance HttpClient + SemaphoreSlim,
                 // so every assignment/Reload leaked them. Capture the old reference under
                 // the lock, swap, then dispose outside the lock (Dispose may block briefly
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Hub.Core.Translation
         public void Reload()
         {
             var next = ResolveFromConfig();
-            // [P1 swarm-audit 2026-05-29] Dispose the outgoing translator (HttpTranslator
+            // Dispose the outgoing translator (HttpTranslator
             // holds an HttpClient + SemaphoreSlim) instead of leaking it. Swap under the
             // lock, dispose outside it.
             ITranslator old;

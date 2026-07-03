@@ -10,7 +10,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
 // Top-level view-model for the Logic Canvas pane. Owns the loaded
 // Graph, the visual node/link VM collections, the pan/zoom
-// state, and the current selection. Track 5's LogicCanvasView XAML
+// state, and the current selection. The LogicCanvasView XAML
 // binds:
 //
 //   <ItemsControl ItemsSource="{Binding Nodes}" ... NodeView template>
@@ -22,7 +22,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // list inside CanvasNotes.md.
 //
 // Implements IDisposable so SubGraphWindow can hand the VM a tear-down
-// signal on Window.Closed (TODO 2026-05-07 round 2 P0 #4). Today there
+// signal on Window.Closed. Today there
 // are no managed event subscriptions to break here, but the seam is the
 // canonical hook for any future per-VM source-event subscription so
 // future additions don't accidentally leak through detached SubGraphWindows.
@@ -34,7 +34,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     private double _panY;
     private object? _selection;
 
-    //  Live id→VM index kept in lockstep with the
+    // Live id→VM index kept in lockstep with the
     // Nodes collection via CollectionChanged. Replaces (a) the per-call dict
     // rebuild inside SyncSocketConnectivity and (b) the O(n) linear scan in
     // FindNode. Subscribing to CollectionChanged means EVERY mutation site
@@ -44,7 +44,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     // lookups that read this.
     private readonly Dictionary<string, NodeViewModel> _nodesById = new();
 
-    //  Per-node incident-link index kept in
+    // Per-node incident-link index kept in
     // lockstep with the Links collection via CollectionChanged. TranslateNode
     // (called per moved node at pointer cadence, x N for a group drag) used to
     // scan the ENTIRE Links collection to find wires touching the moved node —
@@ -53,7 +53,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     // construction (rewire replaces the link), so indexing at add-time is safe.
     private readonly Dictionary<string, List<LinkViewModel>> _linksByNode = new();
 
-    //  Per-socket incident-link index — mirrors _linksByNode but
+    // Per-socket incident-link index — mirrors _linksByNode but
     // keyed on socket id. NodeView.Pins.NudgeLinksForSocket fires per socket-row
     // SizeChanged/Loaded (≈770 rows on CommandStructure.phxg) and used to
     // full-scan the whole Links collection per row (O(rows × links) ≈ 200k
@@ -72,7 +72,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         Links.CollectionChanged += OnLinksCollectionChanged;
     }
 
-    //  Maintain _nodesById alongside the Nodes
+    // Maintain _nodesById alongside the Nodes
     // collection. Reset (Clear) rebuilds from scratch; Add / Remove / Replace
     // apply the delta. Empty / duplicate ids are guarded the same way the
     // prior per-call rebuild did (skip empty; last-write-wins on dup, which
@@ -113,7 +113,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         }
     }
 
-    //  Maintain _linksByNode alongside Links.
+    // Maintain _linksByNode alongside Links.
     // Each link is filed under BOTH its endpoint node ids so TranslateNode can
     // find every wire touching a moved node in O(incident) instead of scanning
     // the whole collection. Reset rebuilds from scratch.
@@ -196,7 +196,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    ///  Mark every wire incident on <paramref name="socketId"/>
+    /// Mark every wire incident on <paramref name="socketId"/>
     /// dirty for the next render-tick recompute, via the per-socket index —
     /// O(incident) instead of NodeView.Pins' prior O(Links) full scan per
     /// socket-row SizeChanged. No-op when the socket carries no wires.
@@ -213,7 +213,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// [arch-perf P1-4] Canvas-level aggregator for per-link path-dirtiness so
+    /// Canvas-level aggregator for per-link path-dirtiness so
     /// the render tick's idle-skip gate can early-out without an O(L) scan of
     /// the link set. Set at the ONLY two places wires are marked dirty for the
     /// render tick — <see cref="MarkLinksDirtyForSocket"/> and the node-translate
@@ -319,7 +319,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
                     SelectedNodes.Add(newN);
                     break;
                 case LinkViewModel newL:
-                    //  Single IsSelected = true. Pre-fix this branch
+                    // Single IsSelected = true. Pre-fix this branch
                     // had two identical assignments — the second was a stale
                     // copy-paste from a code review iteration. The mirror
                     // comment below stays because the COMMENT is what
@@ -455,7 +455,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     {
         Selection = null;
         ClearMultiSelection();
-        //  None of the VMs (NodeViewModel / LinkViewModel /
+        // None of the VMs (NodeViewModel / LinkViewModel /
         // FrameViewModel) implement IDisposable today, so Clear is a clean
         // tear-down — the GC reclaims them once the canvas drops its last
         // reference. If a future per-VM event subscription is added (e.g.
@@ -511,13 +511,13 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     /// the same — saved viewport per graph).
     /// </summary>
     /// <param name="wildcardAlreadyResolved">
-    ///  When true, skip the wildcard cascade below — the
+    /// When true, skip the wildcard cascade below — the
     /// caller guarantees it has already run (e.g. <c>ArchitectViewModel.OpenAsync</c>,
     /// where <c>GraphSerializer.LoadGraph</c> runs the cascade off-thread after
     /// MigrateNodes). Pre-fix the open path ran the cascade twice: once
     /// off-thread in GraphSerializer, then again here on the UI thread after the
     /// load returned. Skipping the redundant UI-thread pass is the largest
-    /// avoidable dispatcher cost on opening a large graph (ARCH-P0-LOADGRAPH-UITHREAD).
+    /// avoidable dispatcher cost on opening a large graph.
     /// Defaults false so NewGraph / undo-replay / SubGraphWindow / headless / test
     /// callers still get the cascade (idempotent + cheap).
     /// </param>
@@ -526,7 +526,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         _graph = graph ?? throw new ArgumentNullException(nameof(graph));
         Selection = null;
 
-        //  (OWNER-OVERRIDE) Pre-fix every VM was
+        // Pre-fix every VM was
         // appended one-by-one to the ObservableCollections, firing N separate
         // CollectionChanged(Add) events — each of which the bound canvas turned
         // into a per-node NodeView mount + per-frame FrameView mount + an
@@ -568,7 +568,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
 
         SyncSocketConnectivity();
 
-        //  Resolve wildcard sockets (Logic.If A/B group, Reroute
+        // Resolve wildcard sockets (Logic.If A/B group, Reroute
         // chains, etc.) right after the connectivity flag sync. Pre-fix this
         // lived only in LogicCanvasView's GraphLoaded handler (the canvas
         // code-behind) so a headless / test consumer that constructs a
@@ -577,7 +577,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         // wildcard the canvas would have collapsed. Running here makes the
         // VM correct on its own; the canvas's redundant call becomes a no-op
         // (idempotent per NodeRegistry.ResolveWildcardCascade docs).
-        //  Skipped when the caller already ran it off-thread.
+        // Skipped when the caller already ran it off-thread.
         if (!wildcardAlreadyResolved)
             try { NodeRegistry.ResolveWildcardCascade(_graph); } catch { /* best effort */ }
 
@@ -600,7 +600,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    ///  Incrementally reflect a small graph edit (a reroute
+    /// Incrementally reflect a small graph edit (a reroute
     /// insertion: one new node + one or two new links, optionally replacing a
     /// removed link) into the canvas VMs WITHOUT a full <see cref="LoadGraph"/>
     /// rebuild. The underlying <see cref="Graph"/> model must already be mutated
@@ -675,6 +675,53 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// Reflect an EXTERNAL in-memory graph mutation — specifically the live
+    /// cross-file Event-pair sync, where another open window edited a paired
+    /// Event node and <see cref="EventPairCrossFileSync.ApplyEventPairSyncToGraph"/>
+    /// has already mutated THIS graph's Event-node sockets (added / removed /
+    /// retyped) and dropped any excess sockets' links. Rebuilds only what changed
+    /// — the link VMs (to drop VMs for removed links) and the Event nodes' socket
+    /// VMs — and re-syncs connectivity + wire paths, WITHOUT the pan / zoom /
+    /// selection reset a full <see cref="LoadGraph"/> would do (a background sync
+    /// must never yank the peer window's viewport or clear its selection). Marks
+    /// the graph dirty because the peer's sockets genuinely changed.
+    /// </summary>
+    public void RefreshAfterExternalGraphMutation()
+    {
+        if (_graph is null) return;
+
+        // Reconcile link VMs against the authoritative graph links. The event-
+        // pair sync only ever REMOVES links (dropping an excess socket's wires),
+        // never adds — but reconcile both ways so a future sync that adds links
+        // stays correct. Reference equality: the VMs hold the SAME Link objects.
+        var live = new System.Collections.Generic.HashSet<Link>(_graph.Links);
+        for (int i = Links.Count - 1; i >= 0; i--)
+            if (!live.Contains(Links[i].Model)) Links.RemoveAt(i);
+        var haveVm = new System.Collections.Generic.HashSet<Link>();
+        foreach (var lvm in Links) haveVm.Add(lvm.Model);
+        foreach (var link in _graph.Links)
+            if (!haveVm.Contains(link)) Links.Add(new LinkViewModel(link, _graph));
+
+        // A cross-file sync can RETYPE an event bubble, and that retype can narrow a
+        // wildcard socket on any node wired (possibly through a reroute chain) to it.
+        // Resolve the cascade so the MODEL types settle first, THEN rebuild EVERY
+        // node's socket VMs so both the mutated event bubbles AND any downstream
+        // wildcard pins re-render — OnGraphMutated (below) only re-syncs IsConnected,
+        // never a pin's shape / colour. Node VMs, viewport, and selection are all
+        // preserved (unlike LoadGraph); the receiving window is never the one the
+        // user is actively editing, so a full socket rebuild here is safe.
+        try { NodeRegistry.ResolveWildcardCascade(_graph); } catch { /* best effort */ }
+        foreach (var nvm in Nodes)
+            nvm.RebuildSockets();
+
+        // Graph socket/link ids changed — invalidate the id caches, then the one
+        // shared pass (recompute wire paths — the mutated event rows moved their
+        // anchors — + re-sync connectivity + raise GraphMutatedAny → dirty).
+        _graph.MarkStructuralChange();
+        OnGraphMutated();
+    }
+
+    /// <summary>
     /// Walk every link and flip each socket's
     /// <see cref="SocketViewModel.IsConnected"/> flag so the required-but-empty
     /// yellow halo (and any future "no connections" affordance) tracks the
@@ -694,9 +741,9 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
             foreach (var s in n.Outputs) s.IsConnected = false;
         }
 
-        // [QC21-09 / ARCH-P1-NODESBYID-CACHE] Pre-fix this loop called FindNode
-        // (a linear scan over Nodes) twice per link — O(L · N) total. QC21-09
-        // replaced that with a per-call dict rebuild; this now reuses the
+        // Pre-fix this loop called FindNode
+        // (a linear scan over Nodes) twice per link — O(L · N) total. That
+        // was replaced with a per-call dict rebuild; this now reuses the
         // VM-level _nodesById index (maintained by OnNodesCollectionChanged)
         // so the dictionary isn't reallocated on every connectivity sync
         // (which fires on LoadGraph AND every OnGraphMutated / node drag).
@@ -719,7 +766,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
 
     // ─── Macro.Call socket sync (WinUI port of Canvas.Macros.cs) ─────────
     //
-    // [P1] The WinForms baseline Canvas.Macros.cs kept every Macro.Call node's
+    // The WinForms baseline Canvas.Macros.cs kept every Macro.Call node's
     // parameter sockets in lockstep with the referenced macro's Entry/Exit
     // signature via RefreshAllCallNodesForMacro / RefreshMacroCallSockets. The
     // WinUI port had no equivalent, so a Macro.Call node loaded from disk, or
@@ -808,7 +855,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         }
         if (droppedSocketIds.Count > 0)
         {
-            // [ARCH-FREEZE / ARCH-P1-TRANSLATENODE-LINKSCAN] Remove the doomed
+            // Remove the doomed
             // wires through the VM Links collection FIRST so OnLinksCollectionChanged
             // fires per-link and keeps _linksByNode / _linksBySocket in lockstep —
             // a bare _graph.Links.RemoveAll bypasses the VM collection and leaves
@@ -983,12 +1030,12 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     {
         if (node is null) return;
         node.Translate(dx, dy);
-        // 0.10.0 (arch-perf P1) — frame-coalesce wire recompute. The actual
+        // Frame-coalesce wire recompute. The actual
         // bezier rebuild happens on the canvas's CompositionTarget.Rendering
         // tick (LogicCanvasView.OnRenderingTick) so a 120 Hz pointer-move
         // burst collapses into one rebuild per displayed frame instead of
         // running RecomputePath per move event.
-        //  Mark only the wires actually touching
+        // Mark only the wires actually touching
         // this node dirty via the per-node incident-link index — O(incident)
         // instead of an O(L) scan of the whole Links collection per moved node
         // (the prior loop was O(N x L) for an N-node group drag at 120 Hz).
@@ -999,12 +1046,12 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
             // because no link add/remove happens inside this loop.
             for (int i = 0; i < incident.Count; i++)
                 incident[i].MarkPathDirty();
-            AnyLinkDirty = true; // [arch-perf P1-4] feed the render-tick idle-skip gate
+            AnyLinkDirty = true; // feed the render-tick idle-skip gate
         }
     }
 
     /// <summary>
-    /// [resize-reanchor] Mark every wire incident on <paramref name="nodeId"/>
+    /// Mark every wire incident on <paramref name="nodeId"/>
     /// dirty for the next render-tick recompute. A node that grows / shrinks to
     /// fit its content (pill edit, socket add/remove, dynamic event-pair grow)
     /// moves its pins to new edge coordinates; <see cref="TranslateNode"/> is the
@@ -1027,7 +1074,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
 
     /// <summary>Returns the node VM at id, or null if unknown.</summary>
     /// <remarks>
-    ///  O(1) lookup against the VM-level id→VM index
+    /// O(1) lookup against the VM-level id→VM index
     /// (maintained by <see cref="OnNodesCollectionChanged"/>) instead of the
     /// prior O(n) linear scan over <see cref="Nodes"/>. FindNode is called from
     /// the debug-flash dispatch (one lookup per DEBUG_NODE_EXEC) and reveal-node
@@ -1085,7 +1132,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     /// </summary>
     private void ApplyVarChainHighlights()
     {
-        // [freeze-diagnostics] Untraced UI-thread hot path: fires on every
+        // Untraced UI-thread hot path: fires on every
         // var-token pill hover-change and runs VarChainAnalyzer.Analyze
         // (O(nodes) + a regex per attribute) plus an O(nodes) flag sweep. On a
         // large graph this is a real per-hover cost during "clicking around", so
@@ -1136,18 +1183,18 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     // / RequestPublishMacroGlobally / RequestRevealNode) that the canvas /
     // ArchitectViewModel / SubGraphWindow subscribe to. Even though both
     // Architect main + SubGraphWindow tear down the VM when the canvas
-    // tears down,  nulling the event fields on Dispose breaks any
+    // tears down, nulling the event fields on Dispose breaks any
     // accidental retention path: a delegate subscriber that forgot to
     // unsubscribe would otherwise keep a reference back to this VM (and
     // through it, every visual VM / cached brush / etc.) alive past
-    // Dispose. The opposite leak direction from QC20-04 — that's about
+    // Dispose. This is the opposite leak direction — the other case is about
     // subscribers holding the VM; this is about the VM holding subscribers.
     private bool _disposed;
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        //  Unhook the index maintainer before the
+        // Unhook the index maintainer before the
         // final Clear so the VM doesn't hold a live handler on its own
         // collection past disposal.
         Nodes.CollectionChanged -= OnNodesCollectionChanged;
@@ -1160,7 +1207,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         _linksBySocket.Clear();
         _selection = null;
 
-        //  Null every outbound delegate field so a subscriber that
+        // Null every outbound delegate field so a subscriber that
         // forgot to unhook can't keep this VM alive through its handler.
         // Setting an event field from inside the declaring class is the
         // canonical "unsubscribe everyone" idiom in .NET. Done after the
@@ -1175,7 +1222,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
 }
 
 /// <summary>
-///  ObservableCollection that can replace its
+/// ObservableCollection that can replace its
 /// entire contents in a single batch, raising ONE Reset notification instead
 /// of N×Add. Used by <see cref="LogicCanvasViewModel.LoadGraph"/> so opening a
 /// large graph mounts the canvas in one layout pass rather than per-node /

@@ -25,7 +25,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 //   kind=process  → Process.Spawn with Attributes["ProcessId"] = id
 //   kind=variable → Var.Get       with Attributes["VarName"]   = name
 //
-// 0.10.0 polish (Task 6):
+// Polish:
 //   * Drop coordinate is centred on the cursor (was top-left, so a wide
 //     Macro.Call landed far to the right of where the user aimed).
 //   * Multi-file drop is first-wins on .phxg with a System log line for
@@ -43,7 +43,7 @@ public sealed partial class LogicCanvasView
     public event System.EventHandler<string>? FileOpenRequested;
 
     /// <summary>
-    ///  Fires when the user drops a .phxlayer file onto the canvas.
+    /// Fires when the user drops a .phxlayer file onto the canvas.
     /// Architect can't open Visualist documents itself, so this surface lets
     /// a host that knows the pillar-launch contract (MainView or future
     /// HubBootstrapper-aware shell) hand the path off to Visualist. If no
@@ -60,7 +60,7 @@ public sealed partial class LogicCanvasView
         HostRoot.Drop      += OnHostDrop;
     }
 
-    // [P1 swarm-audit 2026-05-29] Symmetric unhook for HookDragDrop — pre-fix
+    // Symmetric unhook for HookDragDrop — pre-fix
     // the DragOver/Drop subscriptions on HostRoot were never removed, leaking
     // the handler (and through it, this canvas) once 0.10.0 multi-window
     // restore recycles SubGraphWindow / sibling-window canvases. Called from
@@ -87,7 +87,7 @@ public sealed partial class LogicCanvasView
             return;
         }
 
-        // Databank table drag — Architect UX review P1-46.
+        // Databank table drag.
         if (e.DataView.Properties.ContainsKey("phx-databank-table"))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
@@ -96,8 +96,8 @@ public sealed partial class LogicCanvasView
             return;
         }
 
-        // P1-A15 — Databank column drag (forward-compat for  which
-        // adds the column-header drag source). Payload format is
+        // Databank column drag (forward-compat for the column-header drag
+        // source). Payload format is
         // phx-databank-column={tableName}|{columnName}|{columnType}. The
         // actual node-template choice (Get/Set/Increment/FindRow/GetColumn)
         // happens on Drop via a MenuFlyout; DragOver just signals acceptance
@@ -137,12 +137,12 @@ public sealed partial class LogicCanvasView
             var items = await e.DataView.GetStorageItemsAsync();
             bool hasPhxg     = items.OfType<StorageFile>().Any(f =>
                 f.Path.EndsWith(".phxg",     StringComparison.OrdinalIgnoreCase));
-            //  Accept .phxlayer too — Visualist documents that drop
+            // Accept .phxlayer too — Visualist documents that drop
             // on Architect get routed via LayerFileOpenRequested instead of
             // being silently swallowed.
             bool hasPhxLayer = items.OfType<StorageFile>().Any(f =>
                 f.Path.EndsWith(".phxlayer", StringComparison.OrdinalIgnoreCase));
-            //  (P1-A27) — .phx drops are now accepted at DragOver
+            // .phx drops are accepted at DragOver
             // so the user gets the gold drop overlay. Drop-time resolves the
             // sibling .phxg and either opens it or surfaces the missing-file
             // banner. Without this DragOver accept, a .phx-only payload
@@ -167,7 +167,7 @@ public sealed partial class LogicCanvasView
         }
         catch
         {
-            //  DataView temporarily locked — provisionally accept;
+            // DataView temporarily locked — provisionally accept;
             // Drop's explicit extension filter still gates the actual open.
             // Wrap the DragUIOverride writes in their own try/catch so a
             // second failure (DragUIOverride nulled by a fast cursor-leave)
@@ -183,7 +183,7 @@ public sealed partial class LogicCanvasView
       }
       catch (Exception ex)
       {
-          // [P1 swarm-audit 2026-05-29] DragOver fires repeatedly during a
+          // DragOver fires repeatedly during a
           // drag; an unobserved throw from any branch (rail/databank/file
           // probe) would surface as an async-void crash. Log and swallow so
           // the drag stays alive and the app doesn't tear down.
@@ -192,7 +192,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  DragUIOverride is nullable per WinUI 3 and can be nulled by
+    /// DragUIOverride is nullable per WinUI 3 and can be nulled by
     /// the framework mid-DragOver during fast cursor-leave / cancel races.
     /// Reading it into a local and short-circuiting on null plus an inner
     /// try/catch around the writes guarantees the outer caller can always
@@ -242,13 +242,13 @@ public sealed partial class LogicCanvasView
         if (_vm is null) return;
 
         // Databank table drop — spawns a DB.RowCount node bound to the
-        // table name (Architect UX review P1-46). Checked before the rail
+        // table name. Checked before the rail
         // branch since both use Properties[].
         if (e.DataView.Properties.TryGetValue("phx-databank-table", out var tableObj)
             && tableObj is string tableName
             && !string.IsNullOrEmpty(tableName))
         {
-            // [P1 swarm-audit 2026-05-29] Per-branch guard — this branch runs
+            // Per-branch guard — this branch runs
             // BEFORE the StorageItems try/catch, so a throw from SpawnDbRowCount
             // / AddNodeCentered (NodeRegistry, socket-sync) would otherwise only
             // hit the outer async-void catch with no branch-specific feedback.
@@ -267,13 +267,13 @@ public sealed partial class LogicCanvasView
             return;
         }
 
-        // P1-A15 — Databank column drop (forward-compat for ).
+        // Databank column drop (forward-compat for the column-header drag source).
         // Payload: phx-databank-column={tableName}|{columnName}|{columnType}.
         // Surfaces a MenuFlyout at the drop point with the five DB node
         // templates that consume a column (Get / Set / Increment / FindRow /
         // GetColumn) and spawns the picked node with Attributes["TableName"]
         // + Attributes["Column"] pre-bound. The pre-bind set is harmless
-        // until  wires the column-header drag source.
+        // until the column-header drag source is wired.
         if (e.DataView.Properties.TryGetValue("phx-databank-column", out var colPayloadObj)
             && colPayloadObj is string colPayload
             && !string.IsNullOrEmpty(colPayload))
@@ -291,7 +291,7 @@ public sealed partial class LogicCanvasView
                 e.AcceptedOperation = DataPackageOperation.None;
                 return;
             }
-            // [P1 swarm-audit 2026-05-29] Per-branch guard — a throw from
+            // Per-branch guard — a throw from
             // ShowDatabankColumnSpawnFlyout (MenuFlyout build / ShowAt) would
             // otherwise escape to the outer async-void catch with no branch-
             // specific feedback.
@@ -311,7 +311,7 @@ public sealed partial class LogicCanvasView
 
         // Rail-spawn drop branch — phx-rail-kind / phx-rail-id / phx-rail-name
         // dictate which Node template to instantiate at the drop point.
-        //  Normalise kind to invariant lowercase before the switch
+        // Normalise kind to invariant lowercase before the switch
         // so a future RailSection refactor (or a pillar that writes
         // "Macro" / "MACRO") still routes correctly instead of silently
         // falling through to the no-op default arm.
@@ -323,7 +323,7 @@ public sealed partial class LogicCanvasView
             var id   = idObj   as string ?? string.Empty;
             var name = nameObj as string ?? string.Empty;
 
-            // [P1 swarm-audit 2026-05-29] Per-branch guard — the rail spawn runs
+            // Per-branch guard — the rail spawn runs
             // BEFORE the StorageItems try/catch, so a throw from SpawnMacroCall /
             // SpawnProcessSpawn / SpawnVarSet / SpawnVarGet / AddNodeCentered
             // (NodeRegistry, socket-sync, RefreshMacroCallSockets) would
@@ -333,7 +333,7 @@ public sealed partial class LogicCanvasView
             {
                 var canvasPos = HostToCanvas(e.GetPosition(HostRoot));
 
-                // P2-A9 — Ctrl held during a variable drag flips Var.Get → Var.Set
+                // Ctrl held during a variable drag flips Var.Get → Var.Set
                 // so users can write the variable as easily as they read it.
                 // Pre-T15 the WinForms rail honoured this same chord. WinUI 3's
                 // DragEventArgs has no direct modifier accessor that's reliable
@@ -365,7 +365,7 @@ public sealed partial class LogicCanvasView
         // logged via GlobalLogger.Log (System) so the user can see why they
         // were ignored without a modal interrupt.
         //
-        //  .phxlayer routes through LayerFileOpenRequested so a
+        // .phxlayer routes through LayerFileOpenRequested so a
         // pillar-launch-aware host (MainView, future Hub shell) can hand it
         // off to Visualist. No subscriber → discrete System log line + TODO
         // marker so the user knows the path was recognised but not actioned.
@@ -376,7 +376,7 @@ public sealed partial class LogicCanvasView
         try
         {
             var items = await e.DataView.GetStorageItemsAsync();
-            //  (P1-A27) — winner is now a resolved .phxg PATH string
+            // Winner is a resolved .phxg PATH string
             // rather than a StorageFile, because a .phx drop redirects to a
             // sibling .phxg that isn't in the original drop payload. The
             // first-wins pool spans both direct .phxg drops AND .phx-redirected
@@ -405,10 +405,10 @@ public sealed partial class LogicCanvasView
 
                 if (isPhx)
                 {
-                    //  (P1-A27) — .phx redirects to its sibling .phxg
+                    // .phx redirects to its sibling .phxg
                     // instead of being rejected outright. .phx is the Hub-
-                    // runtime exporter output (NEVER hand-edit per
-                    // feedback_no_phx_edits.md), but its same-stemmed .phxg
+                    // runtime exporter output (NEVER hand-edit), but its
+                    // same-stemmed .phxg
                     // sitting next to it is the authored graph the user
                     // almost certainly meant. If the sibling exists, fold it
                     // into the first-wins pool. If not, surface a clear
@@ -499,7 +499,7 @@ public sealed partial class LogicCanvasView
                         level: LogLevel.System);
                 }
                 e.AcceptedOperation = DataPackageOperation.Copy;
-                //  (P1-A27) — even when a winner opened, if any
+                // Even when a winner opened, if any
                 // sibling .phx had no .phxg the user still needs to see why
                 // those entries didn't contribute. Surface the banner so the
                 // partial success is visible.
@@ -537,7 +537,7 @@ public sealed partial class LogicCanvasView
             }
             else if (missingPhxgSiblings.Count > 0)
             {
-                //  (P1-A27) — drop contained only .phx files with no
+                // Drop contained only .phx files with no
                 // surviving .phxg siblings (and nothing else openable).
                 // Surface the banner so the user understands why nothing
                 // opened. AcceptedOperation stays None because no graph was
@@ -565,7 +565,7 @@ public sealed partial class LogicCanvasView
       }
       catch (Exception ex)
       {
-          // [P1 swarm-audit 2026-05-29] Outer guard around the whole async-void
+          // Outer guard around the whole async-void
           // drop handler. The rail/databank spawn branches above run BEFORE the
           // StorageItems try/catch, so a throw there (NodeRegistry / socket-sync
           // / flyout) would otherwise escape as an unobserved-task crash. Log and
@@ -574,13 +574,13 @@ public sealed partial class LogicCanvasView
       }
     }
 
-    //  (P1-A27) — Missing-.phxg banner. Lives on the LogicCanvasView
+    // Missing-.phxg banner. Lives on the LogicCanvasView
     // surface (DropStatusInfoBar in the XAML) so the user gets feedback
     // anchored to the canvas they just dropped on. Auto-dismisses after 5
     // seconds via DispatcherTimer — same pattern used elsewhere in
     // LogicCanvasView (e.g. _crossFileSyncTimer in the .xaml.cs partial).
-    // The banner is non-modal per
-    // feedback_no_modal_dialogs_for_repeatable_rejections.md; the same
+    // The banner is non-modal (repeatable rejections log rather than pop a
+    // modal); the same
     // names are also logged at LogLevel.Warning so they show up in the
     // SystemLog WARN chip.
     private DispatcherTimer? _dropStatusDismissTimer;
@@ -642,7 +642,7 @@ public sealed partial class LogicCanvasView
     {
         try
         {
-            // [P1 swarm-audit 2026-05-29] Stop + fully release the timer after a
+            // Stop + fully release the timer after a
             // single fire so it doesn't linger with a live Tick subscription
             // between drops. A subsequent banner re-creates it in
             // ShowMissingPhxgBanner (guarded on null), so nulling here is safe.
@@ -660,7 +660,7 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    // [P1 swarm-audit 2026-05-29] Tear down the auto-dismiss banner timer on
+    // Tear down the auto-dismiss banner timer on
     // unload so a SubGraphWindow / tab-swap doesn't leak the DispatcherTimer +
     // its Tick subscription. Mirrors the _crossFileSyncTimer / _flashSweepTimer
     // teardown in OnUnloaded (LogicCanvasView.xaml.cs). Called from OnUnloaded.
@@ -695,7 +695,7 @@ public sealed partial class LogicCanvasView
     {
         if (_vm is null) return null;
 
-        //  Front-load macro-id validation at spawn time (the pre-T15
+        // Front-load macro-id validation at spawn time (the pre-T15
         // WinForms rail validated the id before node creation). The rail builds
         // its list from _vm.Graph.Macros, so a macro dragged from the LOCAL
         // section resolves here; a macro that lives only in the canonical
@@ -725,7 +725,7 @@ public sealed partial class LogicCanvasView
 
         if (macro is not null)
         {
-            //  Sync the spawned call node's sockets to the macro's
+            // Sync the spawned call node's sockets to the macro's
             // actual Entry/Exit signature so a macro with custom inputs/outputs
             // is wireable immediately (pre-fix the node kept only the template's
             // default Flow-in/Flow-out signature). Reuses the ViewModel's
@@ -748,7 +748,7 @@ public sealed partial class LogicCanvasView
     {
         if (_vm is null) return null;
 
-        //  Mirror SpawnMacroCall's validation for Process.Spawn. There
+        // Mirror SpawnMacroCall's validation for Process.Spawn. There
         // is no export-time orphan check for Process.Spawn (CheckMacroCallOrphans
         // covers Macro.Call only), so front-loading the diagnostic here is the
         // only place a dangling process reference surfaces before runtime.
@@ -832,7 +832,7 @@ public sealed partial class LogicCanvasView
     }
 
     // ── Process.Spawn socket-signature sync ─────────────────────────────────
-    //  Restores the pre-T15 RefreshProcessSpawnSockets behaviour the
+    // Restores the pre-T15 RefreshProcessSpawnSockets behaviour the
     // WinUI port dropped: a freshly-spawned Process.Spawn should carry the
     // referenced process's actual Entry/Exit socket signature, not just the
     // template default. The macro counterpart already exists as the public
@@ -956,7 +956,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// P2-A9 — Var.Set companion to <see cref="SpawnVarGet"/>. Used when
+    /// Var.Set companion to <see cref="SpawnVarGet"/>. Used when
     /// Ctrl is held during a rail variable drag so the user gets a writer
     /// instead of a reader. The NodeRegistry's Var.Set template uses
     /// "VariableName" as the attribute key (see
@@ -977,22 +977,22 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// P1-A15 — Databank column drop dispatcher. Pops a small MenuFlyout at
+    /// Databank column drop dispatcher. Pops a small MenuFlyout at
     /// the drop point listing the five DB node templates that consume a
     /// (table, column) pair. The user picks one; we spawn it with
-    /// Attributes["TableName"] + Attributes["Column"] pre-bound. 
-    /// added the matching drag source on the Databank side; the right-click
+    /// Attributes["TableName"] + Attributes["Column"] pre-bound. The matching
+    /// drag source on the Databank side feeds this; the right-click
     /// parity path on a column header is routed through the public shell
     /// entry-point <see cref="ShowDatabankColumnSpawnMenuFromShell"/> so
     /// both gestures share the same menu builder.
     ///
-    /// DB.Increment is included for parity with the brief's menu list, but
+    /// DB.Increment is included for parity with the menu list, but
     /// the runtime template (NodeRegistry.Templates.Databank.cs) doesn't
     /// model a Column socket — Increment's row addressing goes through the
     /// "Key" socket. We still write Attributes["Column"] so the user's
-    /// drop intent is preserved in graph JSON; once  ships the
-    /// actual increment-by-column semantics, the attribute lookup is
-    /// already in place. See TODO sprint34-followup-DB.Increment below.
+    /// drop intent is preserved in graph JSON; once the
+    /// actual increment-by-column semantics ship, the attribute lookup is
+    /// already in place. See the DB.Increment TODO below.
     /// </summary>
     private void ShowDatabankColumnSpawnFlyout(
         string tableName,
@@ -1012,7 +1012,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  (P1-A19) — shell entry-point so the Databank column-header
+    /// Shell entry-point so the Databank column-header
     /// right-click can open the same Get / Set / Increment / FindRow /
     /// GetColumn menu as the drag-drop path, anchored on the column-header
     /// element (live in the Databank tab) rather than on the canvas host.
@@ -1084,12 +1084,12 @@ public sealed partial class LogicCanvasView
         Point anchorPos,
         Point spawnPos)
     {
-        // TODO sprint34-followup-DB.Increment: NodeRegistry's DB.Increment
+        // TODO DB.Increment: NodeRegistry's DB.Increment
         // template has TableName but no Column attribute default; the
         // Attributes["Column"] write here is silently preserved on the
-        // node but unread by the current exporter.  can either
+        // node but unread by the current exporter. A follow-up can either
         // retrofit DB.Increment with a Column socket or drop it from this
-        // menu — both are acceptable closures of the followup.
+        // menu — both are acceptable closures.
         var menu = new MenuFlyout();
         AddDatabankColumnSpawnItem(menu, "DB.GetCell",     "Get",               tableName, columnName, spawnPos);
         AddDatabankColumnSpawnItem(menu, "DB.SetCell",     "Set",               tableName, columnName, spawnPos);

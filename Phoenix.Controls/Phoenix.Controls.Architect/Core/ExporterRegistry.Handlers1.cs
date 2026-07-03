@@ -256,8 +256,12 @@ namespace Phoenix.Controls.Architect.Core
             r.Register(new EventTriggerHandler());
             r.Register(new EventReturnHandler());
 
-            // Macros
+            // Macros — Call inlines the body; Entry/Exit are the boundary
+            // markers (Exit binds the return slots + terminates the body,
+            // parallel to ProcessEntryHandler / ProcessExitHandler).
             r.Register(new MacroCallHandler());
+            r.Register(new MacroEntryHandler());
+            r.Register(new MacroExitHandler());
 
             // Processes — live instances (Process.Start) + the deprecated
             // fire-and-forget Process.Spawn (kept for back-compat / coverage).
@@ -636,7 +640,7 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
-            //  — File.ReadJSON / File.WriteJSON. Same shape as the
+            // File.ReadJSON / File.WriteJSON. Same shape as the
             // text variants; the JSON-validity gate lives Hub-side in
             // ScriptManager.File so the exporter doesn't need extra knobs.
             r.RegisterSimple(new SimpleEmitDescriptor(
@@ -768,7 +772,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { new SocketArg("Text", "\"\"") },
                 FollowNamedOutput: "Flow"));
 
-            //  — AI.GenerateImage. Calls OpenAI's
+            // AI.GenerateImage. Calls OpenAI's
             // /v1/images/generations and writes result.ai_image_url +
             // result.ai_image_error + result.ai_image_done. Defaults
             // mirror the manifest: dall-e-3 at 1024x1024.
@@ -782,7 +786,7 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
-            //  — AI.VisionDescribe. Calls OpenAI's chat completions
+            // AI.VisionDescribe. Calls OpenAI's chat completions
             // with a multi-modal user message and writes result.ai_response +
             // result.ai_error. Default Model gpt-4o-mini.
             r.RegisterSimple(new SimpleEmitDescriptor(
@@ -795,11 +799,11 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
-            //  — AI.WithTools. Single-shot OpenAI chat completion
+            // AI.WithTools. Single-shot OpenAI chat completion
             // with a tools array. Result is either result.ai_response
             // (plain answer) or result.ai_tool_calls (JSON array of
             // {id,name,arguments} when the model chose a tool).
-            // QC37-05 — ToolChoice / ParallelToolCalls are optional. Empty-string
+            // ToolChoice / ParallelToolCalls are optional. Empty-string
             // fallbacks emit "" for unwired sockets; the handler reads args[4]/[5]
             // and treats "" as "omit so the API default applies". Order matches
             // the manifest + handler (args[4]=ToolChoice, args[5]=ParallelToolCalls).
@@ -816,12 +820,12 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
-            //  — AI.StreamText. Hub-side handler streams Server-
+            // AI.StreamText. Hub-side handler streams Server-
             // Sent Events from the routed provider (claude* → Anthropic;
             // ollama/<name> → local; cerebras/<name> → Cerebras; else
             // OpenAI) and accumulates result.ai_response cumulatively
             // while broadcasting AI_CHUNK Bus events per delta.
-            //  — MemoryVar (optional) names a Var key
+            // MemoryVar (optional) names a Var key
             // whose JSON-array-of-{role,content} payload is prepended
             // to the request as prior turns and updated after completion.
             r.RegisterSimple(new SimpleEmitDescriptor(
@@ -835,7 +839,7 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
-            // Sweep 25 — chat-overlay broadcast pair. Mirrors sweep-19's
+            // Chat-overlay broadcast pair. Mirrors sweep-19's
             // ScriptManager.RegisterCommand("chat.overlay.push") /
             // RegisterCommand("chat.overlay.clear") signatures so the .phxg-
             // authored emit matches the runtime command exactly. Color
@@ -856,7 +860,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { new SocketArg("WidgetID", "\"\"") },
                 FollowNamedOutput: "Done"));
 
-            // D2 — low-level HUD mutation emits. Mirror the ScriptManager.Visual.cs
+            // Low-level HUD mutation emits. Mirror the ScriptManager.Visual.cs
             // RegisterCommand("visual.set_text" / "visual.set_visible" /
             // "visual.set_property") signatures so the .phxg-authored emit matches
             // the runtime command (and CommandManifest.cs arg order) exactly. The

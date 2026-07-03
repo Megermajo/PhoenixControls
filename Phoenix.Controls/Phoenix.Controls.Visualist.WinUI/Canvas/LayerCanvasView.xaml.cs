@@ -36,7 +36,7 @@ public sealed partial class LayerCanvasView : UserControl
     private bool         _dragMoved;
     private uint         _dragPointerId;
 
-    // Multi-select state (). _multiSelected is the model-side set;
+    // Multi-select state. _multiSelected is the model-side set;
     // _viewByWidget maps each widget to its current WidgetView so Render
     // rebuilds and group-drag can touch the visuals without an O(n) lookup.
     // Group-drag snapshots every selected widget's origin at press-time so
@@ -54,13 +54,12 @@ public sealed partial class LayerCanvasView : UserControl
     private Point _lassoStart;
     private Rectangle? _lassoRect;
 
-    // ─── Resize handle (Area 1 P0 — restored from pre-T15 LayerCanvas) ───
+    // ─── Resize handle (restored from pre-T15 LayerCanvas) ───
     //
     // The pre-T15 WinForms LayerCanvas painted a 12×12 resize handle on the
     // bottom-right of the primary-selected widget and ran a _resizing state
     // machine (handle hit-test → Width/Height mutation, snap, PushUndo on first
-    // motion, MarkDirty on release — LayerCanvas.cs lines 44/402-408/452-456/
-    // 509-520). The WinUI canvas dropped it entirely. We restore it as a single
+    // motion, MarkDirty on release). The WinUI canvas dropped it entirely. We restore it as a single
     // shared Rectangle child of WidgetSurface re-positioned over the primary
     // widget on every Render; the handle owns its own pointer handlers so
     // grabbing it never triggers the widget-body move drag.
@@ -88,24 +87,24 @@ public sealed partial class LayerCanvasView : UserControl
     private const uint ScanCode_PhysicalZ = 0x2C;
     private const uint ScanCode_PhysicalY = 0x15;
 
-    // R36 — physical [ / ] keytops (the two keys right of P on a US layout) drive
+    // Physical [ / ] keytops (the two keys right of P on a US layout) drive
     // single-step z-order regardless of the VirtualKey the layout reports, the
     // same scancode-anchor pattern as Undo/Redo above.
     private const uint ScanCode_BracketLeft  = 0x1A;  // [  → send backward
     private const uint ScanCode_BracketRight = 0x1B;  // ]  → bring forward
 
-    // ─── B25 — snap-to-grid + alignment guides ───────────────────────────
+    // ─── Snap-to-grid + alignment guides ───────────────────────────
     //
     // Visualist-local copy of the snap-guide semantics from Architect's
-    // LogicCanvasView.Pointer.cs:1479-1682. The PAINT helpers are NOT lifted
-    // (feedback_visualist_architect_chrome_independence.md) — Visualist owns
+    // LogicCanvasView.Pointer.cs. The PAINT helpers are NOT lifted —
+    // Visualist owns
     // its own implementation, identical behaviour but distinct code.
     //
     // Grid step is 8px (vs Architect's wildcard zoom-based grid) so widget
     // placement on a layer canvas reads cleanly against typical OBS-source
     // resolutions like 1920×1080 (240 columns × 135 rows).
     //
-    // Track B PART 2 — the edge/centre ALIGNMENT snap (and its guides) is now
+    // The edge/centre ALIGNMENT snap (and its guides) is
     // delegated to the shared, pure-data WidgetSnapCalculator in
     // Phoenix.Controls.Visualist.Engine, which owns the tolerance
     // (SnapThreshold = 6px) and the snap targets (canvas 0 / mid / max edges
@@ -120,7 +119,7 @@ public sealed partial class LayerCanvasView : UserControl
 
     private const int SnapGridStepPx = 8;
 
-    // P2 — alignment guides span the union of the dragged-widget extent and the
+    // Alignment guides span the union of the dragged-widget extent and the
     // matching sibling extent, padded by this margin on each end, instead of the
     // whole canvas. A localized line reads as "this widget is about to snap to
     // that one" rather than a full-stage line that implies a snap is active
@@ -144,7 +143,7 @@ public sealed partial class LayerCanvasView : UserControl
     private IReadOnlyList<WidgetSnapCalculator.Guide> _engineSnapGuides =
         System.Array.Empty<WidgetSnapCalculator.Guide>();
 
-    // P2 perf — the alignment-guide overlay is rebuilt on every PointerMoved
+    // Perf — the alignment-guide overlay is rebuilt on every PointerMoved
     // during a drag/resize. The overlay is a pure function of the anchor's
     // rect (siblings don't move mid-gesture), so when the anchor's geometry
     // hasn't changed since the last rebuild the freshly-built overlay would be
@@ -155,7 +154,7 @@ public sealed partial class LayerCanvasView : UserControl
     // gesture (and any return to a previously-visited position) rebuilds.
     private (int X, int Y, int W, int H)? _lastGuideAnchorRect;
 
-    // ─── Live preview (Lane C / Area 5 P1 — canvas widget live preview) ──
+    // ─── Live preview (canvas widget live preview) ──
     //
     // The pre-T15 WinForms LayerCanvas blit-rendered each widget from a hidden
     // WebView2 (WidgetCanvasPreviewer). This restores that pipeline on WinUI:
@@ -168,8 +167,7 @@ public sealed partial class LayerCanvasView : UserControl
     // fallback is never removed).
     //
     // The previewer is created lazily on first attach so opening a layer with
-    // the toggle off (or with no Hub running) costs nothing. Per
-    // feedback_visualist_architect_chrome_independence the whole pipeline is
+    // the toggle off (or with no Hub running) costs nothing. The whole pipeline is
     // Visualist-local; Architect has no analogue.
     private Phoenix.Controls.Visualist.WinUI.Controls.WidgetCanvasPreviewer? _previewer;
     private Action? _onConfigChanged;
@@ -181,7 +179,7 @@ public sealed partial class LayerCanvasView : UserControl
     private bool _previewRefreshInFlight;
     private bool _previewRefreshQueued;
 
-    // P3 — overlay-refresh batch guard. Bumped on every Render() (which rebuilds
+    // Overlay-refresh batch guard. Bumped on every Render() (which rebuilds
     // _viewByWidget). RefreshWidgetOverlaysAsync snapshots this at the start of a
     // crop batch and, after each CropWidgetAsync await, checks the live value:
     // if a Render() landed mid-batch the snapshot is stale, so we abandon the
@@ -191,7 +189,7 @@ public sealed partial class LayerCanvasView : UserControl
     // interrupted batch is dropped.
     private int _renderVersion;
 
-    // P2 — attach-call coalescing. SyncPreviewer fires AttachPreviewerSafeAsync
+    // Attach-call coalescing. SyncPreviewer fires AttachPreviewerSafeAsync
     // fire-and-forget on every Render(); rapidly switching layers (each
     // selection re-renders) would otherwise launch a stack of overlapping
     // AttachAsync calls, each awaiting the slow WebView2 EnsureCoreAsync and
@@ -200,28 +198,25 @@ public sealed partial class LayerCanvasView : UserControl
     // arrives while an attach is running just updates the pending tuple, and the
     // running loop re-attaches to the newest target before exiting. This is the
     // _captureInFlight pattern from WidgetCanvasPreviewer applied to attach, and
-    // it stays entirely in this owned file (no edit to WidgetCanvasPreviewer,
-    // which lane K owns).
+    // it stays entirely in this owned file (no edit to WidgetCanvasPreviewer).
     private bool _attachInFlight;
     private (string LayerId, int W, int H)? _pendingAttach;
 
     /// <summary>
-    /// B25 — persistent snap toggle. Defaults to <c>true</c> per the audit
-    /// brief. In-memory only; no settings round-trip (separate sprint if
-    /// Majo wants it sticky). Toggled at runtime via the public surface.
+    /// Persistent snap toggle. Defaults to <c>true</c>.
+    /// In-memory only; no settings round-trip. Toggled at runtime via the public surface.
     /// </summary>
     public bool SnapEnabled { get; set; } = true;
 
     /// <summary>
     /// Fires when the user drops a .phxlayer file from Explorer onto the
     /// canvas. Visualist.MainView subscribes and routes the path through
-    /// VisualistViewModel.OpenLayer (TODO 2026-05-07 round 1 P2 — drag-drop
-    /// into editor windows not wired).
+    /// VisualistViewModel.OpenLayer (TODO: drag-drop into editor windows not wired).
     /// </summary>
     public event System.EventHandler<string>? FileOpenRequested;
 
     /// <summary>
-    /// R1 (enter-widget restore) — raised when the user enters a widget for
+    /// Enter-widget restore — raised when the user enters a widget for
     /// editing: double-tap its body, press Enter on the current selection, or
     /// pick "Edit Widget" from the per-widget context menu. MainView subscribes
     /// (mirroring the <see cref="FileOpenRequested"/> bubble pattern) and swaps
@@ -252,14 +247,14 @@ public sealed partial class LayerCanvasView : UserControl
         WidgetSurface.RightTapped += OnSurfaceRightTapped;
 
         // Explorer file-drop — accept .phxlayer and bubble through
-        // FileOpenRequested (TODO 2026-05-07 round 1 P2). AllowDrop sits on
+        // FileOpenRequested. AllowDrop sits on
         // the outer Grid (not WidgetSurface) so drops on the resolution
         // badge / outside the stage frame still register.
         AllowDrop = true;
         DragOver += OnHostDragOver;
         Drop     += OnHostDrop;
 
-        // Sprint B (TODO cleanup) — Cut/Copy/Paste/Select-All/Delete keyboard
+        // Cut/Copy/Paste/Select-All/Delete keyboard
         // shortcuts. The UserControl itself acts as the focus host; PointerPressed
         // (both on widgets and on empty surface) calls Focus so the next
         // keystroke lands here rather than bubbling to the embedding pillar
@@ -268,7 +263,7 @@ public sealed partial class LayerCanvasView : UserControl
         KeyDown += OnKeyDownForClipboardShortcuts;
         WidgetSurface.PointerPressed += (_, _) => TryFocus();
 
-        // Lane C — live-preview wiring. Config flips (toggle / bg) re-evaluate
+        // Live-preview wiring. Config flips (toggle / bg) re-evaluate
         // whether the previewer should be running; a Hub LAYER_RELOADED forces
         // an immediate re-capture so a save round-trip refreshes the canvas
         // within one frame. Both handlers are detached on Unloaded.
@@ -278,13 +273,13 @@ public sealed partial class LayerCanvasView : UserControl
         _onLayerReloaded = OnBusLayerReloaded;
         Phoenix.Controls.Visualist.WinUI.Core.VisualistBusClient.Instance.OnLayerReloaded += _onLayerReloaded;
 
-        // R22/R24 — build the backdrop swatches + seed the command-bar toggles
+        // Build the backdrop swatches + seed the command-bar toggles
         // from the persisted prefs. The same config OnChanged fan-out the
         // previewer uses keeps these in step if a setting is flipped elsewhere.
         BuildBackdropSwatches();
         SyncPrefsUi();
 
-        // P3 — zoom/pan on the stage host. Ctrl+wheel zooms about the cursor;
+        // Zoom/pan on the stage host. Ctrl+wheel zooms about the cursor;
         // middle-mouse drag pans. Handlers live on StageHost (the letterboxed
         // grid around the Viewbox) so they fire over the empty margin too.
         // PointerWheelChanged needs handledEventsToo=false (default) — Ctrl+wheel
@@ -323,8 +318,7 @@ public sealed partial class LayerCanvasView : UserControl
 
     // Theme-key + literal-ARGB fallback for tinted brushes. Per-pillar copy
     // of the same helper in WidgetGraphCanvas.ResolveBrush — Visualist owns
-    // its own paint helpers per feedback_visualist_architect_chrome_independence,
-    // never lifted to Shared. Returns a SolidColorBrush at the requested alpha
+    // its own paint helpers, never lifted to Shared. Returns a SolidColorBrush at the requested alpha
     // using the resolved RGB triple (theme lookup wins, literal ARGB is the
     // fallback for designer / pre-app / missing-key paths).
     private static Brush ResolveBrushTinted(string key, byte a, byte r, byte g, byte b)
@@ -342,17 +336,15 @@ public sealed partial class LayerCanvasView : UserControl
         return new SolidColorBrush(Color.FromArgb(a, r, g, b));
     }
 
-    // B30 — accepted extensions at the DragOver gate. .phxlayer opens a layer
+    // Accepted extensions at the DragOver gate. .phxlayer opens a layer
     // file; the media set spawns Image.Load / Video.Load widgets at the drop
-    // point (B28). Anything else gets rejected at DragOver so the gold halo
+    // point. Anything else gets rejected at DragOver so the gold halo
     // never lights up for an unsupported type. Visualist owns its own filter
-    // table per the per-pillar paint isolation rule
-    // (feedback_visualist_architect_chrome_independence) — Architect's
+    // table per the per-pillar paint isolation rule — Architect's
     // LogicCanvasView.Pointer DragOver lives on its own table; not lifted.
-    // Audit 2026-05-24 B30 spec lists the canonical accepted extensions:
+    // The canonical accepted extensions are:
     // .png / .jpg / .jpeg / .webp / .gif for images, .mp4 / .webm / .mov for
-    // video. .bmp is kept for back-compat with the prior table; the audit
-    // doesn't ask for a removal.
+    // video. .bmp is kept for back-compat with the prior table.
     private static readonly string[] s_imageExtensions =
         { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp" };
     private static readonly string[] s_videoExtensions =
@@ -388,7 +380,7 @@ public sealed partial class LayerCanvasView : UserControl
             else if (HasExt(p, s_imageExtensions)) anyImage = true;
             else if (HasExt(p, s_videoExtensions)) anyVideo = true;
         }
-        // Captions are anchored to the audit B30 brief: "Open layer" /
+        // Captions: "Open layer" /
         // "Spawn image widget" / "Spawn video widget". A mixed media drop
         // falls through to a generic "Spawn media widget" so the user still
         // sees something coherent; the rejection caption ("Unsupported file
@@ -411,11 +403,11 @@ public sealed partial class LayerCanvasView : UserControl
             return;
         }
 
-        // B30 — peek at the dragged items before lighting up the halo. Resolve
+        // Peek at the dragged items before lighting up the halo. Resolve
         // the deferral so the StorageItems read completes before we set the
         // accepted operation. The per-Architect-pattern reference is
         // LogicCanvasView.Pointer.cs's DragOver but Visualist owns its own
-        // filter logic (feedback_visualist_architect_chrome_independence).
+        // filter logic.
         var deferral = e.GetDeferral();
         try
         {
@@ -432,11 +424,10 @@ public sealed partial class LayerCanvasView : UserControl
 
             if (!anyAccepted)
             {
-                // Audit B30 — emit an explicit "Unsupported file type" caption
+                // Emit an explicit "Unsupported file type" caption
                 // on the override so the gold halo doesn't appear, but the
                 // user still gets feedback explaining why their drop is being
-                // refused. Per feedback_no_modal_dialogs_for_repeatable_rejections
-                // this stays purely visual chrome — no popup.
+                // refused. This stays purely visual chrome — no popup.
                 e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.None;
                 if (e.DragUIOverride is not null)
                 {
@@ -478,7 +469,7 @@ public sealed partial class LayerCanvasView : UserControl
         {
             var items = await e.DataView.GetStorageItemsAsync();
 
-            // B28 — resolve the drop position into WidgetSurface-local coords
+            // Resolve the drop position into WidgetSurface-local coords
             // so spawned widgets land where the cursor was. Failures fall back
             // to (0,0) — same anchor an "Add Widget" toolbar click uses.
             int dropX = 0, dropY = 0;
@@ -529,11 +520,10 @@ public sealed partial class LayerCanvasView : UserControl
     }
 
     /// <summary>
-    /// B28 — spawn an Image.Load (or Video.Load) widget at (dropX, dropY) with
+    /// Spawn an Image.Load (or Video.Load) widget at (dropX, dropY) with
     /// the dragged file path stamped onto the source node's Path attribute.
     /// Returns true on a successful spawn so the caller can offset subsequent
-    /// drops in the same batch. Failures are logged via GlobalLogger; no modal
-    /// per feedback_no_modal_dialogs_for_repeatable_rejections.
+    /// drops in the same batch. Failures are logged via GlobalLogger; no modal.
     /// </summary>
     private bool SpawnMediaWidget(string path, bool isVideo, int dropX, int dropY)
     {
@@ -638,7 +628,7 @@ public sealed partial class LayerCanvasView : UserControl
             _vm = null;
         }
 
-        // Lane C — tear down the live-preview pipeline. Detach the global
+        // Tear down the live-preview pipeline. Detach the global
         // config + bus subscriptions (both fan out across surfaces; a dangling
         // delegate would resurrect a disposed canvas) and dispose the previewer
         // so its hidden Window + WebView2 + 4Hz timer are released.
@@ -682,7 +672,7 @@ public sealed partial class LayerCanvasView : UserControl
         }
     }
 
-    // B37 (audit/winui-regressions-2026-05-24) — capture each mounted
+    // Capture each mounted
     // WidgetView's rendered bitmap and stamp it into the corresponding
     // LayerWidget.Thumbnail field. Called from MainView's save flow before
     // LayerSerializer.Write so the persisted .phxlayer carries a live thumb.
@@ -736,7 +726,7 @@ public sealed partial class LayerCanvasView : UserControl
             }
         }
 
-        // Lane C — a save just changed the .phxlayer on disk. Hub's LayerWatcher
+        // A save just changed the .phxlayer on disk. Hub's LayerWatcher
         // will broadcast LAYER_RELOADED (which forces a re-capture via the bus
         // handler), but nudge a local re-capture too so the canvas reflects the
         // saved state immediately even when no Hub is connected. No-op when the
@@ -750,7 +740,7 @@ public sealed partial class LayerCanvasView : UserControl
 
     private void Render(VisualistViewModel vm)
     {
-        // P3 — mark a new view generation so any in-flight overlay-refresh batch
+        // Mark a new view generation so any in-flight overlay-refresh batch
         // can detect it's rebuilding against stale views and bail (see
         // RefreshWidgetOverlaysAsync). unchecked so the counter wraps harmlessly
         // rather than overflowing on a very long session.
@@ -770,7 +760,7 @@ public sealed partial class LayerCanvasView : UserControl
         }
         Layer? layer = vm.SelectedLayer;
 
-        // P3 — only reset zoom/pan when the LAYER itself changes (not on the
+        // Only reset zoom/pan when the LAYER itself changes (not on the
         // SelectedWidget re-renders), so clicking a widget never zaps the user's
         // zoom but switching layers always recentres on the fresh stage.
         bool layerChanged = !ReferenceEquals(layer, _lastRenderedLayer);
@@ -782,7 +772,7 @@ public sealed partial class LayerCanvasView : UserControl
             ResolutionLabel.Text = "(no layer loaded)";
             // Layer change invalidates any prior multi-select.
             _multiSelected.Clear();
-            // R47 — surface the New/Open empty-state when nothing is loaded.
+            // Surface the New/Open empty-state when nothing is loaded.
             if (EmptyStateOverlay is not null) EmptyStateOverlay.Visibility = Visibility.Visible;
             return;
         }
@@ -801,7 +791,7 @@ public sealed partial class LayerCanvasView : UserControl
             WidgetView view = BuildView(w, vm);
             Microsoft.UI.Xaml.Controls.Canvas.SetLeft(view, w.Rect.X);
             Microsoft.UI.Xaml.Controls.Canvas.SetTop(view, w.Rect.Y);
-            // R36 — paint the preview in z-order so it matches the OBS compositor
+            // Paint the preview in z-order so it matches the OBS compositor
             // (which sorts by zIndex). Pre-fix the editor painted in list order,
             // so Bring-to-Front / Send-to-Back changed the value but never moved
             // the widget in the preview. The resize handle uses SetZIndex(10000)
@@ -811,11 +801,11 @@ public sealed partial class LayerCanvasView : UserControl
             _viewByWidget[w] = view;
         }
 
-        // Area 1 P0 — place the resize handle over the primary-selected widget
+        // Place the resize handle over the primary-selected widget
         // (added last so it sits on top of every widget view).
         PositionResizeHandle(vm);
 
-        // Lane C — (re)point the live previewer at this layer and refresh every
+        // (Re)point the live previewer at this layer and refresh every
         // widget's overlay from the latest captured frame. SyncPreviewer reads
         // the layerId from the document's file-stem (matching Hub's LayerRegistry
         // key); an unsaved layer has no id, so the previewer detaches and the
@@ -823,7 +813,7 @@ public sealed partial class LayerCanvasView : UserControl
         SyncPreviewer(vm, layer);
     }
 
-    // ─── Live-preview pipeline (Lane C / Area 5 P1) ──────────────────────
+    // ─── Live-preview pipeline ──────────────────────────────────────────
 
     // Hub serves overlays under /layer/<file-stem>; LayerRegistry keys each entry
     // by the same stem. Layer.Name is the DISPLAY name and is NOT what Hub looks
@@ -909,7 +899,7 @@ public sealed partial class LayerCanvasView : UserControl
             if (DispatcherQueue is null) { return; }
             DispatcherQueue.TryEnqueue(() =>
             {
-                // R24 — keep the command-bar toggles + active backdrop swatch in
+                // Keep the command-bar toggles + active backdrop swatch in
                 // step with an external pref flip.
                 SyncPrefsUi();
                 if (_vm is { } vm && vm.SelectedLayer is { } layer
@@ -925,7 +915,7 @@ public sealed partial class LayerCanvasView : UserControl
         }
     }
 
-    // ─── R22/R23/R24 — command-bar commands + prefs strip ────────────────
+    // ─── Command-bar commands + prefs strip ──────────────────────────────
 
     private bool _suppressPrefsEcho;
 
@@ -978,7 +968,7 @@ public sealed partial class LayerCanvasView : UserControl
         {
             if (CanvasPreviewToggle is not null) CanvasPreviewToggle.IsChecked = cfg.CanvasWidgetPreviewEnabled;
             if (AutoSyncToggle     is not null) AutoSyncToggle.IsChecked     = cfg.AutoSyncOnEdit;
-            // P3 — reflect the in-memory snap state (defaults true). Not config-
+            // Reflect the in-memory snap state (defaults true). Not config-
             // backed, so this seeds from the live field rather than cfg.
             if (SnapToggle         is not null) SnapToggle.IsChecked         = SnapEnabled;
         }
@@ -1092,7 +1082,7 @@ public sealed partial class LayerCanvasView : UserControl
         Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance.Update(c => c.AutoSyncOnEdit = on);
     }
 
-    // P3 — snap toggle. SnapEnabled is in-memory only (no config round-trip yet,
+    // Snap toggle. SnapEnabled is in-memory only (no config round-trip yet,
     // see its doc comment), so this just flips the field and re-anchors any live
     // alignment overlay; a subsequent drag/resize reads the new state via
     // ShouldSnap(). No PushUndo — snap mode isn't part of the undo history.
@@ -1162,7 +1152,7 @@ public sealed partial class LayerCanvasView : UserControl
                 var previewer = _previewer;
                 if (previewer is null) return;
 
-                // P3 — pin this batch to the current view generation. A Render()
+                // Pin this batch to the current view generation. A Render()
                 // landing mid-batch bumps _renderVersion; we then abandon the
                 // rest of THIS batch and let the queued/timer re-run rebuild
                 // against the fresh views instead of pushing crops onto a
@@ -1186,7 +1176,7 @@ public sealed partial class LayerCanvasView : UserControl
                     try
                     {
                         var crop = await previewer.CropWidgetAsync(w.Rect);
-                        // P3 — a Render() rebuilt the view set while this crop was
+                        // A Render() rebuilt the view set while this crop was
                         // in flight: the whole batch is now stale. Drop this crop
                         // and re-queue a fresh batch (so the just-rendered views
                         // still get filled) rather than continuing to push onto
@@ -1229,7 +1219,7 @@ public sealed partial class LayerCanvasView : UserControl
         }
     }
 
-    // ─── Resize handle (Area 1 P0) ───────────────────────────────────────
+    // ─── Resize handle ───────────────────────────────────────────────────
 
     /// <summary>
     /// Creates / repositions the single shared resize handle over the primary
@@ -1256,7 +1246,7 @@ public sealed partial class LayerCanvasView : UserControl
             {
                 Width  = HandleSize,
                 Height = HandleSize,
-                // R40 — §2 gold (SelectionBrush #FFD700) is the canonical
+                // §2 gold (SelectionBrush #FFD700) is the canonical
                 // selection accent (Design_Orders §2: gold=selection); the
                 // pre-fix code painted brass EmberPrimary and mislabelled it
                 // "canonical". Fill at reduced alpha so the handle reads as a
@@ -1395,7 +1385,7 @@ public sealed partial class LayerCanvasView : UserControl
         if (moved)
         {
             _vm?.Document?.MarkDirty();
-            // Lane C — push the committed geometry to the live WebView2 so the
+            // Push the committed geometry to the live WebView2 so the
             // captured frame reflects the new rect before the next save round-
             // trip. No-op when the previewer isn't running.
             if (resized is not null) _previewer?.PostWidgetUpdate(resized);
@@ -1414,7 +1404,7 @@ public sealed partial class LayerCanvasView : UserControl
     /// </summary>
     private void ClampAndApplyResize(LayerWidget widget, WidgetView? view, int nw, int nh)
     {
-        if (ShouldSnap())   // R44 — Alt suppresses grid snap mid-resize
+        if (ShouldSnap())   // Alt suppresses grid snap mid-resize
         {
             nw = SnapToGrid(nw);
             nh = SnapToGrid(nh);
@@ -1464,7 +1454,7 @@ public sealed partial class LayerCanvasView : UserControl
     /// </summary>
     private void ResolveResizeAlignmentSnap(LayerWidget resized, ref int right, ref int bottom)
     {
-        bool bypass = IsAltDown();   // R44 — Alt suppresses alignment-guide snap
+        bool bypass = IsAltDown();   // Alt suppresses alignment-guide snap
 
         if (_vm?.SelectedLayer is not Layer layer)
         {
@@ -1513,7 +1503,7 @@ public sealed partial class LayerCanvasView : UserControl
                 ? Localizer.T("visualist.canvas.widget.unnamed", "(unnamed)")
                 : widget.Name,
             ThumbKind  = ResolveThumbKind(widget.Preset),
-            // B37 — round-trip the captured thumbnail. WidgetView falls back
+            // Round-trip the captured thumbnail. WidgetView falls back
             // to the preset stub when this is null/empty so an unsaved widget
             // (or one whose capture failed) still gets a usable visual.
             ThumbnailB64 = widget.Thumbnail,
@@ -1523,11 +1513,10 @@ public sealed partial class LayerCanvasView : UserControl
             ContextFlyout = BuildWidgetContextMenu(vm, widget),
         };
 
-        //  (P1-U1) — wire the inline value pills. Each commit pushes
+        // Wire the inline value pills. Each commit pushes
         // undo + marks dirty + invalidates the layer so the canvas re-renders
         // at the new geometry. Same shape the drag handlers below use; the
-        // pill is a discrete-edit alternative to dragging. Per
-        // feedback_node_ui_inline_sockets.md the inspector becomes a
+        // pill is a discrete-edit alternative to dragging. The inspector becomes a
         // read-only mirror — see InspectorPanel.xaml for the disabled controls.
         view.SetEditTarget(widget, committed =>
         {
@@ -1547,7 +1536,7 @@ public sealed partial class LayerCanvasView : UserControl
             }
         });
 
-        // Area 1 P0 — inline rename commit. WidgetView hands back the new name
+        // Inline rename commit. WidgetView hands back the new name
         // WITHOUT mutating the model, so we push undo against the pre-change
         // state, apply the name, mark dirty, then re-render (which also refreshes
         // the inspector mirror via RaiseSelectedLayerChanged).
@@ -1567,7 +1556,7 @@ public sealed partial class LayerCanvasView : UserControl
             }
         });
 
-        // R1 — double-tap the widget body enters its node editor. WidgetView
+        // Double-tap the widget body enters its node editor. WidgetView
         // raises EnterRequested from a body double-tap (the name footer renames,
         // the inline pills edit geometry — both own their own gestures), which
         // we bubble to MainView via WidgetEnterRequested to swap into the editor.
@@ -1612,8 +1601,7 @@ public sealed partial class LayerCanvasView : UserControl
             if (!p.Properties.IsLeftButtonPressed) return;
 
             // Shift-click toggles in/out of the multi-select set without
-            // starting a drag — mirrors the widget-graph pattern from
-            // .
+            // starting a drag — mirrors the widget-graph pattern.
             if (IsShiftDown())
             {
                 if (_multiSelected.Contains(capture))
@@ -1717,7 +1705,7 @@ public sealed partial class LayerCanvasView : UserControl
                 ClampAndApplyMove(capture, view, nx, ny);
             }
 
-            // B25 — alignment-guide overlay is rebuilt every move so the
+            // Alignment-guide overlay is rebuilt every move so the
             // dashed lines track the dragged widget's edges/centre against
             // every sibling in the layer. Cleared on release / cancel.
             UpdateAlignmentGuides();
@@ -1771,7 +1759,7 @@ public sealed partial class LayerCanvasView : UserControl
         if (_dragMoved)
         {
             _vm?.Document?.MarkDirty();
-            // Lane C — push the committed position(s) to the live WebView2 so the
+            // Push the committed position(s) to the live WebView2 so the
             // captured frame tracks the move without a save round-trip.
             if (_isGroupDragging)
             {
@@ -1810,7 +1798,7 @@ public sealed partial class LayerCanvasView : UserControl
         {
             Width = 0,
             Height = 0,
-            // R40 — §2 gold marquee (SelectionBrush #FFD700). The pre-fix code
+            // §2 gold marquee (SelectionBrush #FFD700). The pre-fix code
             // painted brass EmberPrimary and falsely called it the §2 accent;
             // gold is the canonical selection colour. Routed through
             // ResolveBrushTinted so a missing key (designer / pre-app) falls back
@@ -1942,12 +1930,12 @@ public sealed partial class LayerCanvasView : UserControl
         if (dy < maxDyNeg) dy = maxDyNeg;
         if (dy > maxDyPos) dy = maxDyPos;
 
-        // B25 — snap the group delta to the 8px grid rather than each member's
+        // Snap the group delta to the 8px grid rather than each member's
         // resulting position. Snapping the per-widget positions would shear
         // the formation: two widgets 4px apart on X would collapse onto the
         // same column the moment the cursor crossed a grid line. Snapping the
         // delta preserves relative offsets and just moves the group in 8px hops.
-        if (ShouldSnap())   // R44 — Alt suppresses grid snap mid-group-drag
+        if (ShouldSnap())   // Alt suppresses grid snap mid-group-drag
         {
             dx = SnapDelta(dx);
             dy = SnapDelta(dy);
@@ -1969,13 +1957,13 @@ public sealed partial class LayerCanvasView : UserControl
 
     private void ClampAndApplyMove(LayerWidget widget, WidgetView view, int nx, int ny)
     {
-        // B25 — snap the dragged origin to the 8px grid (when the persistent
+        // Snap the dragged origin to the 8px grid (when the persistent
         // toggle is on) BEFORE clamping. Then, if the resulting position
         // aligns within the 4px alignment-guide tolerance of any sibling
         // edge/centre, snap-to-guide overrides the grid snap so the drop
         // commits exactly on the guide the user is seeing. Matches the
-        // commit-drop-snaps-to-guide behaviour the audit brief calls out.
-        if (ShouldSnap())   // R44 — Alt suppresses grid snap mid-move
+        // commit-drop-snaps-to-guide behaviour.
+        if (ShouldSnap())   // Alt suppresses grid snap mid-move
         {
             nx = SnapToGrid(nx);
             ny = SnapToGrid(ny);
@@ -2000,7 +1988,7 @@ public sealed partial class LayerCanvasView : UserControl
         Microsoft.UI.Xaml.Controls.Canvas.SetTop(view, ny);
     }
 
-    // ─── B25 helpers — snap + alignment guide overlay ────────────────────
+    // ─── Snap + alignment guide overlay ──────────────────────────────────
 
     private static int SnapToGrid(int v) =>
         (int)Math.Round(v / (double)SnapGridStepPx) * SnapGridStepPx;
@@ -2009,7 +1997,7 @@ public sealed partial class LayerCanvasView : UserControl
         (int)Math.Round(v / (double)SnapGridStepPx) * SnapGridStepPx;
 
     /// <summary>
-    /// B25 / Track B PART 2 — snap the candidate move position by delegating to
+    /// Snap the candidate move position by delegating to
     /// the pure-data <see cref="WidgetSnapCalculator"/> in the Visualist Engine.
     /// The calculator snaps the dragged rect against the layer-canvas
     /// edges/centre AND every sibling's edges/centre (within its 6px threshold)
@@ -2022,7 +2010,7 @@ public sealed partial class LayerCanvasView : UserControl
     /// </summary>
     private void ResolveAlignmentSnap(LayerWidget dragged, ref int x, ref int y)
     {
-        // R44 — Alt bypasses the alignment snap entirely. We still pass the
+        // Alt bypasses the alignment snap entirely. We still pass the
         // bypass flag to the calculator (rather than early-returning) so it
         // clears any stale guides for an honest "no snap" frame.
         bool bypass = IsAltDown();
@@ -2067,13 +2055,13 @@ public sealed partial class LayerCanvasView : UserControl
     }
 
     /// <summary>
-    /// B25 — rebuild the alignment-guide overlay (dashed gold lines) against
+    /// Rebuild the alignment-guide overlay (dashed gold lines) against
     /// every non-selected sibling's matching edge / centre. Called every
     /// PointerMoved during a drag; cleared on release / cancel.
     /// </summary>
     private void UpdateAlignmentGuides()
     {
-        // R44 — Alt suppresses snapping, so don't draw guides that wouldn't snap.
+        // Alt suppresses snapping, so don't draw guides that wouldn't snap.
         if (IsAltDown())
         {
             ClearAlignmentGuides();
@@ -2098,7 +2086,7 @@ public sealed partial class LayerCanvasView : UserControl
         int dragW = anchor.Rect.Width;
         int dragH = anchor.Rect.Height;
 
-        // P2 perf — short-circuit when the anchor hasn't moved/resized since the
+        // Perf — short-circuit when the anchor hasn't moved/resized since the
         // last rebuild. The overlay depends only on the anchor rect (siblings
         // are static mid-gesture), so an unchanged rect ⇒ identical overlay
         // (including the "no guide matched" empty overlay — caching that too
@@ -2117,7 +2105,7 @@ public sealed partial class LayerCanvasView : UserControl
         // drag every member moves together so all of them are excluded from
         // the alignment cascade (a member shouldn't draw a guide against
         // another member). During a resize the anchor is the widget being
-        // resized (Area 1 P0) — same guide overlay, different gesture.
+        // resized — same guide overlay, different gesture.
         var dragSet = new HashSet<LayerWidget>();
         if (_isGroupDragging)
         {
@@ -2135,7 +2123,7 @@ public sealed partial class LayerCanvasView : UserControl
         int dragRight = dragX + dragW;
         int dragBottom = dragY + dragH;
 
-        // R40 — §2 gold (SelectionBrush #FFD700) is the canonical selection
+        // §2 gold (SelectionBrush #FFD700) is the canonical selection
         // accent (Design_Orders §2: gold=selection). The pre-fix stroke used
         // brass EmberPrimary, so guides read in a different colour than the rest
         // of the selection chrome (selected-widget border, resize handle, lasso
@@ -2143,7 +2131,7 @@ public sealed partial class LayerCanvasView : UserControl
         // so a missing key (designer / pre-app) falls back to the literal ARGB.
         Brush stroke = ResolveBrushTinted("SelectionBrush", 0xCC, 0xFF, 0xD7, 0x00);
 
-        // Track B PART 2 — render the EXACT guide segments the snap engine
+        // Render the EXACT guide segments the snap engine
         // (WidgetSnapCalculator) returned, captured into _engineSnapGuides by
         // the matching ResolveAlignmentSnap / ResolveResizeAlignmentSnap pass.
         // The engine emits canvas-spanning axis-aligned guides (vertical:
@@ -2202,7 +2190,7 @@ public sealed partial class LayerCanvasView : UserControl
         }
     }
 
-    // Track B PART 2 — draw one dashed gold guide line for a snap the engine
+    // Draw one dashed gold guide line for a snap the engine
     // already decided on (no threshold re-gate here; the engine's 6px
     // SnapThreshold owns that). Endpoints are clamped to the canvas bounds so the
     // localized ± margin never paints off-surface. Matches the dash/opacity of
@@ -2234,7 +2222,7 @@ public sealed partial class LayerCanvasView : UserControl
 
     private void ClearAlignmentGuides()
     {
-        // P2 perf — drop the rebuild-skip cache so the next UpdateAlignmentGuides
+        // Perf — drop the rebuild-skip cache so the next UpdateAlignmentGuides
         // (a fresh gesture, or a return to a previously-visited anchor rect)
         // always rebuilds rather than short-circuiting against a stale rect whose
         // guides we just removed.
@@ -2278,14 +2266,13 @@ public sealed partial class LayerCanvasView : UserControl
         && a.Y < b.Y + b.Height
         && a.Y + a.Height > b.Y;
 
-    // Visualist owns its own copy of the keyboard-state probe per
-    // feedback_visualist_architect_chrome_independence.md. Same helper
+    // Visualist owns its own copy of the keyboard-state probe. Same helper
     // lives in WidgetGraphCanvas; not lifted to a shared utility.
     private static bool IsShiftDown()
         => (InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
             & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
 
-    // R44 — Alt-held momentary snap-disable, matching the widget-graph canvas
+    // Alt-held momentary snap-disable, matching the widget-graph canvas
     // (WidgetGraphCanvas.IsAltDown / ShouldSnap) and the Photoshop / Fusion
     // convention where the modifier SUPPRESSES the active grid/guide constraint
     // for the duration of the drag. VirtualKey.Menu == Alt in Win32-speak.
@@ -2295,7 +2282,7 @@ public sealed partial class LayerCanvasView : UserControl
 
     private bool ShouldSnap() => SnapEnabled && !IsAltDown();
 
-    // ─── P3 — stage zoom / pan ───────────────────────────────────────────
+    // ─── Stage zoom / pan ────────────────────────────────────────────────
     //
     // Restores the pre-WinForms LayerCanvas zoom/pan the rework dropped, layered
     // on top of the aspect-locking Viewbox so the existing canvas-space pointer
@@ -2310,7 +2297,7 @@ public sealed partial class LayerCanvasView : UserControl
     private Point _panStartPointer;       // pointer pos in StageHost space at grab
     private double _panStartX, _panStartY; // TranslateTransform values at grab
 
-    // P3 — last layer Render() painted, so we only reset zoom/pan on an actual
+    // Last layer Render() painted, so we only reset zoom/pan on an actual
     // layer switch, not on the SelectedWidget-driven re-renders (which would
     // otherwise zap the user's zoom every time they clicked a widget).
     private Layer? _lastRenderedLayer;
@@ -2420,7 +2407,7 @@ public sealed partial class LayerCanvasView : UserControl
         _isPanning = false;
     }
 
-    /// <summary>P3 — reset zoom (1×) and pan (0,0) back to the Viewbox's
+    /// <summary>Reset zoom (1×) and pan (0,0) back to the Viewbox's
     /// default uniform fit. Called on every fresh layer render so switching
     /// layers doesn't strand the new one off-screen at an old zoom.</summary>
     private void ResetStageZoomPan()
@@ -2538,7 +2525,7 @@ public sealed partial class LayerCanvasView : UserControl
         _                      => p.ToString(),
     };
 
-    // R1 — instance (was static) so the "Edit Widget" item can reach the
+    // Instance (was static) so the "Edit Widget" item can reach the
     // enter-editor bubble (RequestEnter / WidgetEnterRequested). The pre-T15
     // shell let you reach the editor without a precise double-click (canvas
     // double-click OR widget-tree double-click); "Edit Widget" is the
@@ -2570,7 +2557,7 @@ public sealed partial class LayerCanvasView : UserControl
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        // R36 — group-aware: when several widgets are multi-selected, To-Front /
+        // Group-aware: when several widgets are multi-selected, To-Front /
         // To-Back restacks the whole set (preserving relative order); otherwise
         // it acts on the right-clicked widget.
         var front = new MenuFlyoutItem { Text = Localizer.T("visualist.canvas.context.bring_to_front", "Bring to Front") };
@@ -2591,10 +2578,10 @@ public sealed partial class LayerCanvasView : UserControl
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        // Area 4 P3 — mirror the baseline ContextMenuStrip grouping. The
+        // Mirror the baseline ContextMenuStrip grouping. The
         // pre-T15 LayerCanvas laid the menu out as three separator-delimited
-        // groups (action → z-order → destructive Delete in Theme.StatusRed,
-        // LayerCanvas.cs:846-863). The WinUI flyout already matched the
+        // groups (action → z-order → destructive Delete in Theme.StatusRed).
+        // The WinUI flyout already matched the
         // 3-group / 2-separator structure; this restores the destructive-
         // command emphasis the baseline carried by tinting Delete with the
         // ErrBrush token (theme-resolved, literal-ARGB fallback for
@@ -2632,10 +2619,9 @@ public sealed partial class LayerCanvasView : UserControl
     };
 
     // ─── Cut / Copy / Paste / Select-All / Delete keyboard shortcuts ─────
-    // Sprint B (TODO cleanup). Operates on the multi-select set
+    // Operates on the multi-select set
     // (_multiSelected). The clipboard buffer is per-app-process — Visualist
-    // owns its own copy per the per-pillar paint isolation rule
-    // (feedback_visualist_architect_chrome_independence.md); not lifted to
+    // owns its own copy per the per-pillar paint isolation rule; not lifted to
     // Phoenix.Controls.Shared.
 
     private void OnKeyDownForClipboardShortcuts(object sender, KeyRoutedEventArgs e)
@@ -2676,7 +2662,7 @@ public sealed partial class LayerCanvasView : UserControl
                 }
                 return;
             }
-            // R36 — Ctrl+] / Ctrl+[ step the selection's z-order; Shift makes it
+            // Ctrl+] / Ctrl+[ step the selection's z-order; Shift makes it
             // To-Front / To-Back (group-aware when several widgets are selected).
             if (sc == ScanCode_BracketRight || sc == ScanCode_BracketLeft)
             {
@@ -2692,7 +2678,7 @@ public sealed partial class LayerCanvasView : UserControl
         switch (e.Key)
         {
             case Windows.System.VirtualKey.Escape:
-                // R53 — Esc clears the widget selection at canvas scope.
+                // Esc clears the widget selection at canvas scope.
                 if (_multiSelected.Count > 0 || _vm.SelectedWidget is not null)
                 {
                     ClearMultiSelectAndAnchor();
@@ -2704,7 +2690,7 @@ public sealed partial class LayerCanvasView : UserControl
                 if (DeleteSelectedWidgets()) e.Handled = true;
                 break;
             // ── Arrow-key nudging ─────────────────────────────────────────
-            // P2 — move the selection by 1px (or SnapGridStepPx with Shift held,
+            // Move the selection by 1px (or SnapGridStepPx with Shift held,
             // mirroring Architect's LogicCanvasView.Keyboard.cs shift?10:1 step
             // pattern, here aligned to the canvas's own 8px grid). Group-aware:
             // nudges the whole multi-select when 2+ are selected, else the
@@ -2724,7 +2710,7 @@ public sealed partial class LayerCanvasView : UserControl
                 if (NudgeSelection(0, IsShiftDown() ?  SnapGridStepPx :  1)) e.Handled = true;
                 break;
             case Windows.System.VirtualKey.Enter when !ctrl:
-                // R1 — Enter on the current selection enters its editor (parity
+                // Enter on the current selection enters its editor (parity
                 // gesture alongside body double-tap + "Edit Widget" menu). Inline
                 // rename / pill TextBoxes consume Enter with e.Handled=true, so
                 // this only fires when the canvas itself owns focus.
@@ -2783,7 +2769,7 @@ public sealed partial class LayerCanvasView : UserControl
         }
     }
 
-    // R36 — apply a z-order chord. <paramref name="dir"/> +1 = toward front,
+    // Apply a z-order chord. <paramref name="dir"/> +1 = toward front,
     // -1 = toward back. <paramref name="toExtreme"/> brings/sends all the way
     // (group-aware when 2+ widgets are multi-selected); otherwise single-step.
     private void ApplyZOrderChord(int dir, bool toExtreme)
@@ -2808,7 +2794,7 @@ public sealed partial class LayerCanvasView : UserControl
     }
 
     /// <summary>
-    /// P2 — nudge the current selection by (dx, dy) canvas pixels in a single
+    /// Nudge the current selection by (dx, dy) canvas pixels in a single
     /// undo entry. Group-aware (every multi-selected widget moves; otherwise the
     /// primary SelectedWidget). Each widget is clamped independently to the
     /// canvas bounds — unlike a group DRAG, a keyboard nudge has no shared
@@ -2851,7 +2837,7 @@ public sealed partial class LayerCanvasView : UserControl
                 Microsoft.UI.Xaml.Controls.Canvas.SetLeft(view, nx);
                 Microsoft.UI.Xaml.Controls.Canvas.SetTop(view, ny);
             }
-            // Lane C — keep the live WebView2 frame in step (no-op when the
+            // Keep the live WebView2 frame in step (no-op when the
             // previewer isn't running), matching the finished-drag path.
             _previewer?.PostWidgetUpdate(w);
         }
@@ -2864,7 +2850,7 @@ public sealed partial class LayerCanvasView : UserControl
     }
 
     // Walk the visual tree up to the embedding MainView. The chrome-level
-    // KeyboardAccelerators ( HubChrome rebind) fire when the chrome
+    // KeyboardAccelerators fire when the chrome
     // window has focus; this handler covers the case where the canvas itself
     // owns focus (e.g. after a click on the layer surface). Keep both paths.
     private Phoenix.Controls.Visualist.WinUI.MainView? FindPillarMainView()
@@ -2878,7 +2864,7 @@ public sealed partial class LayerCanvasView : UserControl
         return null;
     }
 
-    // R1 — select the widget and ask the shell to open its editor. Selection is
+    // Select the widget and ask the shell to open its editor. Selection is
     // set here too (not only in MainView.EnterWidget) so the VM reflects the
     // intent even on a host that doesn't subscribe; MainView.EnterWidget re-sets
     // it idempotently. Single funnel for all three enter gestures (body
@@ -3119,8 +3105,7 @@ public sealed partial class LayerCanvasView : UserControl
 
 /// <summary>
 /// Per-app-process clipboard buffer for cut/copy/paste of widgets in
-/// LayerCanvasView. Visualist owns its own buffer per
-/// feedback_visualist_architect_chrome_independence.md — Architect has its
+/// LayerCanvasView. Visualist owns its own buffer — Architect has its
 /// own LogicCanvasView clipboard, not shared.
 /// </summary>
 internal static class WidgetClipboard

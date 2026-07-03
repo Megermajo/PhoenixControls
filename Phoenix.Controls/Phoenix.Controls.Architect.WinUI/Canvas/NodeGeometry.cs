@@ -42,7 +42,7 @@ public static class NodeGeometry
     // off-screen — single-line pills render at true text width UP TO this
     // body ceiling, then trim.
     public const double NodeMaxWidth          = 1200.0; // was 520 (pre-T15 EnsureNodeBodySize ceiling)
-    //  DB.* TableName/Column pills must render single-line AND
+    // DB.* TableName/Column pills must render single-line AND
     // fully visible (no ellipsis cut-off) — Majo's hard rule. A node carrying such a
     // pill widens to fit the whole identifier on ONE line, up to this much larger
     // ceiling (≈never reached by real table/column names) before the last-resort
@@ -57,7 +57,7 @@ public static class NodeGeometry
     public const double HeaderBandHeightPlain = 26.0;  // node without italic definer subtitle
     public const double HeaderBandHeightDef   = 40.0;  // node with italic definer subtitle
     public const double SocketRowHeight       = 24.0;
-    // 0.11.5 canvas-polish r3 — pin centres now sit ON the body's outer
+    // 0.11.5 — pin centres now sit ON the body's outer
     // edge (50/50 overhang, half outside the body, half inside) per Majo's
     // "bubbles for input/output should be on the border of the node (50/50
     // in/out) to allow a better overlap with the pipe" feedback from the
@@ -76,7 +76,7 @@ public static class NodeGeometry
     public const double SocketColumnInset     = 0.0;
     public const double PinRadius             = 7.0;   // pin shape is centred in 14×14
     public const double SocketGapAfterHeader  = 8.0;   // matches NodeView XAML row 1 (gap row)
-    // arch-ux-polish round 2 — NodeView.xaml's NodeRoot Border carries
+    // NodeView.xaml's NodeRoot Border carries
     // BorderThickness=1; the inner content area is inset 1px from the
     // node body's OUTER-top-left corner. SocketColumnInset already bakes
     // this into the horizontal anchor; FirstSocketRowY uses this constant
@@ -136,7 +136,7 @@ public static class NodeGeometry
     /// </summary>
     public static (double X, double Y) SocketAnchor(Node node, int rowIndex, SocketType socketType)
     {
-        // A1 — Flow.Reroute: pin In at the diamond's west point (x=0, y=10)
+        // Flow.Reroute: pin In at the diamond's west point (x=0, y=10)
         // and pin Out at the east point (x=20, y=10). The header / row-Y
         // arithmetic below would land both pins ~48px below the diamond
         // top, well below the painted footprint.
@@ -153,14 +153,14 @@ public static class NodeGeometry
         // right-edges anchored at 520 while the painted body had shrunk to its
         // intrinsic width, so output pipes started past the node body in mid-air.
         double width = EffectiveWidth(node);
-        // 0.11.5 canvas-polish r3 — pin centres sit ON the body's outer edge
+        // 0.11.5 — pin centres sit ON the body's outer edge
         // (SocketColumnInset=0). NodeBorderInset still applies on the vertical
         // axis (RowCenterY is inner-top-relative; pin centres are outer-top-
         // relative). On the horizontal axis, the pin Ellipse is rendered as a
         // sibling of NodeRoot (NodeView.PinOverlay) and centred on x=0 / x=width
         // — the Border's CornerRadius clip can't reach an element that isn't a
         // descendant of NodeRoot.
-        // [win2d-layout] Use the DYNAMIC row centre (accounts for rows above this
+        // Use the DYNAMIC row centre (accounts for rows above this
         // one that grew tall to fit a wrapped multi-line pill). Identical to the
         // static RowCenterY when no row wraps, so single-line nodes are unchanged.
         // This keeps wire endpoints glued to the painted pin centre on the GPU
@@ -183,11 +183,11 @@ public static class NodeGeometry
     /// </summary>
     public static double EffectiveWidth(Node node)
     {
-        // A1 (audit 2026-05-24) — Flow.Reroute is a fixed-footprint diamond
+        // Flow.Reroute is a fixed-footprint diamond
         // "wire knot", not a normal node. Without this carve-out IntrinsicWidth
         // measured the "Flow.Reroute" title string and grew the body to ~140px,
-        // breaking the visual idiom Majo named (the audit's anchor regression
-        // #1). 20px matches the pre-T15 NodeRegistry Size = (20, 20).
+        // breaking the visual idiom Majo named. 20px matches the pre-T15
+        // NodeRegistry Size = (20, 20).
         if (IsReroute(node)) return 20.0;
         if (IsCompactMode(node) && node.Size.Width > 0) return node.Size.Width;
         return IntrinsicWidth(node);
@@ -222,8 +222,7 @@ public static class NodeGeometry
     /// </summary>
     public static double IntrinsicWidth(Node node)
     {
-        //  Per-node body-size cache (RUN1 #18 parity,
-        // ref ead334f9). XAML binds Width/Height on every layout pass and every
+        // Per-node body-size cache. XAML binds Width/Height on every layout pass and every
         // PropertyChanged storm re-evaluates the bound geometry, so without a
         // cache IntrinsicWidth/IntrinsicHeight walked every socket + every
         // DefaultProperties entry on each call (~500 MeasureString/frame on a
@@ -355,7 +354,7 @@ public static class NodeGeometry
                         pillW = 16.0;
                     }
 
-                    //  + 16 row padding (8L+8R) so the body grows
+                    // + 16 row padding (8L+8R) so the body grows
                     // wide enough to hold the pill + its row chrome; mirrors
                     // MiddleAttrPillLead so width-grow and PillWrapWidth agree.
                     double rowW = keyW + 16.0 + pillW + 16.0 // 16px dotted-spacer + 16px row padding
@@ -367,7 +366,7 @@ public static class NodeGeometry
         catch { /* registry miss / instance-without-template — fall through to socket-only width */ }
 
         double needed = Math.Max(NodeMinWidth, Math.Max(titleW, Math.Max(rowsW, middleW)));
-        //  A node with a DB.* TableName/Column pill gets the
+        // A node with a DB.* TableName/Column pill gets the
         // larger single-line ceiling so a long identifier shows in full on one line
         // (no cut-off); every other node keeps the standard NodeMaxWidth cap.
         return Math.Min(needed, HasDbPill(node) ? DbSingleLineCap : NodeMaxWidth);
@@ -432,7 +431,7 @@ public static class NodeGeometry
             // returned pre-fix.
             pillW = EstimateTextWidth("(wired)", 11.0, mono: true) + 12.0;
         }
-        //  + 14 (pill Border margin 6 + row right padding 8) so the
+        // + 14 (pill Border margin 6 + row right padding 8) so the
         // body grows wide enough to hold the pill + its row chrome; mirrors
         // SocketPillLead so width-grow and PillWrapWidth agree.
         return pinAndPad + labelW + (pillW > 0 ? 6.0 + pillW + 14.0 : 0.0);
@@ -461,8 +460,8 @@ public static class NodeGeometry
     public const double MultilinePillCap = 240.0;
 
     /// <summary>Plain (non-DB, non-multiline) value pills — e.g. Value.String
-    /// literals — widen to this cap and then WRAP rather than truncate (Issue
-    /// 1 / 1.2: no cut-offs). "Widen first" keeps short values on one line;
+    /// literals — widen to this cap and then WRAP rather than truncate (no
+    /// cut-offs). "Widen first" keeps short values on one line;
     /// only genuinely long values wrap. Wider than <see cref="MultilinePillCap"/>
     /// (which keeps Template/Script/Payload block editors tight) but well under
     /// <see cref="NodeMaxWidth"/> so a long literal breaks onto a new line
@@ -489,7 +488,7 @@ public static class NodeGeometry
     }
 
     /// <summary>
-    ///  True when <paramref name="node"/> carries at least one
+    /// True when <paramref name="node"/> carries at least one
     /// DB.* TableName/Column pill (an <see cref="IsDbPill"/> input socket). Drives the
     /// larger <see cref="DbSingleLineCap"/> body ceiling in
     /// <see cref="ComputeIntrinsicWidth"/> so such a node can grow wide enough to show
@@ -503,7 +502,7 @@ public static class NodeGeometry
         return false;
     }
 
-    // ───  Shared pill-wrap budget ────────────────────────────
+    // ─── Shared pill-wrap budget ────────────────────────────
     // The single source of truth for "how wide may an inline value pill be on its
     // row before it must WRAP". Used by THREE consumers that previously diverged
     // and let the pill overflow + clip:
@@ -621,7 +620,7 @@ public static class NodeGeometry
     /// "↩ {EventName}", otherwise NodeRegistry.Template.DisplayName when
     /// set, falling back to canonical Title.
     /// <para>
-    /// S29-patch: a user-typed inline rename is stored in
+    /// A user-typed inline rename is stored in
     /// <c>node.Attributes["__displayNameOverride"]</c> and wins over every
     /// template-driven rendering branch. The override is display-only —
     /// <see cref="Node.Title"/> stays the registry key
@@ -635,7 +634,7 @@ public static class NodeGeometry
     public static string DisplayTitle(Node node)
     {
         var raw = node?.Title ?? string.Empty;
-        // S29-patch (display-name override). Checked FIRST so the user-typed
+        // Display-name override. Checked FIRST so the user-typed
         // label wins over Event.Return's "↩ {EventName}" synthesis and the
         // template DisplayName. The attribute is non-load-bearing — exporter
         // and registry consult Node.Title, never this attribute — so an
@@ -684,7 +683,7 @@ public static class NodeGeometry
         = new();
 
     /// <summary>
-    ///  Per-node body-size cache (RUN1 #18 parity).
+    /// Per-node body-size cache.
     /// Keyed on <see cref="Node.Id"/>; the stored <c>Hash</c> is a content
     /// hash over Title + every socket's Name/Type/DataType/IsPlaceholder + every attribute
     /// key/value. A cache hit (id present AND hash matches) skips the
@@ -705,12 +704,12 @@ public static class NodeGeometry
     }
 
     /// <summary>
-    ///  Content hash over the inputs that drive a node's intrinsic
+    /// Content hash over the inputs that drive a node's intrinsic
     /// geometry — Title, each socket's Name/Type/DataType/IsPlaceholder, and each
     /// attribute key/value. A layout-pass re-read with unchanged content hits the
     /// cache, while any rename / wire-drop / pill-edit / placeholder-activation
     /// flips the hash and forces a recompute.
-    /// arch-perf P2-1 (Fix 7): Offset.Y was REMOVED from this key — it is a
+    /// Offset.Y was REMOVED from this key — it is a
     /// computed layout POSITION (a size output, never a size input), so including
     /// it caused spurious cache misses + cold re-measure storms once layout
     /// settled and the measure pass wrote new Offset.Y values back.
@@ -727,7 +726,7 @@ public static class NodeGeometry
                 hc.Add(s.Name ?? string.Empty);
                 hc.Add((int)s.Type);
                 hc.Add((int)s.DataType);
-                // arch-perf P2-1 (Fix 7) — Offset.Y intentionally NOT hashed (see
+                // Offset.Y intentionally NOT hashed (see
                 // method summary): layout-position output, not a size input.
                 // IsPlaceholder STAYS: a placeholder renders no row, so it changes
                 // the node's intrinsic HEIGHT and must invalidate the cache.
@@ -848,7 +847,7 @@ public static class NodeGeometry
     /// bloat the caches with stale entries from the previous one. Cheap O(n)
     /// clear; both caches rebuild lazily as the new graph paints.
     /// <para>
-    ///  The node-size cache is keyed on Node.Id — graph reloads
+    /// The node-size cache is keyed on Node.Id — graph reloads
     /// re-Guid sockets but node ids can collide across sessions of the same
     /// .phxg, so clearing here together with the text cache keeps a stale
     /// (id, hash) entry from masking a recomputed body on the next load.
@@ -856,17 +855,17 @@ public static class NodeGeometry
     /// </summary>
     public static void ResetTextWidthCache()
     {
-        // arch-perf P2-2 (Fix 7) — do NOT clear s_textWidthCache on graph load.
+        // Do NOT clear s_textWidthCache on graph load.
         // Its key is (text, size, bold, mono) and glyph metrics are process-scoped
         // (Phoenix has no runtime theme/font switch), so a measured width is valid
         // for the whole session regardless of which graph is open. Clearing it
-        // forced a cold TextBlock.Measure storm on every reload (the Class-B
-        // precursor); the only cost of keeping it is a few KB of string→width
+        // forced a cold TextBlock.Measure storm on every reload; the only cost
+        // of keeping it is a few KB of string→width
         // tuples. Only s_nodeSizeCache MUST clear here: it is keyed on Node.Id,
         // which CAN collide across .phxg files, so a stale (id, hash) entry could
         // otherwise mask a recomputed body on the next load.
         s_nodeSizeCache.Clear();
-        // [win2d-layout] Per-row height cache is also Node.Id-keyed — clear in lockstep.
+        // Per-row height cache is also Node.Id-keyed — clear in lockstep.
         s_rowHeightsCache.Clear();
     }
 
@@ -877,7 +876,7 @@ public static class NodeGeometry
     /// </summary>
     public static double IntrinsicHeight(Node node)
     {
-        //  Same per-node cache as IntrinsicWidth —
+        // Same per-node cache as IntrinsicWidth —
         // shares the s_nodeSizeCache entry keyed on node.Id + content hash.
         if (node is not null && !string.IsNullOrEmpty(node.Id))
         {
@@ -900,7 +899,7 @@ public static class NodeGeometry
 
     private static double ComputeIntrinsicHeight(Node node)
     {
-        // A1 — Flow.Reroute is a fixed 20×20 diamond; the standard
+        // Flow.Reroute is a fixed 20×20 diamond; the standard
         // header + socket-row arithmetic doesn't apply.
         if (IsReroute(node)) return 20.0;
 
@@ -917,9 +916,9 @@ public static class NodeGeometry
         int rows = Math.Max(inputCount, outputCount);
         double sockH = MeasureSocketRowsHeight(node!, rows);
 
-        // Middle-attribute rows (QC45-02 / QC45-03) push the body taller. The
+        // Middle-attribute rows push the body taller. The
         // one-shot top pad + dotted divider sits above the area; each row's
-        // height is measured DYNAMICALLY (S4-fix) rather than assumed to be a
+        // height is measured DYNAMICALLY rather than assumed to be a
         // fixed MiddleAttrRowHeight=22. Multi-line middle-attribute pills
         // (Template / Script / Payload, or any newline-containing value) wrap
         // and grow past 22px, so the fixed-count budget clipped the read-only
@@ -932,7 +931,7 @@ public static class NodeGeometry
     }
 
     /// <summary>
-    ///  Socket-row area height. Pre-fix this was
+    /// Socket-row area height. Pre-fix this was
     /// rows * <see cref="SocketRowHeight"/> (a fixed 24px/row), which CLIPPED a
     /// wrapped socket-row pill (e.g. a long <c>Twitch.SendChat</c> Message)
     /// vertically — only middle-attribute rows were ever measured. Now each input
@@ -944,7 +943,7 @@ public static class NodeGeometry
     private static double MeasureSocketRowsHeight(Node node, int rows)
     {
         if (rows <= 0 || node is null) return rows <= 0 ? 0 : rows * SocketRowHeight;
-        // [win2d-layout] Sum the per-row heights from the shared SocketRowHeights
+        // Sum the per-row heights from the shared SocketRowHeights
         // helper so the body-height budget, the GPU renderer, and the wire-anchor
         // row centre all derive from ONE computation and can never diverge.
         var heights = SocketRowHeights(node);
@@ -954,7 +953,7 @@ public static class NodeGeometry
         return total;
     }
 
-    // ─── [win2d-layout] Per-row socket heights + dynamic row centre ──────────
+    // ─── Per-row socket heights + dynamic row centre ──────────
     // The Win2D GPU renderer and the wire anchor (SocketAnchor) must position
     // each socket row at the SAME Y the body measures to. Before this, the GPU
     // path used a static SocketRowHeight=24/row estimate, so a multi-line pill
@@ -1042,7 +1041,7 @@ public static class NodeGeometry
     }
 
     /// <summary>
-    /// S4-fix — dynamic middle-attribute area height. Walks the same
+    /// Dynamic middle-attribute area height. Walks the same
     /// DefaultProperties keys <see cref="CountMiddleAttributes"/> /
     /// <see cref="NodeViewModel.RebuildMiddleAttributes"/> surface and measures
     /// each row's height with the pill text wrapped to the body's pill-column
@@ -1064,7 +1063,7 @@ public static class NodeGeometry
                 if (s.Type == SocketType.Input && !string.IsNullOrEmpty(s.Name))
                     socketNames.Add(s.Name);
 
-            //  Each row's wrapped height is measured at the SAME
+            // Each row's wrapped height is measured at the SAME
             // PillWrapWidth the pill actually renders at (MiddleAttrPillLead), so
             // the reserved height matches the on-screen wrap exactly. Pre-fix the
             // measure used a bespoke pillBudget that diverged from the rendered
@@ -1077,33 +1076,16 @@ public static class NodeGeometry
                 if (socketNames.Contains(kv.Key)) continue;
                 rowCount++;
 
-                bool isBool = string.Equals(kv.Value, "true",  System.StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(kv.Value, "false", System.StringComparison.OrdinalIgnoreCase);
-                if (isBool)
-                {
-                    // ☑/☐ glyph row never wraps — fixed single-row height.
-                    total += MiddleAttrRowHeight;
-                    continue;
-                }
-
                 string? liveValue = null;
                 if (node.Attributes != null && node.Attributes.TryGetValue(kv.Key, out var v))
                     liveValue = v;
                 var effective = liveValue ?? kv.Value ?? string.Empty;
 
-                if (string.IsNullOrEmpty(effective))
-                {
-                    total += MiddleAttrRowHeight;
-                    continue;
-                }
-
-                double pickerLead = IsOptionsPickerAttr(node, kv.Key) ? MiddleAttrPickerChevronWidth : 0.0;
-                double pillBudget = PillWrapWidth(node, MiddleAttrPillLead(kv.Key) + pickerLead, IsMultilinePill(kv.Key, effective), isDb: false);
-
-                double measured = MeasureWrappedTextHeight(effective, 11.0, pillBudget, mono: true);
-                // Row = max(measured wrapped pill, single-row floor) + 2px row
-                // padding (NodeView.xaml Border Margin 0,1,0,1).
-                total += Math.Max(MiddleAttrRowHeight, measured + 2.0);
+                // ONE shared per-row formula, also used by the Win2D draw + click
+                // hit-test, so the reserved height, the painted wrap, and the
+                // clickable target can never drift (the fixed-height GPU draw
+                // overflowed a long Template pill over the output labels).
+                total += MiddleAttrRowHeightFor(node, kv.Key, effective);
             }
 
             if (rowCount == 0) return 0;
@@ -1121,7 +1103,47 @@ public static class NodeGeometry
     }
 
     /// <summary>
-    /// S4-fix — measure the wrapped height (px) of <paramref name="text"/>
+    /// Pill-wrap width for a middle-attribute row — the finite width its value
+    /// pill wraps within. Declared multi-line keys (Template / Script / Payload,
+    /// or a newline value) cap at <see cref="MultilinePillCap"/>; every other key
+    /// widens to <see cref="WrapPillCap"/> before wrapping. Matches the width
+    /// <see cref="MiddleAttrRowHeightFor"/> measures the wrapped height at, so the
+    /// GPU render fills the reserved height exactly.
+    /// </summary>
+    public static double MiddleAttrPillWrapWidth(Node node, string key, string? value)
+    {
+        double pickerLead = IsOptionsPickerAttr(node, key) ? MiddleAttrPickerChevronWidth : 0.0;
+        return PillWrapWidth(node, MiddleAttrPillLead(key) + pickerLead,
+                             IsMultilinePill(key, value ?? string.Empty), isDb: false);
+    }
+
+    /// <summary>
+    /// Rendered height (px) of ONE middle-attribute row for <paramref name="value"/>.
+    /// Bool (☑/☐) and empty rows are the fixed <see cref="MiddleAttrRowHeight"/>
+    /// floor; a text row grows to its wrapped height (measured at the SAME
+    /// <see cref="MiddleAttrPillWrapWidth"/> the pill renders within) so a long
+    /// Template / Script / Payload wraps and grows the row instead of the GPU
+    /// drawing it single-line over the node's output labels ("dismembered" pill).
+    /// This is the single per-row formula shared by the height budget
+    /// (<see cref="MeasureMiddleAttributesHeight"/>) and the Win2D draw + click
+    /// hit-test, so they can never drift.
+    /// </summary>
+    public static double MiddleAttrRowHeightFor(Node node, string key, string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return MiddleAttrRowHeight;
+        bool isBool = string.Equals(value, "true",  System.StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "false", System.StringComparison.OrdinalIgnoreCase);
+        if (isBool) return MiddleAttrRowHeight;
+
+        double budget   = MiddleAttrPillWrapWidth(node, key, value);
+        double measured = MeasureWrappedTextHeight(value, 11.0, budget, mono: true);
+        // + 2px row padding (NodeView.xaml Border Margin 0,1,0,1); floored at the
+        // single-row height so short rows keep their prior budget.
+        return Math.Max(MiddleAttrRowHeight, measured + 2.0);
+    }
+
+    /// <summary>
+    /// Measure the wrapped height (px) of <paramref name="text"/>
     /// laid out against <paramref name="widthConstraint"/> in the canvas font
     /// at <paramref name="fontSize"/>. Mirrors <see cref="EstimateTextWidth"/>'s
     /// per-thread TextBlock measure pipeline + the same background-thread
@@ -1130,7 +1152,7 @@ public static class NodeGeometry
     /// read-only middle-attribute display reserves the full wrapped height
     /// instead of clipping at the fixed 22px row.
     /// </summary>
-    // [win2d-layout] Public so the Win2D GPU renderer's per-row height helper can
+    // Public so the Win2D GPU renderer's per-row height helper can
     // reuse the EXACT wrapped-height measure the body-height budget uses.
     public static double MeasureWrappedTextHeight(string? text, double fontSize, double widthConstraint, bool mono)
     {
@@ -1267,7 +1289,7 @@ public static class NodeGeometry
                 node.Attributes.TryGetValue("CronExpression", out v); break;
             case "Visual.Trigger":
             {
-                // [visual-trigger-definer 2026-06-10] Surface the routing target
+                // Surface the routing target
                 // so the node reads "which trigger in which layer it goes" at a
                 // glance (Majo). The previous code read a stale "CompositionId"
                 // attribute the Visualist copy-snippet never writes — it writes

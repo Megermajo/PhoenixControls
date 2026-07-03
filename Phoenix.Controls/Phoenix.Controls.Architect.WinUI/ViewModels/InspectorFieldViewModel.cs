@@ -7,8 +7,8 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 //   - sans text:   <Field label="Stream"  value="online"/>
 //   - bool toggle: <Field label="Reply to source" type="bool" value/>
 //
-// Track 5's InspectorFieldView XAML branches on Kind to render the right
-// shape. Track 6 just supplies the data + the kind label; selection
+// The InspectorFieldView XAML branches on Kind to render the right
+// shape. This type just supplies the data + the kind label; selection
 // changes on the canvas / databank push fresh field lists into the
 // LogicInspectorViewModel.Fields / DatabankInspectorViewModel.Fields
 // observable collections.
@@ -19,7 +19,7 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 // Now a class with a settable BoolValue and an optional WriteBackBool
 // callback the inspector hands in when constructing the field.
 //
-// QC19-02 (0.10.0 follow-up) — Value is now mutable + observable with an
+// Value is now mutable + observable with an
 // optional WriteBackText closure that mirrors WriteBackBool: the
 // inspector hands in a per-field persistence delegate, and the Value
 // setter (driven by the TwoWay binding from InspectorField's commit
@@ -58,7 +58,7 @@ public sealed class InspectorFieldViewModel : ObservableObject
     /// the underlying model (DB cell, Node.Attributes, etc.) persists.
     /// Pre-fix this was a getter-only property bound OneTime, so the
     /// inline TextBox commit landed in the control's DP but never
-    /// reached the data layer (QC19-02).
+    /// reached the data layer.
     ///
     /// When WriteBackText returns false the setter rolls the cached
     /// value back to the prior state so subsequent rebuilds reflect the
@@ -81,7 +81,7 @@ public sealed class InspectorFieldViewModel : ObservableObject
             // setter completes either way; null = accept (parity with the
             // InspectorField control's WriteBack default).
             //
-            // S10 P1: the closure (e.g. DatabankInspector → ApplyLocalEdit →
+            // The closure (e.g. DatabankInspector → ApplyLocalEdit →
             // DatabankCellViewModel.Value → SetField → synchronous
             // PropertyChanged) can throw, and a PropertyChanged handler that
             // faults would propagate straight out of this setter and crash the
@@ -143,7 +143,7 @@ public sealed class InspectorFieldViewModel : ObservableObject
     /// commits. Return true to accept the edit, false to reject it (the
     /// setter rolls back to the prior cached value). Null on non-text
     /// fields, or when the inspector intentionally surfaces a read-only
-    /// row (link-detail eyebrow + value pairs, etc.). QC19-02.
+    /// row (link-detail eyebrow + value pairs, etc.).
     /// </summary>
     public System.Func<string, bool>? WriteBackText { get; }
 }

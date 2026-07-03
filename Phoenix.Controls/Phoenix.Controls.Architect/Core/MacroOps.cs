@@ -30,7 +30,7 @@ namespace Phoenix.Controls.Architect.Core
 
             foreach (var node in graph.Nodes)
             {
-                if (node == null) continue; // [P1 swarm-audit 2026-05-29] guard null node before deref
+                if (node == null) continue; // guard null node before deref
                 if (node.Title != "Macro.Call") continue;
                 if (node.Attributes == null) continue;
                 if (!node.Attributes.TryGetValue("MacroId", out var mid) || mid != macroId) continue;

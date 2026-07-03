@@ -10,7 +10,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // binding-friendly projections of its sockets split into Inputs/Outputs
 // rows (the design's two-column layout in architect.jsx:Node).
 //
-// Position (X/Y) is mutable so a future drag-handler in Track 5 can update
+// Position (X/Y) is mutable so a future drag-handler can update
 // the model directly — the model still owns the Point via Node.Location.
 // Selection lives on the parent LogicCanvasViewModel so multi-selection
 // can be coordinated; here we just expose IsSelected as a derived flag.
@@ -25,7 +25,7 @@ public sealed class NodeViewModel : ObservableObject
         Inputs           = new ObservableCollection<SocketViewModel>();
         Outputs          = new ObservableCollection<SocketViewModel>();
         MiddleAttributes = new ObservableCollection<MiddleAttributeViewModel>();
-        //  Resolve the template-derived caches on construct so the
+        // Resolve the template-derived caches on construct so the
         // per-binding hot getters (IconGlyph, NodeTooltip) don't round-trip
         // through NodeRegistry.GetTemplate on every PropertyChanged storm.
         // RebuildTemplateDerivedCaches re-fires on Title changes via
@@ -49,7 +49,7 @@ public sealed class NodeViewModel : ObservableObject
     /// </summary>
     public string Title => NodeGeometry.DisplayTitle(_node);
 
-    // S29-patch: attribute key holding the user-typed display-name override.
+    // Attribute key holding the user-typed display-name override.
     // Read/written by EditableTitle + read by NodeGeometry.DisplayTitle. Kept
     // local to this class — the only other touch is the geometry helper which
     // hard-codes the same key string so this view-model and the static
@@ -59,12 +59,12 @@ public sealed class NodeViewModel : ObservableObject
     private const string DisplayNameOverrideKey = "__displayNameOverride";
 
     /// <summary>
-    /// TwoWay-bound proxy for the inline title TextBox (S29 P0-A5).
+    /// TwoWay-bound proxy for the inline title TextBox.
     /// <para>
-    /// S29-patch (course correction): reads / writes
+    /// Course correction: reads / writes
     /// <c>Node.Attributes["__displayNameOverride"]</c> instead of
     /// <see cref="Phoenix.Controls.Shared.Models.Node.Title"/>. The original
-    /// S29 setter wrote through to <c>Node.Title</c>, which is the lookup key
+    /// setter wrote through to <c>Node.Title</c>, which is the lookup key
     /// for <c>NodeRegistry.GetTemplate(node.Title)</c> and
     /// <c>CommandManifest.Resolve(title)</c> — renaming a <c>Math.Add</c>
     /// instance to "MyMath" silently broke template binding and script export.
@@ -125,7 +125,7 @@ public sealed class NodeViewModel : ObservableObject
 
     private bool _isTitleRenaming;
     /// <summary>
-    /// True while the inline title TextBox is showing (S29 P0-A5). Mirrors
+    /// True while the inline title TextBox is showing. Mirrors
     /// <see cref="SocketViewModel.IsRenaming"/> in shape so the XAML
     /// visibility converter can swap the read-only TextBlock for the editor.
     /// </summary>
@@ -135,12 +135,12 @@ public sealed class NodeViewModel : ObservableObject
         set => SetField(ref _isTitleRenaming, value);
     }
 
-    // S29 inline-title edit baseline — mirror of SocketViewModel's
+    // Inline-title edit baseline — mirror of SocketViewModel's
     // _labelEditBaseline path: Esc rolls back to the value at edit-start,
     // and a no-op commit (old == new) skips the undo push so a typing-then-
     // deleting session doesn't accrete a stale snapshot.
     //
-    // S29-patch: baseline tracks the override attribute (not Node.Title).
+    // The baseline tracks the override attribute (not Node.Title).
     // When no override is set, the baseline is null and Esc restores the
     // node to its registry-derived title. When the user deletes the field
     // and commits, the override clears (empty=clear contract above) which
@@ -213,7 +213,7 @@ public sealed class NodeViewModel : ObservableObject
     /// matches one of the Event-pair role tokens (<c>Event.Trigger</c> /
     /// <c>Event.Executor</c>). Surfaced so the inline socket-rename commit
     /// path in <see cref="NodeView"/> can gate the cross-file payload-shape
-    /// sync (S29 P1-A6) without re-reading the model field directly.
+    /// sync without re-reading the model field directly.
     /// </summary>
     public bool IsEventPairHost
         => _node.Title is "Event.Trigger" or "Event.Executor";
@@ -236,7 +236,7 @@ public sealed class NodeViewModel : ObservableObject
     /// Screen-reader-friendly compact label combining Title and Definer
     /// (when present). Surfaced via NodeView's AutomationProperties.Name
     /// binding so a focus traversal announces "Schedule.Cron — */5 * * * *"
-    /// or "Var.Set — counter" rather than just "node". 0.10.0 a11y P2.
+    /// or "Var.Set — counter" rather than just "node". 0.10.0 accessibility.
     /// </summary>
     public string AccessibleName => HasDefiner ? $"{Title} — {Definer}" : Title;
 
@@ -244,9 +244,9 @@ public sealed class NodeViewModel : ObservableObject
     /// Optional 16×16 Segoe Fluent Icons codepoint rendered left of the
     /// header title — resolved from the template's
     /// <see cref="NodeTemplate.IconGlyph"/> slot. Empty when the template
-    /// doesn't opt in (most templates today). 0.10.0 UX P2.
+    /// doesn't opt in (most templates today).
     /// <para>
-    ///  Cached on construct + invalidated on Title change via
+    /// Cached on construct + invalidated on Title change via
     /// <see cref="RebuildTemplateDerivedCaches"/> so per-binding reads
     /// don't round-trip through <see cref="NodeRegistry.GetTemplate"/>.
     /// PropertyChanged storms (selection toggles, var-chain highlight,
@@ -264,11 +264,11 @@ public sealed class NodeViewModel : ObservableObject
     /// Tooltip rendered on node-header hover: title + category + the template's
     /// description (when present). When <see cref="ErrorReason"/> is set the
     /// reason string is appended on its own line so the red-triangle badge
-    /// (Architect UX P1 "Error-state node reason") has a hover-discoverable
+    /// ("Error-state node reason") has a hover-discoverable
     /// explanation alongside the visual marker. Mirrors pre-T15 canvas
     /// tooltip resolver output for nodes.
     /// <para>
-    ///  Base ("title · category[\ndescription]") is cached in
+    /// Base ("title · category[\ndescription]") is cached in
     /// <see cref="_nodeTooltipBase"/> on construct + Title change; the
     /// getter only re-formats when <see cref="ErrorReason"/> is set, which
     /// changes through its own PropertyChanged path.
@@ -279,12 +279,12 @@ public sealed class NodeViewModel : ObservableObject
             ? _nodeTooltipBase
             : $"{_nodeTooltipBase}\n⚠ {_errorReason}";
 
-    //  Backing fields for template-derived caches.
+    // Backing fields for template-derived caches.
     private string _iconGlyph       = string.Empty;
     private string _nodeTooltipBase = string.Empty;
 
     /// <summary>
-    ///  Re-snapshot every template-derived hot getter into its
+    /// Re-snapshot every template-derived hot getter into its
     /// backing cache. Called on construct (warm cache) and on
     /// <see cref="RaiseHeaderChanged"/> (Title change — rare, only Event /
     /// Var rename paths flip Title). Try/catch swallows a registry miss
@@ -356,7 +356,7 @@ public sealed class NodeViewModel : ObservableObject
     /// inline pill) changes the rendered header. Call from places that mutate
     /// Node.Attributes outside the SocketViewModel TwoWay binding path.
     /// <para>
-    ///  Also rebuilds the template-derived caches (IconGlyph,
+    /// Also rebuilds the template-derived caches (IconGlyph,
     /// NodeTooltip base) since Title is the cache key. Definer changes
     /// don't invalidate these (definer is an attribute-driven subtitle,
     /// not a template lookup), but the rebuild is cheap and the call site
@@ -372,7 +372,7 @@ public sealed class NodeViewModel : ObservableObject
         OnPropertyChanged(nameof(IconGlyph));
         OnPropertyChanged(nameof(HasIconGlyph));
         OnPropertyChanged(nameof(NodeTooltip));
-        // S4-fix — compact-mode toggle (LogicCanvasView.ToggleCompactMode)
+        // Compact-mode toggle (LogicCanvasView.ToggleCompactMode)
         // flips Attributes["Compact"] then calls this; nudge the compact
         // affordance bindings so the centred CompactSymbol glyph + the
         // compact-tint border (ApplyBorder reads IsCompactMode) refresh in
@@ -391,7 +391,7 @@ public sealed class NodeViewModel : ObservableObject
     /// diamond with no header / chrome / middle attrs — the WinUI port
     /// initially rendered every node through the standard Border, which made
     /// the reroute look like an oversized rectangular node and lost the
-    /// "wire knot" affordance Majo named in the 2026-05-24 audit (A1).
+    /// "wire knot" affordance Majo named.
     /// </summary>
     public bool IsReroute => string.Equals(_node.Title, "Flow.Reroute", System.StringComparison.Ordinal);
 
@@ -400,7 +400,7 @@ public sealed class NodeViewModel : ObservableObject
     public bool IsStandardNode => !IsReroute;
 
     /// <summary>
-    /// S4-fix — true when the node persists the opt-in compact-mode flag
+    /// True when the node persists the opt-in compact-mode flag
     /// (right-click → Convert to Compact writes <c>Attributes["Compact"]="true"</c>).
     /// Mirrors <see cref="NodeGeometry.IsCompactMode"/>. Bound by NodeView.xaml
     /// to (1) tint NodeRoot's border so compact mode reads as a distinct state
@@ -415,7 +415,7 @@ public sealed class NodeViewModel : ObservableObject
         && string.Equals(v, "true", System.StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// S4-fix — the operator glyph the registry assigns to Math / Logic
+    /// The operator glyph the registry assigns to Math / Logic
     /// templates (<c>+ − × ÷ % == ≠ &gt; &lt; AND OR ! ?</c> …). Surfaced so
     /// compact-mode nodes can paint a large centred symbol that conveys the
     /// node's function at a glance when the title band is hidden. Empty for
@@ -439,7 +439,7 @@ public sealed class NodeViewModel : ObservableObject
     public bool HasCompactSymbol => IsCompactMode && !string.IsNullOrEmpty(CompactSymbol);
 
     /// <summary>
-    /// Stroke brush for the Flow.Reroute diamond. S4-fix — the reroute knot is
+    /// Stroke brush for the Flow.Reroute diamond. The reroute knot is
     /// a NEUTRAL passthrough connector, not a type-identifier. The stroke is
     /// selection-driven (Gold <c>EmberPrimaryBrush</c> tone when this node is
     /// selected, DimGray otherwise) mirroring the pre-T15 WinForms Canvas which
@@ -467,7 +467,7 @@ public sealed class NodeViewModel : ObservableObject
         => new(ParseHexColor("#FF3C3C41"));
 
     /// <summary>
-    /// S4-fix — re-raise the reroute stroke binding when selection flips so
+    /// Re-raise the reroute stroke binding when selection flips so
     /// the diamond's border tracks Gold-when-selected / DimGray-otherwise.
     /// Called from the IsSelected setter (reroute nodes only — cheap no-op
     /// nudge for standard nodes which don't bind these properties).
@@ -502,7 +502,7 @@ public sealed class NodeViewModel : ObservableObject
         catch { return Windows.UI.Color.FromArgb(0xFF, 0x80, 0x80, 0x80); }
     }
 
-    //  Per-node geometry memoisation. XAML binds Width in several
+    // Per-node geometry memoisation. XAML binds Width in several
     // places (NodeRoot, PinOverlay, shadow Border via ActualWidth) and Height
     // (PinOverlay), and every NotifyPropertyChanged storm (selection toggle,
     // var-chain highlight, flash burst) re-evaluates every bound property —
@@ -517,7 +517,7 @@ public sealed class NodeViewModel : ObservableObject
     private double _cachedHeight = double.NaN;
 
     /// <summary>
-    ///  Drop the memoised Width / Height so the next binding read
+    /// Drop the memoised Width / Height so the next binding read
     /// recomputes from <see cref="NodeGeometry"/>. Call alongside every
     /// <c>OnPropertyChanged(nameof(Width))</c> / <c>(nameof(Height))</c> so
     /// the cache invalidates in lockstep with the change notification.
@@ -537,7 +537,7 @@ public sealed class NodeViewModel : ObservableObject
     /// pipes at the old 520-px ceiling. Compact mode keeps the persisted
     /// 56-px footprint (toggled via right-click → Convert to Compact) intact.
     /// <para>
-    ///  Memoised in <see cref="_cachedWidth"/>; recomputed only
+    /// Memoised in <see cref="_cachedWidth"/>; recomputed only
     /// after <see cref="InvalidateGeometryCache"/> fires (every socket /
     /// attribute mutation).
     /// </para>
@@ -558,7 +558,7 @@ public sealed class NodeViewModel : ObservableObject
     /// (placeholder activation, dynamic event-pair grow) reflects in the
     /// painted body without a manual resize.
     /// <para>
-    ///  Memoised in <see cref="_cachedHeight"/>; recomputed only
+    /// Memoised in <see cref="_cachedHeight"/>; recomputed only
     /// after <see cref="InvalidateGeometryCache"/> fires.
     /// </para>
     /// </summary>
@@ -588,8 +588,7 @@ public sealed class NodeViewModel : ObservableObject
     /// the ~20 templates whose distinguishing attribute lives on
     /// <c>DefaultProperties</c> (Bus.OnMessage.EventType, Logic.If.Operator,
     /// Schedule.RunAt.DateTime, …) were authorable only via the inspector — the
-    /// regression <c>feedback_node_ui_inline_sockets.md</c> exists to close.
-    /// 
+    /// regression this exists to close.
     /// </summary>
     public ObservableCollection<MiddleAttributeViewModel> MiddleAttributes { get; }
 
@@ -715,7 +714,7 @@ public sealed class NodeViewModel : ObservableObject
         if (e.PropertyName == nameof(MiddleAttributeViewModel.Value) ||
             e.PropertyName == nameof(MiddleAttributeViewModel.BoolValue))
         {
-            // ARCH-FREEZE — the inline pill TextBox binds UpdateSourceTrigger=PropertyChanged,
+            // The inline pill TextBox binds UpdateSourceTrigger=PropertyChanged,
             // so Value fires on EVERY keystroke. Running the geometry/relayout cascade per
             // keystroke storms the single UI thread (the reported CRON-pill freeze). While the
             // pill is being edited we defer it: the value still writes through to
@@ -726,7 +725,7 @@ public sealed class NodeViewModel : ObservableObject
         }
         else if (e.PropertyName == nameof(MiddleAttributeViewModel.IsEditing))
         {
-            // 2026-06-08 — push the pill's MaxWidth on edit ENTRY too (see
+            // Push the pill's MaxWidth on edit ENTRY too (see
             // OnSocketPropertyChanged) so the inline TextBox is sized correctly
             // while editing instead of snapping right only on commit.
             if (m != null)
@@ -754,7 +753,7 @@ public sealed class NodeViewModel : ObservableObject
     }
 
     /// <summary>
-    ///  Re-raise every child pill's <c>PillMaxWidth</c> so each
+    /// Re-raise every child pill's <c>PillMaxWidth</c> so each
     /// re-evaluates the width it may wrap within after the node body width changed.
     /// Pills derive their wrap width from the node's EffectiveWidth, so a value edit
     /// on one row (which can grow / shrink the body) must nudge the siblings too.
@@ -779,7 +778,7 @@ public sealed class NodeViewModel : ObservableObject
             e.PropertyName == nameof(SocketViewModel.ValuePill) ||
             e.PropertyName == nameof(SocketViewModel.HasValuePill))
         {
-            // ARCH-FREEZE — the socket value-pill TextBox also binds
+            // The socket value-pill TextBox also binds
             // UpdateSourceTrigger=PropertyChanged, so ValuePill fires on every keystroke. Defer
             // the relayout cascade while the pill is being edited (same per-keystroke storm as
             // the middle-attr pill); it runs once on commit (IsEditing -> false, below). Label /
@@ -797,7 +796,7 @@ public sealed class NodeViewModel : ObservableObject
         }
         else if (e.PropertyName == nameof(SocketViewModel.IsEditing))
         {
-            // 2026-06-08 — the inline editor's MaxWidth={Binding PillMaxWidth} is a
+            // The inline editor's MaxWidth={Binding PillMaxWidth} is a
             // OneWay binding that only re-pulls when PillMaxWidth raises
             // PropertyChanged. Pre-fix nothing fired on edit ENTRY, so the TextBox
             // measured at a stale width and only snapped to the correct size on
@@ -809,7 +808,7 @@ public sealed class NodeViewModel : ObservableObject
                 else RaiseInlineLayoutChanged();
             }
         }
-        // S4-fix — the reroute diamond no longer recolours on the wildcard
+        // The reroute diamond no longer recolours on the wildcard
         // cascade's DataType / ColorHex flips: it's a NEUTRAL grey wire knot
         // (fixed fill, selection-driven stroke), not a type-coded bead. The
         // stroke re-raise lives on the IsSelected setter
@@ -833,7 +832,7 @@ public sealed class NodeViewModel : ObservableObject
     /// pre-T15 DrawNodes header fill so a node's title band has a subtle
     /// depth cue instead of a flat tint.
     ///
-    /// PERF (perf/architect-blockers, HIGH): pre-cache, the getter built a
+    /// PERF: pre-cache, the getter built a
     /// fresh LinearGradientBrush + 2 GradientStops on every binding read.
     /// Bindings re-evaluate on every NotifyPropertyChanged from a HeaderColor
     /// dependency (IsExecutingFlash, IsVarChainWriter, etc.), so the same
@@ -841,7 +840,7 @@ public sealed class NodeViewModel : ObservableObject
     /// keyed by HeaderColor; the <c>_cachedHeaderGradientKey == key</c>
     /// comparison IS the invalidation — a HeaderColor change makes the
     /// equality fail and the gradient rebuilds on the next read.
-    ///  Removed stale reference to a ResetHeaderGradientCache
+    /// Removed stale reference to a ResetHeaderGradientCache
     /// method that never existed.
     /// </summary>
     public Microsoft.UI.Xaml.Media.Brush HeaderGradientBrush
@@ -901,7 +900,7 @@ public sealed class NodeViewModel : ObservableObject
         set
         {
             if (SetField(ref _isSelected, value))
-                // S4-fix — reroute diamond's stroke is selection-driven
+                // Reroute diamond's stroke is selection-driven
                 // (Gold when selected, DimGray else). No-op for standard nodes.
                 RaiseRerouteSelectionChanged();
         }
@@ -926,7 +925,6 @@ public sealed class NodeViewModel : ObservableObject
     /// which short-circuits in SetField when toggled <c>true→true</c>),
     /// so bursts on the same node — tight loops, rapid event chains — restart
     /// the storyboard instead of silently dropping the second pulse.
-    /// Architect UX review P1-50.
     /// </summary>
     public int FlashTick
     {
@@ -993,17 +991,17 @@ public sealed class NodeViewModel : ObservableObject
     }
 
     /// <summary>
-    ///  P2-A3 — per-node "Disable Node" toggle. Wraps the
+    /// Per-node "Disable Node" toggle. Wraps the
     /// <c>__disabled</c> entry on <see cref="Node.Attributes"/> so the flag
     /// round-trips through .phxg save/load via the existing attribute
     /// serializer. NodeView paints disabled nodes at reduced opacity so the
     /// authoring surface reads them as inert. Script-engine consumption of
     /// the flag lands in a follow-up sprint — see the
-    /// <c>// TODO sprint31-followup</c> comment in LogicCanvasView.Menus.cs.
+    /// <c>// TODO(skip-disabled-nodes)</c> comment in LogicCanvasView.Menus.cs.
     /// </summary>
     public bool IsDisabled
     {
-        // BH-054 — Node.Attributes can be null after System.Text.Json
+        // Node.Attributes can be null after System.Text.Json
         // deserialisation of a `"Attributes": null` graph (the same edge
         // GraphSerializer.MigrateNodes documents + heals elsewhere). Guard
         // the read with the null-conditional + lazily initialise on first
@@ -1026,7 +1024,7 @@ public sealed class NodeViewModel : ObservableObject
     /// <summary>
     /// Move the underlying Node by the given canvas-space delta. Raises
     /// PropertyChanged for X/Y so a binding view repositions automatically. Used
-    /// by drag handlers (Track 5).
+    /// by drag handlers.
     /// </summary>
     public void Translate(double dx, double dy)
     {

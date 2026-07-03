@@ -95,7 +95,7 @@ public partial class App : Application
 
     private async Task OnLaunchedCore(LaunchActivatedEventArgs args)
     {
-        // BlockerC (perf/architect-blockers): pre-cache this was a single
+        // Pre-cache this was a single
         // synchronous RunCommonPreUi (AppData migrator + icon-font detect +
         // DB.Initialize + log writer + Localizer.Init + mutex) running before
         // the splash was shown — 200-750ms of invisible startup on cold disk,
@@ -122,7 +122,7 @@ public partial class App : Application
         // Awaited so HubBootstrapper.BootAsync below sees a ready DB +
         // localizer + log writer.
         //
-        // [QC18-S1 P2] Catastrophic-failure gate. PillarBootstrap.RunHeavyPreUiCore
+        // Catastrophic-failure gate. PillarBootstrap.RunHeavyPreUiCore
         // wraps each of its five sub-steps (log writer, AppData migrator,
         // icon-font resolver, DB.Initialize, Localizer.Init) in its own
         // try/catch — the migrator / icon font / localizer faults are
@@ -155,7 +155,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             GlobalLogger.Error("App", "RunHeavyPreUiAsync failed", ex);
-            // [QC18-S1 P2] Re-throw so OnLaunched's outer try/catch surfaces
+            // Re-throw so OnLaunched's outer try/catch surfaces
             // the failure on the splash. Pre-fix the catch swallowed the
             // exception and fell through to MainWindow construction with a
             // null DB connection.
@@ -165,7 +165,7 @@ public partial class App : Application
 
         swPhase.Restart();
         GlobalLogger.Log("Startup phase: Splash.RefreshLocalizedStrings begin", "App", LogLevel.System);
-        //  Re-resolve the splash's localized strings now that
+        // Re-resolve the splash's localized strings now that
         // Localizer.Init (step 5 of RunHeavyPreUiAsync) has completed.
         // The constructor seeded BootEyebrow from the XAML literal because
         // a Localizer.T call before Init always returns the English
@@ -223,7 +223,7 @@ public partial class App : Application
         try { await minSplashTask.ConfigureAwait(true); }
         catch { /* delay was cancelled / dispatcher torn down */ }
 
-        // Boot-failure gate (TODO 2026-05-07 round 2 P0 #2 + P0 #3): if
+        // Boot-failure gate: if
         // services didn't materialise — either BootAsync threw, or the
         // bootstrapper completed with a null result — keep the splash up
         // in error mode and skip MainWindow activation entirely. Without
@@ -238,14 +238,14 @@ public partial class App : Application
             return;
         }
 
-        // Perf-review C4 (2026-05-14): SetPanels BEFORE Activate so the first
+        // SetPanels BEFORE Activate so the first
         // frame paints with content. Old order activated an empty
         // MainPaneRegion, then injected panels — users saw splash → un-themed
         // window → panels light up. Defer splash close until the first
         // MainWindow Activated fire so the splash mask survives until the
         // window has actually painted its first frame.
         //
-        // H2 (2026-05-14): wrap the MainWindow construction + SetPanels +
+        // Wrap the MainWindow construction + SetPanels +
         // Activate + splash-handoff block in its own try so a fault here —
         // e.g. PanelFactory throwing during a panel ctor, or the
         // splash-Activated wiring failing — surfaces through GlobalLogger
@@ -259,7 +259,7 @@ public partial class App : Application
             _main = new MainWindow();
             navigator.Attach(_main);
             _main.SetPanels(_services, new PanelFactory());
-            // [bus-persist 2026-06-10] Connect both design-time pillar bus links
+            // Connect both design-time pillar bus links
             // to the Hub IPC bus now that BootAsync has bound the server. They
             // run for the whole session (stopped only at app close) so OBS
             // transmissions + Architect live-debug keep flowing regardless of
@@ -268,7 +268,7 @@ public partial class App : Application
             _main.StartPillarBusLinks();
             _main.Activate();
 
-            //  Keep _splash assigned past this block so the
+            // Keep _splash assigned past this block so the
             // outer OnLaunched catch — and the inline try/catch wrappers
             // around --open, the welcome dialog, and the UpdateChecker
             // sentinel surface below — can still funnel a fault through
@@ -281,7 +281,7 @@ public partial class App : Application
             var splash = _splash;
             if (splash is not null)
             {
-                // Hub UI sweep P2 — defer splash close until MainWindow's
+                // Defer splash close until MainWindow's
                 // content visual tree has actually finished its first
                 // arrange/measure pass. Activated fires early in the WinUI 3
                 // lifecycle — on some hardware the splash dismissed before
@@ -300,7 +300,7 @@ public partial class App : Application
                     if (closeOnActivatedFallback is not null) _main.Activated -= closeOnActivatedFallback;
                     if (closeOnContentLoaded is not null && _main.Content is FrameworkElement felDetach)
                         felDetach.Loaded -= closeOnContentLoaded;
-                    //  Null _splash from inside CloseOnce so the
+                    // Null _splash from inside CloseOnce so the
                     // outer catch only loses its handle once the window has
                     // actually been dismissed — not at the point we wired
                     // the handlers. ReferenceEquals guards a re-entrant
@@ -345,8 +345,7 @@ public partial class App : Application
         // Surface yesterday's Updater outcome through System Log — the
         // Updater writes %AppData%/PhoenixControls/Hub/last-update-result.json
         // on success/rollback/failure and Hub had been ignoring it. Read &
-        // clear here so the entry appears once per launch, not every time
-        // (TODO 2026-05-07 round 2 P1 — last-update-result.json never read).
+        // clear here so the entry appears once per launch, not every time.
         try
         {
             // Clear any Hub-exit sentinel left over from a crashed prior run.
@@ -391,7 +390,7 @@ public partial class App : Application
             GlobalLogger.Error("App", "UiHangWatchdog start failed", ex);
         }
 
-        // CLI deep-link (TODO ) — when launched via Explorer's
+        // CLI deep-link — when launched via Explorer's
         // .phxg / .phx / .phxlayer file association, Hub gets
         // `--open <absolute-path>` (or a positional path) in argv. Route
         // through the navigator so the right pillar tab comes up and the
@@ -399,7 +398,7 @@ public partial class App : Application
         // first-run user double-clicking a sample doesn't have to dismiss
         // the dialog before seeing the file.
         //
-        // Note ( P1 #14): the installer-registered file
+        // Note: the installer-registered file
         // associations fire as plain argv positional args (Hub.exe
         // "C:\path\file.phxg"), which TryParseOpenTarget already covers.
         // Packaged-MSIX apps would use AppInstance.GetActivatedEventArgs()
@@ -410,7 +409,7 @@ public partial class App : Application
         {
             try
             {
-                // Sprint F — .phx dispatches to the read-only viewer window,
+                // .phx dispatches to the read-only viewer window,
                 // NOT a pillar. .phx is a generated output (see the project docs
                 // "Critical rule: never edit `.phx` directly"); routing it
                 // to Architect would let the streamer hand-edit a runtime
@@ -444,7 +443,7 @@ public partial class App : Application
             }
         }
 
-        // First-run welcome dialog (TODO P0 #1) — opens once per fresh
+        // First-run welcome dialog — opens once per fresh
         // install. AppConfig.SeenWelcomeDialog flips the moment the user
         // dismisses (or picks a sample), so a successful boot followed by
         // a crash before the user reached the dialog still gets a second
@@ -551,8 +550,8 @@ public partial class App : Application
         return ext switch
         {
             ".phxg"     => PillarKind.Architect,
-            // .phx is intentionally NOT in this map any more — Sprint F
-            // routes it to ReadOnlyPhxWindow via the upstream dispatch in
+            // .phx is intentionally NOT in this map any more — it
+            // routes to ReadOnlyPhxWindow via the upstream dispatch in
             // OnLaunchedCore. Adding .phx back here would re-introduce the
             // editable-Architect surface the sprint is closing.
             ".phxlayer" => PillarKind.Visualist,
@@ -561,7 +560,7 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Sprint F — open the read-only .phx viewer for an Explorer
+    /// Open the read-only .phx viewer for an Explorer
     /// double-click. Constructs a fresh <see cref="ReadOnlyPhxWindow"/>
     /// and activates it. The sibling-graph "Open in Architect" callback
     /// is bound to <see cref="MainWindow.NavigateTo"/> so clicking the

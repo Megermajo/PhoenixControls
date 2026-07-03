@@ -10,26 +10,24 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 
 /// <summary>
-/// C12 (audit/winui-regressions-2026-05-24) — preset picker shown when the
+/// Preset picker shown when the
 /// user invokes File → New Layer. Pre-fix the new document came in at the
-/// engine's hard-coded FullHD default; now the dialog surfaces B35's
+/// engine's hard-coded FullHD default; now the dialog surfaces the
 /// preset → resolution mapping at the explicit creation event so the user
 /// can pick FullHD / QHD / UHD / Vertical / Square or supply a custom W/H
 /// upfront. Cancel returns a null <see cref="Choice"/> and the caller is
 /// expected to abort the New action.
 ///
-/// Per <c>feedback_no_modal_dialogs_for_repeatable_rejections.md</c> this
-/// is a modal at a single explicit creation event (not a repeatable
+/// This is a modal at a single explicit creation event (not a repeatable
 /// rejection), so a <see cref="ContentDialog"/> is the appropriate
-/// affordance. Per
-/// <c>feedback_visualist_architect_chrome_independence.md</c> the visual
+/// affordance. The visual
 /// treatment authors its own copy of the Architect KeyboardShortcutsDialog
 /// chrome rather than lifting the resource dictionary.
 ///
-/// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml / InitializeComponent.
+/// This dialog has NO .xaml / InitializeComponent.
 ///   A code-constructed ContentDialog defined in a LIBRARY assembly
 ///   (Visualist.WinUI) throws XamlParseException at Application.LoadComponent when
-///   `new`'d while detached — proven by the 1.0.6 runtime stack trace, which still
+///   `new`'d while detached — proven by the runtime stack trace, which still
 ///   crashed AFTER the resource markup was stripped. The resource theory was wrong;
 ///   the throw is in the XAML parse itself, before any resource or DialogTheme code
 ///   runs. Building the content in code removes LoadComponent entirely, so the parse
@@ -82,7 +80,7 @@ public sealed class NewLayerDialog : ContentDialog
         // ── Visual tree (1:1 with the old XAML) ───────────────────────────
         // Keyed styles that lived in <ContentDialog.Resources> are applied as
         // direct setters on each element here (NewLayerEyebrow / NewLayerFieldLabel
-        // / NewLayerHint) per recipe §2d — literal setters only; font/brush
+        // / NewLayerHint) — literal setters only; font/brush
         // theming is re-applied in code below via DialogTheme.
 
         var root = new Grid { Width = 420 };

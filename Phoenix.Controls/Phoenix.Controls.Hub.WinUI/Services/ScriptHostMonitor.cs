@@ -29,7 +29,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 //     (default Idle; Phase==Queued ⇒ Queued; Phase==Running ⇒ Running;
 //     Phase==Finished ⇒ Idle; Phase==Error ⇒ Errored; Phase==Trigger
 //     doesn't change row state).
-//   - QC12-04 — Queued is wired now: ScriptManager fires it before each
+//   - Queued is wired now: ScriptManager fires it before each
 //     chat/event/webhook WaitAsync, and the row flips to yellow ("queued")
 //     until BeginExecutionTracked fires Running after the slot is acquired.
 public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
@@ -47,7 +47,7 @@ public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
 
     private readonly Action _onRegistryChanged;
     private readonly Action<ScriptManager.ScriptLifecycleEvent> _onLifecycle;
-    // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber to StatusChanged
+    // Fan-out: every subscriber to StatusChanged
     // receives every update; no primary-subscriber gate.
     private int _disposed;
 
@@ -71,7 +71,7 @@ public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
             switch (evt.Phase)
             {
                 case ScriptManager.ScriptExecutionPhase.Queued:
-                    // QC12-04 — fires before WaitAsync on the chat/event/
+                    // Fires before WaitAsync on the chat/event/
                     // webhook semaphore path. Row flips to yellow; the
                     // subsequent Running phase from BeginExecutionTracked
                     // promotes it to green once the slot is held.
@@ -178,7 +178,7 @@ public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
         bool phxgExists = await Task.Run(() => File.Exists(phxgPath), ct).ConfigureAwait(true);
         if (!phxgExists) phxgPath = info.FullPath;
 
-        // Single-HUB collapse (TODO.md P0 #3): no more sibling exe spawn.
+        // Single-HUB collapse: no more sibling exe spawn.
         // Hub.MainWindow swaps MainPaneRegion to the Architect tab via
         // IPillarNavigator. The deep-link open hint is reserved for a
         // future Architect tab activation handler.

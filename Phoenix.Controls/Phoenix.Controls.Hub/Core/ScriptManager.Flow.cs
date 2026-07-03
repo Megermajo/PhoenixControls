@@ -8,7 +8,7 @@ namespace Phoenix.Controls.Hub.Core
     // Lifts the 2 execution-local "fire once / fire N times" gates
     // (do_once, do_n) out of RegisterHubCommands.
     //
-    // M12 — the legacy exporter emits inline `global._doonce_<id>` /
+    // The legacy exporter emits inline `global._doonce_<id>` /
     // `global._don_counter_<id>` bookkeeping persisted to Vars
     // (so the counter survives engine restarts). These dispatched-command
     // variants keep the counter in execution-local result vars (ephemeral,

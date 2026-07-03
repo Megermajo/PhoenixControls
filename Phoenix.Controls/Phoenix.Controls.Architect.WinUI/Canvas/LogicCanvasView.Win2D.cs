@@ -16,7 +16,7 @@ using XamlCanvas = Microsoft.UI.Xaml.Controls.Canvas;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
-// ─── [perf/win2d-immediate-canvas] Immediate-mode GPU canvas renderer ────────
+// ─── Immediate-mode GPU canvas renderer ────────
 //
 // THE PERMANENT FIX for the large-graph death-freeze. The retained path (LOD +
 // viewport cull + wire-virt, shipped 0.12.41–0.12.44) hit its honest ceiling:
@@ -32,7 +32,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // transform is baked into the draw session (NOT a XAML RenderTransform) so
 // DirectWrite text stays crisp at any zoom.
 //
-// STAGING (honors feedback_ambitious_with_consent — no silent regression):
+// STAGING (no silent regression):
 //   • _useImmediateMode defaults OFF. The retained ViewSurface path is the
 //     shipping default until Majo confirms run-app parity.
 //   • Ctrl+Alt+F7 toggles it (mirrors the Ctrl+Alt+F6 virtualization kill-
@@ -46,9 +46,9 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // mode is a view that still pans/zooms (HostRoot handlers + _vm.Zoom/Pan drive
 // the draw) but defers per-node editing to the retained path.
 //
-// Per feedback_visualist_architect_chrome_independence this paint code lives in
-// Architect.WinUI and is never lifted to Shared — Visualist would get its own
-// copy if/when its WidgetGraphCanvas needs the same treatment.
+// This paint code lives in Architect.WinUI and is never lifted to Shared —
+// Visualist would get its own copy if/when its WidgetGraphCanvas needs the
+// same treatment.
 public sealed partial class LogicCanvasView
 {
     // DEFAULT — the GPU canvas IS the Architect canvas. The retained NodeView path
@@ -59,13 +59,13 @@ public sealed partial class LogicCanvasView
     private bool _immediateHooked;
     private bool _immediateActivated;
 
-    // [M3] The one node currently materialized as a real, editable NodeView over
+    // The one node currently materialized as a real, editable NodeView over
     // the GPU canvas (double-tap to enter). The renderer skips drawing it so the
     // live control isn't double-painted; all inline editing (pills, rename,
     // middle-attrs) is the real NodeView's own, verbatim.
     private NodeViewModel? _editNode;
 
-    // [M4] Hover feedback. In the retained path wire/node hover came from XAML
+    // Hover feedback. In the retained path wire/node hover came from XAML
     // pointer events on per-element Paths/NodeViews; immediate mode has none, so
     // the idle-move handler resolves the hovered node/wire from the model.
     private NodeViewModel? _hoverNode;
@@ -78,7 +78,7 @@ public sealed partial class LogicCanvasView
     private CanvasTextFormat? _imLabelFormat;
     private CanvasTextFormat? _imLabelRightFormat;
     private CanvasTextFormat? _imPillFormat;
-    private CanvasTextFormat? _imPillFormatWrap; // [win2d-layout] multi-line wrapped value pills
+    private CanvasTextFormat? _imPillFormatWrap; // multi-line wrapped value pills
 
     // Palette resolved once from the active theme dictionary (re-resolved on a
     // runtime theme switch via RefreshImmediateThemeColors). Fallbacks mirror
@@ -111,7 +111,7 @@ public sealed partial class LogicCanvasView
         try
         {
             ApplyImmediateModeState();
-            // [tooltip-canvas-restore] The GPU canvas draws nodes + sockets as
+            // The GPU canvas draws nodes + sockets as
             // pixels, so the per-pin TooltipPopup wiring the retained NodeView path
             // uses (NodeView.Pins) never existed here — hover tooltips silently
             // stopped working once the Win2D canvas became the default. Attach ONE
@@ -159,7 +159,7 @@ public sealed partial class LogicCanvasView
         if (FlowDecorLayer is not null)      FlowDecorLayer.Visibility      = retained;
         if (DanglingMarkerLayer is not null) DanglingMarkerLayer.Visibility = retained;
         // NodeLayer stays VISIBLE — in immediate mode it hosts only the single
-        // materialized NodeView for the node being edited (M3); the GPU canvas
+        // materialized NodeView for the node being edited; the GPU canvas
         // draws every other node.
 
         if (ImmediateCanvas is not null)
@@ -187,7 +187,7 @@ public sealed partial class LogicCanvasView
         _immediateHooked = true;
     }
 
-    // ─── [M3] Inline-edit overlay ────────────────────────────────────────────
+    // ─── Inline-edit overlay ────────────────────────────────────────────
     //
     // Materialize ONE real, fully-interactive NodeView over the GPU canvas for the
     // node being edited (double-tap to enter). It's mounted into NodeLayer (which
@@ -202,8 +202,22 @@ public sealed partial class LogicCanvasView
         if (ReferenceEquals(_editNode, vm)) return;
         ExitImmediateEdit();
         _editNode = vm;
+        // The GPU renderer bakes the live VM pan/zoom into every frame, but the
+        // mounted NodeView renders through ViewSurface's CompositeTransform. Force
+        // the two into agreement at the mount — with a stale transform (a same-VM
+        // graph load wrote PanX/PanY/Zoom and no gesture ran since) the view
+        // materializes away from its GPU-drawn twin while the renderer stops
+        // drawing the node, i.e. the node teleports or vanishes on the first edit
+        // after opening a file. Idempotent when already in sync.
+        ApplyViewTransform();
         var view = EnsureFullView(vm);          // reuse the LOD lazy-builder + cache
         view._isCulling = false;
+        // Stamp AFTER EnsureFullView — a fresh view's DataContext set clears the
+        // cached-canvas slot. Guarantees the inline editors' commit tail (undo +
+        // EventName adopt/pair-sync + label cross-file sync) can reach this canvas
+        // even when the commit fires AFTER ExitImmediateEdit detached the view
+        // (click-away on the GPU canvas = LostFocus on a severed visual chain).
+        view.StampOwnerCanvas(this);
         XamlCanvas.SetLeft(view, vm.X);
         XamlCanvas.SetTop(view, vm.Y);
         if (!NodeLayer.Children.Contains(view)) NodeLayer.Children.Add(view);
@@ -225,11 +239,11 @@ public sealed partial class LogicCanvasView
         ImmediateCanvas?.Invalidate();          // GPU path draws the node again
     }
 
-    // ─── [perf/win2d-immediate-canvas] Direct single-click inline-pill edit ──
+    // ─── Direct single-click inline-pill edit ──
     //
     // The GPU canvas draws every node's inline value pills as Direct2D primitives,
     // so there is no per-pill XAML element to receive a click. Pre-fix the only way
-    // to edit a pill was the M3 path: double-tap the NODE to materialize its real
+    // to edit a pill was: double-tap the NODE to materialize its real
     // NodeView, THEN click the pill — Majo: "you first have to double-click the node
     // to even get the option to edit those pills". This resolves the editable pill
     // under the cursor straight from the model (mirroring the EXACT row/pill geometry
@@ -252,7 +266,7 @@ public sealed partial class LogicCanvasView
         double nx = node.X, ny = node.Y, nw = node.Width;
         double x = canvasPoint.X, y = canvasPoint.Y;
 
-        // [win2d-layout] Hit rects are computed by the SAME helpers the renderer uses
+        // Hit rects are computed by the SAME helpers the renderer uses
         // (ComputeInputPillRect + RowCenterYDynamic via NodeGeometryRowCenter), so the
         // clickable target always matches the painted pill — including confined
         // (non-overlapping) and multi-line grown rows.
@@ -286,13 +300,18 @@ public sealed partial class LogicCanvasView
             double mpW = Math.Max(10.0, nx + nw - 8 - mpX);
             foreach (var m in node.MiddleAttributes)
             {
-                double rowCY = yTop + NodeGeometry.MiddleAttrRowHeight / 2.0;
-                if (!m.IsBool && x >= mpX && x <= mpX + mpW && y >= rowCY - 11 && y <= rowCY + 11)
+                // Per-row height mirrors DrawMiddleAttributes so a grown (wrapped)
+                // Template / Script / Payload row stays clickable across its full
+                // height and the rows below it aren't offset.
+                double rowH  = NodeGeometry.MiddleAttrRowHeightFor(node.Model, m.Key, m.Value);
+                double rowCY = yTop + rowH / 2.0;
+                double half  = Math.Max(11.0, rowH / 2.0);
+                if (!m.IsBool && x >= mpX && x <= mpX + mpW && y >= rowCY - half && y <= rowCY + half)
                 {
                     BeginInlinePillEdit(node, m.BeginEdit, m, $"middle-attr '{m.Key}'");
                     return true;
                 }
-                yTop += NodeGeometry.MiddleAttrRowHeight;
+                yTop += rowH;
             }
         }
 
@@ -341,7 +360,7 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    // [M4] Resolve + apply the hovered node/wire from the cursor (idle move only).
+    // Resolve + apply the hovered node/wire from the cursor (idle move only).
     private void UpdateImmediateHover(Point canvasPoint)
     {
         if (!_useImmediateMode || _vm is null) return;
@@ -380,7 +399,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// [tooltip-canvas-restore] Resolve the rich hover tooltip (title / body) for
+    /// Resolve the rich hover tooltip (title / body) for
     /// whatever socket or node sits under the cursor on the immediate GPU canvas.
     /// Socket pins take priority over the node body; bare canvas returns an empty
     /// title which suppresses the tip. <paramref name="hostPoint"/> is HostRoot-
@@ -498,7 +517,7 @@ public sealed partial class LogicCanvasView
 
             foreach (var node in _vm.Nodes)
             {
-                if (ReferenceEquals(node, _editNode)) continue;   // drawn by its live NodeView (M3)
+                if (ReferenceEquals(node, _editNode)) continue;   // drawn by its live NodeView
                 if (!RectsOverlap(node.X, node.Y, node.Width, node.Height, visible)) continue;
                 DrawNode(ds, node);
             }
@@ -585,7 +604,7 @@ public sealed partial class LogicCanvasView
         Color baseColor = link.IsFlow
             ? Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)   // flow = white (matches retained s_flowBrush)
             : ParseHexColor(link.StrokeColorHex, _imSubText);
-        // [M4] hover lift — +20% brightness, matching the retained EffectiveStrokeBrush.
+        // hover lift — +20% brightness, matching the retained EffectiveStrokeBrush.
         if (link.IsHovered) baseColor = Lift(baseColor, 1.20);
         return baseColor;
     }
@@ -732,11 +751,11 @@ public sealed partial class LogicCanvasView
         if (node.IsVarChainWriter) return (_imVarWriter, 2f);
         if (node.IsVarChainReader) return (_imVarReader, 2f);
         if (node.IsSelected)       return (_imSelection, 2f);
-        if (ReferenceEquals(node, _hoverNode)) return (Lift(_imBorder, 1.8), 1.5f); // [M4] hover
+        if (ReferenceEquals(node, _hoverNode)) return (Lift(_imBorder, 1.8), 1.5f); // hover
         return (_imBorder, 1f);
     }
 
-    // [win2d-layout] Inline value pill. The caller passes the EXACT rect (computed by
+    // Inline value pill. The caller passes the EXACT rect (computed by
     // ComputeInputPillRect for socket rows, or the middle-attr path) so the painted
     // pill and the click hit-test share one geometry source and can't drift. Single-
     // line pills paint NoWrap at 18px; multi-line pills paint wrapped into the (taller)
@@ -750,7 +769,7 @@ public sealed partial class LogicCanvasView
         ds.DrawText(text, new Rect(pillX + 5, pillY + 2, Math.Max(0, pillW - 10), Math.Max(0, pillH - 4)), _imText, fmt);
     }
 
-    // [win2d-layout] Exact rect of an INPUT socket's value pill — the SINGLE source
+    // Exact rect of an INPUT socket's value pill — the SINGLE source
     // shared by DrawNodeBody and the click hit-test so the painted pill and the
     // clickable target can never diverge. Horizontal: the pill sits right after its
     // label and ends before the right-aligned output-label column (mirrors the
@@ -761,7 +780,7 @@ public sealed partial class LogicCanvasView
     // height match). DB pills (TableName/Column) stay single-line and just need the
     // node — already widened by IntrinsicWidth — to give them room, which the
     // confinement preserves.
-    // [win2d-layout] X where the input column must END — the left edge of the
+    // X where the input column must END — the left edge of the
     // right-aligned output-label column (mirrors the retained NodeView Auto output
     // column). Input pills AND no-pill input labels stay left of this so they never
     // paint over the outputs. No outputs → input content runs to the right padding.
@@ -791,7 +810,7 @@ public sealed partial class LogicCanvasView
 
         string text = s.PillDisplayText ?? string.Empty;
         bool isDb = NodeGeometry.IsDbPill(node.Model, s.Model);
-        // [ARCH-PILL-CLIP 2026-06-28] A pill wraps (multi-line) when it is a
+        // A pill wraps (multi-line) when it is a
         // DECLARED multi-line editor (Template / Script / Payload / newline) OR
         // when a plain pill's single-line text is wider than the row's pill-wrap
         // budget. NodeGeometry.SocketRowHeights ALREADY measured + reserved the
@@ -829,7 +848,7 @@ public sealed partial class LogicCanvasView
     private void DrawMiddleAttributes(CanvasDrawingSession ds, NodeViewModel node, double nx, double ny, double nw)
     {
         if (!node.HasMiddleAttributes) return;
-        // [win2d-layout] Socket area can now be taller than rows*24 (wrapped pills),
+        // Socket area can now be taller than rows*24 (wrapped pills),
         // so the middle-attr block starts below the ACTUAL summed socket-row heights.
         double socketRowsTotal = 0;
         foreach (var h in NodeGeometry.SocketRowHeights(node.Model)) socketRowsTotal += h;
@@ -843,7 +862,14 @@ public sealed partial class LogicCanvasView
 
         foreach (var m in node.MiddleAttributes)
         {
-            double rowCY = y + NodeGeometry.MiddleAttrRowHeight / 2.0;
+            // Per-row height from the SAME formula the body-height budget reserves
+            // (NodeGeometry.MiddleAttrRowHeightFor). Pre-fix every row was a fixed
+            // 22px and the value pill drew single-line NoWrap, so a long Template /
+            // Script / Payload overran the node body over the "Result" output — the
+            // "dismembered" pill Majo reported. Now the row grows and the pill wraps
+            // to match, exactly like the socket-pill path (ComputeInputPillRect).
+            double rowH  = NodeGeometry.MiddleAttrRowHeightFor(node.Model, m.Key, m.Value);
+            double rowCY = y + rowH / 2.0;
             ds.DrawText(m.Key, new Rect(nx + 8, rowCY - 9, Math.Max(0, nw * 0.5), 18), _imSubText, _imLabelFormat);
             if (m.IsBool)
                 ds.DrawText(m.BoolGlyph, new Rect(nx + nw - 26, rowCY - 9, 18, 18), _imText, _imLabelFormat);
@@ -852,17 +878,34 @@ public sealed partial class LogicCanvasView
                 // Middle-attr rows have no output column on their line, so the pill
                 // uses the right portion of the full body width (Key …… [pill]).
                 double mpX = nx + nw * 0.42;
-                double mpW = Math.Max(10.0, nx + nw - 8 - mpX);
-                DrawValuePill(ds, mpX, rowCY - 9, mpW, 18, m.DisplayText, false);
+                double mpAvailW = Math.Max(10.0, nx + nw - 8 - mpX);
+                string val = m.DisplayText;
+                // Wrap when the key is a declared multi-line editor OR the value is
+                // wider than the row's wrap budget (the width the height was
+                // measured at); cap the pill at that budget so the render fills the
+                // reserved height instead of overflowing the body single-line.
+                double wrapW = NodeGeometry.MiddleAttrPillWrapWidth(node.Model, m.Key, m.Value);
+                double textW = NodeGeometry.EstimateTextWidth(val, 11.0, mono: true);
+                bool wraps = NodeGeometry.IsMultilinePill(m.Key, m.Value) || textW > wrapW;
+                if (wraps)
+                {
+                    double w = Math.Max(10.0, Math.Min(mpAvailW, wrapW));
+                    double h = Math.Max(18.0, rowH - 4.0);
+                    DrawValuePill(ds, mpX, rowCY - h / 2.0, w, h, val, true);
+                }
+                else
+                {
+                    DrawValuePill(ds, mpX, rowCY - 9, Math.Min(mpAvailW, textW + 18.0), 18, val, false);
+                }
             }
-            y += NodeGeometry.MiddleAttrRowHeight;
+            y += rowH;
         }
     }
 
     private static double NodeGeometryRowCenter(NodeViewModel node, int rowIndex)
         => NodeGeometry.NodeBorderInset + NodeGeometry.RowCenterYDynamic(node.Model, rowIndex);
 
-    // [win2d-layout] Prefer the MEASURED row-centre (set when a real NodeView was
+    // Prefer the MEASURED row-centre (set when a real NodeView was
     // mounted to edit this node) over the computed dynamic estimate — mirroring the
     // wire path (LinkViewModel / SocketViewModel.Anchor / RebuildPinOverlay) so the
     // GPU pins, the pill hit-test, and the wires all land on the SAME Y in every
@@ -881,7 +924,7 @@ public sealed partial class LogicCanvasView
     {
         Color pinColor = ParseHexColor(s.ColorHex, _imSubText);
         double ox = cx - 7, oy = cy - 7;
-        //  Dynamic placeholders ("+ variable" / "+ input"
+        // Dynamic placeholders ("+ variable" / "+ input"
         // / "+ output" / "+ return") render their pin outline DASHED — matching the
         // retained NodeView's IsDynamicPlaceholder StrokeDashArray — so an add-slot
         // reads as a distinct "droppable" target rather than a faint solid pin (which
@@ -998,7 +1041,7 @@ public sealed partial class LogicCanvasView
             WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character,
             VerticalAlignment = CanvasVerticalAlignment.Center, HorizontalAlignment = CanvasHorizontalAlignment.Left,
         };
-        // [win2d-layout] Wrapped variant for multi-line pills (Template / Script /
+        // Wrapped variant for multi-line pills (Template / Script /
         // Payload, or any value with a newline). Top-aligned so the wrapped text
         // fills the grown row from its top; the row height was measured at the same
         // PillWrapWidth this wraps at, so render and height-budget agree.

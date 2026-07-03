@@ -4,8 +4,8 @@ using Phoenix.Controls.Shared.Models;
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
 /// <summary>
-///  P2-A6 — which edge / corner of a frame the pointer is dragging
-/// during a FrameResize gesture. Pre- the canvas only honoured the
+/// Which edge / corner of a frame the pointer is dragging
+/// during a FrameResize gesture. Earlier the canvas only honoured the
 /// bottom-right corner handle; pre-T15 WinForms Architect allowed all four
 /// edges + all four corners, so this enum re-introduces the missing affordances
 /// and lets the pointer code branch on a single value instead of N booleans.
@@ -38,7 +38,7 @@ public sealed class FrameViewModel : ObservableObject
     public string Id    => _frame.Id;
     public string Label
     {
-        //  Placeholder frames render their label with a "// " prefix
+        // Placeholder frames render their label with a "// " prefix
         // to visually distinguish them from comment frames — matches the
         // WinForms baseline Canvas.PaintBackground.cs placeholder rendering.
         get => _frame.IsPlaceholder ? $"// {_frame.Label ?? string.Empty}" : (_frame.Label ?? string.Empty);
@@ -77,7 +77,7 @@ public sealed class FrameViewModel : ObservableObject
     public bool IsPlaceholder => _frame.IsPlaceholder;
 
     /// <summary>
-    ///  P2-A4 — per-frame z-order within the FrameLayer. Wraps
+    /// Per-frame z-order within the FrameLayer. Wraps
     /// <see cref="Frame.ZOrder"/> so changes raise PropertyChanged and the
     /// canvas can re-apply Canvas.ZIndex without rebuilding the frame view.
     /// </summary>
@@ -99,7 +99,7 @@ public sealed class FrameViewModel : ObservableObject
     }
 
     /// <summary>
-    ///  Restore exact bounds — used by the deferred
+    /// Restore exact bounds — used by the deferred
     /// frame-undo commit/revert to roll a resize gesture back to its captured
     /// pre-drag rectangle (Translate only moves; a resize needs X/Y/W/H set).
     /// </summary>
@@ -157,7 +157,7 @@ public sealed class FrameViewModel : ObservableObject
     }
 
     /// <summary>
-    ///  P2-A6 — apply a per-edge resize given the captured pre-drag
+    /// Apply a per-edge resize given the captured pre-drag
     /// bounds (<paramref name="startX"/>, <paramref name="startY"/>,
     /// <paramref name="startW"/>, <paramref name="startH"/>) and the cumulative
     /// cursor delta (<paramref name="dx"/>, <paramref name="dy"/>) from the

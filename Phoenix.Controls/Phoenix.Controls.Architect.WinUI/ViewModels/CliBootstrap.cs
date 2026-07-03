@@ -3,12 +3,12 @@ using System.Threading.Tasks;
 
 namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 
-// Architect.exe CLI entry point — Track 5's App.xaml.cs forwards argv
-// here from OnLaunched(). Honours --open <path> per the Track 6 brief
+// Architect.exe CLI entry point — App.xaml.cs forwards argv
+// here from OnLaunched(). Honours --open <path>
 // so Hub's right-click "Open in Architect" context menu can deep-link
 // into a specific .phxg file.
 //
-// Usage from Track 5:
+// Usage:
 //
 //     protected override async void OnLaunched(LaunchActivatedEventArgs args)
 //     {
@@ -30,7 +30,7 @@ public static class CliBootstrap
     /// <summary>
     /// Parse argv and apply the requested startup behaviour to <paramref name="vm"/>.
     /// Returns true when a graph was opened, false otherwise.
-    ///  Was sync HandleCli that called the deadlock-prone Open shim;
+    /// Was sync HandleCli that called the deadlock-prone Open shim;
     /// now awaits ArchitectViewModel.OpenAsync directly so the deserialize +
     /// wildcard cascade runs on the thread pool and resumes on the captured
     /// context (the same context the WinUI Loaded handler ran us on).

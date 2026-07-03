@@ -18,45 +18,45 @@ public sealed partial class NodeView : UserControl
 {
     // Resolved from PhoenixDark.xaml at first construction so the three
     // node-state brushes track the theme dictionary instead of being frozen
-    // ARGB literals (TODO 2026-05-07 P1). Falls back to literal coal/ember
+    // ARGB literals. Falls back to literal coal/ember
     // if the resource lookup fails — should never happen in production but
     // keeps designers running from raw XBF reloads sane.
-    //  These were `static readonly`, resolved once at
+    // These were `static readonly`, resolved once at
     // first construction and never refreshed — a runtime OS light↔dark / high-
     // contrast switch left every node painting stale colours until restart
     // (nothing subscribed to ActualThemeChanged). Now they're refreshable via
     // RefreshThemeBrushes(), called from each NodeView's ActualThemeChanged
     // (guarded to re-resolve once per actual transition); every live instance
     // then repaints its border. Mirrors the Hub SystemLogView ActualThemeChanged
-    // fix (commit 04d56a89).
+    // fix.
     private static SolidColorBrush s_selectionBrush = ResolveBrush("EmberPrimaryBrush", 0xFF, 0xE5, 0xA2, 0x4E);
     private static SolidColorBrush s_dividerBrush   = ResolveBrush("CoalDividerBrush", 0xFF, 0x3A, 0x31, 0x27);
-    //  s_flashBrush retired — the flash is now a
+    // s_flashBrush retired — the flash is now a
     // saturated-amber FlashOverlay body-tint (NodeView.xaml), not a border brush.
     // Error state — tries the project's ErrBrush key (set by the canvas
     // wire-drop preview path) and falls back to a saturated rust red.
     private static SolidColorBrush s_errorBrush     = ResolveBrush("ErrBrush", 0xFF, 0xCB, 0x4D, 0x3F);
-    // Var-chain hover halos — cyan (writers) + amber (readers). 0.10.0 theme P2:
-    // resolved from PhoenixDark.xaml so a future palette retune doesn't
+    // Var-chain hover halos — cyan (writers) + amber (readers).
+    // Resolved from PhoenixDark.xaml so a future palette retune doesn't
     // require editing this code-behind. Fallbacks preserve pre-T15 ARGB
     // values for designer-time / pre-app-construction lookups.
     private static SolidColorBrush s_varWriterBrush = ResolveBrush("VarChainWriterBrush", 0xFF, 0x78, 0xC8, 0xFF);
     private static SolidColorBrush s_varReaderBrush = ResolveBrush("VarChainReaderBrush", 0xFF, 0xFF, 0xB4, 0x50);
-    // S4-fix — compact-mode border tint (soft teal, distinct from the cyan
+    // Compact-mode border tint (soft teal, distinct from the cyan
     // var-chain writer halo and the gold selection halo). Lowest-priority
     // branch in ApplyBorder: a compact node that is NOT selected / error /
     // var-chain gets this tint so the compact state is visible at a glance,
     // pairing with the centred CompactSymbol glyph in NodeView.xaml.
     private static SolidColorBrush s_compactBrush   = ResolveBrush("InfoBrush", 0xFF, 0x5F, 0xB8, 0xA6);
 
-    //  Last ElementTheme the static brushes were
+    // Last ElementTheme the static brushes were
     // resolved for. ActualThemeChanged fires per live NodeView, so guard the
     // (shared) re-resolve to run once per actual transition.
     private static ElementTheme s_lastResolvedTheme = ElementTheme.Default;
     private static readonly object s_themeRefreshGate = new();
 
     /// <summary>
-    ///  Re-resolve the shared node-state brushes from
+    /// Re-resolve the shared node-state brushes from
     /// the (now theme-/HC-current) resource dictionary. Idempotent and cheap;
     /// guarded so only the first NodeView to observe a given transition pays the
     /// re-resolve. Also invalidates the wire selection-brush cache so selected
@@ -111,15 +111,15 @@ public sealed partial class NodeView : UserControl
     // new VM — a small but real listener leak under reload paths.
     private NodeViewModel? _boundVm;
 
-    // S29 (P1-A21): the last socket-label the pointer entered. F2 fired on the
-    // NodeView routes to this socket when present, otherwise to the node title
-    // (P0-A5). PointerExited clears it so a stale hover after the cursor leaves
+    // The last socket-label the pointer entered. F2 fired on the
+    // NodeView routes to this socket when present, otherwise to the node title.
+    // PointerExited clears it so a stale hover after the cursor leaves
     // the node body doesn't capture an unintended F2. Per-NodeView state — the
     // hover signal doesn't cross nodes because PointerExited fires before the
     // next node's PointerEntered when crossing the boundary.
     private SocketViewModel? _hoveredSocketVm;
 
-    // PERF (perf/architect-blockers, HIGH): cached so OnPillPointerEntered /
+    // PERF: cached so OnPillPointerEntered /
     // OnPillPointerExited / ShowVarPicker don't walk the visual tree on every
     // pointer event. The canvas reference is stable across the NodeView's
     // lifetime in the same logical tree; we invalidate on DataContext swap
@@ -132,6 +132,21 @@ public sealed partial class NodeView : UserControl
         _cachedCanvas = FindAncestor<LogicCanvasView>(from);
         return _cachedCanvas;
     }
+
+    /// <summary>
+    /// Deterministically stamp the owning canvas into the cached-resolver slot.
+    /// Called by the canvas at every mount (retained <c>MountNodeView</c> and the
+    /// GPU path's <c>EnterImmediateEdit</c>) so the commit-time handlers can still
+    /// reach the canvas AFTER this view is detached: on the Win2D canvas a
+    /// click-away exits edit mode by REMOVING the view from NodeLayer, and the
+    /// editor's LostFocus then fires with the visual chain severed — a
+    /// FindAncestor walk from the sender returns null there, which silently
+    /// dropped the whole commit tail (undo push, the EventName adopt/pair-sync
+    /// notify, the socket-rename cross-file sync) while the raw value still
+    /// committed. The cache survives cull/edit unmounts by design —
+    /// <c>RunUnloadTeardown</c> clears it only on a REAL removal.
+    /// </summary>
+    internal void StampOwnerCanvas(LogicCanvasView canvas) => _cachedCanvas = canvas;
 
     // Per-node flash storyboard cache (Architect UI WIP). Re-flashing a node
     // that's already flashing must Stop() the prior storyboard before
@@ -147,7 +162,7 @@ public sealed partial class NodeView : UserControl
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Unloaded += OnUnloaded;
-        //  2026-06-08 — when an inline pill TextBox grows (lots of
+        // 2026-06-08 — when an inline pill TextBox grows (lots of
         // typed text wrapping onto new lines) WinUI raises BringIntoViewRequested to
         // pull the now-taller focused control into view; a host ScrollViewer up the
         // tree (Hub shell) honours it and yanks/zooms the canvas onto the node (Majo:
@@ -160,10 +175,10 @@ public sealed partial class NodeView : UserControl
         // boundary. The TextBox's own internal caret scroll is unaffected (handled
         // inside the TextBox template, below this node).
         BringIntoViewRequested += (_, e) => e.Handled = true;
-        //  React to runtime theme / high-contrast
+        // React to runtime theme / high-contrast
         // switches — re-resolve the shared node brushes and repaint.
         ActualThemeChanged += OnActualThemeChanged;
-        // S4-fix — keep the var-chain glow sized to the body as it
+        // Keep the var-chain glow sized to the body as it
         // intrinsic-grows (multi-line pill edits, placeholder activation) while
         // a chain highlight is active. No-op when the glow is collapsed.
         if (NodeRoot is not null)
@@ -195,11 +210,11 @@ public sealed partial class NodeView : UserControl
                 _boundVm = vm;
             }
             ApplySelection(vm.IsSelected);
-            //  P2-A3 — honor the persisted __disabled attribute on
+            // Honor the persisted __disabled attribute on
             // first paint so reloaded graphs reflect the disabled state
             // immediately rather than waiting for a property-changed bump.
             ApplyDisabledOpacity(vm);
-            // 0.11.5 canvas-polish r3 — pin overlay binding. See
+            // 0.11.5 — pin overlay binding. See
             // NodeView.Pins.cs for the rebuild + reposition logic.
             HookPinOverlay(vm);
         }
@@ -210,7 +225,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    ///  P2-A3 — fade the node body when <see cref="NodeViewModel.IsDisabled"/>
+    /// Fade the node body when <see cref="NodeViewModel.IsDisabled"/>
     /// is true so the canvas reads it as inert. Selection / error / flash
     /// borders stay at full opacity (they're on NodeRoot.BorderBrush which the
     /// Opacity setter still affects — but the priority comment in ApplyBorder
@@ -223,7 +238,7 @@ public sealed partial class NodeView : UserControl
         NodeRoot.Opacity = vm.IsDisabled ? 0.45 : 1.0;
     }
 
-    // [Tranche-2 virtualization] When true, this view was removed from
+    // When true, this view was removed from
     // NodeLayer.Children by the viewport cull (it scrolled off-screen) and will be
     // remounted UNCHANGED when it scrolls back in. Set by the canvas immediately
     // before the cull-driven Children.Remove; cleared on remount / real removal.
@@ -233,7 +248,7 @@ public sealed partial class NodeView : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        // [Tranche-2] Cull-unmount: skip the full teardown so the VM binding, pin
+        // Cull-unmount: skip the full teardown so the VM binding, pin
         // overlay, tooltip timer and flash storyboard survive for a clean remount.
         // A REAL removal (node deleted) leaves _isCulling=false → full teardown.
         if (_isCulling) return;
@@ -241,7 +256,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    /// [Tranche-2] The per-view teardown (detach VM binding, unhook the pin
+    /// The per-view teardown (detach VM binding, unhook the pin
     /// overlay + its static-event listeners, stop the flash storyboard). Run from
     /// <see cref="OnUnloaded"/> on a real unmount, AND called directly by the
     /// canvas when a node is deleted while culled off-screen — that view isn't in
@@ -282,11 +297,11 @@ public sealed partial class NodeView : UserControl
             e.PropertyName == nameof(NodeViewModel.IsVarChainWriter) ||
             e.PropertyName == nameof(NodeViewModel.IsVarChainReader) ||
             e.PropertyName == nameof(NodeViewModel.IsDimmedByPicker) ||
-            // S4-fix — compact-mode toggle re-runs the border cascade so the
+            // Compact-mode toggle re-runs the border cascade so the
             // teal compact tint paints / clears (RaiseHeaderChanged nudges this).
             e.PropertyName == nameof(NodeViewModel.IsCompactMode))
             ApplyBorder(vm);
-        //  P2-A3 — IsDisabled toggles the node-body opacity so the
+        // IsDisabled toggles the node-body opacity so the
         // authoring surface reads the node as inert. Border state stays
         // untouched (selection / error halos still paint at full opacity so
         // disabled nodes can still be inspected / re-enabled).
@@ -295,7 +310,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    ///  Atomically snapshot the six shared node-state
+    /// Atomically snapshot the six shared node-state
     /// brushes under <see cref="s_themeRefreshGate"/> so a concurrent
     /// <see cref="RefreshThemeBrushes"/> can't be read half-applied mid-paint
     /// (e.g. a new-theme selection brush paired with an old-theme divider
@@ -319,14 +334,14 @@ public sealed partial class NodeView : UserControl
         // the halo (right-click → Trace / Pin) and wants the chain visible
         // even when a chain member is also the selected node. Picker dim
         // overlay is layered on top of the body via DimOverlay below.
-        //  Flash is no longer part of this border
+        // Flash is no longer part of this border
         // cascade — it's a separate body-tint overlay (UpdateFlashOverlay) so a
         // selected / error / var-chain node keeps its border colour while the
         // execution pulse plays over the body.
-        //  Snapshot the shared brushes under the gate
+        // Snapshot the shared brushes under the gate
         // so an in-flight theme refresh can't be observed half-applied.
         var br = SnapshotThemeBrushes();
-        // arch-perf P1-1 (Fix 3) — NodeRoot stays a CONSTANT 1px divider body
+        // NodeRoot stays a CONSTANT 1px divider body
         // border (set the brush only; never touch its Thickness, so the body is
         // never re-measured on a state toggle). The 2px accent emphasis is painted
         // on the no-content AccentRing sibling instead. Same priority cascade as
@@ -357,7 +372,7 @@ public sealed partial class NodeView : UserControl
         }
         else if (vm.IsCompactMode)
         {
-            // S4-fix — compact mode reads as a distinct teal-tinted ring so it's
+            // Compact mode reads as a distinct teal-tinted ring so it's
             // not mistaken for a manually-shrunk node. Lowest priority: selection
             // / error / var-chain all win above.
             AccentRing.BorderBrush = br.Compact;
@@ -373,7 +388,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    /// S4-fix (BOTH-RUNS) — paint the var-chain outer glow halo behind
+    /// Paint the var-chain outer glow halo behind
     /// NodeRoot when this node writes (cyan) or reads (amber) the currently
     /// hovered / picked variable. NodeViewModel documents "cyan border + outer
     /// glow halo" / "amber border + outer glow halo"; the border is set in
@@ -386,7 +401,7 @@ public sealed partial class NodeView : UserControl
     private void ApplyVarChainGlow(NodeViewModel vm)
     {
         if (VarChainGlow is null) return;
-        //  Snapshot under the gate so a concurrent
+        // Snapshot under the gate so a concurrent
         // theme refresh can't be read half-applied while painting the halo.
         var br = SnapshotThemeBrushes();
         if (vm.IsVarChainWriter)
@@ -407,7 +422,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    /// S4-fix — size the glow to the body + 8px (4px each side, paired with
+    /// Size the glow to the body + 8px (4px each side, paired with
     /// the XAML Margin="-4") and reveal it at the pre-T15 ~0.43 halo opacity.
     /// Re-sizing here (rather than via an ElementName binding) lets the glow
     /// track NodeRoot's live intrinsic-grow size without XAML arithmetic.
@@ -424,7 +439,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    ///  Drive the FlashOverlay body-tint pulse,
+    /// Drive the FlashOverlay body-tint pulse,
     /// independent of the border cascade so the selection / error halo stays
     /// visible while a node executes. Saturated amber, ~420ms ramp
     /// (120 ease-out fade-in, 180 hold, 120 ease-in fade-out). Re-firing while a
@@ -484,10 +499,10 @@ public sealed partial class NodeView : UserControl
         if (DataContext is NodeViewModel vm) ApplyBorder(vm);
         else
         {
-            //  Snapshot under the gate so a concurrent
+            // Snapshot under the gate so a concurrent
             // theme refresh can't be observed half-applied mid-paint.
             var br = SnapshotThemeBrushes();
-            // arch-perf P1-1 (Fix 3) — non-VM fallback: NodeRoot stays a constant
+            // Non-VM fallback: NodeRoot stays a constant
             // 1px divider; selection paints the AccentRing (paint-only, no body
             // re-measure), matching the ApplyBorder path above.
             NodeRoot.BorderBrush   = br.Divider;
@@ -503,7 +518,7 @@ public sealed partial class NodeView : UserControl
     // Enter / Esc / focus-loss → IsEditing flips off; Mode=TwoWay binding
     // already wrote the typed text back into ValuePill via SocketViewModel.
 
-    //  The inline-edit TextBoxes (value pill, socket-
+    // The inline-edit TextBoxes (value pill, socket-
     // label rename, node-title rename, middle-attr) toggle Visibility on
     // IsEditing / IsRenaming / IsTitleRenaming — they stay in the visual tree,
     // so a one-shot Loaded never re-fires per edit. Register a visibility watcher
@@ -533,7 +548,7 @@ public sealed partial class NodeView : UserControl
         // otherwise Focus on a just-shown (previously-collapsed) element can
         // no-op. SelectAll so typing replaces the existing value.
         //
-        //  On a pointer-captured canvas (the pill is
+        // On a pointer-captured canvas (the pill is
         // tapped while the canvas still owns pointer capture) Focus() can silently
         // return false; SelectAll() on an unfocused box then no-ops and the first
         // keystroke inserts instead of replacing. Honour the Focus() result: only
@@ -589,7 +604,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    /// [perf/win2d-immediate-canvas] Realize + focus the inline editor (value pill or
+    /// Realize + focus the inline editor (value pill or
     /// middle-attr) whose DataContext is <paramref name="editTarget"/>, for the GPU
     /// canvas's single-click pill-edit path. The caller has already flipped the
     /// target's IsEditing (so the editor TextBox's Visibility binding is Visible), but
@@ -642,7 +657,7 @@ public sealed partial class NodeView : UserControl
             // an undo entry entirely. Pre-0.10.0 the push fired here
             // eagerly and Esc didn't rewind the TwoWay-bound value;
             // typing-then-Esc lost the original and Ctrl+Z silently
-            // rewound past the edit (Architect UX review P0-1).
+            // rewound past the edit.
             s.BeginValuePillEdit();
             TryFocusInlineEditorNow(sender);
             e.Handled = true;
@@ -906,7 +921,7 @@ public sealed partial class NodeView : UserControl
         var m = s_varTokenPattern.Match(v);
         if (!m.Success) return;
         var canvas = GetCanvasCached(sender as DependencyObject);
-        //  Skip the VM write (and its var-chain
+        // Skip the VM write (and its var-chain
         // highlight recompute) when the hovered var is unchanged. The setter
         // already short-circuits internally, but this avoids even the call on a
         // re-enter of the same pill.
@@ -946,7 +961,11 @@ public sealed partial class NodeView : UserControl
                 if (ctrl || !s.IsMultilineAttr)
                 {
                     if (s.EndValuePillEdit(commit: true))
-                        FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+                    {
+                        var canvas = GetCanvasCached(sender as DependencyObject);
+                        canvas?.PushUndoForInlineEdit();
+                        MaybeNotifyEventNameChangedFromValuePill(canvas, s);
+                    }
                     e.Handled = true;
                     return;
                 }
@@ -978,7 +997,7 @@ public sealed partial class NodeView : UserControl
         // Resolve the current node so AutocompleteScopeBuilder.Build can walk
         // upstream flow ancestors and surface event.* / loop.* / result.* tokens.
         Phoenix.Controls.Shared.Models.Node? currentNode = null;
-        // B19 (audit/winui-regressions-2026-05-24) — capture the pin's
+        // Capture the pin's
         // DataType so the picker can hide variables whose persisted type
         // doesn't match. The picker was opened from a value-pill keystroke
         // (Ctrl+Space inside the inline TextBox); the host TextBox's
@@ -995,7 +1014,7 @@ public sealed partial class NodeView : UserControl
 
         var pool = BuildAutocompletePool(graph, currentNode);
 
-        // B19 — apply type filter when we know the pin's DataType. Non-
+        // Apply type filter when we know the pin's DataType. Non-
         // variable entries (system tokens, namespace bookends, scope-
         // builder output, public.* keys) stay in the pool — they have no
         // declared type and resolve at runtime; suppressing them would
@@ -1022,7 +1041,7 @@ public sealed partial class NodeView : UserControl
         };
         list.ItemTemplate = BuildAutocompleteRowTemplate();
 
-        // B20 (audit/winui-regressions-2026-05-24) — pre-select the first
+        // Pre-select the first
         // row so a user who already knows the variable name can hit Enter
         // alone (and so the selection-highlight reads as a "focus" cue
         // before they touch the arrow keys).
@@ -1052,7 +1071,7 @@ public sealed partial class NodeView : UserControl
                 flyout.Hide();
         };
 
-        // B20 — handle Enter/Escape on the ListView. WinUI's ListView
+        // Handle Enter/Escape on the ListView. WinUI's ListView
         // routes Up/Down internally when SelectionMode=Single, so we let
         // it handle navigation; Enter to commit and Escape to dismiss
         // are what need explicit wiring.
@@ -1076,7 +1095,7 @@ public sealed partial class NodeView : UserControl
 
         flyout.Opened += (_, _) =>
         {
-            // B20 — focus the ListView on open so arrow keys + Enter land
+            // Focus the ListView on open so arrow keys + Enter land
             // there. Pre-fix the picker opened with keyboard focus still
             // on the TextBox and Up/Down moved the caret instead of
             // walking the picker rows.
@@ -1088,7 +1107,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    /// B19 (audit/winui-regressions-2026-05-24) — filter the picker pool
+    /// Filter the picker pool
     /// against the pin's DataType. Keeps non-variable entries (system
     /// tokens, namespaces, scope-builder output, public.*) because their
     /// runtime type isn't declared in the graph; rejects graph variables
@@ -1121,7 +1140,7 @@ public sealed partial class NodeView : UserControl
     }
 
     /// <summary>
-    /// B19 — map the <see cref="Phoenix.Controls.Shared.Models.VariableDefinition.Type"/>
+    /// Map the <see cref="Phoenix.Controls.Shared.Models.VariableDefinition.Type"/>
     /// token ("String" / "Number" / "Bool") onto a
     /// <see cref="Phoenix.Controls.Shared.Models.SocketDataType"/>. Number
     /// maps to Float so Int↔Float widening in AreCompatible accepts either
@@ -1212,7 +1231,7 @@ public sealed partial class NodeView : UserControl
 
     /// <summary>Two-column row template: token name + dim source tag.</summary>
     ///
-    /// PERF (perf/architect-blockers, HIGH): cached as a static readonly. Pre-cache
+    /// PERF: cached as a static readonly. Previously
     /// every Ctrl+Space invocation re-parsed the XAML string via
     /// <see cref="Microsoft.UI.Xaml.Markup.XamlReader.Load"/> (tokenise,
     /// namespace resolve, type lookup, object construction). One template is
@@ -1300,12 +1319,38 @@ public sealed partial class NodeView : UserControl
             // pill). No-op when EndValuePillEdit was already called by the
             // Esc / Enter path.
             if (s.EndValuePillEdit(commit: true))
-                FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+            {
+                var canvas = GetCanvasCached(sender as DependencyObject);
+                canvas?.PushUndoForInlineEdit();
+                MaybeNotifyEventNameChangedFromValuePill(canvas, s);
+            }
         }
     }
 
+    /// <summary>
+    /// When a socket VALUE-pill commit writes the <c>EventName</c> on an
+    /// Event-pair node, run the canvas's EventName tail (adopt-on-join +
+    /// pair sync + cross-file sync + unpaired refresh). Event.Trigger is the
+    /// case that needs this: its EventName is an INPUT SOCKET whose unwired
+    /// value pill writes <c>Attributes["EventName"]</c> — so naming a Trigger
+    /// went through THIS commit path, which (pre-fix) ended at the undo push.
+    /// <see cref="MaybeNotifyEventNameChanged"/> only covers the
+    /// middle-attribute pill (Event.Executor / Event.Return, which have no
+    /// EventName socket), so a freshly placed Trigger never adopted the
+    /// executor's bubble shape from the sibling file ("trigger does not sync
+    /// up with executors when placed and name given").
+    /// </summary>
+    private static void MaybeNotifyEventNameChangedFromValuePill(LogicCanvasView? canvas, SocketViewModel s)
+    {
+        if (canvas is null) return;
+        if (s.Model.Name != "EventName") return;
+        var host = s.ParentNode;
+        if (host?.Title is "Event.Trigger" or "Event.Executor" or "Event.Return")
+            canvas.NotifyEventNameChangedFromNodeView(host);
+    }
+
     // ─── Inline socket-name rename ───────────────────────────────────────
-    // Per feedback_node_ui_inline_sockets — UE-Blueprints style, sockets are
+    // UE-Blueprints style, sockets are
     // renamed on the node body. Double-tap label → TextBox, Enter/Esc/blur
     // commits via TwoWay binding back into SocketViewModel.Label which writes
     // through to Socket.Name.
@@ -1314,6 +1359,19 @@ public sealed partial class NodeView : UserControl
     {
         if ((sender as FrameworkElement)?.DataContext is SocketViewModel s)
         {
+            // A managed "+ variable" / "+ return" / "+ input" / "+ output"
+            // slot is an ADD affordance, not a socket the user names —
+            // renaming its label leaves IsPlaceholder=true under a
+            // non-placeholder name, which no longer matches
+            // IsManagedPlaceholder, so the slot can never be activated again
+            // (a zombie row that presents as "the + slot is dead"). The name
+            // is assigned by PlaceholderActivator.Activate at activation;
+            // rename the ACTIVATED bubble instead.
+            if (s.Model.IsPlaceholder)
+            {
+                e.Handled = true;
+                return;
+            }
             // 0.10.0 — baseline snapshot (not undo push). Same Esc-rollback /
             // no-op-skip contract as the inline pill above.
             s.BeginLabelEdit();
@@ -1335,14 +1393,14 @@ public sealed partial class NodeView : UserControl
             {
                 if (s.EndLabelEdit(commit: true))
                 {
-                    var canvas = FindAncestor<LogicCanvasView>(sender as DependencyObject);
+                    var canvas = GetCanvasCached(sender as DependencyObject);
                     canvas?.PushUndoForInlineEdit();
-                    // S29 (P1-A6): payload-socket rename on a paired-event host
-                    // must propagate to sibling .phxg files. Names of the
-                    // hosting node stay decoupled (per feedback_event_pair_socket_sync.md)
-                    // — the cross-file sync only reshapes payload bubbles on
-                    // matching peers; the host's own "EventName" is untouched.
-                    MaybeScheduleCrossFileEventPairSync(canvas, s);
+                    // Payload-socket rename on a paired-event host must reach
+                    // the in-graph peers AND sibling .phxg files. Names of the
+                    // hosting node stay decoupled — the sync only reshapes
+                    // payload bubbles on matching peers; the host's own
+                    // "EventName" is untouched.
+                    MaybeNotifyEventSocketRenamed(canvas, s);
                 }
                 e.Handled = true;
             }
@@ -1355,37 +1413,60 @@ public sealed partial class NodeView : UserControl
         {
             if (s.EndLabelEdit(commit: true))
             {
-                var canvas = FindAncestor<LogicCanvasView>(sender as DependencyObject);
+                var canvas = GetCanvasCached(sender as DependencyObject);
                 canvas?.PushUndoForInlineEdit();
-                // S29 (P1-A6): same cross-file propagation as the Enter-commit
-                // path — focus-loss is the second commit edge that has to
+                // Same propagation as the Enter-commit path —
+                // focus-loss is the second commit edge that has to
                 // honour the payload-sync contract.
-                MaybeScheduleCrossFileEventPairSync(canvas, s);
+                MaybeNotifyEventSocketRenamed(canvas, s);
             }
         }
     }
 
     /// <summary>
-    /// S29 (P1-A6): when a socket-label rename commits AND the hosting node
-    /// is an Event-pair role (<c>Event.Trigger</c> / <c>Event.Executor</c>),
-    /// fire the canvas's debounced cross-file sync so every sibling .phxg's
-    /// matching peer ends up with the new payload-socket name. The sync is
-    /// already a no-op for non-event hosts upstream, but gating here keeps
-    /// the call site honest about which renames need to cross file boundaries.
+    /// When a socket-label rename commits AND the hosting node is an
+    /// Event-pair role (<c>Event.Trigger</c> / <c>Event.Executor</c> /
+    /// <c>Event.Return</c>), run the canvas's full rename tail: IN-GRAPH
+    /// pair sync + peer view rebuild + debounced cross-file sync. Pre-fix
+    /// only the cross-file half fired — the in-graph peers kept the old
+    /// bubble name and the next pair-sync from any of them stomped the
+    /// rename right back ("bubble names are constantly resetted"). The sync
+    /// is already a no-op for non-event hosts upstream, but gating here
+    /// keeps the call site honest about which renames need to propagate.
     /// </summary>
-    private static void MaybeScheduleCrossFileEventPairSync(LogicCanvasView? canvas, SocketViewModel s)
+    private static void MaybeNotifyEventSocketRenamed(LogicCanvasView? canvas, SocketViewModel s)
     {
         if (canvas is null) return;
         // The hosting node-view-model is reachable via the parent on
         // SocketViewModel — but the VM only exposes the raw Node. Re-derive
         // the role from Node.Title to keep this check at the model edge,
         // matching LogicCanvasView's own LinkTouchesEventPair tests.
-        var hostTitle = s.ParentNode?.Title;
-        if (hostTitle is "Event.Trigger" or "Event.Executor")
-            canvas.RequestCrossFileEventPairSyncFromNodeView();
+        var host = s.ParentNode;
+        if (host?.Title is "Event.Trigger" or "Event.Executor" or "Event.Return")
+            canvas.NotifyEventSocketRenamedFromNodeView(host);
     }
 
-    // ─── Socket-label hover tracking (S29 P1-A21) ───────────────────────
+    /// <summary>
+    /// When a middle-attribute pill commit changes the <c>EventName</c> definer on
+    /// an <c>Event.Trigger</c> / <c>Event.Executor</c> / <c>Event.Return</c> node,
+    /// renaming the event changes its cross-file pairing identity — so the node must
+    /// re-sync its payload-socket shape to the (newly matching) peers in-graph, in
+    /// other open windows, and on disk, and refresh the unpaired red-border state.
+    /// The socket-label rename path has
+    /// <see cref="MaybeNotifyEventSocketRenamed"/>; the EventName pill had no
+    /// equivalent, so renaming an event silently stopped Event-pair sync from firing
+    /// (the old peer kept mismatched sockets until an unrelated edit). Names stay
+    /// decoupled (signal/slot) — only socket SHAPE follows the pairing.
+    /// </summary>
+    private static void MaybeNotifyEventNameChanged(LogicCanvasView? canvas, MiddleAttributeViewModel m)
+    {
+        if (canvas is null) return;
+        if (m.Key != "EventName") return;
+        if (m.ParentNode?.Title is "Event.Trigger" or "Event.Executor" or "Event.Return")
+            canvas.NotifyEventNameChangedFromNodeView(m.ParentNode);
+    }
+
+    // ─── Socket-label hover tracking ───────────────────────
     // Pointer-driven targeting for the UserControl-level F2 accelerator: the
     // most recently entered socket-label captures F2 (alongside double-tap)
     // and falls through to title rename when no socket is hovered.
@@ -1403,11 +1484,11 @@ public sealed partial class NodeView : UserControl
             _hoveredSocketVm = null;
     }
 
-    // ─── Inline node-title rename (S29 P0-A5) ───────────────────────────
+    // ─── Inline node-title rename ───────────────────────────
     // Same baseline-snapshot pattern as the socket-label rename above —
     // BeginTitleEdit() captures the rollback baseline on the VM, Esc
     // restores it, Enter / focus-loss commits, empty-title commits are
-    // logged + rolled back (no modal per feedback_no_modal_dialogs_for_repeatable_rejections.md).
+    // logged + rolled back (no modal for repeatable interactions).
 
     private void OnTitleDoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
@@ -1431,7 +1512,7 @@ public sealed partial class NodeView : UserControl
             if (e.Key == Windows.System.VirtualKey.Enter)
             {
                 if (vm.EndTitleEdit(commit: true))
-                    FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+                    GetCanvasCached(sender as DependencyObject)?.PushUndoForInlineEdit();
                 e.Handled = true;
             }
         }
@@ -1442,14 +1523,14 @@ public sealed partial class NodeView : UserControl
         if (DataContext is NodeViewModel vm)
         {
             if (vm.EndTitleEdit(commit: true))
-                FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+                GetCanvasCached(sender as DependencyObject)?.PushUndoForInlineEdit();
         }
     }
 
     /// <summary>
-    /// S29 (P0-A5 / P1-A21): UserControl-level F2 KeyboardAccelerator. Routes
-    /// to the hovered socket label (P1-A21) when one is tracked, otherwise
-    /// enters title rename on the host node (P0-A5). Double-tap is the mouse
+    /// UserControl-level F2 KeyboardAccelerator. Routes
+    /// to the hovered socket label when one is tracked, otherwise
+    /// enters title rename on the host node. Double-tap is the mouse
     /// entry; F2 is the keyboard parity affordance — the two paths share the
     /// VM's BeginLabelEdit / BeginTitleEdit so commit / rollback semantics
     /// stay identical regardless of which trigger started the edit.
@@ -1459,8 +1540,12 @@ public sealed partial class NodeView : UserControl
         Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
         // Prefer the hovered socket — that's the surface the user is
-        // looking at, mirroring the double-tap target.
-        if (_hoveredSocketVm is { } socket)
+        // looking at, mirroring the double-tap target. Managed "+" slots are
+        // excluded for the same reason as the double-tap path: renaming a
+        // placeholder label zombifies the slot (IsPlaceholder stays true
+        // under a non-placeholder name → IsManagedPlaceholder never matches
+        // → the slot can't be activated again).
+        if (_hoveredSocketVm is { } socket && !socket.Model.IsPlaceholder)
         {
             socket.BeginLabelEdit();
             args.Handled = true;
@@ -1478,8 +1563,8 @@ public sealed partial class NodeView : UserControl
     // Mirrors the socket-pill edit/commit cycle for `DefaultProperties` keys
     // that have NO matching input socket on the node (Design_Orders §5.1 —
     // Key …… [pill] / Key …… ☑/☐). Required so the ~20 templates whose
-    // inline-only state was inspector-only pre-QC45 get authorable on the
-    // node body. 
+    // inline-only state was previously inspector-only get authorable on the
+    // node body.
 
     private void OnMiddleAttrPillTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
@@ -1507,7 +1592,11 @@ public sealed partial class NodeView : UserControl
                 if (ctrl || !m.IsMultiline)
                 {
                     if (m.EndEdit(commit: true))
-                        FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+                    {
+                        var canvas = GetCanvasCached(sender as DependencyObject);
+                        canvas?.PushUndoForInlineEdit();
+                        MaybeNotifyEventNameChanged(canvas, m);
+                    }
                     e.Handled = true;
                     return;
                 }
@@ -1515,7 +1604,7 @@ public sealed partial class NodeView : UserControl
             }
         }
 
-        // S4-fix — Ctrl+Space opens the variable-picker flyout, matching the
+        // Ctrl+Space opens the variable-picker flyout, matching the
         // socket-pill path (OnPillEditKeyDown). Middle-attribute pills
         // (Template / Script / Payload, …) are commonly multi-line and carry
         // {variable} tokens, so authors expect the same insert-a-{name}
@@ -1533,7 +1622,11 @@ public sealed partial class NodeView : UserControl
         if ((sender as FrameworkElement)?.DataContext is MiddleAttributeViewModel m)
         {
             if (m.EndEdit(commit: true))
-                FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+            {
+                var canvas = GetCanvasCached(sender as DependencyObject);
+                canvas?.PushUndoForInlineEdit();
+                MaybeNotifyEventNameChanged(canvas, m);
+            }
         }
     }
 
@@ -1541,8 +1634,8 @@ public sealed partial class NodeView : UserControl
     /// Bool middle-attr glyph tap — flip the stored "true" / "false" value
     /// through MiddleAttributeViewModel.ToggleBool and push undo. Mirrors
     /// the InspectorField.OnBoolHitTapped shape (consumed pattern, NOT lifted
-    /// file — a parallel agent owns InspectorField.xaml.cs per QC19).
-    /// Per feedback_no_modal_dialogs_for_repeatable_rejections.md: no dialogs
+    /// file — a parallel agent owns InspectorField.xaml.cs).
+    /// No dialogs
     /// for repeatable interactions; the toggle commits silently.
     /// </summary>
     private void OnMiddleAttrBoolTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
@@ -1550,7 +1643,7 @@ public sealed partial class NodeView : UserControl
         if ((sender as FrameworkElement)?.DataContext is MiddleAttributeViewModel m)
         {
             if (m.ToggleBool())
-                FindAncestor<LogicCanvasView>(sender as DependencyObject)?.PushUndoForInlineEdit();
+                GetCanvasCached(sender as DependencyObject)?.PushUndoForInlineEdit();
             e.Handled = true;
         }
     }

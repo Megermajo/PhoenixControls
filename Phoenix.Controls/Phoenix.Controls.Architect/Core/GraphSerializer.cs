@@ -18,10 +18,10 @@ namespace Phoenix.Controls.Architect.Core
     /// cannot be set by the default deserializer, which would silently yield Color.Empty).
     /// </summary>
     /// <remarks>
-    ///  dropped the writer for the legacy <c>{"R":…,"G":…,"B":…,"A":…}</c>
-    /// object form, but the READER stays lenient — a 0.9.7-era report from Majo
+    /// The writer for the legacy <c>{"R":…,"G":…,"B":…,"A":…}</c>
+    /// object form was dropped, but the READER stays lenient — a 0.9.7-era report from Majo
     /// surfaced legacy <c>.phxg</c> files where every socket loaded with
-    /// <see cref="Color.Empty"/> (the post-Sprint-93 Read returned Empty for
+    /// <see cref="Color.Empty"/> (the Read returned Empty for
     /// any non-Number token), which then cascaded through
     /// <c>NodeRegistry.DataTypeFromColorPublic</c> → <c>SocketDataType.Any</c>
     /// → wires repainted as the default gray "Any" pipe → user-visible
@@ -37,7 +37,7 @@ namespace Phoenix.Controls.Architect.Core
             if (reader.TokenType == JsonTokenType.Number)
                 return Color.FromArgb(reader.GetInt32());
 
-            //  Hex-string form — supports hand-authored `.phxg` payloads
+            // Hex-string form — supports hand-authored `.phxg` payloads
             // that use `"Color": "#FF8800"` or `"#AARRGGBB"`. Previously the
             // reader fell through to `reader.Skip()` and the socket loaded as
             // Color.Empty, then degraded to SocketDataType.Any during
@@ -46,7 +46,7 @@ namespace Phoenix.Controls.Architect.Core
             {
                 string s = reader.GetString() ?? string.Empty;
                 if (TryParseHexColor(s, out var parsed)) return parsed;
-                //  A non-empty string that isn't a
+                // A non-empty string that isn't a
                 // valid #RRGGBB/#AARRGGBB hex degrades the socket to Color.Empty
                 // → SocketDataType.Any during MigrateNodes, silently changing the
                 // socket's type. Log the parse failure (rare hand-edit typo) so
@@ -58,7 +58,7 @@ namespace Phoenix.Controls.Architect.Core
                 return Color.Empty;
             }
 
-            // Legacy {R,G,B,A} object form — used by pre-Sprint-93 .phxg files.
+            // Legacy {R,G,B,A} object form — used by older .phxg files.
             // Without this branch the reader returned Color.Empty and every
             // downstream socket palette degraded to "Any" gray.
             if (reader.TokenType == JsonTokenType.StartObject)
@@ -122,7 +122,7 @@ namespace Phoenix.Controls.Architect.Core
 
     public static class GraphSerializer
     {
-        // R14 — Forward-compatibility surface for the .phxg JSON wire format.
+        // Forward-compatibility surface for the .phxg JSON wire format.
         // Bump this constant and add a migration step in MigrateNodes (keyed off
         // the loaded version) when the schema changes in a non-trivial way. The
         // model class (Graph) intentionally has no Version field so the
@@ -147,7 +147,7 @@ namespace Phoenix.Controls.Architect.Core
 
         public static async Task SaveGraphAsync(Graph graph, string filePath)
         {
-            //  Refuse to overwrite a file that was loaded from a future
+            // Refuse to overwrite a file that was loaded from a future
             // schema version. Without this gate, any autosave/explicit-save on a
             // read-only placeholder would silently clobber the newer .phxg with
             // the empty placeholder payload. Surface via GlobalLogger (callers
@@ -164,7 +164,7 @@ namespace Phoenix.Controls.Architect.Core
 
             try
             {
-                //  Offload the synchronous JSON serialize + rotate work
+                // Offload the synchronous JSON serialize + rotate work
                 // to the ThreadPool so a large graph doesn't hitch the UI thread.
                 // The previous shape did SerializeToNode + ToJsonString + the
                 // rotation chain inline; only the final File.WriteAllTextAsync
@@ -181,7 +181,7 @@ namespace Phoenix.Controls.Architect.Core
                     node[SchemaVersionPropertyName] = CurrentSchemaVersion;
                     string s = node.ToJsonString(_options);
 
-                    // 0.10.0 (arch-ux-state #5) — three-slot rolling backup chain.
+                    // Three-slot rolling backup chain.
                     // Rotate BEFORE the destination is overwritten by the new content
                     // so the pyramid pushes down by one. Best-effort: a failed rotation
                     // only logs (the foreground save still proceeds because the user's
@@ -205,7 +205,7 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 finally
                 {
-                    //  If the Move never fired but the .tmp landed (e.g.
+                    // If the Move never fired but the .tmp landed (e.g.
                     // the WriteAllTextAsync succeeded and then Move threw because
                     // the destination was locked by another process), the .tmp
                     // would otherwise linger on disk forever — clutter for the
@@ -238,7 +238,7 @@ namespace Phoenix.Controls.Architect.Core
         /// and same OnLoadFailed semantics — wraps the synchronous path so
         /// non-UI callers (EventPairCrossFileSync) get the same behaviour.
         ///
-        /// PERF (perf/architect-blockers, BlockerF): pre-cache, ArchitectViewModel.Open
+        /// PERF: previously ArchitectViewModel.Open
         /// called LoadGraph synchronously on the UI thread; for a sizeable .phxg
         /// that was hundreds of ms of canvas freeze every open.
         /// </summary>
@@ -263,7 +263,7 @@ namespace Phoenix.Controls.Architect.Core
                                      && versionNode is JsonValue v
                                      && v.TryGetValue(out int parsed))
                     {
-                        //  A malformed / negative
+                        // A malformed / negative
                         // _schemaVersion would otherwise slip past the upper-bound
                         // check below (parsed > Current is false for negatives) and
                         // mis-route migration as if it were a known legacy version.
@@ -292,7 +292,7 @@ namespace Phoenix.Controls.Architect.Core
 
                 if (loadedVersion > CurrentSchemaVersion)
                 {
-                    //  The previous "return new Graph()" path silently
+                    // The previous "return new Graph()" path silently
                     // dropped the user back to an empty canvas; the next autosave
                     // would then overwrite the future-format .phxg with the empty
                     // payload, destroying the newer file. Returning a placeholder
@@ -308,7 +308,7 @@ namespace Phoenix.Controls.Architect.Core
                     };
                 }
 
-                // B13 (sweep 18) — normalize node `Attributes` payloads BEFORE binding.
+                // Normalize node `Attributes` payloads BEFORE binding.
                 // Three sub-bugs handled at the load boundary so call sites don't need
                 // defensive code:
                 //   * JSON int/float/bool/null values for what the model declares as
@@ -322,7 +322,7 @@ namespace Phoenix.Controls.Architect.Core
                 //     which breaks the `out var raw` assumption nearly every reader
                 //     makes.
                 //
-                // PERF NOTE — an earlier perf-sweep attempt skipped this step when
+                // PERF NOTE — an earlier attempt skipped this step when
                 // hasVersionField && loadedVersion == CurrentSchemaVersion, on the
                 // theory that schema-v1 files always came from JsonSerializer.Serialize.
                 // BugFixSweep18_GraphHardening_Tests.B13_Load_NumericAttribute_NormalizesToString
@@ -343,19 +343,19 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 // Always run MigrateNodes for any known version (≤ current). It is
                 // idempotent and load-bearing for several callers — Save/Load
-                // round-trips, attribute-key normalization (Step1Fixes "Case A"),
-                // and post-edit dangling-link pruning (M41) all depend on it
-                // executing on every Load. The R14 version field provides
+                // round-trips, attribute-key normalization ("Case A"),
+                // and post-edit dangling-link pruning all depend on it
+                // executing on every Load. The version field provides
                 // forward-compat refusal (above) — not an excuse to skip migration.
                 //
-                // / Recurse into nested macros + processes-in-processes.
+                // Recurse into nested macros + processes-in-processes.
                 // Pre-fix the LoadGraph path stopped at the top-level Macros / Processes
                 // lists — a macro defined inside another macro (or a process inside a
                 // process) silently skipped migration entirely. Walk the tree so every
                 // embedded Graph instance gets the same migration pass.
                 MigrateNodesRecursive(graph);
 
-                //  Single invocation of the wildcard cascade here so freshly
+                // Single invocation of the wildcard cascade here so freshly
                 // loaded graphs always pick up Reroute → wildcard propagation without
                 // depending on the canvas, ViewModel, or sub-graph windows to remember
                 // to call it. Cascade is idempotent, so callers that still invoke it
@@ -377,7 +377,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        /// B13 (sweep 18) — pre-binding JSON normalization for node `Attributes` payloads.
+        /// Pre-binding JSON normalization for node `Attributes` payloads.
         ///
         /// Walks the raw JSON via <see cref="Utf8JsonReader"/> and emits a rewritten JSON
         /// stream via <see cref="Utf8JsonWriter"/>. Inside each <c>Nodes[*].Attributes</c>
@@ -530,7 +530,7 @@ namespace Phoenix.Controls.Architect.Core
                             {
                                 if (pendingAttrKey != null && attrsBuffer != null)
                                 {
-                                    // B13.1 — coerce numeric to invariant-string form for
+                                    // Coerce numeric to invariant-string form for
                                     // the string-only Dictionary<string,string> model.
                                     string s;
                                     if (reader.TryGetInt64(out long ln))
@@ -570,7 +570,7 @@ namespace Phoenix.Controls.Architect.Core
                             {
                                 if (pendingAttrKey != null && attrsBuffer != null)
                                 {
-                                    // B13.3 — present-but-null becomes empty string so the
+                                    // Present-but-null becomes empty string so the
                                     // `out var raw` contract every existing reader uses
                                     // never sees null.
                                     attrsBuffer[pendingAttrKey] = string.Empty;
@@ -588,7 +588,7 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 catch (Exception ex)
                 {
-                    // [QC16-06 / S13] Graceful degradation: a normalization failure here
+                    // Graceful degradation: a normalization failure here
                     // must NOT take the whole graph down. Re-throwing propagated to
                     // LoadGraph's outer catch, which returns an empty Graph() — losing
                     // every node/link in the file, with the risk that the user then
@@ -609,16 +609,16 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        /// / Walks <paramref name="graph"/> and every nested
+        /// Walks <paramref name="graph"/> and every nested
         /// macro / process sub-graph, calling <see cref="MigrateNodes"/> on each.
         /// Pre-fix the LoadGraph path migrated the top-level Macros / Processes
-        /// once (BH-055), but a macro embedded inside another macro's inner graph
+        /// once, but a macro embedded inside another macro's inner graph
         /// silently skipped migration. Cycles are impossible here — macros own
         /// their inner graphs by composition, not by reference — but a visited
         /// set is kept for cheap insurance against pathological hand-edited .phxg
         /// shapes.
         /// </summary>
-        //  Sanity cap so a pathological hand-authored .phxg with a
+        // Sanity cap so a pathological hand-authored .phxg with a
         // cycle that somehow defeats the visited set (e.g. recursively-cloned
         // sub-graphs that all carry distinct object identity) can't blow the
         // call stack. 32 levels far exceeds any realistic macro/process
@@ -663,7 +663,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        ///  Reorder a node's sockets so each type
+        /// Reorder a node's sockets so each type
         /// group (inputs, then outputs) reads in template order, with any
         /// non-template / placeholder sockets kept in their original relative
         /// order appended after the template ones in their group. Preserves the
@@ -714,13 +714,13 @@ namespace Phoenix.Controls.Architect.Core
             const int spacing   = 22;
             const int nodeWidth = 200;
 
-            // BH-054: a JSON literal `"Attributes": null` or `"Sockets": null` overrides
+            // A JSON literal `"Attributes": null` or `"Sockets": null` overrides
             // the field initializer and produces a null collection that downstream code
             // (DataType re-sync, intra-node id collision repair, template back-fill, the
             // dangling-link sweep, MacroSyncHashGate.BuildSignature) NREs on. Heal once
             // here so no later pass needs to defend.
             //
-            //  Extend the same healing path to top-level Graph collections —
+            // Extend the same healing path to top-level Graph collections —
             // `"Nodes": null` / `"Links": null` / `"Macros": null` / `"Processes": null`
             // in a hand-edited .phxg would otherwise NRE in the very first foreach over
             // `graph.Nodes` below. The model class's field initializers don't survive a
@@ -749,7 +749,7 @@ namespace Phoenix.Controls.Architect.Core
                 else if (node.Title == "Process.Terminate") node.Title = "Process.Stop";
             }
 
-            // 0.10.0 (arch-perf P1) — adjacency prebuild. The downstream
+            // Adjacency prebuild. The downstream
             // collision-repair + dangling-link sweep both used to walk
             // graph.Links inside an outer loop over graph.Nodes (or vice
             // versa), giving O(N·L) load behaviour on the migration pass.
@@ -766,7 +766,7 @@ namespace Phoenix.Controls.Architect.Core
             // back-fill mutates each node's socket list.
             var linksByEndpoint = BuildLinksByEndpoint(graph);
 
-            // B14 (sweep 18) — intra-node socket-id collision repair.
+            // Intra-node socket-id collision repair.
             // Hand-edited or copy-pasted .phxg payloads can produce two sockets on the
             // same node sharing an Id. The link resolver matches by `(NodeId, SocketId)`
             // pairs and walks links in graph order, so the "second" link to an
@@ -786,7 +786,7 @@ namespace Phoenix.Controls.Architect.Core
 
             // Re-sync DataType from Color for every socket — ensures previously-saved nodes pick up
             // any corrections to the DataTypeFromColor mapping (e.g. ColNumber → Int, not Float).
-            // BH-053: Visualist-only palette types (Image / Color / Scalar / Vector2-4 / Audio)
+            // Visualist-only palette types (Image / Color / Scalar / Vector2-4 / Audio)
             // ride on custom socket colors that DataTypeFromColor doesn't know about, so
             // unconditionally re-deriving downgrades them to Any on every load. Skip the
             // overwrite when the color-derived type would be Any but the persisted DataType
@@ -803,7 +803,7 @@ namespace Phoenix.Controls.Architect.Core
                 }
             }
 
-            //  — the legacy CaseA/CaseB → Case A/Case B migration for
+            // The legacy CaseA/CaseB → Case A/Case B migration for
             // Logic.Switch / State.Switch was removed. Majo green-lit the pull
             // after confirming no personal graphs still carry the old keys; the
             // current templates have used the spaced names since before the
@@ -814,7 +814,7 @@ namespace Phoenix.Controls.Architect.Core
             // Bus.Send / Bus.Broadcast / Twitch.SendChat output-socket rename:
             // legacy graphs stored the flow continuation socket as "Sent"; templates
             // now expose it as "Done" so all action-node continuations converge on
-            // the same name (M33 follow-through). Rename the persisted socket in
+            // the same name. Rename the persisted socket in
             // place — preserving its Id keeps existing wires intact, so the later
             // template back-fill sees a socket already named "Done" and skips the
             // remove-and-readd path that would orphan the links.
@@ -863,7 +863,7 @@ namespace Phoenix.Controls.Architect.Core
 
             foreach (var node in graph.Nodes)
             {
-                //  — DB.FetchRow: synthesize per-column output sockets
+                // DB.FetchRow: synthesize per-column output sockets
                 // matching KnownColumns. Runs before the generic template
                 // back-fill below so the user-declared columns are present
                 // before the back-fill walks the socket list.
@@ -875,6 +875,14 @@ namespace Phoenix.Controls.Architect.Core
                 // Dynamic event nodes: variable sockets are saved state, not template drift — preserve them.
                 if (node.Title == "Event.Trigger" || node.Title == "Event.Executor" || node.Title == "Event.Return")
                 {
+                    // Repair BEFORE ensure: strip corrupted sockets (duplicate
+                    // placeholders, wrong-side placeholders, Output-channel junk on
+                    // Event.Return) that graphs saved under the old polarity-heal /
+                    // Return-as-Executor sync bugs still carry — the ensure step below
+                    // only ever ADDS, so without this pass a corrupted node stays
+                    // broken on every load (wire-drops reject as same-side, stacked
+                    // placeholder hit-bands make the node un-editable).
+                    PlaceholderActivator.RepairEventNodeShape(graph, node);
                     NodeRegistry.EnsureEventNodePlaceholders(node);
 
                     int inRow = 0, outRow = 0;
@@ -916,7 +924,7 @@ namespace Phoenix.Controls.Architect.Core
                 // Macro.Call: sockets are rebuilt from the macro definition, not the template — skip migration
                 if (node.Title == "Macro.Call") continue;
 
-                // BH-055 follow-up: Macro.Entry / Macro.Exit carry user-defined parameter
+                // Macro.Entry / Macro.Exit carry user-defined parameter
                 // sockets that aren't in their templates. The post-recursion sweep would
                 // strip them as "non-template inputs/outputs" and break the macro export's
                 // parameter binding (golden MacroSimple regressed). Their socket layout is
@@ -926,7 +934,7 @@ namespace Phoenix.Controls.Architect.Core
                 var tmpl = NodeRegistry.GetTemplate(node.Title);
                 if (tmpl == null)
                 {
-                    //  A node whose template is no
+                    // A node whose template is no
                     // longer registered (e.g. a plugin/category was removed) is
                     // skipped here — and the dangling-link sweep below then prunes
                     // its wires. Pre-fix that happened silently, so a missing
@@ -947,7 +955,7 @@ namespace Phoenix.Controls.Architect.Core
                     && ((s.Type == SocketType.Input  && !templateInputNames.Contains(s.Name))
                      || (s.Type == SocketType.Output && !templateOutputNames.Contains(s.Name))));
 
-                //  Pre-build name sets for the
+                // Pre-build name sets for the
                 // existing input/output sockets so the missing-socket back-fill below
                 // does O(1) HashSet lookups instead of O(M) `node.Sockets.Any(...)`
                 // scans per template entry. Each set is kept current as sockets are
@@ -1020,7 +1028,7 @@ namespace Phoenix.Controls.Architect.Core
                     node.Size = new Size(node.Size.Width, newH);
 
                 // Backfill socket Description from the current template registry so
-                // older .phxg files (saved before A3) pick up freshly-authored socket-
+                // older .phxg files pick up freshly-authored socket-
                 // level help text. Only writes when the persisted Description is empty
                 // — a future per-graph override (canvas-side rename / authoring tool)
                 // would set Description directly and survive this pass.
@@ -1034,7 +1042,7 @@ namespace Phoenix.Controls.Architect.Core
                     }
                 }
 
-                //  Rebuild the socket list in
+                // Rebuild the socket list in
                 // template order. The "add missing input" path above uses
                 // Sockets.Insert(templateInputIndex, …) against the MIXED
                 // input/output list, so a back-filled socket can land among the
@@ -1045,7 +1053,7 @@ namespace Phoenix.Controls.Architect.Core
                 ReorderSocketsToTemplate(node, tmpl);
             }
 
-            // M41 — sweep dangling links left over from the socket-removal pass
+            // Sweep dangling links left over from the socket-removal pass
             // above. RemoveAll deletes any link whose endpoints no longer resolve
             // to a real socket on the corresponding node. Done in a single pass
             // AFTER socket migration so we don't iterate-while-mutating sockets.
@@ -1053,7 +1061,7 @@ namespace Phoenix.Controls.Architect.Core
             // the dangling link as if it carries data — producing scripts that
             // reference deleted sockets.
             //
-            // 0.10.0 (arch-perf P1) — fold the per-link `graph.Nodes.Find(...)` +
+            // Fold the per-link `graph.Nodes.Find(...)` +
             // `Sockets.All(...)` scans (O(L · (N + S)) total) into one O(N + N·S)
             // prebuild + O(L) sweep. The pre-fix shape dominated load time for
             // any sizeable .phxg; the prebuild is unconditional because it's
@@ -1082,7 +1090,7 @@ namespace Phoenix.Controls.Architect.Core
                 return false;
             });
 
-            //  Migration adds/removes sockets, renames socket Ids (the BH-054
+            // Migration adds/removes sockets, renames socket Ids (the
             // collision repair above), and rewires links. Every one of those is a
             // structural change, so invalidate Graph's id-indexed caches now —
             // otherwise the per-paint lookup self-heals once-per-cache-miss for the
@@ -1092,7 +1100,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        /// 0.10.0 (arch-perf P1) — build a (NodeId, SocketId) → List&lt;Link&gt;
+        /// Build a (NodeId, SocketId) → List&lt;Link&gt;
         /// index over <see cref="Graph.Links"/>. Each link contributes one
         /// entry under its From-endpoint and one under its To-endpoint, so a
         /// link touching either side is reachable via either key. Used by
@@ -1123,7 +1131,7 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
         /// <summary>
-        /// 0.10.0 (arch-ux-state #5) — three-slot rolling backup metadata.
+        /// Three-slot rolling backup metadata.
         /// One entry per existing .phxg.bakN beside the active <c>.phxg</c>;
         /// returned in newest-first order. <see cref="LastWriteUtc"/> is
         /// surfaced by Architect's File → Restore previous version… menu so
@@ -1160,7 +1168,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        /// 0.10.0 (arch-ux-state #5) — restore one of the <c>.phxg.bakN</c>
+        /// Restore one of the <c>.phxg.bakN</c>
         /// candidates as the new active .phxg, bumping the rolling chain so
         /// the current state slides into <c>bak1</c> first (the same shape
         /// <see cref="SaveGraphAsync"/> creates). Returns true when the
@@ -1173,7 +1181,7 @@ namespace Phoenix.Controls.Architect.Core
             if (!File.Exists(backupPath)) return false;
             try
             {
-                //  CRITICAL: snapshot the backup payload BEFORE rotating
+                // CRITICAL: snapshot the backup payload BEFORE rotating
                 // the chain. The user-facing restore menu lets the user pick any
                 // .bakN slot; if we rotate first, the rotation slides
                 // phxg→bak1, bak1→bak2, bak2→bak3 (dropping bak3), which moves
@@ -1206,7 +1214,7 @@ namespace Phoenix.Controls.Architect.Core
         /// the foreground save still proceeds because the user's intent is to
         /// write fresh content; the rotation is a defence-in-depth backstop.
         ///
-        ///  Rotate in reverse order so a mid-flight failure can never
+        /// Rotate in reverse order so a mid-flight failure can never
         /// destroy a slot that hasn't been promoted yet. Pre-fix the chain ran
         /// bak2→bak3 first then bak1→bak2; if either Move threw after deleting
         /// the destination slot, the source content was already gone from its
@@ -1244,7 +1252,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        ///  Promote one backup slot — copy <paramref name="src"/> to
+        /// Promote one backup slot — copy <paramref name="src"/> to
         /// <paramref name="dst"/> via a <c>.tmp</c> stage, then File.Replace to
         /// land it atomically. Only after the Replace lands do we delete
         /// <paramref name="src"/>. If any step throws, both <paramref name="src"/>
@@ -1383,14 +1391,14 @@ namespace Phoenix.Controls.Architect.Core
             => s.Length >= 2 && s[0] == '"' && s[^1] == '"' ? s[1..^1] : s;
 
         /// <summary>
-        /// B14 (sweep 18) — intra-node socket-id collision repair. See the call-site
+        /// Intra-node socket-id collision repair. See the call-site
         /// comment in <see cref="MigrateNodes"/> for the full rationale and link-rewire
         /// semantics. This method walks each node's sockets in declaration order,
         /// renames duplicates to <c>{originalId}_dup{N}</c>, and rewrites the Nth
         /// matching link endpoint to point at the Nth occurrence's new id. Logs a
         /// Communication-tier warning per affected node.
         ///
-        /// 0.10.0 (arch-perf P1) — accepts a prebuilt
+        /// Accepts a prebuilt
         /// <c>(NodeId, SocketId) → List&lt;Link&gt;</c> adjacency map so the per-
         /// duplicated-id rewire can do a single bucket lookup instead of a full
         /// scan over <see cref="Graph.Links"/>. Per-link order within the bucket

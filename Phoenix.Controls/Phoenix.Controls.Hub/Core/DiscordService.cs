@@ -45,7 +45,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private int _disposed;
 
-        // [P1 swarm-audit 2026-05-29] The Lazy<> singleton's HttpClient (and its
+        // The Lazy<> singleton's HttpClient (and its
         // HttpClientHandler) were never disposed, leaking the underlying socket
         // pool + handler for the Hub process lifetime. HubBootstrapper's shutdown
         // path calls Dispose() (wired separately). Disposing _http also disposes

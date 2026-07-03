@@ -18,7 +18,7 @@ namespace Phoenix.Controls.Shared.WinUI.Services;
 /// uses the modern Vista+ shell UI — only the surfacing API differs.
 /// </summary>
 /// <remarks>
-///  <b>STA-thread requirement.</b> Both <see cref="PickSingleFile"/>
+/// <b>STA-thread requirement.</b> Both <see cref="PickSingleFile"/>
 /// and <see cref="PickSaveFile"/> instantiate Common Item Dialog COM objects
 /// (<c>FileOpenDialogClass</c> / <c>FileSaveDialogClass</c>) and invoke
 /// <c>IFileDialog.Show</c>, which require a Single-Threaded Apartment
@@ -37,7 +37,7 @@ public static class CustomFilePicker
     [Conditional("DEBUG")]
     private static void AssertSTA()
     {
-        //  One-line STA guard. The dialog COM objects are
+        // One-line STA guard. The dialog COM objects are
         // apartment-bound; running from MTA produces hard-to-diagnose
         // failures (silent no-show, COM cast exceptions). Fail loudly
         // in Debug so the caller learns to dispatch to the UI thread.
@@ -215,7 +215,7 @@ public static class CustomFilePicker
             int hr = dialog.Show(hwnd);
             if ((uint)hr == ERROR_CANCELLED || hr != S_OK) return null;
 
-            //  Wrap the result IShellItem in try/finally so a throw
+            // Wrap the result IShellItem in try/finally so a throw
             // from GetDisplayName can't leak the COM ref. (Pre-fix: a
             // GetDisplayName exception bypassed ReleaseComObject entirely.)
             dialog.GetResult(out var item);
@@ -326,7 +326,7 @@ public static class CustomFilePicker
             int hr = dialog.Show(hwnd);
             if ((uint)hr == ERROR_CANCELLED || hr != S_OK) return null;
 
-            //  Wrap the result IShellItem in try/finally — see
+            // Wrap the result IShellItem in try/finally — see
             // sibling PickSingleFile for rationale.
             dialog.GetResult(out var item);
             try
@@ -376,7 +376,7 @@ public static class CustomFilePicker
         {
             var iid = typeof(IShellItem).GUID;
             SHCreateItemFromParsingName(folder, IntPtr.Zero, ref iid, out var item);
-            //  Wrap in try/finally so a throw from SetFolder
+            // Wrap in try/finally so a throw from SetFolder
             // (e.g. UAC restriction on the parsed path) can't leak the
             // IShellItem COM ref.
             try

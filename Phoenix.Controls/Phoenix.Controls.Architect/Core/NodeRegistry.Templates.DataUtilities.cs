@@ -4,7 +4,7 @@ using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.Core
 {
-    //  — data-utilities carve. Six small-to-medium bands that
+    // Data-utilities carve. Six small-to-medium bands that
     // together cover the pure-data side of the palette:
     //   * SYSTEM      — System.Log / GetTime / GetDate / Time.SecondsSinceLastFire.
     //   * MATH & RNG  — Math.Random / Chance, the five operator-glyphed
@@ -52,7 +52,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Seconds", ColNumber) },
                 displayName: "Time Since Last Fire");
 
-            //  — Time.StreamUptime. Pure-data probe: outputs
+            // Time.StreamUptime. Pure-data probe: outputs
             // resolve to {stream.*} tokens at exec time. The anchor
             // ("stream start" instant) defaults to Hub-uptime — i.e. the
             // moment the ScriptEngine module first loaded — and
@@ -86,7 +86,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Result", ColNumber) },
                 new Dictionary<string, string> { { "Min", "1" }, { "Max", "100" } });
 
-            // B24 (audit 2026-05-24) — inline default for the % Rate input
+            // Inline default for the % Rate input
             // pill. Exporter (MathChanceHandler in ExporterRegistry.Handlers2.cs)
             // already falls back to "50" via ctx.Resolve(node, "% Rate", "50"),
             // so seeding the template default matches the exporter's behaviour
@@ -146,7 +146,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Result", ColString) },
                 new Dictionary<string, string> { { "Template", "Hello {Arg1}" } });
 
-            // D6 — additive C/D placeholder slots. The runtime handler is variadic
+            // Additive C/D placeholder slots. The runtime handler is variadic
             // ({A}..{Z}) and the inline exporter resolver now walks every present Arg
             // slot, so {C}/{D} in the template reach the emitted text.format call.
             // A/B are unchanged (renaming/removing a socket would prune wires in
@@ -335,10 +335,10 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Out", ColNumber) },
                 new Dictionary<string, string> { { "Default", "0" } });
 
-            // M8 — Convert.ToString In was Int-only, mismatching the sibling Convert.ToFloat
+            // Convert.ToString In was Int-only, mismatching the sibling Convert.ToFloat
             // which already accepts Any. Promoting In → Any (ColObject) lets the same node
             // serialize floats, bools, lists and strings without an upstream coercion.
-            // M9 — AreCompatible widens Int↔Float silently, so a Float wired into the old
+            // AreCompatible widens Int↔Float silently, so a Float wired into the old
             // Int-only socket would have been truncated invisibly. The lighter-touch fix
             // (vs editing engine-wide AreCompatible) lives in the tooltip below: an explicit
             // Float→String suggestion plus a note about silent widening loss.

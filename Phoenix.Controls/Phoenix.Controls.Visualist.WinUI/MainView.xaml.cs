@@ -20,7 +20,7 @@ using WinRT.Interop;
 
 namespace Phoenix.Controls.Visualist.WinUI;
 
-// Single-HUB collapse (TODO.md P0 #3): Visualist now ships as a UserControl
+// Single-HUB collapse: Visualist now ships as a UserControl
 // embedded in Hub.MainWindow's pillar-tab region rather than a standalone
 // Window. Host Hub passes its Window in via the ctor for picker HWNDs;
 // the SystemBackdrop on the old Window moves up to Hub's MainWindow.
@@ -45,7 +45,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// Visualist's prompt: a three-button ContentDialog (Save / Don't Save /
     /// Cancel). Save routes through the same SaveLayer / SaveLayerAs path
     /// the chrome uses; Cancel returns false so MainWindow cancels the
-    /// AppWindow.Closing. (TODO 2026-05-07 round 2 P0 #1.)
+    /// AppWindow.Closing.
     /// </remarks>
     public async Task<bool> PromptSaveBeforeCloseAsync()
     {
@@ -54,7 +54,6 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         string fileName = ViewModel.ActiveLayerFileName;
 
-        // [Lane E — finding: PromptSaveBeforeClose cached-dirty messaging]
         // The prompt only ever guards the ACTIVE document, but on close the VM
         // also flushes any *saved-dirty* cached layers from this session
         // (VisualistViewModel.Dispose → FlushAndDispose: a dirty doc that still
@@ -62,8 +61,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // not lost). Pre-fix the dialog said only "Save changes to <active>?",
         // so a user who had edited and switched away from other layers had no
         // idea those were about to be auto-saved. We can't read the private
-        // cache count from here (the cache lives in the VM, owned by another
-        // lane) without crossing the owned-file boundary, so we surface the
+        // cache count from here (the cache lives in the VM) without crossing
+        // the owned-file boundary, so we surface the
         // behaviour generically: a single extra line stating that other
         // unsaved layers from this session are auto-saved on close.
         string content = string.Format(
@@ -95,10 +94,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                     // treat that as "abort the close".
                     return !ViewModel.IsDirty;
                 }
-                // B37 — capture before save so the close-prompt path also
+                // Capture before save so the close-prompt path also
                 // refreshes thumbnails.
                 await CaptureLiveThumbnailsAsync();
-                // [Lane E — finding #69] surface a failed save on the status
+                // Surface a failed save on the status
                 // strip; the false return already aborts the close so the user
                 // stays in the document, but pre-fix they got no visible reason.
                 bool saved = ViewModel.SaveLayer();
@@ -114,7 +113,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private readonly Window _hostWindow;
     private readonly LayerCanvasView _canvasView;
     private readonly WidgetEditorView _editorView;
-    //  Narrowed from IHubServices? to the single capability we actually
+    // Narrowed from IHubServices? to the single capability we actually
     // consume — live-layer presence dots on the LayerRail. Pre-fix the ctor
     // accepted the whole IHubServices bag (chat / livefeed / scripts / system
     // log) and threw away everything but .Layers; that gave Visualist visibility
@@ -122,7 +121,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // `services?.Layers` instead of the full IHubServices.
     private readonly ILayerRegistrySource? _layerSource;
 
-    // [P1 swarm-audit 2026-05-29] stored chrome/status-bar PropertyChanged
+    // stored chrome/status-bar PropertyChanged
     // handler so it can be unsubscribed on Unloaded (was an un-removable lambda).
     private System.ComponentModel.PropertyChangedEventHandler? _vmChromeBridge;
 
@@ -151,22 +150,20 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         // Post-T15 the pillar-local VisualistChrome was Visibility=Collapsed
         // because Hub.MainWindow's HubChrome owns the only visible chrome.
-        //  polish deleted the dead VisualistChrome control entirely —
+        // Polish pass deleted the dead VisualistChrome control entirely —
         // the public action methods on this MainView (NewLayer, OpenLayerDialog,
         // …) are the only entry points and Hub's MenuDefinition.Visualist
-        // dispatches into them via OnMenuItemInvoked
-        // (TODO 2026-05-07 P3 — dead VisualistChrome control).
+        // dispatches into them via OnMenuItemInvoked.
 
         _canvasView = new LayerCanvasView { DataContext = ViewModel };
         _editorView = new WidgetEditorView { DataContext = ViewModel };
         MainPaneRegion.Content = _canvasView;
 
-        // Explorer file-drop on the layer canvas opens the dropped .phxlayer
-        // (TODO 2026-05-07 round 1 P2 — drag-drop into editor windows). The
-        // canvas raises FileOpenRequested with the dropped path; we route
+        // Explorer file-drop on the layer canvas opens the dropped .phxlayer.
+        // The canvas raises FileOpenRequested with the dropped path; we route
         // through OpenLayerRoutingThroughRegistry so a drop that targets a
         // file already open in another sibling window focuses that window
-        // instead of duplicate-loading here (B26).
+        // instead of duplicate-loading here.
         _canvasView.FileOpenRequested += (_, path) =>
         {
             try
@@ -179,7 +176,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             }
         };
 
-        // R1 (enter-widget restore) — the canvas raises WidgetEnterRequested when
+        // The canvas raises WidgetEnterRequested when
         // the user double-taps a widget body, presses Enter on the selection, or
         // picks "Edit Widget"; route it through the single EnterWidget chokepoint
         // so we swap to the Widget Editor sub-tab bound to that widget. Mirrors
@@ -188,14 +185,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         // Bridge VM property changes that affect the chrome filename / dirty
         // marker into the IPillarShellHost.ShellStateChanged event so Hub's
-        // HubChrome.FileName tracks edits / loads / saves
-        // (TODO 2026-05-07 round 2 P2 — chrome filename was empty for both
-        // pillars). Same VM signals also repaint the local status bar
-        // ( P2 — CHANGELOG 0.9.9 status-bar parity).
-        // [P1 swarm-audit 2026-05-29] event-handler leak: the chrome/status-bar
-        // bridge was an anonymous lambda that could never be unsubscribed, so a
-        // pillar-tab teardown leaked this MainView through ViewModel.PropertyChanged.
-        // Store it in a field and drop it on Unloaded (below).
+        // HubChrome.FileName tracks edits / loads / saves. Same VM signals
+        // also repaint the local status bar (CHANGELOG 0.9.9 status-bar parity).
+        // The chrome/status-bar bridge was once an anonymous lambda that could
+        // never be unsubscribed, so a pillar-tab teardown leaked this MainView
+        // through ViewModel.PropertyChanged. Store it in a field and drop it on
+        // Unloaded (below).
         _vmChromeBridge = (_, e) =>
         {
             if (e.PropertyName == nameof(VisualistViewModel.IsDirty)
@@ -214,9 +209,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         };
         ViewModel.PropertyChanged += _vmChromeBridge;
 
-        // Sprint K — attach the Hub-provided live-layer source so the
+        // Attach the Hub-provided live-layer source so the
         // LayerRail's per-row dot reflects real OBS browser-source presence
-        // instead of the pre-Sprint-K hardcoded green. Must happen on the
+        // instead of a hardcoded green. Must happen on the
         // UI thread (we are — ctor runs on the UI dispatcher) and before
         // RefreshLayers so the initial seed runs once against the freshly
         // populated rows. Falls through to a no-op when services is null
@@ -227,7 +222,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // into the strip before the first VM PropertyChanged would fire.
         RefreshStatusBar();
 
-        // [bus-persist 2026-06-10] The Visualist pillar MainView is created ONCE
+        // The Visualist pillar MainView is created ONCE
         // and cached for the whole Hub session (MainWindow._visualistView).
         // Switching pillar tabs only removes it from the visual tree — that is a
         // tab-blur, NOT a pillar teardown. The old code subscribed Unloaded and
@@ -241,7 +236,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // undo-redo bridges all survive every tab round-trip. We deliberately do
         // NOT subscribe Unloaded.
 
-        // M32 (2026-05-14): the layer enumeration (Directory.EnumerateFiles
+        // The layer enumeration (Directory.EnumerateFiles
         // + N × LayerSerializer.Read) is deferred to InitializeAsync so the
         // synchronous MainView ctor return isn't gated on `data/layers/`
         // FS work. Loaded drives InitializeAsync below.
@@ -250,14 +245,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // Seed the initial mode (Layer Canvas) through SelectSubTab — the single
         // source of truth for the MainPaneRegion swap, the LayerRail column
         // width/visibility, and the inspector's editor-context flag. (The shell
-        // sub-tab ToggleButtons that used to mirror this were removed 2026-06-08;
+        // sub-tab ToggleButtons that used to mirror this were removed;
         // mode switching now routes through the View menu, the trigger strip's
         // ← Back, and double-click-to-enter.)
         SelectSubTab(showCanvas: true);
     }
 
     /// <summary>
-    /// [bus-persist 2026-06-10] Real pillar teardown — invoked ONCE from Hub
+    /// Real pillar teardown — invoked ONCE from Hub
     /// MainWindow's Closed handler at app shutdown, NOT on tab-blur. Symmetric to
     /// every subscription made in the ctor / EnsureUndoRedoForwarderSubscribed so
     /// app close releases the VM and its document graph cleanly. The
@@ -268,13 +263,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     public void ShutdownPillar()
     {
         // Stop the design-time bus link only at real app shutdown.
-        // [Lane E — finding: Unloaded swallowed all exceptions] log the fault
-        // instead of a bare catch so a teardown failure is visible for
-        // telemetry; the handler must not throw, so we log and proceed.
+        // Log the fault instead of a bare catch so a teardown failure is
+        // visible for telemetry; the handler must not throw, so we log and proceed.
         try { Phoenix.Controls.Visualist.WinUI.Core.VisualistBusClient.Instance.Stop(); }
         catch (Exception ex) { GlobalLogger.Error("Visualist.MainView", "Shutdown bus stop", ex); }
 
-        // R22 — close the shared layer-preview popout so its WebView2 process
+        // Close the shared layer-preview popout so its WebView2 process
         // tears down with the pillar tab rather than lingering.
         try { _layerPreviewWindow?.Close(); }
         catch (Exception ex) { GlobalLogger.Error("Visualist.MainView", "Unloaded preview close", ex); }
@@ -299,7 +293,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             _undoRedoTrackedDocument = null;
         }
 
-        // [Lane E — finding: Unloaded swallowed all exceptions] the VM teardown
+        // The VM teardown
         // (DetachLayerSource + Dispose, which flushes dirty cached docs and
         // tears down auto-save timers) is the heaviest step here. Pre-fix it
         // ran unguarded — a throw would propagate out of the Unloaded handler.
@@ -320,17 +314,17 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private async void OnLoadedInit(object sender, RoutedEventArgs e)
     {
         Loaded -= OnLoadedInit;
-        // Visualist regression audit 2026-05-31 — own the design-time bus link's
+        // Own the design-time bus link's
         // lifecycle at the pillar level so Test Run, live widget updates, and
         // LAYER_RELOADED preview refresh work whether or not the widget editor is
-        // open. [bus-persist 2026-06-10] Start() is idempotent and is ALSO kicked
+        // open. Start() is idempotent and is ALSO kicked
         // from Hub launch (MainWindow.StartPillarBusLinks) so the link is up
         // before Visualist is ever opened; this call stays as a defensive belt-
         // and-braces. The matching Stop() now lives in ShutdownPillar() (app
         // close only), NOT on tab-blur — the bus runs for the whole session.
         try { Phoenix.Controls.Visualist.WinUI.Core.VisualistBusClient.Instance.Start(); }
         catch (Exception ex) { GlobalLogger.Error("Visualist", "bus client start", ex); }
-        // Finding #32 — proactively prune the Recent-Layers MRU of files that no
+        // Proactively prune the Recent-Layers MRU of files that no
         // longer exist on disk, so the Open-Recent dialog / sibling menu never
         // list dead links (previously pruned only one-at-a-time on open).
         try { Phoenix.Controls.Visualist.WinUI.Services.RecentFiles.Prune(); }
@@ -358,7 +352,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// M32 (2026-05-14) — async post-ctor init. The .phxlayer enumeration
+    /// Async post-ctor init. The .phxlayer enumeration
     /// runs on a thread-pool worker so a cold-disk `data/layers/` doesn't
     /// stall the dispatcher during pillar-tab activation; the result
     /// (a LayerListItem list) is then applied back on the UI thread.
@@ -369,7 +363,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         if (_initialized) return;
         _initialized = true;
 
-        // [Lane E — finding #20] On an INSTALLED build Paths.HubLayers resolves
+        // On an INSTALLED build Paths.HubLayers resolves
         // to a (frequently empty / not-yet-created) %AppData% subfolder. Make
         // sure the folder exists so the rail enumeration below has something to
         // read and the user's first Save/Save-As lands in a real directory
@@ -410,8 +404,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// Opens the given .phxlayer in the Layer Canvas. Called by Hub's
     /// <see cref="Phoenix.Controls.Shared.WinUI.Contracts.IPillarNavigator"/>
-    /// after the user double-clicks a layer file in Explorer (TODO 
-    /// — Hub --open routing). Forwards to VisualistViewModel.OpenLayer which
+    /// after the user double-clicks a layer file in Explorer (Hub --open
+    /// routing). Forwards to VisualistViewModel.OpenLayer which
     /// loads via LayerDocument and updates the rail selection.
     /// </summary>
     public void Open(string path) => ViewModel.OpenLayer(path);
@@ -421,7 +415,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// File → New Layer. Hub menu token: visualist.file.newLayer.
     /// <para>
-    /// C12 (audit/winui-regressions-2026-05-24) — fires the preset picker
+    /// Fires the preset picker
     /// dialog before constructing the layer so the user can pick FullHD /
     /// QHD / UHD / Vertical / Square / Custom at creation time. The public
     /// signature stays void to keep the Hub menu-dispatch contract (a void
@@ -431,8 +425,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// </summary>
     public async void NewLayer()
     {
-        // async void error boundary (Visualist regression audit 2026-05-31, Lane E
-        // P1): invoked from synchronous Hub menu dispatch (MainWindow.OnMenuItemInvoked).
+        // async void error boundary: invoked from synchronous Hub menu dispatch
+        // (MainWindow.OnMenuItemInvoked).
         // A dialog cancellation or file-I/O fault before the first await would
         // otherwise fault an unobserved Task. Route any fault to the log instead.
         try { await NewLayerWithPresetAsync(); }
@@ -474,7 +468,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// MRU backed by Visualist.WinUI.Services.RecentFiles. Picking a row
     /// opens the layer (if the file still exists on disk, otherwise prunes
     /// the row and surfaces a System Log entry). Hub menu token:
-    /// visualist.file.openRecent (TODO 2026-05-07 round 1 P2 PARTIAL).
+    /// visualist.file.openRecent.
     /// </summary>
     public async Task OpenRecentLayerAsync()
     {
@@ -502,7 +496,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// B26 (audit/winui-regressions-2026-05-24) — open a .phxlayer with
+    /// Open a .phxlayer with
     /// cross-window dedup. Before loading the file into this MainView's
     /// VisualistViewModel, we ask the registry whether another sibling
     /// window already has the same path open. If so, we activate that
@@ -546,8 +540,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// through the same cross-window dedup helper the embedded MainView uses
     /// for its picker / drag-drop / open-recent surfaces: if another sibling
     /// already has the file open, that window is activated instead of
-    /// duplicate-loading here. Used by the sibling-window Recent submenu
-    /// (Lane E — Visualist WinUI regression restore, 2026-05-31) so a
+    /// duplicate-loading here. Used by the sibling-window Recent submenu so a
     /// recent-file pick respects the multi-window model. Distinct from
     /// <see cref="Open(string)"/>, which loads unconditionally into this VM
     /// (the registry path is the right default for user-initiated opens).
@@ -629,7 +622,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>Edit → Add Widget. Hub menu token: visualist.edit.addWidget.</summary>
     public void AddWidget() => OnAddWidget(this, EventArgs.Empty);
 
-    // R54 — Ctrl+N / Ctrl+O accelerators (the embedded Visualist File menu had
+    // Ctrl+N / Ctrl+O accelerators (the embedded Visualist File menu had
     // no shortcut keys). Route to the same NewLayer / OpenLayerDialog the Hub
     // menu invokes.
     private void OnNewLayerAccelerator(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
@@ -646,7 +639,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         args.Handled = true;
     }
 
-    // R22 — shared layer-preview popout, owned by the pillar shell so both the
+    // Shared layer-preview popout, owned by the pillar shell so both the
     // Widget Editor toolbar and the Layer Canvas command bar open / re-summon
     // the SAME window. The Widget Editor's timeline transport bridges scrub /
     // play / stop into this window's Preview (see ActiveLayerPreviewWindow).
@@ -657,13 +650,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     public Phoenix.Controls.Visualist.WinUI.Hosting.LayerPreviewWindow? ActiveLayerPreviewWindow => _layerPreviewWindow;
 
     /// <summary>
-    /// R22 — open (or re-summon) a windowed preview of the whole layer. Requires
+    /// Open (or re-summon) a windowed preview of the whole layer. Requires
     /// a saved layer (the LayerID is the .phxlayer file stem Hub serves under
     /// <c>/layer/&lt;id&gt;</c>). Returns false + logs when no LayerID is available.
     /// </summary>
     public bool PreviewLayer()
     {
-        // [Lane E — finding: PreviewLayer condition order / silent fallback]
         // Gate on the LayerID FIRST (it derives from Document.FilePath, the only
         // thing that determines whether a preview is even possible) before
         // touching any display data — so an unsaved layer fails fast with a
@@ -736,7 +728,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     public void ShowWidgetEditor() => SelectSubTab(showCanvas: false);
 
     /// <summary>
-    /// R1 (enter-widget restore) — select <paramref name="widget"/> and swap to
+    /// Select <paramref name="widget"/> and swap to
     /// the Widget Editor sub-tab bound to it. The single chokepoint the canvas
     /// (body double-tap / Enter / "Edit Widget" menu) and the widget roster
     /// route through, restoring the pre-WinUI "double-click a widget opens its
@@ -755,7 +747,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     public void ShowCompositorReference() => OnCompositorReference(this, EventArgs.Empty);
 
     /// <summary>
-    /// C3 (audit/winui-regressions-2026-05-24) — Window → Preset Gallery.
+    /// Window → Preset Gallery.
     /// Hub menu token: <c>visualist.window.presetGallery</c>. Opens a
     /// non-modal <see cref="Phoenix.Controls.Visualist.WinUI.Hosting.PresetGalleryWindow"/> that surfaces
     /// every built-in <see cref="Phoenix.Controls.Shared.Models.WidgetPreset"/>
@@ -780,7 +772,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// B26 (audit/winui-regressions-2026-05-24) — Window → New Visualist
+    /// Window → New Visualist
     /// Window. Hub menu token: <c>visualist.window.new</c>. Spawns a fresh
     /// top-level Visualist sibling window through
     /// <see cref="Phoenix.Controls.Visualist.WinUI.Hosting.VisualistWindowRegistry.OpenNewWindowAsync"/>;
@@ -800,8 +792,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <see cref="Phoenix.Controls.Visualist.WinUI.Hosting.VisualistWindowRegistry"/>
     /// in a ContentDialog (rebuilt from the live registry each open, so the
     /// list is always current) and activates the chosen window. No-op with a
-    /// log line — never a modal rejection — when no sibling windows are open
-    /// (feedback_no_modal_dialogs_for_repeatable_rejections).
+    /// log line — never a modal rejection — when no sibling windows are open.
     /// </summary>
     public async Task ShowWindowSwitcherAsync()
     {
@@ -861,7 +852,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// Tools → Media Library… Hub menu token: visualist.tools.mediaLibrary.
     /// <para>
-    /// Sprint C reintroduces the pre-0.9.0 media-library delete affordance
+    /// Reintroduces the pre-0.9.0 media-library delete affordance
     /// (CHANGELOG 0.6.4) as a single ContentDialog rather than a panel — the
     /// pre-redesign panel restructure is out of scope. Hands the dialog the
     /// currently-loaded layer so its reference-scan covers unsaved edits in
@@ -934,7 +925,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             foreach (var e in s_videoExt) allExt.Add(("Video", e));
             foreach (var e in s_audioExt) allExt.Add(("Audio", e));
 
-            // R57 — multi-select import. Each picked file is copied into the
+            // Multi-select import. Each picked file is copied into the
             // kind-by-extension subfolder; unsupported types are skipped (logged)
             // rather than aborting the batch.
             var sources = CustomFilePicker.PickMultipleFiles(hwnd, startDir, allExt);
@@ -944,7 +935,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             string? lastSrc = null;
             foreach (string src in sources)
             {
-                // [Lane E — finding: import logic deduplicated] route through the
+                // Route through the
                 // unified MediaLibrary.Import (same kind-by-extension subfolder
                 // routing, name sanitisation, and _2/_3 collision suffixing the
                 // local ImportMediaFile reimplemented) so File→Import Media and
@@ -978,7 +969,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
     }
 
-    // [Lane E — finding: import logic deduplicated] The local ImportMediaFile /
+    // The local ImportMediaFile /
     // MediaSubfolderFor / SanitizeMediaName trio was a faithful port of the
     // pre-T15 MediaLibrary.ImportAsync, written here because the WinUI
     // Services.MediaLibrary was read/delete-only at the time. MediaLibrary.Import
@@ -995,12 +986,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// </summary>
     private void SelectSubTab(bool showCanvas)
     {
-        // The shell sub-tab ToggleButtons were removed 2026-06-08 (the trigger
+        // The shell sub-tab ToggleButtons were removed (the trigger
         // strip's ← Back + double-click-to-enter cover navigation); SelectSubTab
         // stays the single source of truth for the pane swap + side-panel context.
         MainPaneRegion.Content = showCanvas ? (UIElement)_canvasView : _editorView;
 
-        // R17/R19 — context-aware side panels. In Widget Editor mode hide the
+        // Context-aware side panels. In Widget Editor mode hide the
         // layer-file rail (a stray click on it silently swaps the document/widget
         // out from under the editor) and tell the inspector to drop its LAYER
         // settings, leaving the widget/trigger context only. Layer Canvas mode
@@ -1019,7 +1010,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// C12 (audit/winui-regressions-2026-05-24) — show the preset picker
+    /// Show the preset picker
     /// dialog and forward the user's choice into
     /// <see cref="VisualistViewModel.NewLayer(string, Phoenix.Controls.Shared.Models.LayerPreset, int, int)"/>.
     /// Falls back to the sync no-arg NewLayer when XamlRoot isn't available
@@ -1053,9 +1044,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // CustomFilePicker (IFileOpenDialog COM interop) seeds the picker
             // at the project's data/layers/ folder — WinUI 3's FileOpenPicker
             // can't take a custom default path (SuggestedStartLocation is
-            // enum-only). Per-pillar last-used folder seed
-            // (TODO 2026-05-07 round 1 P3): if AppConfig has a recent dir for
-            // Visualist, prefer it over Paths.HubLayers.
+            // enum-only). Per-pillar last-used folder seed: if AppConfig has a
+            // recent dir for Visualist, prefer it over Paths.HubLayers.
             var hwnd = WindowNative.GetWindowHandle(_hostWindow);
             string startDir = ResolveStartDir(
                 Phoenix.Controls.Shared.Services.ConfigManager.Current.LastVisualistOpenDir,
@@ -1065,7 +1055,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 startDir,
                 new[] { ("Phoenix Layer", ".phxlayer") });
             if (string.IsNullOrEmpty(path)) return;
-            // B26 — route through the registry so opening a layer that's
+            // Route through the registry so opening a layer that's
             // already loaded in a sibling window focuses that window
             // instead of duplicate-loading here. MRU bookkeeping happens
             // inside the helper.
@@ -1087,12 +1077,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 await ShowSaveAsDialogAndSave();
                 return;
             }
-            // B37 — capture each widget's rendered bitmap into
+            // Capture each widget's rendered bitmap into
             // LayerWidget.Thumbnail before serialisation so the .phxlayer
             // carries a live thumb. Capture is best-effort: a failure
             // logs + falls through, never blocks the save.
             await CaptureLiveThumbnailsAsync();
-            // [Lane E — finding #69] surface a failed save on the status strip
+            // Surface a failed save on the status strip
             // instead of swallowing the false return.
             if (!ViewModel.SaveLayer())
             {
@@ -1112,12 +1102,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// B37 — drive <see cref="LayerCanvasView.CaptureAllWidgetThumbnailsAsync"/>
+    /// Drive <see cref="LayerCanvasView.CaptureAllWidgetThumbnailsAsync"/>
     /// on the active canvas. No-ops when the canvas isn't the visible sub-tab
     /// (capture requires the WidgetViews to be mounted in the visual tree) so
     /// a Save fired from the Widget Editor doesn't refresh thumbs. Future
     /// polish could mount widget views off-screen for capture, but that's
-    /// beyond the audit scope.
+    /// out of scope here.
     /// </summary>
     private async Task CaptureLiveThumbnailsAsync()
     {
@@ -1162,10 +1152,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             new[] { ("Phoenix Layer", ".phxlayer") });
         if (!string.IsNullOrEmpty(path))
         {
-            // B37 — refresh widget thumbnails before SaveAs writes the file
+            // Refresh widget thumbnails before SaveAs writes the file
             // so a freshly-named layer captures the current canvas state.
             await CaptureLiveThumbnailsAsync();
-            // [Lane E — finding #69] surface a failed SaveAs on the status strip
+            // Surface a failed SaveAs on the status strip
             // and skip the MRU/recent bookkeeping (which would imply success).
             if (!ViewModel.SaveLayerAs(path))
             {
@@ -1178,7 +1168,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     // Last-used folder per pillar — read on picker construction, write on
-    // successful pick (TODO 2026-05-07 round 1 P3). Existence-checked so a
+    // successful pick. Existence-checked so a
     // renamed/deleted recent folder doesn't strand the picker.
     private static string ResolveStartDir(string? recall, string fallback)
         => !string.IsNullOrWhiteSpace(recall)
@@ -1237,10 +1227,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     // ─── status bar ─────────────────────────────────────────────────────
     //
-    //  P2 — CHANGELOG 0.9.9 claimed "both pillars status bar" but
+    // CHANGELOG 0.9.9 claimed "both pillars status bar" but
     // Visualist had no strip. Paint code is duplicated locally (mirrors
-    // Architect's status strip) per feedback_visualist_architect_chrome_independence.md
-    // — no Shared/UI/ helper class. Driven from the VM.PropertyChanged
+    // Architect's status strip) — Visualist owns its own chrome, so there is
+    // no Shared/UI/ helper class. Driven from the VM.PropertyChanged
     // handler above (Document / IsDirty / ActiveLayerFileName / SelectedLayer)
     // plus an initial paint in the ctor.
 
@@ -1272,7 +1262,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         // Center: layer filename — ActiveLayerFileName returns "(no layer)"
         // when nothing is loaded, but we already returned above in that case.
-        // R59 — the TextBlock ellipsis-trims; surface the full name on hover.
+        // The TextBlock ellipsis-trims; surface the full name on hover.
         StatusCenter.Text = ViewModel.ActiveLayerFileName;
         ToolTipService.SetToolTip(StatusCenter, ViewModel.ActiveLayerFileName);
 
@@ -1286,7 +1276,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// [Lane E — finding #69] Surface a failed save NON-modally by repainting
+    /// Surface a failed save NON-modally by repainting
     /// the existing status strip (red light + "Save failed" text) rather than
     /// letting <see cref="VisualistViewModel.SaveLayer"/> /
     /// <see cref="VisualistViewModel.SaveLayerAs"/> fail silently. The detail
@@ -1305,7 +1295,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             "Save failed — see System Log");
     }
 
-    // Theme-brush lookup with graceful fallback —  P2 spec requires
+    // Theme-brush lookup with graceful fallback — the status-bar spec requires
     // we don't crash when a token is missing in a stripped/forked theme.
     private static Microsoft.UI.Xaml.Media.Brush ResolveBrush(params string[] keys)
     {

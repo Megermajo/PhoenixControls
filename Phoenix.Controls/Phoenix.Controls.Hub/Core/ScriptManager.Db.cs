@@ -16,7 +16,7 @@ namespace Phoenix.Controls.Hub.Core
     {
         private void RegisterDbCommands()
         {
-            // M24 — strip surrounding quotes from the inputs (function-call expressions
+            // Strip surrounding quotes from the inputs (function-call expressions
             // pass through as bare values; literal strings come quoted). Numeric search
             // values are detected and round-tripped through long.ToString so SQLite's
             // type-affinity rules treat them as INTEGER candidates rather than as the
@@ -103,7 +103,7 @@ namespace Phoenix.Controls.Hub.Core
             });
 
             // db.insert_row: Table + variadic positional col,val,col,val,...,resultVar.
-            // Sweep 16 — added to manifest with Variadic String. The handler still does
+            // Added to manifest with Variadic String. The handler still does
             // its own parity-detection logic on the rest list (the script grammar pairs
             // by POSITION, not by `=`, so KvPairs doesn't fit); the binder just gives us
             // the table arg and the rest list typed.

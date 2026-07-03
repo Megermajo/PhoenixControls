@@ -15,7 +15,7 @@ using Windows.UI;
 
 namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 
-// QC22-06 / QC23-02 — PreviewSeam: WidgetView is the consumer for both
+// PreviewSeam: WidgetView is the consumer for both
 //   (a) per-node body-preview snapshots (NodeEvaluator.EvaluatePreviews +
 //       PreviewSnapshot — engine-side surface that the WinUI canvas does not
 //       yet drive), AND
@@ -23,8 +23,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 //       (Manifesto §4.4).
 // Both surfaces are intentionally unwired in this branch — the engine seam
 // exists, the WinUI host hangs ThumbnailHost as the future render target,
-// and the live-preview sprint plugs the two ends together. See the M65 block
-// in WidgetNodeRegistry.cs for the engine end.
+// and the live-preview work plugs the two ends together. See the
+// AllowedCategories rationale block in WidgetNodeRegistry.cs for the engine end.
 
 public enum WidgetThumbKind { Label, Text, Gradient }
 
@@ -43,9 +43,8 @@ public sealed partial class WidgetView : UserControl
     }
 
     // Theme-key + literal-ARGB fallback for tinted brushes. Mirrors
-    // WidgetGraphCanvas.ResolveBrush — kept as a local per-pillar copy per
-    // feedback_visualist_architect_chrome_independence (Visualist owns its
-    // own paint helpers, never lifts to Shared). Routes the previous inline
+    // WidgetGraphCanvas.ResolveBrush — kept as a local per-pillar copy
+    // (Visualist owns its own paint helpers, never lifts to Shared). Routes the previous inline
     // ARGB literals through the dark-theme tokens so a future theme tweak
     // ripples here without code edits. Colours stay bit-identical to the
     // pre-fix output because EmberPrimaryBrush == #E5A24E and CoalSurfaceBrush
@@ -76,7 +75,7 @@ public sealed partial class WidgetView : UserControl
     private static readonly Brush s_idleFill =
         ResolveBrushTinted("CoalSurfaceBrush", 0x66, 0x14, 0x11, 0x0D);
 
-    // P3 polish — pre-layout clip sentinel. Comfortably larger than any
+    // Pre-layout clip sentinel. Comfortably larger than any
     // realistic widget footprint so the construction-time clip never masks
     // content before the first SizeChanged stamps the real ActualSize.
     private const double ClipSentinel = 10000.0;
@@ -84,14 +83,13 @@ public sealed partial class WidgetView : UserControl
     private string _widgetName = "";
     private WidgetThumbKind _thumbKind = WidgetThumbKind.Label;
     private bool _isSelected;
-    // B37 — base64-encoded PNG (optionally "data:image/png;base64," prefixed)
+    // Base64-encoded PNG (optionally "data:image/png;base64," prefixed)
     // captured at last save via WidgetThumbnailCapture. When non-null, the
     // ThumbnailHost renders the decoded bitmap instead of the gradient /
-    // text / label stub — closing the "thumb host stays a placeholder"
-    // half of the audit item.
+    // text / label stub — so the thumb host no longer stays a placeholder.
     private string? _thumbnailB64;
 
-    //  (P1-U1) — inline value-pill state. The LayerWidget the pills
+    // Inline value-pill state. The LayerWidget the pills
     // mutate plus the commit callback that pushes undo + marks the document
     // dirty + invalidates the layer canvas. The view never reaches up through
     // FindAncestor for the VM: LayerCanvasView calls SetEditTarget(...) at
@@ -99,7 +97,7 @@ public sealed partial class WidgetView : UserControl
     private LayerWidget? _editWidget;
     private Action<LayerWidget>? _onCommit;
 
-    // Area 1 P0 — inline widget rename. The double-click → TextBox editor reuses
+    // Inline widget rename. The double-click → TextBox editor reuses
     // the SwapPill/RestorePill visibility-flip mechanics. Unlike the geometry
     // pills (which mutate the model then signal the canvas to PushUndo+MarkDirty),
     // rename hands the *new* name back to LayerCanvasView WITHOUT mutating
@@ -129,16 +127,16 @@ public sealed partial class WidgetView : UserControl
         InitializeComponent();
         ApplyAppearance();
 
-        // QC23-03 — Manifesto §4.4 widget-rect-as-clip-rect. The WidgetFrame
+        // Manifesto §4.4 widget-rect-as-clip-rect. The WidgetFrame
         // hosts a ThumbnailHost that may eventually render images / live
         // previews larger than the author-declared rect; without a clip those
         // overflow the widget's footprint and bleed across siblings on the
         // layer canvas. RectangleGeometry tracks the frame's actual size via
         // SizeChanged so a resize / inspector edit keeps the clip in lockstep
-        // (resize-aware per the QC report).
+        // (resize-aware).
         if (WidgetFrame is not null)
         {
-            // P3 polish — InitializeComponent runs before the first layout pass,
+            // InitializeComponent runs before the first layout pass,
             // so ActualWidth/ActualHeight are still 0 here. Seeding the clip with
             // a 0×0 rect would mask ALL widget content (thumbnail, pills, name)
             // for one frame until OnWidgetFrameSizeChanged corrects it. Seed a
@@ -185,7 +183,7 @@ public sealed partial class WidgetView : UserControl
     }
 
     /// <summary>
-    /// B37 — base64 PNG payload (the same string LayerSerializer round-trips
+    /// Base64 PNG payload (the same string LayerSerializer round-trips
     /// through <c>LayerWidget.Thumbnail</c>). Accepts an optional
     /// <c>data:image/png;base64,</c> prefix; passing <c>null</c> or empty
     /// reverts to the preset-driven stub (gradient / text / label).
@@ -217,7 +215,7 @@ public sealed partial class WidgetView : UserControl
 
         if (_isSelected)
         {
-            // R40 — selected widget border is §2 gold (SelectionBrush #FFD700),
+            // Selected widget border is §2 gold (SelectionBrush #FFD700),
             // not brass Ember (Design_Orders §2: gold=selection).
             WidgetFrame.BorderBrush = Resource("SelectionBrush");
             WidgetFrame.Background  = s_selectedFill;
@@ -234,7 +232,7 @@ public sealed partial class WidgetView : UserControl
 
         if (ThumbnailHost is null) return;
 
-        // B37 — if the model carries a captured thumbnail, prefer it over
+        // If the model carries a captured thumbnail, prefer it over
         // the preset-driven stub. Falls back to the stub when decoding fails
         // (corrupt payload, missing data prefix variant) so a bad capture
         // doesn't break the canvas.
@@ -257,7 +255,7 @@ public sealed partial class WidgetView : UserControl
     }
 
     /// <summary>
-    /// B37 — decode the base64 PNG into an Image element. Returns null on
+    /// Decode the base64 PNG into an Image element. Returns null on
     /// any decode failure (malformed base64, non-PNG payload, etc.) so the
     /// caller falls back to the preset-driven stub. Logging only at the
     /// outermost catch — XAML's BitmapImage exceptions surface via the
@@ -277,7 +275,7 @@ public sealed partial class WidgetView : UserControl
             }
             byte[] bytes = Convert.FromBase64String(raw);
 
-            // [P1 swarm-audit 2026-05-29] removed sync-over-async DataWriter.StoreAsync()
+            // removed sync-over-async DataWriter.StoreAsync()
             // .GetAwaiter().GetResult() on the UI thread (deadlock risk). Wrap the raw bytes
             // in a MemoryStream and hand the BitmapImage its IRandomAccessStream directly —
             // no async pump is required for an in-memory buffer, so nothing blocks the dispatcher.
@@ -363,15 +361,14 @@ public sealed partial class WidgetView : UserControl
 
     private static UIElement BuildLabelStub() => new Border();
 
-    // ───  (P1-U1) — inline value pills ──────────────────────────
-    // Per feedback_node_ui_inline_sockets.md the user wants geometry edits on
-    // the widget body, not buried in the right-pane inspector. The pill chrome
+    // ─── inline value pills ──────────────────────────────────────────────
+    // The user wants geometry edits on the widget body, not buried in the
+    // right-pane inspector. The pill chrome
     // mirrors Architect's MiddleAttributeRowTemplate (NodeView.xaml:236-328)
     // and its OnMiddleAttrPillTapped / OnMiddleAttrPillEditKeyDown /
     // OnMiddleAttrPillEditLostFocus handler shape (NodeView.xaml.cs:594-635).
-    // Both copies, per feedback_visualist_architect_chrome_independence.md:
-    // Architect and Visualist evolve their paint code independently — no
-    // Phoenix.Controls.Shared/UI/ extraction.
+    // Both copies: Architect and Visualist evolve their paint code
+    // independently — no Phoenix.Controls.Shared/UI/ extraction.
 
     /// <summary>
     /// Wires the pill row to a LayerWidget + commit callback. Called by
@@ -388,7 +385,7 @@ public sealed partial class WidgetView : UserControl
     }
 
     /// <summary>
-    /// Area 1 P0 — wires the double-click rename commit. <paramref name="onNameCommit"/>
+    /// Wires the double-click rename commit. <paramref name="onNameCommit"/>
     /// receives the widget plus the newly typed name; the host (LayerCanvasView)
     /// is responsible for PushUndo (pre-change snapshot) → set widget.Name →
     /// MarkDirty → re-render. WidgetView never mutates widget.Name itself so the
@@ -399,14 +396,14 @@ public sealed partial class WidgetView : UserControl
         _onNameCommit = onNameCommit;
     }
 
-    // ─── R1 (enter-widget restore) — body double-tap → open the editor ───
+    // ─── enter-widget restore — body double-tap → open the editor ───
     // Pre-WinUI parity: the WinForms LayerCanvas raised OnWidgetDoubleClicked
     // from a double-click on a widget rectangle, which MainForm.OpenWidgetEditor
     // turned into a per-widget WidgetEditorForm. The WinUI rework dropped that
     // gesture (the only DoubleTapped left renames the name footer), severing the
     // canvas → editor transition. We restore it on the widget BODY here; the
     // canvas bubbles EnterRequested up to MainView (see LayerCanvasView /
-    // MainView). Visualist-local per feedback_visualist_architect_chrome_independence.
+    // MainView). Visualist-local.
 
     /// <summary>
     /// Raised when the user double-taps the widget body to enter its node
@@ -643,7 +640,7 @@ public sealed partial class WidgetView : UserControl
                 if (i >= 0 && i < s_pillPresets.Length)
                 {
                     WidgetPreset? newP = s_pillPresets[i];
-                    // P3 polish — only Hide() on a genuine change. Clicking the
+                    // Only Hide() on a genuine change. Clicking the
                     // already-selected entry is a no-op, so leaving the flyout
                     // open gives the user a clear signal the click changed nothing
                     // (vs. the old behaviour where any click slammed it shut with
@@ -665,7 +662,7 @@ public sealed partial class WidgetView : UserControl
         e.Handled = true;
     }
 
-    // ── Inline rename (Area 1 P0) ────────────────────────────────────────
+    // ── Inline rename ────────────────────────────────────────────────────
     // Double-tap the footer name label → swap to an inline TextBox. Enter or
     // focus-loss-with-change commits via _onNameCommit (LayerCanvasView pushes
     // undo against the pre-change state, sets widget.Name, marks dirty,
@@ -757,7 +754,7 @@ public sealed partial class WidgetView : UserControl
         => int.TryParse(s, System.Globalization.NumberStyles.Integer,
                         System.Globalization.CultureInfo.InvariantCulture, out v);
 
-    // ─── Live-preview overlay (Lane C / Area 5 P1) ───────────────────────
+    // ─── Live-preview overlay ────────────────────────────────────────────
     // LayerCanvasView's WidgetCanvasPreviewer crops this widget's rect out of
     // the hidden-WebView2 Hub overlay frame and hands the cropped SoftwareBitmap
     // here. We wrap it in a SoftwareBitmapSource (the only WriteableBitmap-free
@@ -766,8 +763,8 @@ public sealed partial class WidgetView : UserControl
     //
     // The overlay is purely additive: when the previewer is off / the layer is
     // unsaved / a crop fails, ClearLivePreview() collapses the image and the
-    // existing labeled-rectangle rendering shows through unchanged. Per
-    // feedback_visualist_architect_chrome_independence this lives Visualist-side.
+    // existing labeled-rectangle rendering shows through unchanged. This lives
+    // Visualist-side.
 
     /// <summary>
     /// Show a cropped live-preview frame over this widget. Takes ownership of
@@ -787,7 +784,7 @@ public sealed partial class WidgetView : UserControl
         // src is captured outside the try so the finally can dispose the
         // converted frame too — otherwise a SetBitmapAsync fault would leak it.
         Windows.Graphics.Imaging.SoftwareBitmap src = bmp;
-        // P3 polish — track the SoftwareBitmapSource outside the try so a
+        // Track the SoftwareBitmapSource outside the try so a
         // SetBitmapAsync fault disposes the wrapper instead of leaving it for
         // GC. On the success path the source becomes LivePreviewImage.Source
         // and `source` is nulled out so the catch doesn't tear down the live
@@ -809,7 +806,7 @@ public sealed partial class WidgetView : UserControl
 
             LivePreviewImage.Source = source;
             LivePreviewImage.Visibility = Visibility.Visible;
-            // Bug D — show the LIVE preview ONLY, at full opacity, and HIDE the baked
+            // Show the LIVE preview ONLY, at full opacity, and HIDE the baked
             // thumbnail beneath it. The overlay used to sit at 0.85 opacity over the
             // ThumbnailHost (which renders the previously-baked snapshot), so a snapshot
             // baked while it was opaque/white bled straight through the transparent live
@@ -847,7 +844,7 @@ public sealed partial class WidgetView : UserControl
         if (LivePreviewImage is null) return;
         LivePreviewImage.Source = null;
         LivePreviewImage.Visibility = Visibility.Collapsed;
-        // Bug D — restore the thumbnail/stub fallback only when the live preview is
+        // Restore the thumbnail/stub fallback only when the live preview is
         // genuinely gone (previewer off, unsaved layer, crop failed) so the widget
         // isn't an empty rectangle. When a live frame is present the thumbnail stays
         // hidden (set in SetLivePreview) so the baked snapshot can't bleed through.

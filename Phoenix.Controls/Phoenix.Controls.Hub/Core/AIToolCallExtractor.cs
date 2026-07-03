@@ -6,7 +6,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    ///  — extracts the assistant's tool-call list from an OpenAI
+    /// Extracts the assistant's tool-call list from an OpenAI
     /// chat-completions response when the model chose to call a tool.
     /// Sibling helper to <see cref="AIChatCompletionParser"/>: that one
     /// returns the assistant's text content; this one returns the
@@ -75,7 +75,7 @@ namespace Phoenix.Controls.Hub.Core
                     string arguments = fnEl.TryGetProperty("arguments", out var argsEl) && argsEl.ValueKind == JsonValueKind.String
                         ? (argsEl.GetString() ?? "") : "";
 
-                    // QC37-06 — `arguments` is a JSON-encoded STRING per the
+                    // `arguments` is a JSON-encoded STRING per the
                     // OpenAI contract, but smaller models (gpt-4o-mini, GPT-3.5)
                     // occasionally emit malformed JSON or get truncated mid-args
                     // when finish_reason == "length". The string is still shipped

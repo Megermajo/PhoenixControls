@@ -30,7 +30,7 @@ public static class PillarBootstrap
     /// when another instance of this pillar is already running — the App
     /// should foreground that one (best-effort) and exit.
     ///
-    /// [P1 swarm-audit 2026-05-29] OWNERSHIP CONTRACT: when
+    /// OWNERSHIP CONTRACT: when
     /// <see cref="OwnedMutex"/> is non-null the caller OWNS that
     /// <see cref="Mutex"/> and MUST dispose it on app exit (the disposing
     /// releases the named OS mutex so the next launch is recognised as the
@@ -39,12 +39,12 @@ public static class PillarBootstrap
     /// (e.g. <c>Application.Exit</c> / window-closed). This type can't dispose
     /// it for the caller — the mutex must outlive this method for the whole
     /// run. NEEDS CALLER WIRING (App.OnExit): App.xaml.cs is out of scope for
-    /// this audit fix, so the disposal site itself is not wired here; this
+    /// this change, so the disposal site itself is not wired here; this
     /// contract documents the obligation precisely so it can be wired there.
     /// </summary>
     public readonly record struct PreUiResult(bool ShouldExit, Mutex? OwnedMutex);
 
-    //  The sync pre-UI form (RunCommonPreUi) was removed
+    // The sync pre-UI form (RunCommonPreUi) was removed
     // because it blocked the UI thread on AppData migration + DB init +
     // localizer load (200-750ms cold) and grep confirmed zero remaining
     // callers. Every pillar now uses the split pair below
@@ -58,7 +58,7 @@ public static class PillarBootstrap
     /// construction + a SetForegroundWindow on duplicate); safe to keep
     /// synchronous on the UI thread.
     ///
-    /// [P1 swarm-audit 2026-05-29] RESOURCE CONTRACT: on the owner path this
+    /// RESOURCE CONTRACT: on the owner path this
     /// returns <see cref="PreUiResult.OwnedMutex"/> non-null and the CALLER
     /// MUST dispose it on app exit — see the <see cref="PreUiResult"/> docs.
     /// The mutex must be held for the entire process lifetime (disposing it
@@ -121,7 +121,7 @@ public static class PillarBootstrap
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         GlobalLogger.Log("Startup phase: log-writer-start begin", "PillarBootstrap", LogLevel.System);
-        //  Step 1 — start the GlobalLogger writer FIRST. The
+        // Step 1 — start the GlobalLogger writer FIRST. The
         // migrator/font/DB steps below all call GlobalLogger.Error on
         // failure; if the writer isn't pumping, those entries sit in the
         // bounded in-memory channel until either the channel evicts them
@@ -189,7 +189,7 @@ public static class PillarBootstrap
                     if (p.Id == self) continue;
                     IntPtr hwnd = p.MainWindowHandle;
                     if (hwnd == IntPtr.Zero) continue;
-                    //  SetForegroundWindow alone won't un-minimize a
+                    // SetForegroundWindow alone won't un-minimize a
                     // window that's currently iconified in the taskbar — the
                     // user clicks the taskbar entry again and nothing happens.
                     // ShowWindow(SW_RESTORE) lifts the minimize state first so

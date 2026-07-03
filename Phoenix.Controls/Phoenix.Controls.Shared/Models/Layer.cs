@@ -15,7 +15,7 @@ namespace Phoenix.Controls.Shared.Models
     /// Maps the named <see cref="LayerPreset"/> values to canonical (width, height)
     /// pairs. <see cref="LayerPreset.Custom"/> returns the (0, 0) sentinel — callers
     /// are expected to keep their existing W/H when the preset is Custom rather
-    /// than zeroing the resolution. Added for B35 (audit 2026-05-24): pre-fix the
+    /// than zeroing the resolution. Previously the
     /// InspectorPanel preset ComboBox only wrote <see cref="Layer.Preset"/>, never
     /// the resolution, so picking "QHD" was cosmetic.
     /// </summary>

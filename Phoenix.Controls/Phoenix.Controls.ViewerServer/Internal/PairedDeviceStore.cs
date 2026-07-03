@@ -25,7 +25,7 @@ internal sealed class PairedDeviceStore
     private const int HashLen = 32;
     private const int Iterations = 200_000;
 
-    // Token rotation policy (QC27-03):
+    // Token rotation policy:
     //   • Absolute max age — 30 days from IssuedAtUtc.
     //   • Idle max         — 7 days since LastUsedUtc.
     // Either limit firing rejects the token and forces a re-pair. The
@@ -34,7 +34,7 @@ internal sealed class PairedDeviceStore
     internal static readonly TimeSpan AbsoluteMaxAge = TimeSpan.FromDays(30);
     internal static readonly TimeSpan IdleMaxAge     = TimeSpan.FromDays(7);
 
-    // Verification cache (QC27-07): PBKDF2-SHA256 at 200_000 iterations
+    // Verification cache: PBKDF2-SHA256 at 200_000 iterations
     // costs ~20-50ms per call on a modern desktop CPU. Once a token has
     // verified against a specific device we cache the SHA-256 of
     // (deviceId || ':' || token) along with the matched deviceId, so
@@ -49,7 +49,7 @@ internal sealed class PairedDeviceStore
     private readonly object _persistLock = new();
     private readonly ConcurrentDictionary<string, Entry> _byDeviceId = new();
 
-    // [P1 swarm-audit 2026-05-29] Guards the mutable PairedDevice fields
+    // Guards the mutable PairedDevice fields
     // (LastSeen / LastUsedUtc / Revoked). The ConcurrentDictionary makes the
     // map thread-safe, but the device objects it holds were mutated + read
     // without synchronisation: concurrent Verify calls write LastSeen/
@@ -67,7 +67,7 @@ internal sealed class PairedDeviceStore
 
     public IReadOnlyList<PairedDevice> List()
     {
-        // [P1 swarm-audit 2026-05-29] read Revoked under the device-state
+        // read Revoked under the device-state
         // lock so the snapshot is consistent against a concurrent Revoke
         // (which writes Revoked under the same lock) — Verify (line 149)
         // and Revoke (line 235) already guard this field.
@@ -116,7 +116,7 @@ internal sealed class PairedDeviceStore
     {
         var now = DateTimeOffset.UtcNow;
 
-        // Fast-path (QC27-07): if this exact token was verified
+        // Fast-path: if this exact token was verified
         // recently the SHA-256(token) fingerprint maps to the
         // matching deviceId, skipping the N × PBKDF2 sweep. The
         // fingerprint itself is the constant-time equality proxy —
@@ -129,7 +129,7 @@ internal sealed class PairedDeviceStore
             cached.ExpiresAt > now &&
             _byDeviceId.TryGetValue(cached.DeviceId, out var cachedEntry))
         {
-            // [P1 swarm-audit 2026-05-29] read Revoked + write LastSeen/
+            // read Revoked + write LastSeen/
             // LastUsedUtc under the device-state lock so a concurrent Revoke
             // can't be torn against this update.
             bool cacheHit = false;
@@ -153,18 +153,18 @@ internal sealed class PairedDeviceStore
 
         foreach (var entry in _byDeviceId.Values)
         {
-            // [P1 swarm-audit 2026-05-29] guard the Revoked read.
+            // guard the Revoked read.
             bool revoked;
             lock (_deviceStateLock) { revoked = entry.Device.Revoked; }
             if (revoked) continue;
             byte[] candidate = HashToken(token, entry.Salt);
             if (CryptographicOperations.FixedTimeEquals(candidate, entry.Hash))
             {
-                // [P1 swarm-audit 2026-05-29] expiry check + LastSeen/
+                // expiry check + LastSeen/
                 // LastUsedUtc writes under the device-state lock.
                 lock (_deviceStateLock)
                 {
-                    // Rotation policy (QC27-03): reject expired tokens
+                    // Rotation policy: reject expired tokens
                     // *after* the constant-time hash check so an attacker
                     // can't distinguish "wrong token" from "expired" by
                     // timing. The check runs unconditionally on the
@@ -247,14 +247,14 @@ internal sealed class PairedDeviceStore
     public bool Revoke(string deviceId)
     {
         if (!_byDeviceId.TryGetValue(deviceId, out var entry)) return false;
-        // [P1 swarm-audit 2026-05-29] write Revoked under the device-state
+        // write Revoked under the device-state
         // lock so a concurrent Verify (reading Revoked / writing LastSeen)
         // observes a consistent value rather than racing this mutation.
         lock (_deviceStateLock)
         {
             entry.Device.Revoked = true;
         }
-        // QC27-07: drop any cached fast-path entry so a revoked
+        // Drop any cached fast-path entry so a revoked
         // device is rejected on the very next Verify call.
         InvalidateVerifyCache(deviceId);
         Persist();
@@ -278,7 +278,7 @@ internal sealed class PairedDeviceStore
             foreach (var d in dto.Devices)
             {
                 if (string.IsNullOrEmpty(d.DeviceId)) continue;
-                // Back-compat: older records (pre-QC27-03) did not
+                // Back-compat: older records did not
                 // persist IssuedAtUtc / LastUsedUtc. Treat missing
                 // (default) values as "same as PairedAt / LastSeen"
                 // so legacy devices keep working until they hit the
@@ -296,7 +296,7 @@ internal sealed class PairedDeviceStore
                     IssuedAtUtc = issuedAt,
                     LastUsedUtc = lastUsed,
                 };
-                // [P1 swarm-audit 2026-05-29] decode salt/hash per-entry so a
+                // decode salt/hash per-entry so a
                 // single corrupt base64 field skips only that device instead
                 // of throwing out of the loop into the bare catch below, which
                 // would wipe ALL paired devices and force everyone to re-pair.
@@ -328,7 +328,7 @@ internal sealed class PairedDeviceStore
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-                // [P1 swarm-audit 2026-05-29] snapshot the mutable device
+                // snapshot the mutable device
                 // fields (LastSeen / Revoked / LastUsedUtc) under the
                 // device-state lock so a concurrent Verify/Revoke can't tear
                 // a value mid-write into the persisted file.
@@ -372,7 +372,7 @@ internal sealed class PairedDeviceStore
 
     private sealed record Entry(PairedDevice Device, byte[] Salt, byte[] Hash);
 
-    /// <summary>One row in the verify-cache fast path (QC27-07).
+    /// <summary>One row in the verify-cache fast path.
     /// Maps a SHA-256(token) fingerprint to the deviceId it most
     /// recently verified against, with a hard expiry so revocations
     /// and rotations take effect within the TTL even on stale
@@ -391,7 +391,7 @@ internal sealed class PairedDeviceStore
         public DateTimeOffset PairedAt { get; set; }
         public DateTimeOffset LastSeen { get; set; }
         public bool Revoked { get; set; }
-        // Added with QC27-03 rotation policy. `default` on legacy
+        // Added with the rotation policy. `default` on legacy
         // payloads is back-filled from PairedAt / LastSeen during Load().
         public DateTimeOffset IssuedAtUtc { get; set; }
         public DateTimeOffset LastUsedUtc { get; set; }

@@ -7,8 +7,8 @@ namespace Phoenix.Controls.ViewerServer;
 /// <summary>
 /// The contract <see cref="ViewerServer"/> consumes from its host. The
 /// Hub-side implementation (eventually living in
-/// <c>Phoenix.Controls.Hub.WinUI/Services/HubViewerReadModel.cs</c> per
-/// Track 4, or in the WinForms Hub as a transitional shim) wraps the
+/// <c>Phoenix.Controls.Hub.WinUI/Services/HubViewerReadModel.cs</c>,
+/// or in the WinForms Hub as a transitional shim) wraps the
 /// existing Hub services — script registry, live feed buffer, chat
 /// history, GlobalLogger ring buffer, connection state — and projects
 /// them into the read-only DTOs declared in <see cref="ViewerSnapshot"/>.

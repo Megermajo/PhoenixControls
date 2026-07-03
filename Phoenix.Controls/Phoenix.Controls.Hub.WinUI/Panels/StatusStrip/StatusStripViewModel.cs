@@ -7,7 +7,7 @@ using Phoenix.Controls.Hub.WinUI.Panels.Common;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI.Contracts;
-// B44 — Visibility lives on the XAML namespace; alias-importing it here
+// Visibility lives on the XAML namespace; alias-importing it here
 // keeps the property accessors readable instead of saying
 // Microsoft.UI.Xaml.Visibility.Visible everywhere.
 using Visibility = Microsoft.UI.Xaml.Visibility;
@@ -17,7 +17,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.StatusStrip;
 public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
 {
     private readonly IConnectionStatus _status;
-    // C1 (2026-05-14): per-VM dispatcher pump, ctor-injected by PanelFactory.
+    // Per-VM dispatcher pump, ctor-injected by PanelFactory.
     private readonly UiDispatcherPump _ui;
 
     private ConnectionState _streamerBot;
@@ -25,7 +25,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     private ConnectionState _ipcBus;
     private bool _disposed;
 
-    // QC44-01 (2026-05-15): clock + version stamp restored per Design_Orders
+    // Clock + version stamp restored per Design_Orders
     // §4.8. The strip used to be a left-zone-only widget; the spec asks for
     // left status zone + center contextual + right meta (clock + version).
     // Center contextual is wired empty for now — call sites will publish
@@ -34,7 +34,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     private string _clock = string.Empty;
     private string _centerContextual = string.Empty;
     private DispatcherTimer? _clockTimer;
-    // B8 / B44 (audit 2026-05-24) — 1 s dispatcher tick polls
+    // 1 s dispatcher tick polls
     // LayerRegistry.ActiveLayerCount + HUDServer.CurrentBroadcastFps +
     // the WS server's port / enabled flag (LIVE WS state requires
     // service-side access we don't have in scope; we surface
@@ -45,7 +45,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     private string _layersText = string.Empty;
     private string _fpsText    = string.Empty;
     private string _wsText     = string.Empty;
-    // B44 — visibility/opacity backing for the WS badge. Hidden entirely
+    // Visibility/opacity backing for the WS badge. Hidden entirely
     // when the master toggle is off; dimmed when listening but no clients
     // are connected; fully opaque on any non-zero client count.
     private Visibility _wsBadgeVisibility = Visibility.Collapsed;
@@ -58,7 +58,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         _status.StateChanged += OnStateChanged;
         Pull();
 
-        // QC44-01: 1-minute resolution is enough for the §4.8 HH:mm format.
+        // 1-minute resolution is enough for the §4.8 HH:mm format.
         // Aligned to dispatcher so binding updates land on the UI thread
         // without an explicit Post.
         _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
@@ -66,7 +66,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         _clockTimer.Start();
         RefreshClock();
 
-        // B8 / B44 (audit 2026-05-24) — center / WS readouts. Polls every
+        // Center / WS readouts. Polls every
         // second through DispatcherTimer so updates land on the UI thread
         // without an explicit Post wrapper. RefreshStats also runs once
         // up-front so the strip renders meaningful initial values before
@@ -78,7 +78,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     }
 
     /// <summary>
-    /// B8 / B44 readouts — read LayerRegistry / HUDServer / AppConfig and
+    /// Readouts — read LayerRegistry / HUDServer / AppConfig and
     /// re-raise the bound text properties when their formatted strings
     /// change. Single allocation per refresh on identity miss, zero on
     /// hit so the 1 Hz tick is cheap.
@@ -125,7 +125,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
             Raise(nameof(FpsText));
         }
 
-        // B44 (audit/winui-regressions-2026-05-24, finished sweep) — WS server
+        // WS server
         // status badge. Now pulled live through HubHost.WebSocketServer, with
         // a fallback to the AppConfig enabled/port pair while the service is
         // still booting (HubHost.WebSocketServer is null until
@@ -146,9 +146,9 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         bool wsEnabled = cfg?.WebSocketServerEnabled ?? false;
         int  wsPort    = cfg?.WebSocketServerPort    ?? 18083;
         string wsText;
-        // B44 — three rendered states drive the badge's Visibility/Opacity.
-        // The audit explicitly asks for "hide entirely when disabled" and
-        // "dim when 0 clients"; we additionally distinguish "starting…" from
+        // Three rendered states drive the badge's Visibility/Opacity:
+        // hide entirely when disabled, dim when 0 clients; we additionally
+        // distinguish "starting…" from
         // "listening with 0 clients" so the user can tell whether the
         // bootstrapper is still working or the listener is just idle.
         Visibility nextVisibility;
@@ -179,7 +179,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
                     Localizer.T("panel.statusstrip.ws_clients_v2_format", "WSS :{0} · {1} clients"),
                     wsPort, clients);
                 nextVisibility = Visibility.Visible;
-                // Audit: "when enabled but 0 clients — dim it." Full opacity
+                // When enabled but 0 clients, dim it. Full opacity
                 // once a real client is connected so live activity stands out.
                 nextOpacity    = clients > 0 ? 1.0 : 0.55;
             }
@@ -201,22 +201,22 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         }
     }
 
-    /// <summary>B8 — formatted "Layers: N" readout.</summary>
+    /// <summary>Formatted "Layers: N" readout.</summary>
     public string LayersText => _layersText;
-    /// <summary>B8 — formatted "FPS: X.X" readout (or "FPS: —" before HUD ready).</summary>
+    /// <summary>Formatted "FPS: X.X" readout (or "FPS: —" before HUD ready).</summary>
     public string FpsText => _fpsText;
-    /// <summary>B44 — formatted "WSS :PORT · N clients" badge.</summary>
+    /// <summary>Formatted "WSS :PORT · N clients" badge.</summary>
     public string WsText => _wsText;
 
     /// <summary>
-    /// B44 — Collapsed when the master toggle is off (hides the badge entirely
-    /// per audit) and Visible otherwise.
+    /// Collapsed when the master toggle is off (hides the badge entirely)
+    /// and Visible otherwise.
     /// </summary>
     public Visibility WsBadgeVisibility => _wsBadgeVisibility;
 
     /// <summary>
-    /// B44 — 0.55 when listening with no clients OR starting; 1.0 once a real
-    /// client connects. Audit calls for a dim affordance on the idle state.
+    /// 0.55 when listening with no clients OR starting; 1.0 once a real
+    /// client connects — a dim affordance on the idle state.
     /// </summary>
     public double WsBadgeOpacity => _wsBadgeOpacity;
 
@@ -233,7 +233,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         {
             try { t.Stop(); } catch { }
         }
-        // B8 / B44 — stop the stats poll timer alongside the clock timer.
+        // Stop the stats poll timer alongside the clock timer.
         var s = _statsTimer;
         _statsTimer = null;
         if (s is not null)
@@ -246,7 +246,7 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     public ConnectionState HudOverlay  { get => _hudOverlay;  private set => Set(ref _hudOverlay,  value); }
     public ConnectionState IpcBus      { get => _ipcBus;      private set => Set(ref _ipcBus,      value); }
 
-    // Hub UI sweep P2 — pull live port labels off AppConfig / Bus instead of
+    // Pull live port labels off AppConfig / Bus instead of
     // hardcoded strings so changing the Streamer.bot URL or HUD Server Port
     // in Settings is reflected in the status strip on the next read. The Bus
     // listen port is a Bus constant (18081 today, exposed as Bus.ListenPort
@@ -296,16 +296,16 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         set => Set(ref _centerContextual, value ?? string.Empty);
     }
 
-    // _status.StateChanged may fire on a background thread (Track 4's bridge to
+    // _status.StateChanged may fire on a background thread (the bridge to
     // Bus / WS event loops). Marshal to the UI thread before
     // touching x:Bind-watched properties — otherwise WinUI raises COMException
     // when the bound DependencyProperty updates off the dispatcher.
-    //  Payload-typed handler. The status strip re-pulls all three
+    // Payload-typed handler. The status strip re-pulls all three
     // channels each fire (the per-channel diff lives in the property setters'
     // change detection) so we don't branch on e.Channel here.
     private void OnStateChanged(object? sender, ConnectionStateChange e)
     {
-        // Perf-review H1: HasThreadAccess fast-path baked into Post.
+        // HasThreadAccess fast-path baked into Post.
         _ui.Post(Pull);
     }
 

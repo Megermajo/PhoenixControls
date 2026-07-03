@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Architect.Core
         // O(depth) linear scan of the stack on each Process.Spawn / Macro.Call.
         private readonly HashSet<string> _macroStackSet;
 
-        // ── ARCH-P1-EXPORT-INDEX ─────────────────────────────────────────────
+        // ── Export index ─────────────────────────────────────────────────────
         // Lazily-built per-export lookup indices over the (immutable-during-export)
         // _graph. Built once on first use, reused for the whole Export() pass, and
         // reset at the top of Export() so a re-export of the same instance rebuilds
@@ -117,9 +117,9 @@ namespace Phoenix.Controls.Architect.Core
         // Categories whose nodes are pure-data (consumed inline by
         // ResolveOutputFromNode). When such a node is reached via flow input,
         // populate its result cache via ComputeInlineValue and skip emit.
-        // M43 — exposed publicly so NodeCoverageTests can read from the
+        // Exposed publicly so NodeCoverageTests can read from the
         // canonical source instead of re-declaring its own copy. The test
-        // wrapper now consumes PureDataCategories directly (sweep 11).
+        // wrapper now consumes PureDataCategories directly.
         public static readonly HashSet<string> _pureDataCategories
             = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -128,13 +128,13 @@ namespace Phoenix.Controls.Architect.Core
         };
 
         /// <summary>
-        /// M43 — read-only accessor for the canonical pure-data category set.
+        /// Read-only accessor for the canonical pure-data category set.
         /// Mirrors <see cref="_pureDataCategories"/> for callers that prefer a
         /// non-mutable view (e.g. the NodeCoverageTests guard).
         /// </summary>
         public static IReadOnlyCollection<string> PureDataCategories => _pureDataCategories;
 
-        // B8 — strict callable detector. A "callable" expression is one that
+        // Strict callable detector. A "callable" expression is one that
         // looks like `name(` or `module.name(` (a dotted lowercase identifier
         // chain immediately followed by an open paren — matches all Script
         // commands like `math.add(`, `text.format(`, `db.get_cell(`, plus bare
@@ -145,7 +145,7 @@ namespace Phoenix.Controls.Architect.Core
             new(@"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)*\s*\(", RegexOptions.Compiled);
 
         /// <summary>
-        ///  Strict callable check exposed to handler-side code that does its
+        /// Strict callable check exposed to handler-side code that does its
         /// own hoist (currently <c>ForLoopHandler</c>). Mirrors the gate in
         /// <see cref="MaterializeInput"/> so the two paths stay consistent — a
         /// parenthesised literal like "(foo)" is NOT a function call and shouldn't
@@ -154,7 +154,7 @@ namespace Phoenix.Controls.Architect.Core
         public static bool IsCallableExpression(string val) =>
             !string.IsNullOrEmpty(val) && CallableRegex.IsMatch(val);
 
-        // B7 — runtime warnings raised during traversal (e.g. ambiguous multi-link
+        // Runtime warnings raised during traversal (e.g. ambiguous multi-link
         // input sockets). Surfaced as `# WARNING: ...` comment lines after the
         // pre-pass GraphValidator results in Export(). De-duped across calls so a
         // single ambiguity doesn't show up multiple times if the graph is walked
@@ -174,7 +174,7 @@ namespace Phoenix.Controls.Architect.Core
             });
         }
 
-        // ARCH-P1-MACRO-MEMO — shared across the whole nested-exporter tree (threaded
+        // Macro-export memo — shared across the whole nested-exporter tree (threaded
         // through the private ctor like _macroStack) so a macro/process body called
         // from N reachable sites/events exports its sub-script once. Keyed on
         // everything that affects sub-export output: the body graph identity, the
@@ -225,7 +225,7 @@ namespace Phoenix.Controls.Architect.Core
         // string parameter the full interpolated string is always built first.
         private void Emit(string line) => _sb.AppendLine(line);
 
-        // ARCH-P2-INDENT-CACHE — indent prefixes ("    " × depth) are rebuilt in
+        // Indent-prefix cache — indent prefixes ("    " × depth) are rebuilt in
         // several hot resolve/emit paths. Cache them by depth so repeated emits at
         // the same indent reuse one interned string. Output is byte-identical to
         // `new string(' ', depth * 4)`. Grown on demand; instance-local.
@@ -243,7 +243,7 @@ namespace Phoenix.Controls.Architect.Core
             _sb.Clear();
             _runtimeWarnings.Clear();
             _runtimeWarningsSeen.Clear();
-            // ARCH-P1-EXPORT-INDEX — drop any stale indices so a re-export of this
+            // Drop any stale indices so a re-export of this
             // same instance rebuilds against the current graph on next use.
             _nodeById = null;
             _linkByFromSocket = null;
@@ -272,7 +272,7 @@ namespace Phoenix.Controls.Architect.Core
             }
 
             // Build the body into a separate buffer first so any runtime warnings
-            // raised during traversal (e.g. B7 ambiguous multi-link inputs) can be
+            // raised during traversal (e.g. ambiguous multi-link inputs) can be
             // hoisted into the header alongside the GraphValidator pre-pass results.
             var headerSnapshot = _sb.ToString();
             _sb.Clear();
@@ -293,7 +293,7 @@ namespace Phoenix.Controls.Architect.Core
                          // an entry point while exporting a template; in the legacy inline
                          // path it stays a plain terminator handled by ProcessExitHandler.
                          || (_processTemplateMode && n.Title == "Process.Exit")
-                         // S13 — Macro.Entry lives in Category="Macros" (not "Events"),
+                         // Macro.Entry lives in Category="Macros" (not "Events"),
                          // so it never matched the Events filter and macro bodies rooted
                          // on its Flow output silently exported empty. Treat it as an
                          // entry point parallel to Process.Entry; ProcessEventNode walks
@@ -382,7 +382,7 @@ namespace Phoenix.Controls.Architect.Core
             // block-header; we just walk the flow at indent 0 so the caller
             // can re-indent inside that block.
             //
-            // S13 — Macro.Entry is the macro-body analogue: it lives in
+            // Macro.Entry is the macro-body analogue: it lives in
             // Category="Macros" (so it newly joins the entry-point set above) and,
             // exactly like Process.Entry, carries NO header. MacroCallHandler emits
             // the call-site framing and re-indents the body via the .Skip(3) header
@@ -407,6 +407,21 @@ namespace Phoenix.Controls.Architect.Core
             if (node.Title == "Process.Entry" || node.Title == "Macro.Entry")
             {
                 FollowNamedOutput(node, "Flow", 0);
+                // Return fallback: when the body's flow never reaches ANY
+                // Macro.Exit (the author only data-wired the exit), bind the
+                // return slots after the body so the call-site outputs still
+                // read real values. Binds the first Exit — mirrors
+                // MacroCallHandler's "only the first is used" contract. If flow
+                // reached SOME exit, that executed path already bound the slots
+                // (MacroExitHandler) — appending the first exit's unconditional
+                // bind here would clobber the executed path's value, so the
+                // fallback is skipped entirely in that case.
+                if (node.Title == "Macro.Entry" && !string.IsNullOrEmpty(_macroContextId))
+                {
+                    var exits = _graph.Nodes.Where(n => n.Title == "Macro.Exit").ToList();
+                    if (exits.Count > 0 && !exits.Any(e => _visitedNodes.Contains(e.Id)))
+                        ProcessNode(exits[0], 0);
+                }
                 return;
             }
             // Twitch.ChatMessage has special handling for Commands filtering
@@ -415,7 +430,7 @@ namespace Phoenix.Controls.Architect.Core
                 ProcessChatMessageEventNode(node);
                 return;
             }
-            // M29 — Bus.OnMessage may need a Source/Target wildcard guard injected
+            // Bus.OnMessage may need a Source/Target wildcard guard injected
             // between the on_bus header and the body. Done in a dedicated method
             // so the surrounding switch stays readable.
             if (node.Title == "Bus.OnMessage")
@@ -441,7 +456,7 @@ namespace Phoenix.Controls.Architect.Core
                 "WS.Server"             => $"on_websocket(\"{node.GetAttr("Name", "default")}\")",
                 "System.Hotkey"         => $"on_hotkey(\"{node.GetAttr("Combination", "Ctrl+Shift+P")}\")",
                 "System.Clipboard"      => "on_clipboard",
-                // B38 — OBS WS v5 event subscription. EventType attribute is
+                // OBS WS v5 event subscription. EventType attribute is
                 // the bare OBS event name (e.g. CurrentProgramSceneChanged).
                 // Dispatched by ScriptManager.DispatchObsEvent against the
                 // matching on_obs("<EventType>") block.
@@ -471,7 +486,7 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
 
-        // M29 — Bus.OnMessage with optional Source/Target wildcard filter.
+        // Bus.OnMessage with optional Source/Target wildcard filter.
         // Source / Target attributes default to "*" (match-any). When either is
         // narrowed to a concrete value, emit an `if {bus.source} == "X" and
         // {bus.target} == "Y":` guard between the on_bus header and the body
@@ -672,7 +687,7 @@ namespace Phoenix.Controls.Architect.Core
         {
             var merge = FindMergePoint(branchNode, trueOut, falseOut);
 
-            // ARCH-P1-BRANCH-FINALLY — guarantee the merge node is unblocked even if
+            // Guarantee the merge node is unblocked even if
             // a branch arm throws, so a later export pass / re-entry doesn't see a
             // stale _blockedForBranch entry that silently swallows the merge node.
             // The Remove() lives in the finally; ProcessNode(merge) stays on the
@@ -730,13 +745,13 @@ namespace Phoenix.Controls.Architect.Core
             if (inputSocket == null)
                 return node.GetAttr(socketName, fallback);
 
-            // B7 — Use JSON insertion order. System.Text.Json preserves array order
+            // Use JSON insertion order. System.Text.Json preserves array order
             // on deserialization, so graph.Links iteration is already deterministic
             // for the same .phxg file. Long-standing tests (ExporterBranchMergeTests)
             // depend on the user's drop order being the tiebreaker; sorting by
             // FromNodeId/FromSocketId would shuffle multi-link selection arbitrarily.
             //
-            // S13 — use the pre-built _linksByToNode index (grouped by ToNodeId,
+            // Use the pre-built _linksByToNode index (grouped by ToNodeId,
             // built preserving _graph.Links order) instead of a linear O(all_links)
             // scan. ResolveInputValue is a hot path (50+ call sites: Math/Text/Array/
             // Convert/Logic), so the full-graph traversal dominated dense-graph
@@ -751,7 +766,7 @@ namespace Phoenix.Controls.Architect.Core
             if (links.Count == 0)
                 return InlineLiteralOrFallback(node, inputSocket, socketName, fallback);
 
-            // B7 — surface multi-link inputs as a runtime warning so the user notices
+            // Surface multi-link inputs as a runtime warning so the user notices
             // their graph is ambiguous. Flow inputs legitimately accept multiple
             // upstream connections (merge points); only warn for non-flow data inputs.
             if (links.Count > 1 && !SocketTypeHelper.IsFlowPin(inputSocket))
@@ -773,13 +788,13 @@ namespace Phoenix.Controls.Architect.Core
             return ResolveOutputFromNode(src, srcSocket);
         }
 
-        //  Resolve an UNWIRED input socket to either its inline-
+        // Resolve an UNWIRED input socket to either its inline-
         // pill literal or the caller's fallback — quoting a String-typed literal ONLY
         // when its raw text contains a character that would break the engine's
         // quote-/paren-aware command-arg splitter if emitted bare. Without this, an
         // inline message like `Hello, world` emitted as `twitch.send_chat(Hello, world)`
         // was split by SplitArgs on the comma into TWO args, so only the text BEFORE
-        // the first comma reached Twitch (Majo, 2026-06-22). Wrapping it —
+        // the first comma reached Twitch (Majo). Wrapping it —
         // `twitch.send_chat("Hello, world")` — keeps it a single argument and round-
         // trips losslessly through the engine's quote-strip/unescape (the SAME
         // contract Value.String already relies on).
@@ -791,7 +806,7 @@ namespace Phoenix.Controls.Architect.Core
         //     already carries its own quoting where needed).
         //   * Skipped for a CALLABLE expression a user typed into a String pill (e.g.
         //     `math.add(1, 2)`) — those must stay bare so the exporter still hoists +
-        //     evaluates them (BugFixSweep2 B8).
+        //     evaluates them.
         //   * Skipped for an already-quoted literal.
         //   * Skipped unless the value actually contains a comma / double-quote /
         //     newline — so plain literals (`LogicExecution`, `42`, single-word
@@ -837,7 +852,7 @@ namespace Phoenix.Controls.Architect.Core
         private string MaterializeInput(Node node, string socketName, string fallback)
         {
             string val = ResolveInputValue(node, socketName, fallback);
-            // B8 — strict callable detection. The previous Contains("(") heuristic
+            // Strict callable detection. The previous Contains("(") heuristic
             // misfired on user-typed strings like "(foo)" (which legitimately
             // contain a paren but are NOT a function call). CallableRegex matches
             // only `name(` shaped expressions.
@@ -933,6 +948,23 @@ namespace Phoenix.Controls.Architect.Core
                 return $"{{global.{_macroContextId}_{SanitizeIdentifier(srcSocket.Name)}}}";
             }
 
+            // Macro.Call return outputs read the per-call-site return slot that
+            // MacroExitHandler writes inside the inlined body. The slot shape
+            // must mirror MacroCallHandler's slotPrefix composition exactly:
+            //   "_macro_<dash-stripped MacroId>_<IdPrefix(call, 12)>_ret_<name>"
+            // Gated on the macro actually existing in the graph — mirroring the
+            // write side, which inlines no body (and writes no slot) for an
+            // unbound (MacroId="") or deleted-but-still-referenced macro. Those
+            // fall through to the generic dead-literal fallback below.
+            if (src.Title == "Macro.Call" && srcSocket.Type == SocketType.Output
+                && srcSocket.Name != "Flow" && !srcSocket.IsPlaceholder)
+            {
+                string rawMacroId = src.GetAttr("MacroId", "");
+                if (!string.IsNullOrEmpty(rawMacroId)
+                    && _graph.Macros.Any(m => m.MacroId == rawMacroId))
+                    return $"{{global._macro_{rawMacroId.Replace("-", "")}_{IdPrefix(src)}_ret_{SanitizeIdentifier(srcSocket.Name)}}}";
+            }
+
             if (src.Category == "Events")
             {
                 // Event.Trigger return outputs carry values handed back by the executor
@@ -951,7 +983,7 @@ namespace Phoenix.Controls.Architect.Core
                     if (srcSocket.Name == "Command") return "{user.command}";
                     if (srcSocket.Name == "Args")    return "{user.args}";
                     if (srcSocket.Name == "IsCommand") return "{event.iscommand}";
-                    // D8 — chatter-role / metadata outputs. The engine binds these in
+                    // Chatter-role / metadata outputs. The engine binds these in
                     // BuildChatVars; map each socket name to its {user.*} var here so the
                     // new outputs resolve correctly instead of falling through to the
                     // generic {event.<name>} default below.
@@ -976,7 +1008,7 @@ namespace Phoenix.Controls.Architect.Core
                         return cachedUserVar;
                     }
                 }
-                //  — WS.Server's Body / Path map to event.body / event.path
+                // WS.Server's Body / Path map to event.body / event.path
                 // (set by ScriptManager.ExecuteOnWebSocketScriptsAsync). Fall through
                 // to the generic mapping for any other socket name on the node.
                 if (src.Title == "WS.Server")
@@ -984,17 +1016,17 @@ namespace Phoenix.Controls.Architect.Core
                     if (srcSocket.Name == "Body") return "{event.body}";
                     if (srcSocket.Name == "Path") return "{event.path}";
                 }
-                //  — System.Hotkey's Combo socket maps to event.combo
+                // System.Hotkey's Combo socket maps to event.combo
                 // (set by ScriptManager.ExecuteOnHotkeyScriptsAsync alongside
                 // hotkey.combo for clarity).
                 if (src.Title == "System.Hotkey" && srcSocket.Name == "Combo")
                     return "{event.combo}";
-                //  — System.Clipboard's Text socket maps to event.text
+                // System.Clipboard's Text socket maps to event.text
                 // (set by ScriptManager.ExecuteOnClipboardScriptsAsync alongside
                 // clipboard.text).
                 if (src.Title == "System.Clipboard" && srcSocket.Name == "Text")
                     return "{event.text}";
-                // B38 — OBS.Event's EventData socket maps to event.data (the
+                // OBS.Event's EventData socket maps to event.data (the
                 // raw OBS WS v5 eventData JSON object as a string). Scripts
                 // can run http.parse_json on it or substring-match the raw
                 // text. obs.event_type also surfaces the matched event name
@@ -1045,7 +1077,7 @@ namespace Phoenix.Controls.Architect.Core
                 return $"{{global._ematch_{IdPrefix(src, 6)}}}";
             if (src.Title == "DB.GetVariable")
             {
-                // H33 — honor the Default attribute by pre-emitting an assignment
+                // Honor the Default attribute by pre-emitting an assignment
                 // to a result var, with a conditional fallback when the resolved
                 // value is empty (i.e. the key was missing in the databank). This
                 // mirrors the Logic.Select pre-statement pattern below: we pay one
@@ -1069,7 +1101,7 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 return cached;
             }
-            //  — DB.FetchRow per-column synthesized output sockets
+            // DB.FetchRow per-column synthesized output sockets
             // resolve to {<RowVar>.<column>}. Must come BEFORE the generic
             // DB.* fallthrough below so the column socket name doesn't get
             // swallowed by the cached row-var return path.
@@ -1107,7 +1139,7 @@ namespace Phoenix.Controls.Architect.Core
                 // when consumed inline as a data output, dispatch through the
                 // registry so the unpack statements are emitted before use.
                 ProcessNode(src, _currentIndent);
-                // H40 — emit the substitution form `{global.x}` so nested macro/event
+                // Emit the substitution form `{global.x}` so nested macro/event
                 // re-entries resolve through SubstituteVars rather than treating the
                 // bare `global._unpack_...` token as a literal identifier.
                 if (srcSocket.Name == "Rest") return $"{{global._unpack_{IdPrefix(src, 6)}_rest}}";
@@ -1124,7 +1156,7 @@ namespace Phoenix.Controls.Architect.Core
 
             if (src.Title == "Text.ParseCommand")
             {
-                // D6 — per-node-unique result var. The old shared key
+                // Per-node-unique result var. The old shared key
                 // (global._result_text_parsecommand) clobbered itself when two
                 // Text.ParseCommand nodes ran in one script: the second node's emit
                 // overwrote the first, so a downstream array.get against the first
@@ -1236,7 +1268,7 @@ namespace Phoenix.Controls.Architect.Core
             if (src.Title == "API.Call" && srcSocket.Name == "Response")
                 return "{result.api_response}";
 
-            // Audit fix — AI nodes write result.ai_* engine vars at runtime
+            // AI nodes write result.ai_* engine vars at runtime
             // (ScriptManager.AI.cs), but ResolveOutputFromNode had no branch, so a
             // wire from an AI output socket emitted the dead literal
             // "AI.Prompt.Response". Map each declared output to its result var.
@@ -1250,7 +1282,7 @@ namespace Phoenix.Controls.Architect.Core
                     "Flagged"    => "{result.ai_flagged}",
                     "Category"   => "{result.ai_category}",
                     "ImageUrl"   => "{result.ai_image_url}",
-                    // QC37 — AI.StreamText surfaces the stream-close / failure
+                    // AI.StreamText surfaces the stream-close / failure
                     // sentinels its handler sets (result.ai_done /
                     // result.ai_error_kind / result.ai_retry_after). Only
                     // AI.StreamText declares these output sockets, so the
@@ -1264,7 +1296,7 @@ namespace Phoenix.Controls.Architect.Core
                 };
             }
 
-            // Audit fix — Bus.OnMessage Type/Payload outputs map to the {bus.*}
+            // Bus.OnMessage Type/Payload outputs map to the {bus.*}
             // vars the Hub bus dispatch populates (Bus.cs busVars); they previously
             // resolved to {event.type}/{event.payload}, which that path never sets.
             if (src.Title == "Bus.OnMessage")
@@ -1282,12 +1314,12 @@ namespace Phoenix.Controls.Architect.Core
             // id, so those sockets were pruned and the runtime no longer sets
             // result.poll_id / result.prediction_id (see ScriptManager.Twitch).
 
-            // Audit fix — Async.WaitForEvent Payload data-out maps to the engine's
+            // Async.WaitForEvent Payload data-out maps to the engine's
             // global._wait_payload (ScriptManager.Wait writes it on resume).
             if (src.Title == "Async.WaitForEvent" && srcSocket.Name == "Payload")
                 return "{global._wait_payload}";
 
-            // Audit fix — StreamerBot.GetUser is a byte-identical alias of
+            // StreamerBot.GetUser is a byte-identical alias of
             // twitch.get_user; its single Data output had no resolver branch and
             // emitted a dead literal. The lookup populates user.* result vars;
             // surface the most useful single field (display name) through Data.
@@ -1415,7 +1447,7 @@ namespace Phoenix.Controls.Architect.Core
                     ("Twitch.GetUser",      "IsSub")         => "user.is_sub",
                     ("Twitch.GetUser",      "IsVip")         => "user.is_vip",
                     ("Twitch.GetStream",    "Title")         => "stream.title",
-                    // Audit fix — engine writes stream.game / stream.viewers
+                    // Engine writes stream.game / stream.viewers
                     // (ScriptManager.Twitch.cs); the exporter previously mapped to
                     // stream.category / stream.viewer_count, which the lookup never
                     // populates, leaving these outputs empty downstream.
@@ -1461,7 +1493,7 @@ namespace Phoenix.Controls.Architect.Core
                     ("System.GetDate", "Month")         => "{system.month}",
                     ("System.GetDate", "MonthName")     => "{system.monthname}",
                     ("System.GetDate", "Year")          => "{system.year}",
-                    //  — Time.StreamUptime maps each output socket to
+                    // Time.StreamUptime maps each output socket to
                     // a {stream.*} token resolved by ScriptEngine
                     // against the configurable "stream start" anchor (defaults
                     // to Hub uptime).
@@ -1478,7 +1510,7 @@ namespace Phoenix.Controls.Architect.Core
             if (src.Category == "Queue")
             {
                 if (src.Title == "Queue.Pop")
-                    // H40 — substitution form so nested macro/event re-entries resolve
+                    // Substitution form so nested macro/event re-entries resolve
                     // these globals via SubstituteVars rather than as bare identifiers.
                     return $"{{global._queue_pop_{srcSocket.Name.ToLower()}_{IdPrefix(src, 6)}}}";
                 // Queue.Length is handled above via the pure-data inline path.
@@ -1500,7 +1532,7 @@ namespace Phoenix.Controls.Architect.Core
                 return "{loop.item}";
 
             // Flow.ForLoop "Index" output — per-id form so nested ForLoops don't
-            // collide. Engine batch B1 must populate both legacy {loop.index}
+            // collide. The engine must populate both legacy {loop.index}
             // and per-id {loop.index_<id6>} per-iteration so this remains a
             // backward-compatible read.
             if (src.Title == "Flow.ForLoop" && srcSocket.Name == "Index")
@@ -1550,7 +1582,7 @@ namespace Phoenix.Controls.Architect.Core
                     string arg2 = ResolveInputValue(src, "Arg2", "\"\"");
                     string arg3 = ResolveInputValue(src, "Arg3", "\"\"");
                     tmpl = tmpl.Replace("{Arg1}", "{0}").Replace("{Arg2}", "{1}").Replace("{Arg3}", "{2}");
-                    // Audit fix — escape the template so a Template containing a quote,
+                    // Escape the template so a Template containing a quote,
                     // backslash, or newline produces a valid `.phx` literal (every other
                     // quoted emission already routes through EscapeStringLiteral). The
                     // {0}/{1}/{2} placeholders are unaffected by escaping.
@@ -1570,7 +1602,7 @@ namespace Phoenix.Controls.Architect.Core
                 case "Math.Random":    return $"math.random({ResolveInputValue(src,"Min","1")}, {ResolveInputValue(src,"Max","100")})";
                 case "Text.Format":
                 {
-                    // D6 — iterate every present Arg slot (A..D) rather than hardcoding
+                    // Iterate every present Arg slot (A..D) rather than hardcoding
                     // A,B, so wired C/D reach the emitted text.format call. Mirrors the
                     // Array.Make slot-walk: resolve all four, then trim trailing empty
                     // fallbacks down to a two-arg floor (A,B) so an unwired Text.Format
@@ -1609,7 +1641,7 @@ namespace Phoenix.Controls.Architect.Core
                 case "Text.ParseCommand": return $"text.parse_command({ResolveInputValue(src,"Message","{message}")}, {ResolveInputValue(src,"Segments","2")})";
                 case "Array.Make":
                 {
-                    // L15 (sweep-8 follow-up) — Array.Make raised from 3 → 8 input
+                    // Array.Make raised from 3 → 8 input
                     // slots in NodeRegistry but the inline emit path still hardcoded
                     // A,B,C. Walk all eight slots, then trim trailing empty fallbacks
                     // so a 3-wire Array.Make doesn't pad to length 8 (which would
@@ -1637,7 +1669,7 @@ namespace Phoenix.Controls.Architect.Core
                     string joined = string.Join(",", items.Split(',').Select(x => x.Trim()));
                     return $"\"{joined}\"";
                 }
-                // Audit fix — the documented inline `Default` attribute (used when In
+                // The documented inline `Default` attribute (used when In
                 // is unwired) was dead: ResolveInputValue looked up a non-existent
                 // "In" attribute and always returned the hardcoded fallback, silently
                 // dropping a user-set Default. Read the Default attribute, escaped +
@@ -1746,7 +1778,7 @@ namespace Phoenix.Controls.Architect.Core
 
         internal void CtxEmit(string line) => Emit(line);
         internal void CtxAppendRawLine(string line) => _sb.AppendLine(line);
-        // M11 — handler-side hook into the runtime-warning surface used by Export().
+        // Handler-side hook into the runtime-warning surface used by Export().
         internal void CtxAddRuntimeWarning(string message, string? nodeId = null)
             => AddRuntimeWarning(message, nodeId);
         internal string CtxResolveInputValue(Node n, string socket, string fallback)
@@ -1761,7 +1793,7 @@ namespace Phoenix.Controls.Architect.Core
             => GetNamedOutputTarget(n, outName);
         internal Node? CtxGetTargetNode(string nodeId, string socketId)
             => GetTargetNode(nodeId, socketId);
-        // ARCH-P2-HANDLER-SCANS — O(1) "is this output socket wired" probe backed by
+        // O(1) "is this output socket wired" probe backed by
         // the per-export link index, so handlers don't re-scan Graph.Links per socket.
         internal bool CtxIsOutputConnected(string nodeId, string socketId)
         {
@@ -1788,7 +1820,7 @@ namespace Phoenix.Controls.Architect.Core
             //   slotPrefix = "_macro_<stableMacroId>_<callSiteId>"
             //   slotPrefix = "_process_<stableProcessId>_<callSiteId>"
             //
-            // / The original hardcoded `"_macro_".Length` (=7) only
+            // The original hardcoded `"_macro_".Length` (=7) only
             // works for the macro shape; for `_process_xyz_abc` the same offset 7
             // lands inside the literal "process" token (between the two `s`s) so
             // `IndexOf('_', 7)` returns 8 — yielding cycle key `"_process"` for
@@ -1806,7 +1838,7 @@ namespace Phoenix.Controls.Architect.Core
                 if (second > 0) cycleKey = slotPrefix.Substring(0, second);
             }
 
-            // ARCH-P2-MACRO-CYCLE-HASHSET — O(1) membership test instead of the
+            // O(1) membership test instead of the
             // O(depth) Stack.Contains scan. _macroStackSet is kept in lock-step
             // with _macroStack on every push/pop below.
             if (_macroStackSet.Contains(cycleKey))
@@ -1815,7 +1847,7 @@ namespace Phoenix.Controls.Architect.Core
                 throw new InvalidOperationException($"Circular macro reference: {chain}");
             }
 
-            // ARCH-P1-MACRO-MEMO — a body called from multiple reachable sites/events
+            // A body called from multiple reachable sites/events
             // re-exports identical text each time. The fresh sub-exporter starts with
             // empty visited/result/var state, so its output is a pure function of
             // (body graph identity, slotPrefix, in-flight macro-stack snapshot) — all
@@ -1900,12 +1932,12 @@ namespace Phoenix.Controls.Architect.Core
             CheckDanglingLinks(graph, warnings);
             CheckPlaceholderFrameContents(graph, warnings);
             CheckMacroCallOrphans(graph, warnings);
-            // B39 — required-input wiring guard. Catches the "saved a
+            // Required-input wiring guard. Catches the "saved a
             // Twitch.SendChat with no Message wire + no inline pill" class of
             // gap at author-time rather than run-time. Warnings only — export
             // still completes so the user can save and triage.
             CheckRequiredInputs(graph, warnings);
-            // C15 — unreachable-conditional-code guard. Tractable subset
+            // Unreachable-conditional-code guard. Tractable subset
             // only: Logic.If with both A and B materialised as compile-time
             // constants, and Flow.Select with a constant Index. See the
             // method header for the deferred-to-runtime cases.
@@ -1914,7 +1946,7 @@ namespace Phoenix.Controls.Architect.Core
             return warnings;
         }
 
-        // B39 — Required-input pre-export validation.
+        // Required-input pre-export validation.
         //
         // Sweep every non-Flow.Reroute / non-Flow.Select node. For each input
         // socket flagged required by the template (NodeTemplate.RequiredInputs
@@ -1979,7 +2011,7 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
 
-        // C15 — Unreachable conditional code (tractable subset).
+        // Unreachable conditional code (tractable subset).
         //
         // Identifies nodes whose only flow-input comes from a branch socket on
         // a Logic.If or Flow.Select where the branch is statically provable
@@ -1998,7 +2030,7 @@ namespace Phoenix.Controls.Architect.Core
         // Severity is Warning — false positives are conceivable when the
         // user is mid-edit, so we never block export.
         //
-        // TODO (C15-followup): cases NOT handled by this first iteration —
+        // TODO: cases NOT handled by this first iteration —
         //   * Logic.If with one constant + one wired side (would require
         //     partial evaluation of the upstream chain).
         //   * Nested conditional chains (A is itself the output of another
@@ -2047,7 +2079,7 @@ namespace Phoenix.Controls.Architect.Core
                 list.Add(toNode);
             }
 
-            // C15-followup — flow-level dead-edge propagation. Walk every
+            // Flow-level dead-edge propagation. Walk every
             // outgoing flow link in the graph once and bucket it as either
             // "live" (originates from an event/start OR from a non-branching
             // flow output) or "dead" (originates from a statically-known

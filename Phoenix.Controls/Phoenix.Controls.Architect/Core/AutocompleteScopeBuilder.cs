@@ -41,7 +41,7 @@ namespace Phoenix.Controls.Architect.Core
             var queue = new Queue<Node>();
             queue.Enqueue(currentNode);
 
-            //  Build a ToSocketId → links index once
+            // Build a ToSocketId → links index once
             // up front. Pre-fix the upstream BFS re-scanned the ENTIRE
             // graph.Links list for every flow-input socket of every dequeued
             // node — O(visited × flowInputs × links). The index drops the inner
@@ -238,7 +238,7 @@ namespace Phoenix.Controls.Architect.Core
                     AddRange(tokens, "result.ai_flagged", "result.ai_category", "result.ai_error");
                     return;
                 case "AI.StreamText":
-                    //  — streaming variant. result.ai_response holds
+                    // Streaming variant. result.ai_response holds
                     // the cumulative text (updated per chunk); result.ai_done
                     // flips on stream close; result.ai_error carries any
                     // error message. Same surface as AI.Prompt + the
@@ -246,7 +246,7 @@ namespace Phoenix.Controls.Architect.Core
                     AddRange(tokens, "result.ai_response", "result.ai_error", "result.ai_done");
                     return;
                 case "AI.GenerateImage":
-                    //  — single-shot image generation. result.ai_image_url
+                    // Single-shot image generation. result.ai_image_url
                     // carries the generated URL on success; result.ai_image_error
                     // any failure detail; result.ai_image_done flips when the
                     // call completes (success or failure) so scripts that
@@ -254,13 +254,13 @@ namespace Phoenix.Controls.Architect.Core
                     AddRange(tokens, "result.ai_image_url", "result.ai_image_error", "result.ai_image_done");
                     return;
                 case "AI.VisionDescribe":
-                    //  — single-shot vision Q&A. Reuses ai.prompt's
+                    // Single-shot vision Q&A. Reuses ai.prompt's
                     // result vars: result.ai_response carries the answer;
                     // result.ai_error any failure detail.
                     AddRange(tokens, "result.ai_response", "result.ai_error");
                     return;
                 case "AI.WithTools":
-                    //  — single-shot tool-calling. Mutually
+                    // Single-shot tool-calling. Mutually
                     // exclusive on a given call:
                     //   * result.ai_response   — plain text answer.
                     //   * result.ai_tool_calls — JSON array string of

@@ -40,7 +40,7 @@ namespace Phoenix.Controls.Hub.Core
         // Active players/synths — kept rooted so they aren't GC'd while playing.
         // Cleaned up by the per-instance MediaEnded/MediaFailed/SpeakCompleted handlers.
         //
-        // QC40-03 — MediaPlayer is stored alongside the original per-call volume
+        // MediaPlayer is stored alongside the original per-call volume
         // (the 0..1 multiplier the script passed in, BEFORE base-volume application).
         // SetBaseVolume needs both to re-derive effective volume on the fly when the
         // streamer ducks mid-playback — without the per-call value we'd lose the
@@ -68,7 +68,7 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     created = Dispatcher.CurrentDispatcher; // forces creation on this thread
 
-                    // QC40-02 — keep the dispatcher loop alive after a faulting handler.
+                    // Keep the dispatcher loop alive after a faulting handler.
                     // Without UnhandledException = Handled, any throw from a MediaEnded /
                     // MediaFailed / dispatch lambda would tear down Dispatcher.Run() and
                     // brick every subsequent audio.play / audio.play_tts call until Hub
@@ -102,7 +102,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC40-02 — graceful teardown for the STA dispatcher thread. Safe to call
+        /// Graceful teardown for the STA dispatcher thread. Safe to call
         /// from any thread; idempotent. Posts <see cref="Dispatcher.InvokeShutdown"/>
         /// onto the dispatcher itself so the worker thread exits its
         /// <see cref="Dispatcher.Run"/> loop without a forced abort.
@@ -128,7 +128,7 @@ namespace Phoenix.Controls.Hub.Core
                 GlobalLogger.Error("Audio", "AudioService.Shutdown failed", ex);
             }
 
-            // QC40-02 — bounded join so a wedged Dispatcher thread can't keep the
+            // Bounded join so a wedged Dispatcher thread can't keep the
             // test host (or a slow Hub teardown) alive indefinitely. 2s is well
             // beyond a healthy InvokeShutdown drain; anything longer than that is
             // a wedge that we'd rather abandon than wait on.
@@ -164,7 +164,7 @@ namespace Phoenix.Controls.Hub.Core
                 activeCount = _activePlayers.Count;
             }
 
-            // QC40-03 — duck currently-playing audio in addition to future plays.
+            // Duck currently-playing audio in addition to future plays.
             // The class XML doc-comment promises "duck everything at once"; before
             // this fix SetBaseVolume only affected the volume snapshot taken at
             // the next PlayAsync call, leaving any in-flight sting / TTS at its
@@ -172,7 +172,7 @@ namespace Phoenix.Controls.Hub.Core
             // * newBase. Marshal onto the audio Dispatcher because MediaPlayer
             // properties are thread-affined to the dispatcher that created it.
             //
-            // QC40-03b — re-read _activePlayers under _lock from INSIDE the
+            // Re-read _activePlayers under _lock from INSIDE the
             // dispatcher callback rather than sending a snapshot captured on the
             // caller's thread. BeginInvoke runs asynchronously, so a player present
             // in a caller-side snapshot can be disposed by DisposePlayer (which
@@ -230,7 +230,7 @@ namespace Phoenix.Controls.Hub.Core
             double effective = perCall * GetBaseVolume();
             var dispatcher = GetDispatcher();
 
-            // QC40-02 — defensive watchdog. If the dispatcher has been shut down
+            // Defensive watchdog. If the dispatcher has been shut down
             // (Hub teardown raced ahead of a fire-and-forget audio.play call), the
             // legacy code would queue a work item that never ran AND return a Task
             // that never completed, hanging the script forever. Fail fast with a
@@ -241,7 +241,7 @@ namespace Phoenix.Controls.Hub.Core
             // Kick off on the STA dispatcher; we wait only for construction +
             // Open + Play to be queued — not for MediaEnded.
             //
-            // QC40-02 — the HasShutdownStarted check above is a TOCTOU best-effort:
+            // The HasShutdownStarted check above is a TOCTOU best-effort:
             // Shutdown() can win the race between the check and this InvokeAsync,
             // in which case InvokeAsync itself throws InvalidOperationException.
             // Convert that into the same controlled fast-fail message the explicit
@@ -266,7 +266,7 @@ namespace Phoenix.Controls.Hub.Core
                             DisposePlayer(player);
                         };
 
-                        // QC40-03 — root the player AND its per-call volume so a later
+                        // Root the player AND its per-call volume so a later
                         // SetBaseVolume can re-derive effective volume without losing
                         // the script's original ducking intent.
                         lock (_lock) { _activePlayers[player] = perCall; }
@@ -300,7 +300,7 @@ namespace Phoenix.Controls.Hub.Core
             catch { /* swallow — disposal is best-effort */ }
         }
 
-        // QC40-03 — test/diagnostic surface. Returns the count of currently rooted
+        // Test/diagnostic surface. Returns the count of currently rooted
         // MediaPlayer instances so unit tests can verify SetBaseVolume's "duck
         // everything at once" iteration without subscribing to internal events.
         internal static int ActivePlayerCount
@@ -358,7 +358,7 @@ namespace Phoenix.Controls.Hub.Core
                     var localSynth = synth;
                     localSynth.SpeakCompleted += (_, __) => DisposeSynth(localSynth);
 
-                    // QC40-06 — cooperative cancellation. Speech.Synthesis.SpeechSynthesizer
+                    // Cooperative cancellation. Speech.Synthesis.SpeechSynthesizer
                     // doesn't accept a CancellationToken on SpeakAsync; the only way to
                     // abort an in-flight TTS is SpeakAsyncCancelAll. Register a callback
                     // on ct so a cancelled script actually stops talking instead of
@@ -389,7 +389,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 finally
                 {
-                    // QC40-06 — if we registered the CT callback but never reached
+                    // If we registered the CT callback but never reached
                     // the SpeakCompleted hand-off (synth.SpeakAsync threw), dispose
                     // the registration here so the closure doesn't leak for the
                     // lifetime of the script's execution token.

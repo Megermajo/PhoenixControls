@@ -70,7 +70,7 @@ internal static class SubGraphWindowStateStore
     /// <paramref name="key"/>. Call from the AppWindow.Closing handler so
     /// the rect lives on across the window destruction.
     /// </summary>
-    /// <param name="flushSync"> Write synchronously
+    /// <param name="flushSync">Write synchronously
     /// (terminal close path) so the geometry lands before a host Environment.Exit
     /// kills a queued async write. Mid-session AppWindow.Closing persists stay async.</param>
     public static void Persist(Window window, string key, bool flushSync = false)
@@ -178,7 +178,7 @@ internal static class SubGraphWindowStateStore
         {
             WriteIndented = true,
         });
-        //  Terminal close path writes synchronously
+        // Terminal close path writes synchronously
         // so the geometry survives an immediate host Environment.Exit.
         if (flushSync)
         {

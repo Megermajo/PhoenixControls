@@ -22,8 +22,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 ///         <c>AppConfig.ArchitectHotkeyCheatsheetExpanded</c> with the
 ///         off-thread write path
 ///         (<see cref="ConfigManager.SaveDeferred"/>) to avoid the
-///         OneDrive-latency UI-thread freeze class flagged in
-///         <c>project_freeze_diagnostics</c>.</item>
+///         OneDrive-latency UI-thread freeze class.</item>
 /// </list>
 /// </summary>
 public sealed partial class HotkeyCheatsheet : UserControl
@@ -118,10 +117,9 @@ public sealed partial class HotkeyCheatsheet : UserControl
     {
         _expanded = !_expanded;
         ApplyExpandedVisual();
-        // Persist the choice off the UI thread per
-        // project_freeze_diagnostics — the deferred path serialises in-
-        // memory on the caller (sub-ms) and offloads the disk write to
-        // the thread pool.
+        // Persist the choice off the UI thread — the deferred path
+        // serialises in-memory on the caller (sub-ms) and offloads the
+        // disk write to the thread pool.
         ConfigManager.Current.ArchitectHotkeyCheatsheetExpanded = _expanded;
         ConfigManager.SaveDeferred(Paths.AppConfigJson);
     }
@@ -168,7 +166,7 @@ public sealed partial class HotkeyCheatsheet : UserControl
             rendered++;
         }
 
-        //  When the context has more chords than
+        // When the context has more chords than
         // fit, append a "+N more — F1 for full list" row instead of silently
         // dropping the overflow (pre-fix the surplus just vanished).
         if (entries.Count > MaxRows)

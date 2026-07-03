@@ -33,8 +33,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 /// an 800×200 widget previews as a wide strip and a 1080×1920 widget as a tall
 /// slice. The owner persists the new width through <see cref="OnResized"/>.</para>
 ///
-/// <para>Per feedback_visualist_architect_chrome_independence this panel is
-/// Visualist-local; all failures log via <see cref="GlobalLogger"/>, no modals.</para>
+/// <para>This panel is Visualist-local; all failures log via
+/// <see cref="GlobalLogger"/>, no modals.</para>
 /// </summary>
 public sealed partial class WidgetSinglePreviewPanel : UserControl
 {
@@ -61,7 +61,7 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
     // (matching compositor.js's page-load behaviour). Updated by SetActiveTrigger.
     private string _activeTriggerName = "onStartup";
 
-    // Load-race guard (#5). Navigate() returns BEFORE the new page's compositor.js
+    // Load-race guard. Navigate() returns BEFORE the new page's compositor.js
     // installs its window.onmessage handler, so a SET_ACTIVE_TRIGGER posted right
     // after LoadAsync is dropped (or hits the outgoing document) — the page's first
     // renderAll() then reads previewActiveTrigger === null and paints the onStartup
@@ -104,14 +104,14 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
     public event Action<ManipulatorAttrChange>? OnManipulatorAttrChanged;
 
     /// <summary>Fired (UI thread) when compositor.js forwards a Ctrl+Z while the
-    /// embedded preview WebView2 holds keyboard focus (bug #5). After a manipulator
+    /// embedded preview WebView2 holds keyboard focus. After a manipulator
     /// drag focus lives in the WebView2, which swallows Ctrl+Z so it never reaches
     /// the document hotkey handler — the preview forwards it here instead so undo
     /// works on transform edits regardless of where focus landed.</summary>
     public event Action? OnUndoRequested;
 
     /// <summary>Fired (UI thread) when compositor.js forwards a Ctrl+Shift+Z / Ctrl+Y
-    /// from the embedded preview (bug #5 — redo counterpart of OnUndoRequested).</summary>
+    /// from the embedded preview (redo counterpart of OnUndoRequested).</summary>
     public event Action? OnRedoRequested;
 
     public WidgetSinglePreviewPanel()
@@ -437,7 +437,7 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
     private void PostJson(object payload)
     {
         if (!_coreInitialized) return;
-        // K-P2 (audit live-preview lane): explicit guard against a torn-down
+        // Explicit guard against a torn-down
         // WebView2. PostJson is reachable from SetActiveNode / PostWidgetUpdate /
         // manipulator events that may fire after the pane unloaded, where
         // PreviewWeb (or its CoreWebView2) can be null. Guarding up front makes
@@ -468,7 +468,7 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
             // Healthy page — reveal it (the loading placeholder was covering it).
             _navFailRetries = 0;
             ShowWebView();
-            // #5 load-race fix. The new document's compositor.js onmessage handler
+            // Load-race fix. The new document's compositor.js onmessage handler
             // is installed by the time NavigationCompleted fires, but its first
             // renderAll() (after the /api/layer fetch resolves) reads
             // previewActiveTrigger — which is null unless a SET_ACTIVE_TRIGGER
@@ -530,7 +530,7 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
             if (!doc.RootElement.TryGetProperty("type", out var typeEl)) return;
             string msgType = typeEl.GetString() ?? "";
 
-            // Bug #5 — undo / redo forwarded from compositor.js when the embedded
+            // Undo / redo forwarded from compositor.js when the embedded
             // preview WebView2 holds keyboard focus (e.g. right after a manipulator
             // drag). The WebView2 swallows Ctrl+Z so the document hotkey on the graph
             // canvas never sees it; the preview forwards it here so undo still works.

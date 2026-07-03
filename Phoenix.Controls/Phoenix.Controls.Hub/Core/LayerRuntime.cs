@@ -17,7 +17,7 @@ namespace Phoenix.Controls.Hub.Core
     /// </summary>
     public sealed class LayerRuntime
     {
-        // BH-018 — same systemic ??= race that plagues ScriptManager / DB /
+        // Same systemic ??= race that plagues ScriptManager / DB /
         // LayerRegistry. LayerRuntime first-touch happens from HubBootstrapper wiring
         // AND from VISUAL_TRIGGER bus handlers that fire before the bootstrapper has
         // finished; concurrent paths must serialize.
@@ -231,7 +231,7 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>
         /// Drops every queue for a given layer (e.g. when a `.phxlayer` is deleted).
-        /// M78 — without this, queued triggers for a now-gone layer kept their
+        /// Without this, queued triggers for a now-gone layer kept their
         /// channel pumps alive.
         /// </summary>
         public void DiscardLayer(string layerId)

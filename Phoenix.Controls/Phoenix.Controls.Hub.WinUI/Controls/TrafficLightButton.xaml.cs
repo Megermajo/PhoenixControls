@@ -75,7 +75,7 @@ public sealed partial class TrafficLightButton : UserControl
         };
         Glyph.Data = (Geometry)XamlBindingHelper.ConvertValue(typeof(Geometry), data);
 
-        //  i18n labels resolve at ApplyKind time. Localizer has no
+        // i18n labels resolve at ApplyKind time. Localizer has no
         // LanguageChanged event yet — language change is restart-required
         // across the suite, so these labels won't repaint mid-session.
         string label = Kind switch

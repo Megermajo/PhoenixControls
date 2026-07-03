@@ -1,8 +1,8 @@
-// Utilities band carved from ScriptEngine.cs ().
+// Utilities band carved from ScriptEngine.cs.
 // Owns: static parsing/recognition helpers —
-//   IsBlockHeader (R12), ShouldEnterBlock,
+//   IsBlockHeader, ShouldEnterBlock,
 //   GetIndent, StripInlineComment, FindBlockEnd, ExtractArgs,
-//   SplitArgs (R24 two-pass, internal), ParseTruthy (L7), SplitListWithEscape (L10).
+//   SplitArgs (two-pass, internal), ParseTruthy, SplitListWithEscape.
 
 using System;
 using System.Collections.Generic;
@@ -16,7 +16,7 @@ namespace Phoenix.Controls.Shared.Core
         // BLOCK HEADER RECOGNITION
         // ─────────────────────────────────────────────────────────────────
 
-        // R12 — Centralized block-header recognizer. Iterates the static
+        // Centralized block-header recognizer. Iterates the static
         // BlockHeaderPrefixes list rather than open-coding the StartsWith
         // chain, so adding a new event family means appending one entry
         // to BlockHeaderPrefixes (and not touching this method). The "if "
@@ -99,7 +99,7 @@ namespace Phoenix.Controls.Shared.Core
                 line.StartsWith("on_interval("))
                 return string.IsNullOrEmpty(EventType)
                     || EventType.Equals("Schedule", StringComparison.OrdinalIgnoreCase);
-            //  — on_websocket("name"): the executor only enters the
+            // on_websocket("name"): the executor only enters the
             // block when the engine's EventType matches "WebSocket.<name>".
             // ScriptManager.ExecuteOnWebSocketScriptsAsync sets EventType
             // before TimedExecuteAsync, mirroring the on_webhook plumbing.
@@ -114,7 +114,7 @@ namespace Phoenix.Controls.Shared.Core
                     : EventType;
                 return actual.Equals(expected, StringComparison.OrdinalIgnoreCase);
             }
-            //  — on_hotkey("Ctrl+Shift+P"): EventType is "Hotkey.<combo>".
+            // on_hotkey("Ctrl+Shift+P"): EventType is "Hotkey.<combo>".
             // HotkeyService normalises the combo string before dispatch, so
             // an exact-string equality against the declaration is sufficient.
             if (line.StartsWith("on_hotkey("))
@@ -128,7 +128,7 @@ namespace Phoenix.Controls.Shared.Core
                     : EventType;
                 return actual.Equals(expected, StringComparison.OrdinalIgnoreCase);
             }
-            //  — on_clipboard: fires on every clipboard change. No
+            // on_clipboard: fires on every clipboard change. No
             // discriminator (the OS doesn't differentiate by handler), so the
             // header check is "EventType starts with Clipboard." or empty.
             // ClipboardService sets EventType="Clipboard.Update" before dispatch.
@@ -169,7 +169,7 @@ namespace Phoenix.Controls.Shared.Core
 
         private static string StripInlineComment(string line)
         {
-            // QC01-06 — Quote-aware scan so a hashtag inside a string literal
+            // Quote-aware scan so a hashtag inside a string literal
             // (very common in send_chat("hello #channel")) is not mistaken for
             // an inline comment marker. Mirrors the inQuote tracking used by
             // SplitArgs. Backslash-escape on quotes is intentionally NOT
@@ -182,7 +182,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// QC01-05/06/13 — Returns the first index of <paramref name="needle"/>
+        /// Returns the first index of <paramref name="needle"/>
         /// in <paramref name="haystack"/> that lies outside any double-quoted
         /// segment, or -1 if no such occurrence exists. Single-character match
         /// returns the position of the character; multi-character match returns
@@ -218,7 +218,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// QC01-05 — Quote-aware split: walks <paramref name="haystack"/> and
+        /// Quote-aware split: walks <paramref name="haystack"/> and
         /// breaks it on every occurrence of <paramref name="separator"/> that
         /// lies outside a double-quoted segment. Returns the original string
         /// as a single-element array when the separator is absent or only
@@ -272,7 +272,7 @@ namespace Phoenix.Controls.Shared.Core
             return SplitArgs(line.Substring(start, end - start));
         }
 
-        // R24 — Two-pass split to drop the per-call List<string> allocation.
+        // Two-pass split to drop the per-call List<string> allocation.
         // Pass 1 walks the string counting paren-/quote-respecting splits to
         // size the result array exactly. Pass 2 fills it. This is the same
         // O(n) work as before (no extra allocations beyond the final array
@@ -337,7 +337,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// L7 — single source of truth for "is this string truthy?" logic. Used by
+        /// Single source of truth for "is this string truthy?" logic. Used by
         /// the engine's inline convert.to_bool wrapper and by ScriptManager's
         /// runtime convert.to_bool command. Accepts the canonical truthy set
         /// case-insensitively: "true" / "1" / "yes" / "on" / "y" / "t".
@@ -350,7 +350,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// Splits a comma-delimited list with `\,` escaping for literal commas (L10 fix).
+        /// Splits a comma-delimited list with `\,` escaping for literal commas.
         /// Used by for_each so values containing commas (chat messages, JSON-ish payloads)
         /// don't corrupt iteration. The escape sequence is decoded in the returned items.
         /// Empty / whitespace-only entries are dropped, matching prior behavior.

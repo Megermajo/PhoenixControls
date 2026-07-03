@@ -71,7 +71,7 @@ public sealed partial class ReadOnlyPhxWindow : Window
 
         ConfigurePresenter();
         PopulateChrome();
-        //  P1: body loading happens off the constructor — the root
+        // Body loading happens off the constructor — the root
         // Grid's Loaded event drives LoadBodyAsync so we can await
         // File.ReadAllTextAsync without blocking the UI thread on large
         // .phx files. Until the load completes, BodyText shows a brief
@@ -160,7 +160,7 @@ public sealed partial class ReadOnlyPhxWindow : Window
                 return;
             }
 
-            //  P1: ReadAllTextAsync keeps the UI thread responsive
+            // ReadAllTextAsync keeps the UI thread responsive
             // on large .phx files. UTF-8 with BOM detection matches what
             // ScriptExporter writes; the async overload preserves that
             // behaviour.

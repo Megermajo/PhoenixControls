@@ -9,7 +9,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 /// <c>HotkeyCheatsheet.SetContext</c>.
 /// </summary>
 /// <remarks>
-/// Per <c>feedback_visualist_architect_chrome_independence.md</c>, the
+/// Per the chrome-independence rule, the
 /// Architect analogue (<c>Architect.WinUI.Canvas.HotkeyContext</c>) is a
 /// deliberately separate enum even though the shape is similar — the two
 /// pillars never share canvas paint code.

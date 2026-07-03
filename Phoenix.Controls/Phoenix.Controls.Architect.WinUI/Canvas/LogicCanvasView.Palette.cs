@@ -25,7 +25,7 @@ public sealed partial class LogicCanvasView
     private System.DateTime _lastSpawnOpenUtc = System.DateTime.MinValue;
     private static readonly System.TimeSpan SpawnOpenDebounce = System.TimeSpan.FromMilliseconds(200);
 
-    //  sourceDirection lets the COMPATIBLE filter inside the
+    // sourceDirection lets the COMPATIBLE filter inside the
     // SpawnPaletteFlyout walk the right pin pool (Inputs vs Outputs) when
     // the wire-drop originated from a non-Output socket. Default Output
     // preserves the pre-fix behaviour for callers that don't thread the
@@ -89,7 +89,7 @@ public sealed partial class LogicCanvasView
         {
             Position           = hostPoint,
             ShowMode           = FlyoutShowMode.Standard,
-            //  Auto lets WinUI flip the placement
+            // Auto lets WinUI flip the placement
             // relative to the cursor anchor to keep the (tall) palette on-screen.
             // The prior hard-coded BottomEdgeAlignedRight clipped the results
             // list when the palette opened near the bottom / right screen edge.
@@ -154,7 +154,7 @@ public sealed partial class LogicCanvasView
                 var compat = FindFirstCompatibleInput(_pendingWireDropSource, newVm);
                 if (compat is not null) TryCreateLink(_pendingWireDropSource, compat);
                 else
-                    //  Spawned node had no
+                    // Spawned node had no
                     // compatible socket for the dropped wire — log instead of
                     // silently leaving the wire unconnected.
                     GlobalLogger.Log(

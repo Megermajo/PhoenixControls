@@ -84,7 +84,7 @@ namespace Phoenix.Controls.Hub.Core
             await _db.LogGiveawayActivityAsync(id, "INF", $"giveaway created — \"{title}\"", NowIso()).ConfigureAwait(false);
             RaiseGiveaways();
 
-            // [P1 swarm-audit 2026-05-29] GetGiveawayAsync is genuinely nullable — a
+            // GetGiveawayAsync is genuinely nullable — a
             // failed re-read (row gone, transient DB error) would NRE on the old `!`.
             // Guard it: if we can't read back the giveaway we just created, surface a
             // clear failure instead of dereferencing null downstream.

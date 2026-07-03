@@ -11,15 +11,14 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ChatPanel;
 //
 // Role coloring follows the precedence ladder:
 //   Broadcaster > Mod > VIP > Sub > Regular
-// — see feedback_chat_role_coloring.md. The four IRC tag-bag flags
-// travel through alongside the precedence-resolved Role so the
-// resolver can branch on them directly and the badge geometry is
-// always renderable for every role permutation. The chat body is
-// plain text (no `!`-prefix highlighting per
-// project_script_window_redesign.md — command activity surfaces in
-// the Script panel, not in chat coloring).
+// The four IRC tag-bag flags travel through alongside the
+// precedence-resolved Role so the resolver can branch on them directly
+// and the badge geometry is always renderable for every role
+// permutation. The chat body is plain text (no `!`-prefix highlighting
+// — command activity surfaces in the Script panel, not in chat
+// coloring).
 //
-//  Brush properties go through INotifyPropertyChanged so
+// Brush properties go through INotifyPropertyChanged so
 // ActualThemeChanged on the host View can re-resolve via RefreshBrushes
 // without recreating every row. x:Bind on UsernameBrush / BadgeBrush
 // uses Mode=OneWay in ChatView.xaml so the change actually flows.
@@ -91,7 +90,7 @@ public sealed class ChatRowVm : INotifyPropertyChanged
         }
     }
 
-    // [crash-fix 2026-06-03] FRESH geometry on every access. A Geometry is a
+    // FRESH geometry on every access. A Geometry is a
     // DependencyObject that can be parented to only one element; ItemsRepeater
     // recycles row containers, so a single STORED instance bound to a recycled
     // PathIcon threw ArgumentException out of PathIcon.set_Data and crashed
@@ -108,7 +107,7 @@ public sealed class ChatRowVm : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
-    ///  Re-resolve UsernameBrush / BadgeBrush against the current
+    /// Re-resolve UsernameBrush / BadgeBrush against the current
     /// Application.Resources so a runtime theme swap reaches the row without
     /// recreating it. Caller is the panel VM, which fires this on every
     /// materialised row when ActualThemeChanged signals a swap.
@@ -126,7 +125,7 @@ public sealed class ChatRowVm : INotifyPropertyChanged
         return RoleColorBrush.Resolve(IsBroadcaster, IsMod, IsVip, IsSubscriber);
     }
 
-    //  Bot ember-tint cache. Resolved lazily on first miss, cached
+    // Bot ember-tint cache. Resolved lazily on first miss, cached
     // statically so repeated misses don't re-walk Application.Resources.
     // InvalidateBrushCache() drops it on theme swap.
     private static Brush? s_cachedBotBrush;
@@ -146,7 +145,7 @@ public sealed class ChatRowVm : INotifyPropertyChanged
     }
 
     /// <summary>
-    ///  Drop cached brushes so the next Resolve / LookupBotBrush
+    /// Drop cached brushes so the next Resolve / LookupBotBrush
     /// call re-walks Application.Resources against the freshly-merged theme.
     /// Pair this with <see cref="RefreshBrushes"/> on each row when a theme
     /// swap lands (the panel VM does both in order).

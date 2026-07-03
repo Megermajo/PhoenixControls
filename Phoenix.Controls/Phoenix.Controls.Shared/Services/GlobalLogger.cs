@@ -18,7 +18,7 @@ namespace Phoenix.Controls.Shared.Services
         // telemetry, etc.) get stack traces, not just message strings.
         public static event Action<ErrorEvent>? OnError;
 
-        // ---------------- M87 — bounded queue ----------------
+        // ---------------- Bounded queue ----------------
         // The persistent log writer feeds a SQLite sink that may stall (DB lock,
         // disk full, AV scanning the WAL, etc.). Unbounded ConcurrentQueue would
         // grow without limit while the drain stalled. A bounded Channel with
@@ -28,7 +28,7 @@ namespace Phoenix.Controls.Shared.Services
         private const int MAX_QUEUE = 5000;
         private const int DROP_LOG_INTERVAL = 100; // one Debug.WriteLine per N drops
 
-        //  Channel element wraps the Log with a write-sequence number
+        // Channel element wraps the Log with a write-sequence number
         // so the writer pump can detect DropOldest evictions exactly (gap
         // between consecutive dequeued sequences = entries evicted).
         private readonly record struct QueuedEntry(Log Entry, long Sequence);
@@ -40,7 +40,7 @@ namespace Phoenix.Controls.Shared.Services
                 SingleReader = true,
                 SingleWriter = false,
             });
-        //  Two distinct counters now:
+        // Two distinct counters now:
         //   _droppedLogCount        — bumped only when TryWrite returns false
         //                             (closed channel after Stop()).
         //   _evictedLogCount        — bumped inside the writer pump when an
@@ -73,21 +73,21 @@ namespace Phoenix.Controls.Shared.Services
         // recursively would otherwise re-fire the event from inside its own
         // handler.
         //
-        //  Was [ThreadStatic] but the dispatch can happen on any
+        // Was [ThreadStatic] but the dispatch can happen on any
         // continuation thread (a subscriber may post back to the same Log()
         // through an awaiter that resumes on a different thread). AsyncLocal
         // flows the guard with the logical async context so a Log → handler →
         // Log re-entry is still caught even after a cross-thread marshal.
         private static readonly AsyncLocal<bool> _isDispatchingOnLogEntry = new();
 
-        // M86 — OnError re-entry guard. A handler that itself calls Error() (or
+        // OnError re-entry guard. A handler that itself calls Error() (or
         // Log() at CriticalError) would otherwise loop until the stack blows.
         // Same AsyncLocal reasoning as _isDispatchingOnLogEntry — Error() can
         // be invoked from an async continuation that resumed on a thread other
         // than the original caller's.
         private static readonly AsyncLocal<bool> _isDispatchingOnError = new();
 
-        // L72 /  — last DB write exception, exposed so the dashboard /
+        // L72 / — last DB write exception, exposed so the dashboard /
         // health UI can show "logger unhealthy" without subscribing to OnError
         // directly. Stored as a single record so paired writes can be applied
         // atomically via Volatile.Write — a reader can never see a torn pair
@@ -126,14 +126,14 @@ namespace Phoenix.Controls.Shared.Services
         public static void Log(string message, string source = "System", LogLevel level = LogLevel.System)
             => Log(message, source, level, exception: null);
 
-        //  Overload that carries the original Exception through to
+        // Overload that carries the original Exception through to
         // OnLogEntry subscribers (SystemLog row "View Last Error" affordance,
         // any future telemetry sink). The persistent SQLite sink doesn't store
         // the object — it flattens via Message — so the Exception lives only on
         // the in-memory ring and the OnLogEntry/OnError dispatches.
         public static void Log(string message, string source, LogLevel level, Exception? exception)
         {
-            //  Capture the instant once as a DateTimeOffset so the
+            // Capture the instant once as a DateTimeOffset so the
             // zone offset is preserved. DateTime.Now (Kind=Local) loses the
             // offset when serialized via JsonSerializer (it writes the local
             // wall-clock with no zone). The legacy DateTime Timestamp field
@@ -163,7 +163,7 @@ namespace Phoenix.Controls.Shared.Services
             // 2. Queue for Persistent Storage (SQLite) FIRST so a slow
             // OnLogEntry subscriber can't delay persistence.
             //
-            //  Pre-fix the order was history → OnLogEntry fan-out →
+            // Pre-fix the order was history → OnLogEntry fan-out →
             // channel write. A slow listener (Hub Dashboard DispatcherQueue
             // stall, RemoteBridge socket back-pressure, etc.) would push the
             // channel write back arbitrarily; under burst that lets the
@@ -183,7 +183,7 @@ namespace Phoenix.Controls.Shared.Services
             // dequeued sequence against the last-observed one. Any gap ==
             // that many entries were evicted between observations.
             //
-            //  The previous `Reader.Count >= MAX_QUEUE` heuristic
+            // The previous `Reader.Count >= MAX_QUEUE` heuristic
             // was a sampling check, NOT an eviction detector — it lied in
             // both directions (false positives when queue briefly idled at
             // cap, false negatives when the writer drained between TryWrite
@@ -198,7 +198,7 @@ namespace Phoenix.Controls.Shared.Services
             }
 
             // 3. Ensure writer is running (atomic check-and-set).
-            //  Snapshot the CTS reference once so a concurrent Stop()
+            // Snapshot the CTS reference once so a concurrent Stop()
             // can't replace the field between our token-read and the
             // StartLogWriterAsync call (which would let us pass an already-
             // disposed CTS to the pump). Volatile.Read pairs with the
@@ -206,7 +206,7 @@ namespace Phoenix.Controls.Shared.Services
             if (Interlocked.CompareExchange(ref _isWriterRunning, 1, 0) == 0)
             {
                 var ctsSnap = Volatile.Read(ref _cts);
-                // [P1 swarm-audit 2026-05-29] Route the fire-and-forget pump start
+                // Route the fire-and-forget pump start
                 // through AsyncErrorBoundary (reachable from Shared — it lives in
                 // Phoenix.Controls.Shared.Core, NOT Hub, so no pillar/dependency
                 // violation) so any fault that escapes the pump's own top-level
@@ -224,7 +224,7 @@ namespace Phoenix.Controls.Shared.Services
             // recursively re-firing the event from inside its own dispatch.
             DispatchOnLogEntry(entry);
 
-            //  Drop the live Exception reference from the ring-buffer
+            // Drop the live Exception reference from the ring-buffer
             // entry now that synchronous OnLogEntry fan-out is complete. Deep
             // inner chains + stack traces can run hundreds of KB each; pinning
             // 2000 of them in Gen2 for the lifetime of the process was worst-
@@ -251,7 +251,7 @@ namespace Phoenix.Controls.Shared.Services
             entry.Exception = null;
         }
 
-        //  Single-reader pump: each dequeue advances _lastReadSequence
+        // Single-reader pump: each dequeue advances _lastReadSequence
         // by exactly 1 in the no-eviction case. A larger jump means DropOldest
         // knocked entries off the back; the size of the jump is the eviction
         // count. Bumps _evictedLogCount and surfaces via ReportDropIfNeeded so
@@ -288,19 +288,19 @@ namespace Phoenix.Controls.Shared.Services
         // consumers get the full Exception). Replaces every silent
         // ContinueWith(OnlyOnFaulted) site in the Hub.
         //
-        //  The original Exception is attached to the Log entry so
+        // The original Exception is attached to the Log entry so
         // OnLogEntry subscribers (SystemLog, future telemetry) can render the
         // stack trace. ExceptionDispatchInfo.Capture preserves the stack so
         // downstream consumers may re-throw without losing the origin frame.
         //
-        //  AggregateException is flattened; each inner exception is
+        // AggregateException is flattened; each inner exception is
         // appended to the composed message and to the routed entries so a
         // Task.WhenAll fault no longer reads as the generic "One or more
         // errors occurred." line. Non-Aggregate exceptions have their
         // InnerException chain walked too (cap=5 to avoid pathological loops).
         public static void Error(string source, string message, Exception? ex = null)
         {
-            //  Single DateTimeOffset.Now reading shared between the
+            // Single DateTimeOffset.Now reading shared between the
             // log-entry timestamp (set inside Log()) and the ErrorEvent we
             // dispatch here. The ErrorEvent's DateTime Timestamp keeps its
             // pre-fix semantics (Kind=Local); the new TimestampOffset field
@@ -345,7 +345,7 @@ namespace Phoenix.Controls.Shared.Services
             });
         }
 
-        //  Flatten AggregateException + walk InnerException chains.
+        // Flatten AggregateException + walk InnerException chains.
         // Cap at MaxExceptionDepth so a pathological/cyclic chain can't blow
         // the stack or pin the dispatcher in a tight format loop.
         private const int MaxExceptionDepth = 5;
@@ -436,7 +436,7 @@ namespace Phoenix.Controls.Shared.Services
             return result;
         }
 
-        // M86 — central OnError dispatch with per-handler try/catch and an
+        // Central OnError dispatch with per-handler try/catch and an
         // AsyncLocal re-entry guard. A handler that calls Error/Log will
         // re-enter Log() (which is fine, and we want the inner log to be kept),
         // but will NOT re-fire OnError from inside its own dispatch — the inner
@@ -482,7 +482,7 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
-        //  Writer-pump variant of DispatchOnError. The pump runs
+        // Writer-pump variant of DispatchOnError. The pump runs
         // single-reader: a slow OnError handler invoked from
         // WriteEntryAsync's catch would block the next dequeue, which is
         // exactly the failure mode the persistent-DB fault path was
@@ -525,7 +525,7 @@ namespace Phoenix.Controls.Shared.Services
             }, (handlers, ev));
         }
 
-        //  OnLogEntry dispatch. Synchronous fan-out on the
+        // OnLogEntry dispatch. Synchronous fan-out on the
         // producer thread (kept that way so existing test fixtures and
         // production sinks observe the entry before the producing call
         // returns); the previous defect was that this dispatch ran BEFORE
@@ -568,7 +568,7 @@ namespace Phoenix.Controls.Shared.Services
         /// <summary>Signals the background writer to stop after draining remaining entries.</summary>
         public static void Stop()
         {
-            //  Swap in a fresh CTS first via Interlocked.Exchange so a
+            // Swap in a fresh CTS first via Interlocked.Exchange so a
             // concurrent Log() caller that already passed the
             // CompareExchange(_isWriterRunning, 1, 0) gate will read EITHER the
             // pre-swap CTS (and start a pump that observes immediate
@@ -589,7 +589,7 @@ namespace Phoenix.Controls.Shared.Services
                 old.Dispose();
             }
 
-            // [P1 swarm-audit 2026-05-29] Complete the writer so the pump's
+            // Complete the writer so the pump's
             // WaitToReadAsync wakes, drains the remainder, and exits its loop
             // (the drain comment in StartLogWriterAsync already anticipates
             // completion). TryComplete (not Complete) keeps Stop() idempotent —
@@ -652,7 +652,7 @@ namespace Phoenix.Controls.Shared.Services
             }
             finally
             {
-                //  Use CompareExchange(want=0, expect=1) so we ONLY
+                // Use CompareExchange(want=0, expect=1) so we ONLY
                 // reset when we still own the running flag. A racing Stop() that
                 // already swapped the CTS and launched a fresh writer wouldn't
                 // see its own _isWriterRunning=1 stomped to 0 by a late finally
@@ -669,7 +669,7 @@ namespace Phoenix.Controls.Shared.Services
         // that *calls Error()* won't reach OnError again because the inner
         // dispatch will trip the guard.
         //
-        // M14 — routes through DB.WriteLogDedicatedAsync (dedicated SqliteConnection
+        // Routes through DB.WriteLogDedicatedAsync (dedicated SqliteConnection
         // owned by the logger), so a long-running script-driven SELECT on
         // DB.Instance's shared semaphore can no longer stall log persistence.
         // SQLite WAL allows the second connection to write while the shared
@@ -682,12 +682,12 @@ namespace Phoenix.Controls.Shared.Services
             }
             catch (Exception ex)
             {
-                //  Single atomic publish of the (Exception, Timestamp)
+                // Single atomic publish of the (Exception, Timestamp)
                 // pair so a polling reader can never observe a torn snapshot
                 // (e.g. a new Exception with a stale timestamp). Volatile.Write
                 // on a reference is a release barrier — paired with the
                 // Volatile.Read in the LastDbWriteError property getter.
-                //  Capture offset-aware now once and project both
+                // Capture offset-aware now once and project both
                 // forms — the snapshot keeps its legacy DateTime At field
                 // (callers and tests already use it via LastDbWriteError),
                 // and the ErrorEvent carries the offset-aware TimestampOffset
@@ -705,7 +705,7 @@ namespace Phoenix.Controls.Shared.Services
                 // here so the failed-write path can't re-enqueue itself into
                 // the same broken sink.
                 //
-                //  Writer-pump-specific variant: fans the
+                // Writer-pump-specific variant: fans the
                 // invocation out onto a ThreadPool work item so this
                 // single-reader pump returns to draining the channel
                 // immediately, regardless of OnError handler latency.

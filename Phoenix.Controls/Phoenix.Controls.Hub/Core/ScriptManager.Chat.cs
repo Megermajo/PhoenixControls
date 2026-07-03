@@ -96,7 +96,7 @@ namespace Phoenix.Controls.Hub.Core
                     type = "STEP",
                     step = new { op = "chat_push", widgetId, username, text = message, color },
                 });
-                // Hub_CodeReview #11 — null-guard so chat that arrives before
+                // Null-guard so chat that arrives before
                 // InitializeLayout finishes building HUDServer doesn't NRE.
                 var hud = HubHost.HUD;
                 if (hud is null)

@@ -4,8 +4,8 @@ using Phoenix.Controls.Shared.WinUI.Contracts;
 namespace Phoenix.Controls.Hub.WinUI;
 
 // Hub-local contract — deliberately not in Shared.WinUI because panel
-// composition is a Hub-internal concern. Track 4's MainWindowViewModel
-// uses this to hand panels (Track 3) into MainWindow's named regions.
+// composition is a Hub-internal concern. MainWindowViewModel uses this
+// to hand panels into MainWindow's named regions.
 public interface IPanelFactory
 {
     UserControl CreateLiveFeedPanel(IHubServices services);

@@ -10,9 +10,9 @@ namespace Phoenix.Controls.Architect.WinUI.Databank.Contracts;
 // production; an in-memory fixture for tests) so the view code does not
 // touch ADO.NET / SqliteConnection directly.
 //
-// Why an interface (per the Track 6 brief): tests want to feed the
+// Why an interface: tests want to feed the
 // browser deterministic table contents without spinning up the real
-// DB singleton, and a future Track 9 (web Viewer) might need
+// DB singleton, and a future web Viewer might need
 // a remote-relational source rather than the local SQLite file.
 //
 // Originally read-only — write methods (+ Row / + Column / + Table /
@@ -85,7 +85,7 @@ public interface IRelationalSource
         CancellationToken ct = default);
 
     /// <summary>
-    /// C9 — Drop a column from a user table. Implementations MUST reject
+    /// Drop a column from a user table. Implementations MUST reject
     /// system tables and the primary-key column, logging the rejection
     /// rather than throwing. Returns <c>true</c> when the column was
     /// dropped.
@@ -96,7 +96,7 @@ public interface IRelationalSource
         CancellationToken ct = default);
 
     /// <summary>
-    /// C9 — Rename a column on a user table. Implementations MUST validate
+    /// Rename a column on a user table. Implementations MUST validate
     /// the new identifier (alphanumeric + underscore, not a reserved
     /// SQLite rowid alias, not a collision with an existing column) and
     /// reject system tables. Returns <c>true</c> on success.
@@ -108,7 +108,7 @@ public interface IRelationalSource
         CancellationToken ct = default);
 
     /// <summary>
-    /// C9 — Change a column's declared SQLite affinity (table-recreation
+    /// Change a column's declared SQLite affinity (table-recreation
     /// pattern; SQLite has no <c>ALTER COLUMN ... TYPE</c>). Allowed
     /// affinities are <c>TEXT / INTEGER / REAL / BLOB / NUMERIC</c>; system
     /// tables are rejected. Returns <c>true</c> on success.

@@ -30,7 +30,7 @@ namespace Phoenix.Controls.Architect.WinUI;
 // view swapping; LauncherService is gone.
 //
 // Implements IPillarShellHost so Hub.MainWindow can ask "any unsaved
-// work?" before honouring AppWindow.Closing.  Dirty tracking
+// work?" before honouring AppWindow.Closing. Dirty tracking
 // is now live: ArchitectViewModel.IsDirty flips true whenever
 // LogicCanvasViewModel.GraphMutatedAny fires (any AddNode / RemoveNode /
 // AddFrame / RemoveFrame / RemoveLink / TryCreateLink / multi-delete /
@@ -53,7 +53,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     private Phoenix.Controls.Architect.WinUI.Services.AutosaveService? _autosave;
 
-    //  One-shot guards for Loaded / Unloaded handler bodies.
+    // One-shot guards for Loaded / Unloaded handler bodies.
     // Hub.MainWindow caches `_architectView` and re-parents it on pillar-tab
     // swap; WinUI fires Loaded again on every reattach (and Unloaded on
     // every detach). Without these guards, every tab swap re-runs
@@ -65,8 +65,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private bool _unloadedOnceRan;
     private double _inspectorMaxHeight = 280.0;
     /// <summary>
-    /// Right-rail inspector card vertical cap. 0.11.5 canvas-polish r3
-    /// removed the InspectorThumb splitter (the chevron roll-up replaced it
+    /// Right-rail inspector card vertical cap. The InspectorThumb splitter
+    /// was removed (the chevron roll-up replaced it
     /// as the size affordance), but the cap is still persisted across
     /// sessions via ConfigManager.ArchitectInspectorHeight and pushed into
     /// InspectorRegion.MaxHeight on load so a long Description doesn't run
@@ -86,7 +86,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
     }
 
-    // 0.10.0 (arch-ux-state #3 + #4) — column splitters between Rail / Canvas
+    // 0.10.0 — column splitters between Rail / Canvas
     // and Canvas / Inspector. HorizontalChange is delta px since last
     // DragDelta; we mutate the column Width inside the MinWidth/MaxWidth
     // envelope and persist via SchedulePersistLayout (debounced).
@@ -120,29 +120,29 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         e.Handled = true;
     }
 
-    // 2026-05-24 — OnInspectorColumnSplitterDragDelta /
+    // OnInspectorColumnSplitterDragDelta /
     // OnInspectorColumnSplitterKeyDown removed alongside the
     // InspectorSplitterCol column in MainView.xaml. The chevron toggle is
     // now the only inspector-visibility affordance and the inspector
     // width is fixed at the persisted ArchitectInspectorColumnWidth.
 
-    // ───  #10 — rail collapse / arch-ux-polish — docked Inspector ──
+    // ─── Rail collapse / docked Inspector ──
 
     private const double RailExpandedWidth   = 220.0;
     private const double RailCollapsedWidth  = 32.0;
 
     /// <summary>
-    /// arch-ux-polish — default docked-Inspector column width when a fresh
+    /// Default docked-Inspector column width when a fresh
     /// install (or stale config) doesn't have a persisted width yet. Slim
-    /// enough to honour the [[feedback-node-ui-inline-sockets]] "slim
-    /// panel" invariant while still fitting the Description paragraph at a
+    /// enough to honour the "slim panel" invariant while still fitting the
+    /// Description paragraph at a
     /// readable wrap. LogicInspector caps its own content at MaxWidth=320
     /// internally so a wider drag still produces a readable layout.
     /// </summary>
     private const double InspectorDockedDefaultWidth = 320.0;
 
     /// <summary>
-    /// arch-ux-polish — minimum splitter-drag width for the docked
+    /// Minimum splitter-drag width for the docked
     /// Inspector. Below this the column-width clamp snaps the inspector
     /// closed (sets visibility to false) so the user can dismiss it by
     /// dragging the splitter all the way right. The MinWidth on the
@@ -151,9 +151,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// </summary>
     private const double InspectorDockedMinWidth = 200.0;
 
-    // ─── arch-ux: short panel open/close width animation ───────────────────
-    // Per-window copy (chrome helpers stay per-window per
-    // feedback_visualist_architect_chrome_independence.md). Tweens a Grid
+    // ─── Short panel open/close width animation ────────────────────────────
+    // Per-window copy (chrome helpers stay per-window). Tweens a Grid
     // column's pixel width to a target over ~170 ms (ease-out cubic) via a
     // DispatcherTimer. Width-only: a viewport-width change does NOT re-measure
     // the absolutely-positioned canvas nodes, so this stays cheap even on large
@@ -210,7 +209,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    ///  #10 — apply the rail-collapsed flag to RailColumn.Width.
+    /// Apply the rail-collapsed flag to RailColumn.Width.
     /// Called from <see cref="ApplyPersistedLayoutAndState"/> on boot AND
     /// from the rail's <see cref="LeftRail.RailCollapseToggled"/> dispatch
     /// when the user clicks the chevron. The persisted column width takes
@@ -232,13 +231,13 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             double w = cfg.ArchitectRailColumnWidth > 0
                 ? cfg.ArchitectRailColumnWidth
                 : RailExpandedWidth;
-            // Defensive clamp — a stale config from before  might
+            // Defensive clamp — a stale config might
             // hold a width below the new 32 px MinWidth; treat values <
             // RailExpandedWidth's lower envelope as "use the expanded default".
             if (w < 100) w = RailExpandedWidth;
             target = w;
         }
-        // arch-ux: animate the rail open/close. On expand, show the full rail
+        // Animate the rail open/close. On expand, show the full rail
         // content BEFORE growing so it slides into view; on collapse, shrink
         // first then swap to the collapsed glyph strip on completion. Boot /
         // persisted-state restore passes animate:false for an instant layout.
@@ -268,7 +267,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // Don't overwrite ArchitectRailColumnWidth here — keep the
             // user's pre-collapse drag preserved so re-expanding restores
             // the same width they last chose.
-            // [freeze sweep] Deferred (background) write — the synchronous
+            // Deferred (background) write — the synchronous
             // Save here blocked the UI thread on every toggle.
             Phoenix.Controls.Shared.Services.ConfigManager.SaveDeferred(
                 Phoenix.Controls.Shared.Core.Paths.AppConfigJson);
@@ -281,7 +280,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// 0.11.5 canvas-polish r3 — width of the InspectorColumn when the
+    /// Width of the InspectorColumn when the
     /// inspector body is rolled up. Just enough for the chevron button to
     /// stay clickable so the user can re-expand. Matches the
     /// <see cref="RailCollapsedWidth"/> idiom on the LeftRail side.
@@ -294,11 +293,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private bool _inspectorExpanded = true;
 
     /// <summary>
-    /// 0.11.5 canvas-polish r3 — apply the Inspector-visible (expanded)
+    /// Apply the Inspector-visible (expanded)
     /// state to the right column. The chevron header strip ALWAYS stays
     /// painted; expanded vs rolled-up changes the column width (full vs
     /// 32 px), the inspector body's visibility, and the chevron glyph.
-    /// 2026-05-24 — InspectorSplitterCol references dropped after the
+    /// InspectorSplitterCol references were dropped after the
     /// splitter column was removed from MainView.xaml.
     /// </summary>
     private void ApplyInspectorVisibleToColumn(bool visible, bool animate = true)
@@ -322,7 +321,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             target = InspectorRolledUpWidth;
         }
         UpdateInspectorChevronGlyph(visible);
-        // arch-ux: animate the inspector roll-up/down. On expand, reveal the
+        // Animate the inspector roll-up/down. On expand, reveal the
         // body BEFORE growing so it slides in; on collapse, shrink first then
         // collapse the body on completion so it fades with the width. Boot /
         // persisted-state restore passes animate:false for an instant layout.
@@ -385,7 +384,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// 0.11.5 canvas-polish r3 — chevron click handler. Toggles the
+    /// Chevron click handler. Toggles the
     /// expanded / rolled-up state via the same path
     /// <see cref="OnInspectorToggleRequested"/> uses for the (now-removed)
     /// LeftRail Inspector button, so the persist + glyph update flow stays
@@ -397,7 +396,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// B11 (audit/winui-regressions-2026-05-24) — F4 from the canvas and
+    /// F4 from the canvas and
     /// View → Toggle Inspector from the chrome both arrive here. Flips the
     /// expanded / rolled-up state through the same code path the chevron
     /// uses so the persist + glyph update flow stays shared.
@@ -416,7 +415,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
             var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
             cfg.ArchitectInspectorVisible = desiredVisible;
-            // [freeze sweep] Deferred (background) write — the synchronous
+            // Deferred (background) write — the synchronous
             // Save here blocked the UI thread on every inspector toggle.
             Phoenix.Controls.Shared.Services.ConfigManager.SaveDeferred(
                 Phoenix.Controls.Shared.Core.Paths.AppConfigJson);
@@ -429,7 +428,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #3) — debounced ConfigManager.Save for layout
+    /// 0.10.0 — debounced ConfigManager.Save for layout
     /// fields (inspector height, both column widths, show-grid, debug-trace).
     /// Each splitter drag fires DragDelta at ~60 Hz; ConfigManager.Save
     /// writes the whole AppConfig JSON on every call, so coalescing keeps
@@ -469,7 +468,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
             cfg.ArchitectInspectorHeight       = _inspectorMaxHeight;
             if (RailColumn      is not null) cfg.ArchitectRailColumnWidth      = RailColumn.ActualWidth;
-            // arch-ux-polish — only persist the inspector column width when
+            // Only persist the inspector column width when
             // the dock is actually visible. When hidden (Width=0), preserve
             // the previously persisted width so a hide → show cycle restores
             // the user's last-chosen size instead of forcing the default.
@@ -495,7 +494,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// KeyDown on the InspectorThumb — Left/Right arrows nudge the inspector
     /// column width by ±16px (clamped to MinWidth/MaxWidth). Mirrors the
-    /// vertical drag affordance for keyboard users. (Architect UI WIP.)
+    /// vertical drag affordance for keyboard users.
     /// </summary>
     private void OnInspectorThumbKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
@@ -525,7 +524,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         InitializeComponent();
 
-        //  First access to NodeRegistry trips its static ctor,
+        // First access to NodeRegistry trips its static ctor,
         // which JIT-compiles ~3,000 lines of template registration synchronously
         // on the calling thread. If that first touch is the user pressing SPACE
         // to open the spawn palette, it lands on the UI thread as a ~5s stall
@@ -551,7 +550,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // dispatches the menu invocations into the Open/Save/Undo/etc.
         // public action methods below.
         //
-        //  Hide via Height=0 + ClipToBounds rather than
+        // Hide via Height=0 + ClipToBounds rather than
         // Visibility=Collapsed. WinUI ignores KeyboardAccelerator
         // declarations on subtrees with `Visibility=Collapsed`, so the
         // 11 chord declarations on ArchitectChrome (Ctrl+N/O/S, Ctrl+Shift+S,
@@ -598,15 +597,15 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             DataContext = _viewModel.LogicCanvas,
         };
 
-        // Chrome menu subscriptions — named handlers (was inline lambdas
-        // pre-fix, /). Named methods so HookChromeHandlers
+        // Chrome menu subscriptions — named handlers (was inline lambdas).
+        // Named methods so HookChromeHandlers
         // / UnhookChromeHandlers can pair them symmetrically; pre-fix every
         // lambda captured `this` and so survived pillar-tab swaps, growing
         // by ~25 handlers per MainView reconstruction. MUST be called after
         // `_logicCanvasView` is constructed — the method also wires the
         // canvas's MinimapVisibilityChanged + KeyboardShortcutsRequested
         // events, which would NRE on the field if hooked first (regression
-        // landed in ecffcb70 + b8d3af2e during the 0.11.0 sweep and surfaced
+        // that surfaced
         // as a startup crash that prevented the Architect pillar from
         // opening — SystemHistory id 1276879 on 2026-05-22).
         HookChromeHandlers();
@@ -618,7 +617,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // a .phxg that's already open in another sibling just focuses it.
         _logicCanvasView.FileOpenRequested += (_, path) =>
         {
-            //  OpenFile is async; fire-and-forget through
+            // OpenFile is async; fire-and-forget through
             // AsyncErrorBoundary so the drop handler stays sync void and
             // a faulted load gets logged instead of swallowed.
             _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
@@ -627,14 +626,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 $"FileOpenRequested drop '{path}' → sibling spawn");
         };
 
-        // 0.10.0 (arch-ux-state #7) — Welcome card buttons. The "New Graph" /
+        // 0.10.0 — Welcome card buttons. The "New Graph" /
         // "Open .phxg…" / "Recent…" actions route through the same paths the
         // chrome menu uses (sibling-window spawn semantics for the multi-
         // window paradigm).
         _logicCanvasView.NewRequested        += (_, _) => OnFileNewRequested();
         _logicCanvasView.OpenRecentRequested += async (_, _) => { await OpenRecentAsync(); RestoreCanvasFocus(); };
 
-        //  LayerFileOpenRequested: Explorer-dropped .phxlayer files
+        // LayerFileOpenRequested: Explorer-dropped .phxlayer files
         // need to land in Visualist, not Architect. Route through the
         // IPillarNavigator the host implements (Hub.MainWindow). Wrapped in
         // try/cast — the host Window need not implement the navigator (e.g.
@@ -642,10 +641,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // System-log warning the pre-fix code already emitted.
         _logicCanvasView.LayerFileOpenRequested += (_, path) =>
         {
-            // TODO  — Hub.MainWindow.NavigateTo(PillarKind.Visualist,
+            // TODO — Hub.MainWindow.NavigateTo(PillarKind.Visualist,
             // openTarget: path) must actually drive a swap to the Visualist
-            // tab and call its Open(path) entrypoint. This sprint only
-            // raises the call;  owns the receiving navigator wiring.
+            // tab and call its Open(path) entrypoint. This only
+            // raises the call; the receiving navigator wiring is still owed.
             try
             {
                 if (_hostWindow is Phoenix.Controls.Shared.WinUI.Contracts.IPillarNavigator nav)
@@ -668,7 +667,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         _viewModel.NodeFlashRequested += nodeId => _logicCanvasView.FlashNode(nodeId);
 
-        // B10 (audit 2026-05-24) — wire the Hub MACRO_SYNC stream into the
+        // Wire the Hub MACRO_SYNC stream into the
         // rail so the `[G]` global-macro prefix lights up. The AVM owns the
         // ArchitectBusClient subscription + JSON parse; we just forward the
         // resolved id collection into the rail's existing SetGlobalMacroIds
@@ -680,7 +679,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             DispatcherQueue.TryEnqueue(() =>
             {
                 Rail.SetGlobalMacroIds(ids);
-                // [S9-417 -> superseded by S8] The Macro.Call socket-refresh
+                // The Macro.Call socket-refresh
                 // cascade now lives in ArchitectViewModel.OnBusMacroSync ->
                 // OnRefreshMacroSignature -> RefreshMacroCallSockets, which syncs
                 // from the CANONICAL global-macro signature and re-renders via a
@@ -699,7 +698,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // user who saw "Saved foo.phxg." doesn't keep wondering why Hub is
         // still running the previous script. Pre-fix the catch in
         // ExportPhxBeside was empty and the status bar still read green
-        // "Saved" (Architect UX review P1-32).
+        // "Saved".
         _viewModel.PhxExportFailed += (_, reason) =>
         {
             if (DispatcherQueue is null) return;
@@ -718,11 +717,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         Rail.SetCanvasContext(_viewModel.LogicCanvas);
         Rail.SetArchitectContext(_viewModel);
-        //  Hand the canvas view back to the rail so SubGraphWindow
+        // Hand the canvas view back to the rail so SubGraphWindow
         // editors launched from rail rows refocus this canvas on close.
         Rail.SetCanvasView(_logicCanvasView);
 
-        //  #10 — rail collapse + floating Inspector window. Both
+        // Rail collapse + floating Inspector window. Both
         // toggles persist their state through ConfigManager so a user who
         // likes a tight canvas-first layout doesn't have to re-collapse on
         // every restart. ApplyPersistedRailAndInspectorState (run from
@@ -732,22 +731,22 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Rail.InspectorToggleRequested  += OnInspectorToggleRequested;
         Loaded += async (_, _) =>
         {
-            //  One-shot: pillar-tab reattach fires Loaded again; we
+            // One-shot: pillar-tab reattach fires Loaded again; we
             // only want the autosave / persisted-layout / CLI-bootstrap to
             // run on the FIRST Loaded of this MainView instance.
             if (_loadedOnceRan) return;
             _loadedOnceRan = true;
             RefreshStatusCounts();
-            RegisterStatusZoneTooltips(); //  live hover resolvers
-            RefreshZoomBadge(); //  seed the badge
+            RegisterStatusZoneTooltips(); // live hover resolvers
+            RefreshZoomBadge(); // seed the badge
             RefreshBusStatusDot(Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.IsConnected);
             StartAutosaveAndScanForSurvivors();
-            // M32 (2026-05-14): drive deferred ctor work through InitializeAsync
+            // Drive deferred ctor work through InitializeAsync
             // so file I/O (--open routing via CliBootstrap) doesn't block the
             // synchronous MainView ctor return.
-            //  Now truly async — await so CLI bootstrap's --open path
+            // Now truly async — await so CLI bootstrap's --open path
             // settles _viewModel.LoadedFilePath before ApplyPersistedLayoutAndState
-            // checks that field as the "CLI took priority" signal (see L729 below).
+            // checks that field as the "CLI took priority" signal.
             try
             {
                 await InitializeAsync().ConfigureAwait(true);
@@ -757,12 +756,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                     "Architect.MainView", "Loaded → InitializeAsync", ex);
             }
-            // 0.10.0 (arch-ux-state #3) — apply persisted layout / state
+            // 0.10.0 — apply persisted layout / state
             // AFTER InitializeAsync's CLI bootstrap. CLI --open explicitly
             // overrides the persisted last-opened .phxg (the user typed the
             // path on the command line — that's a stronger signal than recall).
             ApplyPersistedLayoutAndState();
-            // 0.10.0 (arch-ux-state #6) — focus the canvas after Loaded so
+            // 0.10.0 — focus the canvas after Loaded so
             // the user's first keystroke (DEL / arrows / Ctrl+S / Ctrl+Space)
             // lands on the canvas instead of vanishing into the empty
             // pillar-tab strip. Mirrors the focus-restore pattern used in
@@ -771,7 +770,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         };
         Unloaded += (_, _) =>
         {
-            //  One-shot: pillar-tab detach fires Unloaded again on
+            // One-shot: pillar-tab detach fires Unloaded again on
             // every swap; teardown (StopAutosave, AVM.Dispose, etc.) must
             // run exactly once. Skipping this guard caused Dispose-twice
             // and StopAutosave-twice on the FIRST tab swap away from Architect.
@@ -786,11 +785,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // own subscriptions; this is the MainView-owned hook.
             try { _viewModel.LogicCanvas.PropertyChanged -= OnCanvasVmPropertyChanged; }
             catch { /* best-effort */ }
-            // / — unhook the Chrome menu subscriptions so
+            // — unhook the Chrome menu subscriptions so
             // a pillar-tab swap doesn't grow Chrome's invocation list by
             // ~18 handlers per MainView reconstruction.
             UnhookChromeHandlers();
-            //  #10 — unhook the rail-driven toggles so a pillar-tab
+            // Unhook the rail-driven toggles so a pillar-tab
             // swap doesn't accumulate handlers on the cached Rail.
             try { Rail.RailCollapseToggled       -= OnRailCollapseToggled; }      catch { /* best-effort */ }
             try { Rail.InspectorToggleRequested  -= OnInspectorToggleRequested; } catch { /* best-effort */ }
@@ -817,7 +816,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStatusChanged
             += OnBusConnectionStatusChanged;
         // Three-state signal — wires Reconnecting → yellow on the dot during
-        // the 5s reconnect backoff (Architect UX review P0-8). 0.10.0 also
+        // the 5s reconnect backoff. Also
         // pipes the same signal into the AVM so the live-debug bus-drop
         // InfoBar can auto-promote from the 8×8 dot when live-debug is on
         // and the bus drops.
@@ -832,8 +831,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         // Surface .phxg load failures via the InfoBar at MainView Row 2 — the
         // user with a corrupt graph used to see only an empty canvas plus a
-        // one-line System Log entry (TODO 2026-05-07 round 1 P2). Per
-        // feedback_no_modal_dialogs_for_repeatable_rejections.md the failure
+        // one-line System Log entry. The failure
         // is non-blocking. Subscribe + unsubscribe with a static event keeps
         // the wire idempotent across MainView reconstruction (sub-graph
         // editor windows reuse the same VM but not this UserControl).
@@ -842,12 +840,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Unloaded += (_, _) =>
             Phoenix.Controls.Architect.Core.GraphSerializer.OnLoadFailed -= ShowLoadFailureInfoBar;
 
-        // HIGH ride-along of the perf audit (zone-20): ArchitectViewModel
+        // ArchitectViewModel
         // implements IDisposable to unhook the canvas/databank/bus event
         // subscriptions it wired in its ctor. Without an Unloaded handler
         // invoking Dispose, those subscriptions kept the AVM alive past
         // MainView teardown (pillar-tab swap / window close).
-        //  Use the same _unloadedOnceRan one-shot as the autosave
+        // Use the same _unloadedOnceRan one-shot as the autosave
         // teardown above so a pillar-tab detach doesn't Dispose the AVM
         // twice (subscriptions are already gone after the first pass).
         bool avmDisposed = false;
@@ -870,14 +868,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         MainPaneRegion.Content   = _logicCanvasView;
         InspectorRegion.Content  = _placeholderLogicInspector;
 
-        // M32 (2026-05-14): CliBootstrap.HandleCli used to run here in the
+        // CliBootstrap.HandleCli used to run here in the
         // ctor; deferred to InitializeAsync (driven from Loaded) so a
         // --open <path> doesn't hold up MainView construction with a
         // GraphSerializer load + wildcard cascade on the synchronous path.
     }
 
     /// <summary>
-    /// M32 (2026-05-14) — async post-ctor init. Today this hosts the
+    /// Async post-ctor init. Today this hosts the
     /// CLI deep-link routing (--open) that used to run synchronously in
     /// the ctor. Future expensive work (recent-files preload, autosave
     /// scan, ArchitectBusClient warm-up) belongs here too. Idempotent — the
@@ -889,7 +887,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         _initialized = true;
         try
         {
-            //  await the async CLI handler so --open <path> resolves
+            // Await the async CLI handler so --open <path> resolves
             // before the Loaded path falls through to ApplyPersistedLayoutAndState
             // (which uses _viewModel.LoadedFilePath as the "CLI took priority" signal).
             await CliBootstrap.HandleCliAsync(Environment.GetCommandLineArgs(), _viewModel)
@@ -1030,7 +1028,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 Phoenix.Controls.Architect.WinUI.Services.RecentFiles.Remove(picked);
                 return;
             }
-            // 0.10.8 readability sweep #11 — first open fills the blank
+            // First open fills the blank
             // default window; subsequent opens spawn siblings. See
             // OnFileOpenRequestedAsync for the same blank-detection
             // rationale.
@@ -1058,9 +1056,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
             // Sibling spawn — registry dedup keeps "Open Recent" of an
             // already-open .phxg from creating a duplicate window.
-            //  await the async load so a fault propagates into
+            // Await the async load so a fault propagates into
             // the surrounding try/catch instead of escaping unobserved.
-            // Hub UI sweep 2026-05-22 — surface parse failures (see
+            // Surface parse failures (see
             // OnFileOpenRequestedAsync for rationale).
             var spawned = await ArchitectWindowRegistry.OpenFileAsync(picked);
             if (spawned is null)
@@ -1080,11 +1078,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// Opens the given .phxg / .phx in the Logic Canvas. Called by Hub's
     /// <see cref="IPillarNavigator"/> after the user double-clicks a graph
-    /// in Explorer (TODO  — Hub --open routing). Forwards to the
+    /// in Explorer. Forwards to the
     /// underlying ArchitectViewModel.OpenAsync which handles the
     /// GraphSerializer load + wildcard cascade.
     ///
-    ///  Was sync Open; now async so the underlying VM no longer
+    /// Was sync Open; now async so the underlying VM no longer
     /// needs the deadlock-prone GetAwaiter().GetResult() shim.
     /// </summary>
     public async Task<bool> OpenAsync(string path)
@@ -1092,7 +1090,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         bool ok = await _viewModel.OpenAsync(path).ConfigureAwait(true);
         if (ok)
         {
-            // [item 3] Loading a graph clears the autosave-recovery prompt — the
+            // Loading a graph clears the autosave-recovery prompt — the
             // user has moved on, so a stale "recover unsaved work" banner is just
             // noise from here on.
             DismissAutosaveInfoBar();
@@ -1242,7 +1240,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 MainPaneRegion.Content = _logicCanvasView;
                 InspectorRegion.Content = _placeholderLogicInspector;
                 _viewModel.OnTabChanged(ArchitectViewModel.TabLogic);
-                // 0.10.0 (arch-ux-state #6) — return focus to the canvas on
+                // 0.10.0 — return focus to the canvas on
                 // every swap back to the Logic tab so the user's DEL /
                 // Ctrl+Space / arrow keystrokes land on the graph without an
                 // extra click. The bare canvas IsTabStop=true so Focus
@@ -1278,7 +1276,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #3) — apply persisted layout (inspector height,
+    /// 0.10.0 — apply persisted layout (inspector height,
     /// column widths, show-grid, debug-trace toggle, last-active tab) after
     /// CliBootstrap.HandleCli has had a chance to set LoadedFilePath via
     /// <c>--open &lt;path&gt;</c>. If CLI did NOT seed a file, fall back to
@@ -1296,7 +1294,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
             // Column widths — clamp to declared MinWidth/MaxWidth so a stale
             // config from a different layout doesn't wedge the columns out
-            // of range.  #10 — the docked Inspector column is
+            // of range. The docked Inspector column is
             // gone (Width=0), so InspectorColumnWidth recall is no longer
             // applied here; the floating InspectorWindow owns its own
             // geometry via InspectorWindowStateStore.
@@ -1305,27 +1303,27 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 double w = System.Math.Clamp(cfg.ArchitectRailColumnWidth,
                     RailColumn.MinWidth,
                     double.IsInfinity(RailColumn.MaxWidth) ? 9999.0 : RailColumn.MaxWidth);
-                // Defensive —  #10 dropped MinWidth to 32 px so the
+                // Defensive — MinWidth was dropped to 32 px so the
                 // collapse mode works; reject sub-100-px persisted expanded
                 // widths to avoid a stale config defeating the readable mode.
                 if (w < 100) w = RailExpandedWidth;
                 RailColumn.Width = new GridLength(w, GridUnitType.Pixel);
             }
 
-            //  #10 — apply persisted rail-collapsed state. Must run
+            // Apply persisted rail-collapsed state. Must run
             // BEFORE the inspector toggle so the visible chrome reaches
             // steady state before we spawn a floating window on top.
             ApplyRailCollapsedToColumn(cfg.ArchitectRailCollapsed, animate: false);
 
-            // arch-ux-polish — restore the docked Inspector when
+            // Restore the docked Inspector when
             // ArchitectInspectorVisible was true at last shutdown. Routes
             // through ApplyInspectorVisibleToColumn so the column-width
             // restore honours the persisted ArchitectInspectorColumnWidth.
-            // Pre-fix this branch spawned a floating InspectorWindow (Sprint
-            // 26 #10) — the floating window infrastructure is still in the
+            // Pre-fix this branch spawned a floating InspectorWindow — the
+            // floating window infrastructure is still in the
             // codebase but no longer the default surface.
             //
-            // 0.11.x polish — one-shot migration. Pre-polish users who
+            // One-shot migration. Pre-polish users who
             // closed the floating InspectorWindow persisted
             // ArchitectInspectorVisible = false; that state now hides the
             // new docked card by default, defeating the "inspector open by
@@ -1349,7 +1347,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             _viewModel.LogicCanvas.ShowGrid = cfg.ArchitectShowGrid;
             Chrome.SetShowGridChecked(cfg.ArchitectShowGrid);
 
-            //  — minimap visibility. The overlay defaults visible
+            // Minimap visibility. The overlay defaults visible
             // (true on a clean install); restore the user's preference here
             // so the surface lands at the persisted state on launch. The
             // chrome toggle's IsChecked is mirrored so the menu glyph
@@ -1370,7 +1368,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 TopTabs.SelectTab(ArchitectTab.Databank);
             }
 
-            // Last-opened .phxg recall removed 2026-05-24 — Architect now
+            // Last-opened .phxg recall was removed — Architect now
             // always starts at the welcome screen. CliBootstrap's `--open
             // <path>` is still honoured (handled upstream in InitializeAsync),
             // so explicit user intent still routes through. The recent-files
@@ -1386,7 +1384,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #5) — File → Restore previous version… handler.
+    /// 0.10.0 — File → Restore previous version… handler.
     /// Lists every <c>.phxg.bak[1-3]</c> beside the active LoadedFilePath,
     /// shows them in a ContentDialog with timestamps, and restores the
     /// pick (rotating the chain so the current state slides into bak1 first).
@@ -1426,7 +1424,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             {
                 Content = label,
                 Tag = b,
-                //  "MonoFont" is an <x:String> resource — cast to
+                // "MonoFont" is an <x:String> resource — cast to
                 // FontFamily throws; build from the string like the XAML converter.
                 FontFamily = Application.Current.Resources["MonoFont"] is string monoFamily
                              ? new Microsoft.UI.Xaml.Media.FontFamily(monoFamily)
@@ -1480,12 +1478,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     // Clip the canvas pane to its column so node geometry that drifts past
     // the rail edge (negative world-x, oversized macros) cannot overpaint
-    // the LeftRail (TODO 2026-05-07 P0 #1). LeftRail's Canvas.ZIndex=2 puts
+    // the LeftRail. LeftRail's Canvas.ZIndex=2 puts
     // it above this border in render order; the clip is defence-in-depth so
     // the rail can never lose pixels even if a future feature lifts the rail
     // back into the canvas's z-stratum.
     //
-    // PERF (perf/architect-blockers, HIGH): pre-cache, every SizeChanged
+    // Pre-cache, every SizeChanged
     // allocated a fresh RectangleGeometry. SizeChanged fires at ~60 Hz
     // during window drag/snap, so the GC saw a steady drip of throwaway
     // geometry. Reuse one per pane and mutate its Rect in place.
@@ -1534,7 +1532,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #3) — persist ShowGrid changes. Wired in the
+    /// 0.10.0 — persist ShowGrid changes. Wired in the
     /// ctor below to LogicCanvas.PropertyChanged so the toggle survives
     /// whether the user flipped it via the menu (which mutates through
     /// ToggleShowGrid) or via a future keyboard chord.
@@ -1546,14 +1544,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             Chrome.SetShowGridChecked(_viewModel.LogicCanvas.ShowGrid);
             SchedulePersistLayout();
         }
-        //  reflect canvas zoom into the status badge.
+        // reflect canvas zoom into the status badge.
         else if (e.PropertyName == nameof(Phoenix.Controls.Architect.WinUI.Canvas.LogicCanvasViewModel.Zoom))
         {
             RefreshZoomBadge();
         }
     }
 
-    //  Update the status-bar zoom-% badge from the
+    // Update the status-bar zoom-% badge from the
     // canvas VM. Called on Zoom change + once on load.
     private void RefreshZoomBadge()
     {
@@ -1603,7 +1601,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// Push a status line into the bottom status bar. Pre-T15 SetStatus parity.
     ///
-    ///  Optional <paramref name="glyph"/> mirrors the baseline
+    /// Optional <paramref name="glyph"/> mirrors the baseline
     /// StatusZone.Glyph (char?): when supplied, the left-zone glyph TextBlock
     /// shows it (icon-font) tinted with the traffic-light colour; when null,
     /// the glyph slot collapses. Existing two-arg callers keep their behaviour
@@ -1614,7 +1612,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         if (StatusLeft is null) return;
         StatusLeft.Text = text ?? string.Empty;
 
-        //  Left-zone glyph. Visibility tracks whether a glyph was
+        // Left-zone glyph. Visibility tracks whether a glyph was
         // supplied; the glyph inherits the traffic-light brush so a red/yellow
         // status reads consistently across the dot + the glyph.
         if (StatusLeftGlyph is not null)
@@ -1630,7 +1628,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 StatusLeftGlyph.Visibility = Visibility.Collapsed;
             }
         }
-        //  Resolve against the canonical Design_Orders traffic-light
+        // Resolve against the canonical Design_Orders traffic-light
         // tokens (StatusGreenBrush #FF5AC878 / StatusYellowBrush #FFE6C85A /
         // StatusRedBrush #FFE66464). Pre-fix this mapped to the older muted
         // OkBrush / WarnBrush / ErrBrush (#6FA46B / #E0A23A / #C9533C), which
@@ -1650,7 +1648,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             && resource is Microsoft.UI.Xaml.Media.Brush b)
         {
             StatusLight.Fill = b;
-            //  Tint the glyph with the same traffic-light brush so a
+            // Tint the glyph with the same traffic-light brush so a
             // glyph-bearing status reads coherently with the dot.
             if (StatusLeftGlyph is not null && glyph is not null) StatusLeftGlyph.Foreground = b;
         }
@@ -1662,7 +1660,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    ///  Center-zone glyph setter — the baseline supported a glyph in
+    /// Center-zone glyph setter — the baseline supported a glyph in
     /// the center zone independent of the left-zone status line. Pass null to
     /// collapse it. Kept separate from <see cref="SetStatus"/> so callers that
     /// only want a center decoration (e.g. a debug-mode badge glyph) don't
@@ -1697,7 +1695,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
     }
 
-    // ───  Status-zone hover tooltips ────────────────────────────────
+    // ─── Status-zone hover tooltips ─────────────────────────────────────────
     //
     // Done-differently from the WinForms baseline's OnMouseMove hit-testing:
     // instead of a manual ZoneAt(Point) loop over StatusZone rectangles, each
@@ -1712,7 +1710,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private bool _statusZoneHoverHooked;
 
     /// <summary>
-    ///  Register the dynamic tooltip resolver for a status zone.
+    /// Register the dynamic tooltip resolver for a status zone.
     /// Resolvers run at hover time so the surfaced text reflects current state
     /// (node counts, debug mode, last save, etc.). Passing null removes the
     /// resolver and clears any tooltip on that zone.
@@ -1785,7 +1783,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    ///  Seed the three status zones with live tooltip resolvers so the
+    /// Seed the three status zones with live tooltip resolvers so the
     /// capability is wired end-to-end (not just plumbing). Left → the current
     /// status line + loaded file; Center → live-debug state; Right → node/link
     /// counts breakdown. Resolvers run at hover so they always reflect current
@@ -1834,15 +1832,15 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     private void OnCanvasGraphMutatedForStatus(object? sender, EventArgs e) => RefreshStatusCounts();
 
-    //  Per-MainView signature-hash cache feeding MacroSyncHashGate so a
+    // Per-MainView signature-hash cache feeding MacroSyncHashGate so a
     // MACRO_SYNC broadcast whose macro signatures are unchanged skips the
     // Call-node rebuild (the cascade is correct-but-wasteful when nothing
-    // changed — Sweep 18 made the inner refresh diff-based + idempotent).
+    // changed — the inner refresh is diff-based + idempotent).
     private readonly Dictionary<string, ulong> _macroSyncHashCache =
         new(StringComparer.Ordinal);
 
     /// <summary>
-    ///  Rebuild the data sockets of every Macro.Call node whose MacroId
+    /// Rebuild the data sockets of every Macro.Call node whose MacroId
     /// is in <paramref name="ids"/> to match the macro's current Entry/Exit
     /// signature, preserving wires by socket name. Gated through
     /// <see cref="Phoenix.Controls.Architect.Core.MacroSyncHashGate"/> so an
@@ -1853,7 +1851,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// graph round-trip the canonical definition); we refresh the Call nodes
     /// to whatever signature the macro now carries. Self-contained here rather
     /// than calling a canvas method (the WinForms RefreshMacroCallSockets has
-    /// no WinUI equivalent) — this file owns the fix per the sprint scope.
+    /// no WinUI equivalent).
     /// </summary>
     private void RefreshMacroCallNodesForSyncedMacros(System.Collections.Generic.IReadOnlyCollection<string>? ids)
     {
@@ -1898,7 +1896,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    ///  Rebuild every Macro.Call node bound to <paramref name="macro"/>
+    /// Rebuild every Macro.Call node bound to <paramref name="macro"/>
     /// (via its <c>MacroId</c> attribute) so its data sockets mirror the
     /// macro's Entry (outputs → Call inputs) and Exit (inputs → Call outputs)
     /// signature. Wires are preserved by socket NAME: a link to a socket whose
@@ -2080,8 +2078,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// Three-state companion to <see cref="OnBusConnectionStatusChanged"/>.
     /// Paints the dot yellow during the reconnect backoff window so users
-    /// don't think Hub is down when the loop is mid-retry (P0-8). 0.10.0:
-    /// also forwards the state to the AVM so the live-debug InfoBar's
+    /// don't think Hub is down when the loop is mid-retry. Also forwards the
+    /// state to the AVM so the live-debug InfoBar's
     /// visibility tracks the same signal.
     /// </summary>
     private void OnBusConnectionStateChanged(Phoenix.Controls.Architect.Core.BusConnectionState state)
@@ -2121,8 +2119,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // Three-state — pre-fix the dot flipped red the instant a socket
             // dropped and stayed red for the entire 5s backoff window, so
             // users assumed Hub was down even when the reconnect loop was
-            // already mid-retry (Architect UX review P0-8).
-            //  Canonical traffic-light tokens (StatusGreen/Yellow/Red),
+            // already mid-retry.
+            // Canonical traffic-light tokens (StatusGreen/Yellow/Red),
             // matching SetStatus above so the status light + bus dot share the
             // one Design_Orders palette rather than the muted Ok/Warn/Err set.
             (string brushKey, string tooltip) = state switch
@@ -2165,7 +2163,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // never clobber a POPULATED canvas; each spawns a sibling Architect
     // window via ArchitectWindowRegistry.
     //
-    // 2026-06-08 (Majo) — but when the embedded canvas is BLANK (no file, no
+    // But when the embedded canvas is BLANK (no file, no
     // nodes — i.e. the Welcome card is up), spawning a sibling just leaves THIS
     // window stuck on the Welcome card with an unused empty sibling beside it
     // ("clicking Create New only opens a new sub-window where the same issue
@@ -2242,7 +2240,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // of WinUI 3's FileOpenPicker so the picker can open at the project's
         // data/logic/ folder by default — FileOpenPicker.SuggestedStartLocation
         // is enum-only and can't take a custom path. Per-pillar last-used
-        // folder seed (TODO 2026-05-07 round 1 P3): if AppConfig has a recent
+        // folder seed: if AppConfig has a recent
         // dir for Architect, prefer it over Paths.HubLogic.
         var hwnd = WindowNative.GetWindowHandle(_hostWindow);
         string startDir = ResolveStartDir(
@@ -2254,7 +2252,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             new[] { ("Phoenix Graph", ".phxg") });
         if (!string.IsNullOrEmpty(path))
         {
-            // 0.10.8 readability sweep #11 — first open fills the blank
+            // First open fills the blank
             // default window; subsequent opens spawn siblings. Pre-fix
             // every File → Open spawned a brand-new sibling even when the
             // embedded MainView's own canvas was empty, leaving the
@@ -2295,10 +2293,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // Default window is in use — spawn a sibling Architect window.
             // The registry handles dedup-by-path so re-opening an already-
             // open .phxg focuses the existing sibling.
-            //  await the async load so the deserialize + cascade
+            // Await the async load so the deserialize + cascade
             // doesn't run on a fire-and-forget continuation.
             //
-            // Hub UI sweep 2026-05-22 — when OpenFileAsync returns null the
+            // When OpenFileAsync returns null the
             // sibling window factory closed the empty shell because the
             // ArchitectViewModel.OpenAsync parse-failure gate refused the
             // load. Surface that as a status line on the embedded view so
@@ -2318,7 +2316,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     // Last-used folder per pillar — read on picker construction, write on
-    // successful pick (TODO 2026-05-07 round 1 P3). Existence-checked because
+    // successful pick. Existence-checked because
     // a renamed/deleted recent folder shouldn't strand the picker.
     private static string ResolveStartDir(string? recall, string fallback)
         => !string.IsNullOrWhiteSpace(recall)
@@ -2335,7 +2333,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
             if (string.Equals(cfg.LastArchitectOpenDir, dir, System.StringComparison.OrdinalIgnoreCase)) return;
             cfg.LastArchitectOpenDir = dir;
-            // [freeze sweep] Deferred write — open/save already does disk work;
+            // Deferred write — open/save already does disk work;
             // don't add a synchronous config write to the UI thread on top.
             Phoenix.Controls.Shared.Services.ConfigManager.SaveDeferred(Paths.AppConfigJson);
         }
@@ -2352,10 +2350,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// the status bar turns yellow with a "Saved with N warnings — see
     /// System Log" message so the user can review without being blocked.
     ///
-    /// Architect UX review P0-2 — the prior implementation popped the modal
+    /// The prior implementation popped the modal
     /// on ANY warnings, which fired on virtually every save during normal
-    /// work-in-progress editing. That violated
-    /// feedback_no_modal_dialogs_for_repeatable_rejections.md directly.
+    /// work-in-progress editing. That violated the
+    /// no-modal-dialogs-for-repeatable-rejections rule directly.
     /// </summary>
     private async Task<bool> ConfirmSaveValidationAsync()
     {
@@ -2381,7 +2379,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             }
 
             // Errors are blocking — keep the modal for the genuine decision case.
-            //  Dialog button contract: Primary="Save anyway",
+            // Dialog button contract: Primary="Save anyway",
             // Secondary="Cancel" (matches WinUI convention — Primary = the
             // affirmative action). Returning true here means "proceed with save".
             if (errorCount > 0)
@@ -2410,7 +2408,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
     }
 
-    //  Reentrancy guard for the Save command. Mashing Ctrl+S during a
+    // Reentrancy guard for the Save command. Mashing Ctrl+S during a
     // validation modal or while the Save-As picker is open used to fan out
     // multiple concurrent SaveAsync calls, racing the file write. The flag is
     // set on entry and cleared at every exit (including the catch) so a second
@@ -2419,7 +2417,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     private async Task OnFileSaveRequestedAsync()
     {
-        //  Drop re-entrant Save invocations.
+        // Drop re-entrant Save invocations.
         if (_savingInProgress) return;
         _savingInProgress = true;
         try
@@ -2434,7 +2432,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                     return;
                 }
 
-                //  Honour SaveAsync's bool result — false means the
+                // Honour SaveAsync's bool result — false means the
                 // disk write failed (disk-full / permission / I/O). Pre-fix the
                 // result was ignored and the UI showed green "Saved" + touched
                 // RecentFiles even though the graph never hit disk.
@@ -2461,7 +2459,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             }
 
             // No-path-yet branch: open the picker FIRST, then validate, then
-            // save.  Pre-fix validation ran before the (non-blocking,
+            // save. Pre-fix validation ran before the (non-blocking,
             // async) picker, so the user could press DEL / Ctrl+Z / Ctrl+Y
             // while the picker was open and mutate the graph after it had
             // passed validation — persisting an unvalidated structure. Moving
@@ -2478,15 +2476,15 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (string.IsNullOrEmpty(path))
             {
                 // Picker dismissed without picking — surface to System Log so the
-                // user has *some* signal the save didn't happen. A future sprint
-                // is captured in TODO round 2 P1 for an InfoBar in MainView.
+                // user has *some* signal the save didn't happen. An InfoBar in
+                // MainView is captured as future work in TODO.
                 Phoenix.Controls.Shared.Services.GlobalLogger.Log(
                     "Save cancelled — work is still unsaved.",
                     "Architect", Phoenix.Controls.Shared.Models.LogLevel.System);
                 return;
             }
 
-            //  Validate now (after the picker closed) so any mutation
+            // Validate now (after the picker closed) so any mutation
             // made while the picker was open is caught.
             if (!await ConfirmSaveValidationAsync())
             {
@@ -2494,7 +2492,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 return;
             }
 
-            //  Check the SaveAsync result for the Save-As branch too.
+            // Check the SaveAsync result for the Save-As branch too.
             bool savedAsOk;
             try { savedAsOk = await _viewModel.SaveAsync(path); }
             catch (Exception ex)
@@ -2541,14 +2539,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// from a prior crash / forced close. Survivors get logged loudly to
     /// System Log and surfaced on the LoadErrorInfoBar so the user knows
     /// to recover (open the .autosave file manually, or wait for the
-    /// dedicated recovery UI). Architect UX review P0-3.
+    /// dedicated recovery UI).
     /// </summary>
     private void StartAutosaveAndScanForSurvivors()
     {
         if (_autosave is null && DispatcherQueue is not null)
         {
             _autosave = new Phoenix.Controls.Architect.WinUI.Services.AutosaveService(_viewModel, DispatcherQueue);
-            //  Surface autosave health: a brief
+            // Surface autosave health: a brief
             // status-bar confirmation on success, and a persistent InfoBar after
             // repeated failures so a stuck autosave (read-only path / full disk)
             // isn't silent and the user doesn't trust a stale recovery file.
@@ -2576,7 +2574,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                     Phoenix.Controls.Shared.Models.LogLevel.CriticalError);
             }
 
-            //  Stash the survivor list for the recovery dialog and
+            // Stash the survivor list for the recovery dialog and
             // light up the InfoBar's Recover… button. Pre-fix the InfoBar told
             // the user to "rename a *.phxg.autosave to *.phxg" by hand in
             // Explorer; now the in-app dialog renames + reopens for them.
@@ -2593,7 +2591,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (AutosaveRecoverButton is not null)
                 AutosaveRecoverButton.Visibility = Visibility.Visible;
 
-            // [item 3] Arm the 30s auto-dismiss so the prompt clears itself even
+            // Arm the 30s auto-dismiss so the prompt clears itself even
             // if the user neither recovers/discards nor opens a file.
             StartAutosaveInfoBarAutoDismiss();
         }
@@ -2604,7 +2602,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
     }
 
-    //  Survivors found at boot, surfaced through the recovery dialog.
+    // Survivors found at boot, surfaced through the recovery dialog.
     private System.Collections.Generic.IReadOnlyList<Phoenix.Controls.Architect.WinUI.Services.AutosaveScout.Survivor>? _autosaveSurvivors;
 
     private async void OnAutosaveRecoverClicked(object sender, RoutedEventArgs e)
@@ -2618,7 +2616,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    ///  Dedicated recovery dialog. Lists each autosave / crash
+    /// Dedicated recovery dialog. Lists each autosave / crash
     /// survivor with a Recover and a Discard button. Recover renames the
     /// <c>.autosave</c> (or <c>.tmp</c>) to its target <c>.phxg</c> and opens
     /// it; Discard deletes the survivor. After all entries are handled the
@@ -2671,7 +2669,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 info.Children.Add(new TextBlock
                 {
                     Text = Path.GetFileName(target),
-                    //  "MonoFont" is declared <x:String> in
+                    // "MonoFont" is declared <x:String> in
                     // PhoenixDark.xaml (a font-uri+family-list string), NOT a
                     // FontFamily object. A raw C# cast of String→FontFamily
                     // throws InvalidCastException (XAML StaticResource works only
@@ -2814,11 +2812,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
     }
 
-    // [item 3] Auto-dismiss the autosave-recovery InfoBar after 30s so a stale
+    // Auto-dismiss the autosave-recovery InfoBar after 30s so a stale
     // recovery prompt (the same survivor re-surfacing every session) doesn't
     // linger on screen. Also dismissed immediately when a .phxg loads — see
-    // OpenAsync. Majo: "when loading up a phxg file the 'recover autosave'
-    // should disappear or after 30 seconds".
+    // OpenAsync. The recovery prompt should disappear when a .phxg file loads
+    // or after 30 seconds.
     private Microsoft.UI.Xaml.DispatcherTimer? _autosaveInfoBarTimer;
 
     private void StartAutosaveInfoBarAutoDismiss()
@@ -2860,7 +2858,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         finally { _autosave = null; }
     }
 
-    //  Fires on the dispatcher timer (UI thread), so
+    // Fires on the dispatcher timer (UI thread), so
     // touching status-bar / InfoBar directly is safe.
     private void OnAutosaveSucceeded(string fileName)
     {
@@ -2892,8 +2890,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <summary>
     /// File → Save As... / Ctrl+Shift+S. Always shows the picker even when
     /// a path is already loaded — pre-fix there was no path to write a
-    /// graph to a different filename without leaving the app (Architect UX
-    /// review P1-31). Suggests the current filename when available.
+    /// graph to a different filename without leaving the app. Suggests the
+    /// current filename when available.
     /// </summary>
     private async Task OnFileSaveAsRequestedAsync()
     {
@@ -2935,7 +2933,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         InitializeWithWindow.Initialize(picker, hwnd);
     }
 
-    // ─── Chrome handler hook / unhook  /  ──────────────────
+    // ─── Chrome handler hook / unhook ──────────────────
     // The chrome menu subscriptions used to be inline lambdas — every one
     // captured `this` and so kept the MainView alive past Unloaded. A
     // pillar-tab swap rebuilt MainView and added another ~25 handlers to
@@ -2952,7 +2950,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Chrome.FileSaveRequested              += OnChromeFileSaveAsync;
         Chrome.FileSaveAsRequested            += OnChromeFileSaveAsAsync;
         Chrome.FileExportRequested            += OnChromeFileExport;
-        // 0.10.0 (arch-ux-state #5) — File → Restore previous version… surfaces
+        // 0.10.0 — File → Restore previous version… surfaces
         // the rolling .phxg.bak[1-3] chain via a ContentDialog. The chrome here
         // is collapsed in the Hub-embedded MainView, so in practice the click
         // arrives through HubChrome's "architect.file.restoreBackup" dispatch
@@ -2971,7 +2969,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Chrome.LiveDebugToggled               += OnChromeLiveDebugToggled;
         Chrome.EditUndoRequested              += OnChromeEditUndo;
         Chrome.EditRedoRequested              += OnChromeEditRedo;
-        //  keep the Edit-menu undo/redo enable state in
+        // keep the Edit-menu undo/redo enable state in
         // sync with the stack depth (push-based via the canvas's signal).
         _logicCanvasView.UndoRedoChanged      += OnUndoRedoChangedForMenu;
         Chrome.SetUndoRedoEnabled(CanUndo, CanRedo);
@@ -2981,7 +2979,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Chrome.ViewSpawnRequested             += OnChromeViewSpawn;
         Chrome.ViewFrameSelectionRequested    += OnChromeViewFrameSelection;
         Chrome.ViewShowGridToggled            += OnChromeViewShowGridToggled;
-        //  — View → Minimap toggle. Routes through SetMinimapVisible
+        // View → Minimap toggle. Routes through SetMinimapVisible
         // (which also persists into AppConfig.ArchitectMinimapVisible). The
         // canvas raises MinimapVisibilityChanged on the in-overlay × glyph
         // path so the toggle reflects the new state without a roundtrip.
@@ -2991,14 +2989,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // canvas; its own Closed handler restores focus.
         Chrome.ViewBookmarksRequested         += OnChromeViewBookmarks;
         Chrome.HelpNodeRefRequested           += OnChromeHelpNodeRef;
-        //  P1-A16 / P1-A17 — Script menu + Keyboard Shortcuts dialog.
+        // Script menu + Keyboard Shortcuts dialog.
         Chrome.ScriptSyncEventPeersRequested  += OnChromeScriptSyncEventPeers;
         Chrome.HelpKeyboardShortcutsRequested += OnChromeHelpKeyboardShortcutsAsync;
-        // F1 fallback ( P1-A13) — raised by the canvas when F1
+        // F1 fallback — raised by the canvas when F1
         // fires with no node selected. Routed to the same dialog the
         // chrome menu opens.
         _logicCanvasView.KeyboardShortcutsRequested += OnCanvasKeyboardShortcutsRequestedAsync;
-        // B11 (audit/winui-regressions-2026-05-24) — F4 inspector toggle.
+        // F4 inspector toggle.
         // Canvas raises InspectorToggleRequested; we flip the inspector's
         // expanded / rolled-up state through the same path the chevron
         // and the View menu use. The chrome's "View → Toggle Inspector"
@@ -3007,10 +3005,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Chrome.InspectorToggleRequested            += OnInspectorToggleRequestedFromCanvas;
         Chrome.FileCloseRequested                  += OnChromeFileCloseRequested;
 
-        // [S9-397/399] The Open Recent submenu + Refresh Script item live on
-        // ArchitectChrome.xaml WITHOUT Click= attributes (ArchitectChrome.xaml.cs
-        // is outside this sprint's ownership, so adding handlers there would
-        // create an orphaned-handler build break). Instead we wire their .Click
+        // The Open Recent submenu + Refresh Script item live on
+        // ArchitectChrome.xaml WITHOUT Click= attributes (adding handlers in
+        // ArchitectChrome.xaml.cs would create an orphaned-handler build
+        // break). Instead we wire their .Click
         // here — MainView owns the Chrome instance and the action plumbing.
         if (Chrome.MenuViewRefreshScript is not null)
             Chrome.MenuViewRefreshScript.Click += OnChromeViewRefreshScript;
@@ -3053,11 +3051,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         try { Chrome.ScriptSyncEventPeersRequested  -= OnChromeScriptSyncEventPeers; } catch { /* best-effort */ }
         try { Chrome.HelpKeyboardShortcutsRequested -= OnChromeHelpKeyboardShortcutsAsync; } catch { /* best-effort */ }
         try { _logicCanvasView.KeyboardShortcutsRequested -= OnCanvasKeyboardShortcutsRequestedAsync; } catch { /* best-effort */ }
-        // B11 — unhook F4 inspector toggle.
+        // Unhook F4 inspector toggle.
         try { _logicCanvasView.InspectorToggleRequested -= OnInspectorToggleRequestedFromCanvas; } catch { /* best-effort */ }
         try { Chrome.InspectorToggleRequested            -= OnInspectorToggleRequestedFromCanvas; } catch { /* best-effort */ }
         try { Chrome.FileCloseRequested                  -= OnChromeFileCloseRequested; } catch { /* best-effort */ }
-        // [S9-397/399] Detach the directly-wired chrome menu items.
+        // Detach the directly-wired chrome menu items.
         try { if (Chrome.MenuViewRefreshScript is not null) Chrome.MenuViewRefreshScript.Click -= OnChromeViewRefreshScript; } catch { /* best-effort */ }
         // Open Recent MRU is maintained eagerly (no menu-open event exists to detach).
     }
@@ -3114,7 +3112,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         RestoreCanvasFocus();
     }
 
-    //  Push the current stack depth onto the Edit menu.
+    // Push the current stack depth onto the Edit menu.
     private void OnUndoRedoChangedForMenu(object? s, EventArgs e) => Chrome.SetUndoRedoEnabled(CanUndo, CanRedo);
 
     private void OnChromeEditUndo(object? s, EventArgs e) { Undo(); RestoreCanvasFocus(); }
@@ -3128,7 +3126,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private void OnChromeViewFrameSelection(object? s, EventArgs e) { FrameSelection(); RestoreCanvasFocus(); }
     private void OnChromeViewShowGridToggled(object? s, bool on) { ToggleShowGrid(); RestoreCanvasFocus(); }
 
-    //  — Chrome View → Minimap toggle. Flips the overlay's
+    // Chrome View → Minimap toggle. Flips the overlay's
     // Visibility AND persists into AppConfig.ArchitectMinimapVisible.
     private void OnChromeViewMinimapToggled(object? s, bool on)
     {
@@ -3136,7 +3134,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         RestoreCanvasFocus();
     }
 
-    //  — canvas raises MinimapVisibilityChanged when the in-overlay
+    // Canvas raises MinimapVisibilityChanged when the in-overlay
     // × glyph hides the minimap; sync the chrome toggle so its IsChecked
     // reflects the new state without a roundtrip.
     private void OnCanvasMinimapVisibilityChanged(object? s, bool visible)
@@ -3146,7 +3144,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     private void OnChromeViewBookmarks(object? s, EventArgs e) => _logicCanvasView?.ShowBookmarkLegendFlyout();
 
-    //  View → Refresh Script Preview (F5). The in-app preview pane was
+    // View → Refresh Script Preview (F5). The in-app preview pane was
     // retired in T15 (export-to-.phx is the canonical workflow), so this
     // regenerates the .phx beside the loaded graph — the same exporter walk
     // File → Export runs, surfaced under a single F5 chord. No-op (with a
@@ -3177,10 +3175,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         RestoreCanvasFocus();
     }
 
-    //  File → Open Recent. Rebuild the MRU children whenever the
+    // File → Open Recent. Rebuild the MRU children whenever the
     // submenu is about to open so it tracks the live recent-files history.
     /// <summary>
-    ///  Populate the chrome's Open Recent submenu from the recent-files
+    /// Populate the chrome's Open Recent submenu from the recent-files
     /// history. Each entry routes through ArchitectWindowRegistry.OpenFileAsync
     /// (which dedups by path — re-opening an already-open .phxg focuses the
     /// existing sibling). A trailing "(no recent files)" placeholder keeps the
@@ -3227,7 +3225,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    ///  Open a recent-file pick from the chrome MRU. Honours the same
+    /// Open a recent-file pick from the chrome MRU. Honours the same
     /// "load into the blank embedded view, else spawn a sibling" idiom as
     /// File → Open so the recent path doesn't always spawn a new window.
     /// </summary>
@@ -3277,12 +3275,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // NodeDocs opens a separate Window; focus stays where it should.
     private void OnChromeHelpNodeRef(object? s, EventArgs e) => OpenNodeDocs();
 
-    //  P1-A16 — Script → Sync Event Peers. Routes to the canvas's
+    // Script → Sync Event Peers. Routes to the canvas's
     // debounced cross-file sync timer (the same path wire-drop / event-rename
-    // edits use). Status feedback shows in the System Log; no modal per
-    // feedback_no_modal_dialogs_for_repeatable_rejections (this isn't a
-    // rejection, but Architect's status strip already surfaces sync activity
-    // through the canvas's GlobalLogger taps).
+    // edits use). Status feedback shows in the System Log; no modal (this
+    // isn't a rejection, but Architect's status strip already surfaces sync
+    // activity through the canvas's GlobalLogger taps).
     private void OnChromeScriptSyncEventPeers(object? s, EventArgs e)
     {
         _logicCanvasView.RequestSyncEventPeersFromShell();
@@ -3293,7 +3290,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         RestoreCanvasFocus();
     }
 
-    //  P1-A17 — Help → Keyboard Shortcuts… opens the dialog
+    // Help → Keyboard Shortcuts… opens the dialog
     // populated with the canvas + chrome chord catalog.
     private async void OnChromeHelpKeyboardShortcutsAsync(object? s, EventArgs e)
     {
@@ -3301,7 +3298,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         RestoreCanvasFocus();
     }
 
-    // F1 fallback ( P1-A13 +  P1-A17) — bare F1 on an
+    // F1 fallback — bare F1 on an
     // empty canvas opens the same dialog.
     private async void OnCanvasKeyboardShortcutsRequestedAsync(object? s, EventArgs e)
     {
@@ -3311,7 +3308,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 }
 
 /// <summary>
-///  The three status-strip zones, mirroring the pre-T15 StatusBar's
+/// The three status-strip zones, mirroring the pre-T15 StatusBar's
 /// left / center / right StatusZone slots. Used by
 /// <see cref="MainView.SetStatusZoneTooltip"/> to target a zone's dynamic
 /// hover-tooltip resolver.

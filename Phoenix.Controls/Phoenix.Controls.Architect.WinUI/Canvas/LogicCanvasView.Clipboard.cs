@@ -30,7 +30,7 @@ public sealed partial class LogicCanvasView
     {
         public List<Node> Nodes { get; set; } = new();
         public List<Link> Links { get; set; } = new();
-        // 0.10.0 (arch-ux-state #1) — comment frames are now part of the
+        // 0.10.0 — comment frames are now part of the
         // multi-selection too, so they round-trip through copy / cut / paste
         // alongside nodes + wires. Older snapshots without this field
         // deserialize as Frames=new() (default-init), so a clipboard payload
@@ -44,7 +44,7 @@ public sealed partial class LogicCanvasView
     // In-process fallback used when DataPackageView.GetDataAsync rejects access
     // (clipboard temporarily locked, virtualised desktop transition, etc.).
     //
-    //  (P1-A11) — per-Window scoping. Was a process-global static
+    // Per-Window scoping. Was a process-global static
     // shared by every LogicCanvasView; with 0.10.0 multi-window restore that
     // meant a Copy in window A could be pulled by a Paste in window B
     // whenever the OS clipboard was locked / unreadable, even though the user
@@ -97,7 +97,7 @@ public sealed partial class LogicCanvasView
         s_fallbackByWindow.AddOrUpdate(key, snap);
     }
 
-    //  Clipboard JSON options that include Architect's
+    // Clipboard JSON options that include Architect's
     // ColorJsonConverter equivalent, so Frame.FrameColor + any future
     // System.Drawing.Color slot round-trip through copy/paste the same way
     // GraphSerializer round-trips them on save/load. Pre-fix CloneNode /
@@ -184,7 +184,7 @@ public sealed partial class LogicCanvasView
         {
             color = System.Drawing.Color.Empty;
             if (string.IsNullOrEmpty(s)) return false;
-            //  Strip optional leading '#' rather than requiring it, so
+            // Strip optional leading '#' rather than requiring it, so
             // paste accepts both "#RRGGBB" and "RRGGBB" forms. Mirrors the
             // canonical GraphSerializer.ColorJsonConverter.TryParseHexColor which
             // is permissive about the prefix.
@@ -219,7 +219,7 @@ public sealed partial class LogicCanvasView
             // s_cloneJson carries ClipboardColorConverter — without it System.Drawing.Color
             // fields (Node.HeaderColor, Frame.FrameColor, Socket.Color) serialize as the
             // default empty object and deserialize back to Color.Empty, so a pasted node lost
-            // its header-bar color (Majo 2026-06-08). The in-process CloneNode/CloneLink/
+            // its header-bar color (Majo flagged). The in-process CloneNode/CloneLink/
             // CloneFrame helpers already use s_cloneJson; the clipboard channel had not.
             string json = JsonSerializer.Serialize(snap, s_cloneJson);
             dp.SetData(SubGraphClipboardFormat, json);
@@ -242,7 +242,7 @@ public sealed partial class LogicCanvasView
     private ClipboardSnapshot? CaptureSelectionSnapshot()
     {
         if (_vm is null) return null;
-        // 0.10.0 (arch-ux-state #1) — accept any non-empty multi-selection so
+        // 0.10.0 — accept any non-empty multi-selection so
         // copy/cut survive on a selection consisting only of wires or frames.
         bool anySelected = _vm.SelectedNodes.Count > 0
                         || _vm.SelectedLinks.Count > 0
@@ -250,7 +250,7 @@ public sealed partial class LogicCanvasView
         if (!anySelected) return null;
 
         var ids = new HashSet<string>(_vm.SelectedNodes.Select(n => n.Id));
-        //  Clone* now return null on a serialization failure;
+        // Clone* now return null on a serialization failure;
         // for the capture path (Copy / Duplicate) a null falls back to the live
         // source model so the snapshot still carries the item — a deep-cloned
         // copy is preferable, but a shared reference is far better than dropping
@@ -258,7 +258,7 @@ public sealed partial class LogicCanvasView
         var snap = new ClipboardSnapshot
         {
             Nodes = _vm.SelectedNodes.Select(n => CloneNode(n.Model) ?? n.Model).ToList(),
-            //  Only capture wires whose BOTH endpoints
+            // Only capture wires whose BOTH endpoints
             // are in the copied node set — those are the only wires ApplyPaste
             // can actually re-create (its remap drops any link with an endpoint
             // outside the pasted set). Pre-fix the capture ALSO pulled in
@@ -284,7 +284,7 @@ public sealed partial class LogicCanvasView
         return snap;
     }
 
-    //  The real paste body is an awaitable Task with a
+    // The real paste body is an awaitable Task with a
     // top-level try-catch so a fault inside TryPasteVisualTriggerSnippetAsync /
     // TryReadSubGraphFromClipboardAsync (or their awaited clipboard reads) is
     // observed and logged rather than escaping as an unobserved-task crash.
@@ -311,7 +311,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Fire-and-forget entry point for the synchronous
+    /// Fire-and-forget entry point for the synchronous
     /// keyboard / context-menu paste call sites (they call <c>Paste()</c> as a
     /// statement). Awaits <see cref="PasteAsync"/> on the UI dispatcher and
     /// routes any escaping fault to GlobalLogger so the await machinery can
@@ -359,7 +359,7 @@ public sealed partial class LogicCanvasView
             if (snip is null) return false;
             if (string.IsNullOrEmpty(snip.LayerID) || string.IsNullOrEmpty(snip.WidgetID)) return false;
 
-            //  Validate LayerID/WidgetID against the local Hub
+            // Validate LayerID/WidgetID against the local Hub
             // data/layers/ directory before committing the node. Architect
             // doesn't own the LayerRegistry runtime (that lives in Hub) so we
             // glob the file system directly — Paths.HubLayers resolves to the
@@ -367,8 +367,8 @@ public sealed partial class LogicCanvasView
             // miss we still spawn the node (per task spec: paste-anyway so the
             // user can fix the reference inline) but seed ErrorReason so the
             // red-triangle badge surfaces immediately. Log via GlobalLogger
-            // System tier per feedback_no_modal_dialogs_for_repeatable_rejections.
-            // [freeze sweep] The validation enumerates data/layers/ and reads +
+            // System tier instead of a modal for this repeatable rejection.
+            // The validation enumerates data/layers/ and reads +
             // deserializes a .phxlayer — synchronous disk I/O that blocked the
             // UI thread on every Visual.Trigger paste. Run it on the thread pool
             // and await; the continuation resumes on the UI thread for the node
@@ -384,7 +384,7 @@ public sealed partial class LogicCanvasView
             node.Attributes["WidgetID"]    = snip.WidgetID;
             node.Attributes["TriggerName"] = snip.TriggerName ?? string.Empty;
             node.Attributes["Queued"]      = snip.Queued ? "true" : "false";
-            //  Off-canvas / stale-cursor fallback. The
+            // Off-canvas / stale-cursor fallback. The
             // WinForms baseline (Canvas.Clipboard.cs) checked
             // `!ClientRectangle.Contains(screen)` and fell back to canvas centre
             // when the cursor sat outside the canvas (over another window, off
@@ -433,7 +433,7 @@ public sealed partial class LogicCanvasView
         }
         catch (Exception ex)
         {
-            // [P1 swarm-audit 2026-05-29] Was an empty `catch {}` that silently
+            // Was an empty `catch {}` that silently
             // swallowed every failure (clipboard read, JSON deserialize, node
             // mutation). Surface it via GlobalLogger so a broken Visual.Trigger
             // paste is diagnosable; still returns gracefully so PasteAsync can
@@ -444,7 +444,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Confirm the snippet's LayerID + WidgetID exist on disk in
+    /// Confirm the snippet's LayerID + WidgetID exist on disk in
     /// the local Hub data/layers/ tree. Returns null when both resolve,
     /// otherwise a human-readable reason suitable for
     /// <see cref="NodeViewModel.ErrorReason"/>. Best-effort: any IO failure
@@ -518,13 +518,13 @@ public sealed partial class LogicCanvasView
     {
         if (_vm is null) return;
 
-        // B32 — Pillar-category validation on PASTE. The clipboard JSON shape
+        // Pillar-category validation on PASTE. The clipboard JSON shape
         // is generic Node serialization, so a Visualist copy of widget-only
         // nodes (Image.Scale, Audio.Play, Caption.LiveCaption, etc.) round-
         // trips into this method as a fully-formed Node with a Title that has
         // no Architect template. Reject those by template lookup; log a single
         // System-tier line summarizing how many nodes were skipped (no modal
-        // per feedback_no_modal_dialogs_for_repeatable_rejections.md).
+        // for this repeatable rejection).
         //
         // Links whose endpoints reference a skipped node id are dropped in the
         // existing wire pass below (nodeIdMap lookup miss → continue).
@@ -547,7 +547,7 @@ public sealed partial class LogicCanvasView
             if (snap.Nodes.Count == 0 && snap.Frames.Count == 0) return;
         }
 
-        //  Macro reference validation + cleanup on paste.
+        // Macro reference validation + cleanup on paste.
         // The WinForms baseline (Canvas.Clipboard.cs PasteSelection) validated
         // every pasted Macro.Call node's MacroId against Graph.Macros and
         // auto-imported missing macros from the full-object GlobalMacros library
@@ -562,7 +562,7 @@ public sealed partial class LogicCanvasView
         // exporting a dangling reference (ScriptExporter.CheckMacroCallOrphans
         // would otherwise flag it at export time). Runs before the ID remap loop
         // so the cloned nodes carry clean attributes. Repeatable, so it logs via
-        // GlobalLogger (feedback_no_modal_dialogs_for_repeatable_rejections).
+        // GlobalLogger rather than surfacing a modal.
         ValidatePastedMacroReferences(snap.Nodes);
 
         PushUndo();
@@ -582,7 +582,7 @@ public sealed partial class LogicCanvasView
         var nodeIdMap   = new Dictionary<string, string>();
         var socketIdMap = new Dictionary<string, string>();
         var newNodes = new List<NodeViewModel>();
-        //  Track pasted wire VMs so DEL right after paste reverses
+        // Track pasted wire VMs so DEL right after paste reverses
         // the whole paste atomically. Pre-fix the wire half stayed unselected
         // and the user got dangling/orphan wires after a DEL on the pasted
         // selection.
@@ -590,14 +590,14 @@ public sealed partial class LogicCanvasView
 
         foreach (var srcNode in snap.Nodes)
         {
-            //  On the paste path a failed clone is SKIPPED
+            // On the paste path a failed clone is SKIPPED
             // (logged inside CloneNode) — pasting the shared source instance
             // here would alias the clipboard payload into the live graph and
             // corrupt a subsequent paste. Links referencing the skipped node id
             // are dropped by the nodeIdMap lookup miss in the wire pass below.
             var clone = CloneNode(srcNode);
             if (clone is null) continue;
-            //  Reject a pasted Macro/Process Entry/Exit singleton when the
+            // Reject a pasted Macro/Process Entry/Exit singleton when the
             // target graph already has one (or an earlier clone in this same paste
             // added it). Skipping before the id-map registration means any wire to
             // the skipped node is dropped by the nodeIdMap lookup miss below.
@@ -642,7 +642,7 @@ public sealed partial class LogicCanvasView
         var newFrames = new List<FrameViewModel>();
         foreach (var srcFrame in snap.Frames)
         {
-            //  Skip a frame whose clone failed (logged in
+            // Skip a frame whose clone failed (logged in
             // CloneFrame) rather than aliasing the source frame into the graph.
             var frame = CloneFrame(srcFrame);
             if (frame is null) continue;
@@ -659,7 +659,7 @@ public sealed partial class LogicCanvasView
 
         _vm.Graph.MarkStructuralChange();
         try { NodeRegistry.ResolveWildcardCascade(_vm.Graph); } catch { /* best effort */ }
-        //  Notify only the freshly-pasted nodes, not
+        // Notify only the freshly-pasted nodes, not
         // the entire canvas. Pasted links only ever connect pasted nodes (the
         // remap above drops any link whose endpoints aren't both in the pasted
         // set), so the cascade can only have re-typed pasted-node sockets —
@@ -677,7 +677,7 @@ public sealed partial class LogicCanvasView
         // (ClearMultiSelection runs inside SetMultiSelection's first line);
         // restore the wire + frame selection with the freshly-pasted instances
         // so a single DEL right after paste reverses the whole paste
-        // atomically.  Pre-fix the wire half stayed unselected and a
+        // atomically. Pre-fix the wire half stayed unselected and a
         // DEL after paste dropped the pasted nodes + frames but silently
         // retained the pasted wires as dangling/orphan wires.
         if (newLinks.Count  > 0) _vm.SetSelectedLinks(newLinks);
@@ -685,7 +685,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Validate + clean the MacroId attribute on every
+    /// Validate + clean the MacroId attribute on every
     /// pasted Macro.Call node. A MacroId is kept when it resolves against the
     /// live <c>_vm.Graph.Macros</c> set (intra-graph copy keeps its link) or
     /// against the host AVM's known-global macro id set (the rail's existing
@@ -748,7 +748,7 @@ public sealed partial class LogicCanvasView
     private HashSet<string>? _knownGlobalMacroIds;
 
     /// <summary>
-    ///  Public hook so the host (MainView /
+    /// Public hook so the host (MainView /
     /// ArchitectSiblingWindow, which already subscribe to
     /// <c>ArchitectViewModel.GlobalMacroIdsChanged</c> and forward to the rail)
     /// can also feed the latest global macro id set into this canvas. Idempotent
@@ -773,8 +773,8 @@ public sealed partial class LogicCanvasView
     /// Ctrl+D — duplicate the current selection without touching the OS
     /// clipboard. Pre-fix DuplicateSelection delegated to Copy()+Paste(),
     /// which wrote through Clipboard.SetContent and destroyed whatever the
-    /// user had in their system clipboard from another app (Architect UX
-    /// review P1-23). The in-process path snapshots the selection and
+    /// user had in their system clipboard from another app. The in-process
+    /// path snapshots the selection and
     /// applies it directly; ApplyPaste does its own PushUndo so duplicate
     /// is still a single undo entry.
     /// </summary>
@@ -785,7 +785,7 @@ public sealed partial class LogicCanvasView
         ApplyPaste(snap, 24, 24);
     }
 
-    //  All three clone helpers route through s_cloneJson so
+    // All three clone helpers route through s_cloneJson so
     // System.Drawing.Color slots (Frame.FrameColor today; future
     // Node/Link color attributes) survive the copy/paste round-trip. The
     // stock JsonSerializer.Serialize path silently dropped them to
@@ -793,7 +793,7 @@ public sealed partial class LogicCanvasView
     // settable properties — the deserializer needs ClipboardColorConverter
     // to repopulate from the ARGB int (or legacy {R,G,B,A} object form).
     //
-    //  The Serialize/Deserialize pair was previously
+    // The Serialize/Deserialize pair was previously
     // unguarded and used the null-forgiving (!) operator, so a malformed
     // Node/Link/Frame (recursion-cycle attribute, NaN double, oversized
     // collection, etc.) would throw JsonException / NullReferenceException

@@ -42,7 +42,7 @@ namespace Phoenix.Controls.Hub.Core
             // the spelling so manifesto §3 examples keep parsing while routing to the addressed
             // (layerId, widgetId, triggerName) pipeline. Architect's Visual.Trigger node emits
             // visual.trigger_queued directly; visual.trigger remains for hand-written scripts.
-            // Sweep 16 — EventData via ArgType.KvPairs Variadic; binder produces the dict.
+            // EventData via ArgType.KvPairs Variadic; binder produces the dict.
             _engine.RegisterCommand("visual.trigger", async (args) =>
             {
                 var bound = _engine.CurrentBoundArgs;
@@ -76,7 +76,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // visual.trigger_queued(layerId, widgetId, triggerName, key=val, key=val, ...)
             // Fire-and-forget: enqueues into LayerRuntime without blocking script.
-            // Sweep 16 — EventData via ArgType.KvPairs Variadic.
+            // EventData via ArgType.KvPairs Variadic.
             _engine.RegisterCommand("visual.trigger_queued", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
                 string layerId     = bound?.GetOrDefault<string>("LayerID", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);

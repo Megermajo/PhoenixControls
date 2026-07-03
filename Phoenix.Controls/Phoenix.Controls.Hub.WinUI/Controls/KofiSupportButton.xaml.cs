@@ -15,8 +15,7 @@ namespace Phoenix.Controls.Hub.WinUI.Controls;
 /// hint that the project can be supported.
 /// <para/>
 /// Used as a footer in <c>SettingsDialog</c> and <c>WelcomeDialog</c>. Per the
-/// per-pillar paint rule (feedback_visualist_architect_chrome_independence.md)
-/// it lives in Hub.WinUI and is not lifted into Shared.
+/// per-pillar paint rule it lives in Hub.WinUI and is not lifted into Shared.
 /// </summary>
 public sealed partial class KofiSupportButton : UserControl
 {

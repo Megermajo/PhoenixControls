@@ -9,7 +9,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     // Partial split: obs.* command registrations.
-    // P3 (TODO #61) — OBS control surface. Each handler dispatches a Phoenix
+    // OBS control surface. Each handler dispatches a Phoenix
     // action-pack wrapper (e.g. `Phoenix: OBS Set Scene`) via DispatchNamedAction
     // — DoAction with action:{ name } against a user-configured Streamer.bot
     // action that wraps SB's native OBS sub-action. The previous bare-string
@@ -303,7 +303,7 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // B38 — on_obs("EventType") manifest stub. The matching script header is
+            // on_obs("EventType") manifest stub. The matching script header is
             // detected by ScriptRegistry's regex and dispatched from
             // DispatchObsEvent below; this RegisterCommand call exists purely to
             // satisfy VerifyCommandManifest's "every manifest entry must be
@@ -353,13 +353,13 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// B38 — fans an inbound OBS WebSocket v5 event out to every enabled
+        /// Fans an inbound OBS WebSocket v5 event out to every enabled
         /// script declaring an <c>on_obs("&lt;eventType&gt;")</c> header with a
         /// matching event type. Called by <c>HubBootstrapper</c>'s subscription
         /// to <see cref="ObsWebSocketClient.EventReceived"/>; the bus
         /// <c>OBS_EVENT</c> broadcast for Architect's debug-trace + future
         /// panels is emitted by the bootstrapper alongside this dispatch (same
-        /// pattern as the WS.cs scene-change dual-routing — see M82).
+        /// pattern as the WS.cs scene-change dual-routing).
         ///
         /// Script-side vars populated:
         ///   event.type — the bare OBS event name (e.g. CurrentProgramSceneChanged)
@@ -372,14 +372,14 @@ namespace Phoenix.Controls.Hub.Core
         ///                  OBS.Event node's EventData socket without going through
         ///                  the exporter's event.data alias
         ///
-        /// Fan-out is parallel (mirrors on_clipboard / on_websocket QC36-12),
+        /// Fan-out is parallel (mirrors on_clipboard / on_websocket),
         /// rate-limited by the shared event semaphore via
         /// <see cref="AcquireEventSlotAsync"/>. Multiple scripts declaring
         /// the same event type all fire.
         /// </summary>
         public async Task DispatchObsEvent(string eventType, string payload)
         {
-            //  Async init gate — see ExecuteEventScriptAsync. Without
+            // Async init gate — see ExecuteEventScriptAsync. Without
             // this a very fast OBS-event-on-startup could land before
             // ScriptRegistry has finished its cold-load and find zero matches.
             await _initTask.ConfigureAwait(false);

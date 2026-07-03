@@ -37,8 +37,8 @@ public static class BezierPath
     /// Self-loop detection epsilon: when both axes' deltas are smaller than
     /// this in canvas-space, the wire is treated as a self-loop and routed
     /// via an upward-arcing path so the loop is visually discoverable
-    /// instead of collapsing into a ~40 px tight arc behind the node body
-    /// (QC48-39). 0.5 px tolerates pixel-rounding noise from
+    /// instead of collapsing into a ~40 px tight arc behind the node body.
+    /// 0.5 px tolerates pixel-rounding noise from
     /// NodeGeometry.SocketAnchor without false-positiving on real wires.
     /// </summary>
     private const double SelfLoopEpsilon = 0.5;
@@ -55,14 +55,14 @@ public static class BezierPath
     /// <paramref name="fromY"/>) to (<paramref name="toX"/>,
     /// <paramref name="toY"/>) in the `M x y C cx1 cy1, cx2 cy2, ex ey`
     /// form WinUI 3 PathGeometry / SVG both accept.
-    ///  Self-loop case (both endpoints coincident in canvas-space)
+    /// Self-loop case (both endpoints coincident in canvas-space)
     /// arcs upward and around the source so the wire is visible.
     /// </summary>
     public static string Build(double fromX, double fromY, double toX, double toY)
     {
         var c = CultureInfo.InvariantCulture;
 
-        //  Self-loop: endpoints coincide in canvas-space. Without
+        // Self-loop: endpoints coincide in canvas-space. Without
         // this branch, ControlDistance returns MinTangent (40 px) and the
         // bezier collapses into a tight arc that sits inside the node body
         // — visually invisible even though hit-testing still works.
@@ -115,7 +115,7 @@ public static class BezierPath
     /// Sample a point on the cubic bezier at parameter t ∈ [0,1].
     /// Used by hit-testing, mid-path chevron orientation on flow wires,
     /// and the (deferred) live-trace pulse animation.
-    ///  Mirrors <see cref="Build"/>'s self-loop branch so
+    /// Mirrors <see cref="Build"/>'s self-loop branch so
     /// hit-testing / chevron orientation on a self-loop traces the same
     /// upward arc the rendered path follows.
     /// </summary>

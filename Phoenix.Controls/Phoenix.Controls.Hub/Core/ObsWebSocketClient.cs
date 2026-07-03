@@ -12,8 +12,8 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core;
 
 /// <summary>
-/// B38 (audit/winui-regressions-2026-05-24) — direct OBS WebSocket v5+
-/// client. Pre-B38 OBS integration was REST-only via Streamer.bot DoAction
+/// Direct OBS WebSocket v5+
+/// client. Previously OBS integration was REST-only via Streamer.bot DoAction
 /// (13 commands: scene / recording / streaming / replay / source-visibility /
 /// etc.). Scripts could <em>trigger</em> OBS but could not <em>react</em> to
 /// OBS state changes because no inbound event subscription existed. This
@@ -85,7 +85,7 @@ public sealed class ObsWebSocketClient : IAsyncDisposable
     public event Action<string, string>? EventReceived;
 
     /// <summary>True after a successful Identified handshake.</summary>
-    // [P1 swarm-audit 2026-05-29] Written from three unsynchronized callback contexts
+    // Written from three unsynchronized callback contexts
     // (DisconnectionHappened sub, HandleIdentified, DisconnectAsync). Back it with a
     // volatile field so a writer on one thread is visible to readers on another without
     // taking _clientLock for a single bool.
@@ -144,7 +144,7 @@ public sealed class ObsWebSocketClient : IAsyncDisposable
             };
             _client = client;
 
-            // [P1 swarm-audit 2026-05-29] Assign the Rx subscription fields under the
+            // Assign the Rx subscription fields under the
             // SAME _clientLock that guards _client. Previously they were assigned outside
             // the lock while DisconnectAsync disposed+nulled them under the lock — an
             // unsynchronized race that could dispose a half-assigned set or leak a sub.
@@ -243,8 +243,8 @@ public sealed class ObsWebSocketClient : IAsyncDisposable
                 HandleEvent(d);
                 break;
             // OpCode 6 (Request) / 7 (RequestResponse) / 9 (RequestBatchResponse)
-            // are not implemented in this sprint — Request plumbing is the
-            // follow-up sprint after the event-subscription work in B38.
+            // are not implemented yet — Request plumbing is a
+            // follow-up after the event-subscription work.
             // Drop quietly so a future enable doesn't surface noise here.
             default:
                 GlobalLogger.Log(
@@ -393,7 +393,7 @@ public sealed class ObsWebSocketClient : IAsyncDisposable
     public async Task DisconnectAsync()
     {
         WebsocketClient? snapshot;
-        // [P1 swarm-audit 2026-05-29] Capture+null the Rx subscription fields under
+        // Capture+null the Rx subscription fields under
         // the SAME _clientLock that ConnectAsync uses to assign them, so this disposal
         // can't race a concurrent (re)connect. Dispose the captured locals after the
         // lock is released.
@@ -433,7 +433,7 @@ public sealed class ObsWebSocketClient : IAsyncDisposable
         // block on the lib's join — same pattern as WS.StopAsync.
         await Task.Run(() =>
         {
-            // [P1 swarm-audit 2026-05-29] Dispose the snapshots captured under the lock
+            // Dispose the snapshots captured under the lock
             // above; the fields were already nulled there.
             try { reconnectionSubSnapshot?.Dispose(); }    catch { }
             try { disconnectionSubSnapshot?.Dispose(); }   catch { }

@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ScriptStatusModel — UI-side state for ScriptMonitorWindow rows.
 //
-// The traffic-light reduction (memory `project_script_window_redesign`):
+// The traffic-light reduction:
 //   • Green  = Idle   — no execution in flight, no recent error.
 //   • Yellow = Running — at least one execution active in the engine.
 //   • Red    = Error  — most recent execution was cancelled (timeout / shutdown)

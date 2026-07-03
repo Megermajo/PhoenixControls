@@ -13,7 +13,7 @@ namespace Phoenix.Controls.Visualist.Core
     /// one or two attribute keys) so the migrator stays auditable and the
     /// blast radius for a buggy migration is small.
     ///
-    /// RE-RUN SAFETY (audit fix): <see cref="Migrate"/> is safe to call any
+    /// RE-RUN SAFETY: <see cref="Migrate"/> is safe to call any
     /// number of times on the same <see cref="Layer"/> — every migration
     /// checks for the canonical form FIRST (see <see cref="SplitCsvVectorAttr"/>:
     /// it returns early when the legacy key is absent, and only drops the
@@ -33,7 +33,7 @@ namespace Phoenix.Controls.Visualist.Core
     /// assembly and so cannot reference back into it (doing so would be a
     /// dependency-direction inversion that won't compile).
     ///
-    /// QC50-12 (May 2026): <c>Particles.Emit</c> previously persisted its
+    /// <c>Particles.Emit</c> previously persisted its
     /// <c>Position</c> and <c>Velocity</c> Vector2 attributes as a single
     /// comma-CSV string ("0.5, 0.5"). That form didn't round-trip through
     /// <see cref="AnimatedPinRegistry.ReadComponentLiteral"/>, which expects
@@ -77,7 +77,7 @@ namespace Phoenix.Controls.Visualist.Core
             return rewritten;
         }
 
-        // QC50-12 — legacy "0.5, 0.5" CSV → PositionX="0.5", PositionY="0.5"
+        // Legacy "0.5, 0.5" CSV → PositionX="0.5", PositionY="0.5"
         // (and same for Velocity). The split only fires when:
         //   • The node title is Particles.Emit.
         //   • The old key still exists.

@@ -1,4 +1,4 @@
-// 0.10.0 redesign R2 — `winui::` disambiguates Windows.UI.Text.TextDecorations
+// 0.10.0 redesign — `winui::` disambiguates Windows.UI.Text.TextDecorations
 // between Microsoft.WinUI.dll and Microsoft.Windows.SDK.NET.dll (CS0433).
 // Both assemblies project the same enum, and the unqualified reference is
 // ambiguous; the project file tags Microsoft.WinUI's resolved reference with
@@ -47,7 +47,7 @@ public sealed partial class HubChrome : UserControl
     private MenuFlyoutItem? _undoMenuItem;
     private MenuFlyoutItem? _redoMenuItem;
 
-    // M25 (2026-05-14): pre-built per-pillar menu strips. The original code
+    // Pre-built per-pillar menu strips. The original code
     // rebuilt the whole MenuBar (Items.Clear + new MenuBarItem + new
     // MenuFlyoutItem * N + Style + Localizer.T + AccessKey hook) on every
     // pillar swap. Pre-building once in the ctor (or first SetPillar) and
@@ -58,7 +58,7 @@ public sealed partial class HubChrome : UserControl
         public IReadOnlyList<MenuBarItem> Items { get; }
         public MenuFlyoutItem? UndoItem { get; }
         public MenuFlyoutItem? RedoItem { get; }
-        // 2026-05-22 (arch-bug #ctrl-z-noop) — full accelerator manifest for
+        // Full accelerator manifest for
         // the bundle. The pre-fix code registered KeyboardAccelerators only
         // on the leaf MenuFlyoutItems, but WinUI 3 doesn't realize those
         // items until the parent flyout is opened at least once — so the
@@ -102,7 +102,7 @@ public sealed partial class HubChrome : UserControl
 
         VersionStamp.Text = ResolveVersionString();
 
-        // M25 (2026-05-14): pre-build all three pillar menu strips up front
+        // Pre-build all three pillar menu strips up front
         // so SetPillar can swap by reference instead of paying the
         // BuildMenuBar allocation/styling cost on every pillar click. Initial
         // mount uses the Hub bundle by default — _activePillar starts at Hub.
@@ -184,8 +184,8 @@ public sealed partial class HubChrome : UserControl
     public void SetPillar(PillarKind kind, ICanExecuteUndoRedo? undoRedoSource = null)
     {
         // Tab IsActive sync runs unconditionally — tab-strip selection drift
-        // was the user-visible regression in TODO 2026-05-07 P0 #3 (the menu
-        // bar swapped fine but the Hub tab stayed "raised" forever).
+        // was a user-visible regression (the menu bar swapped fine but the
+        // Hub tab stayed "raised" forever).
         UpdateTabSelection(kind);
 
         // Detach the previous undo source first so the swap doesn't fire a
@@ -197,7 +197,7 @@ public sealed partial class HubChrome : UserControl
         if (_activePillar != kind || HubMenuBar.Items.Count == 0)
         {
             _activePillar = kind;
-            // M25 — swap the pre-built MenuBarItems by reference rather than
+            // Swap the pre-built MenuBarItems by reference rather than
             // reconstructing the bundle. The first swap after ctor still hits
             // a fresh bundle; subsequent swaps cost only Items.Clear + N Add.
             var bundle = kind switch
@@ -265,12 +265,12 @@ public sealed partial class HubChrome : UserControl
 
     private MenuStripBundle BuildMenuStripBundle(IReadOnlyList<MenuSection> menus)
     {
-        // M25 — produces an out-of-tree MenuBarItem list + the
+        // Produces an out-of-tree MenuBarItem list + the
         // undo/redo refs for the bundle. ApplyMenuBundle is responsible for
         // attaching the items to HubMenuBar.Items. Keeping construction and
         // attachment apart is what lets us cache the bundles in the ctor.
 
-        // Branded menu chrome (redesign R2 / chrome.jsx — MenuItem). The
+        // Branded menu chrome (chrome.jsx — MenuItem). The
         // styles live in Shared.WinUI/Themes/PhoenixDark.xaml; resolve once
         // outside the hot loop. The MenuFlyoutPresenter style is applied as
         // an implicit subtree style in HubChrome.xaml so the generated
@@ -279,7 +279,7 @@ public sealed partial class HubChrome : UserControl
         var barItemStyle    = (Style?)Application.Current.Resources["ChromeMenuBarItemStyle"];
         var flyoutItemStyle = (Style?)Application.Current.Resources["ChromeMenuFlyoutItemStyle"];
 
-        // Ember access-key underline (redesign R2 / chrome.jsx — first
+        // Ember access-key underline (chrome.jsx — first
         // character of each menu title rendered with an ember underline).
         // MenuBarItem.Title is a plain string, so the rendering is done
         // by walking the realized visual tree on Loaded and replacing
@@ -311,14 +311,14 @@ public sealed partial class HubChrome : UserControl
                 if (!string.IsNullOrEmpty(entry.Accelerator))
                 {
                     // Visible hint stays cosmetic (mirrors what the user sees
-                    // on the right edge of the MenuFlyoutItem).  — also
+                    // on the right edge of the MenuFlyoutItem). Also
                     // register a real Microsoft.UI.Xaml.Input.KeyboardAccelerator
                     // so the chord actually fires the menu item when the chrome
                     // window has focus. Pre-fix every advertised accelerator
                     // was decorative — Ctrl+S in the menu strip rendered the
                     // text but did nothing on press.
                     item.KeyboardAcceleratorTextOverride = entry.Accelerator;
-                    //  Suppress WinUI's auto-generated
+                    // Suppress WinUI's auto-generated
                     // accelerator tooltip on the item — the visible chord hint
                     // is the right-aligned KeyboardAcceleratorTextOverride above,
                     // not a floating popup. Default (Auto) pops a chip on
@@ -329,7 +329,7 @@ public sealed partial class HubChrome : UserControl
                     if (accel is not null)
                     {
                         item.KeyboardAccelerators.Add(accel);
-                        // 2026-05-22 — capture the accelerator for the
+                        // Capture the accelerator for the
                         // window-wide mirror that MirrorAcceleratorsTo will
                         // attach to the chrome's parent root, so Ctrl+Z (and
                         // friends) fire even when the Edit menu has never
@@ -371,7 +371,7 @@ public sealed partial class HubChrome : UserControl
         // RefreshUndoRedoEnabled hits the visible MenuFlyoutItems.
         _undoMenuItem = bundle.UndoItem;
         _redoMenuItem = bundle.RedoItem;
-        // 2026-05-22 — refresh the window-wide accelerator mirror so the
+        // Refresh the window-wide accelerator mirror so the
         // active pillar's chords (architect.edit.undo vs visualist.edit.undo)
         // resolve correctly. The mirror lives on whichever scope owner
         // MirrorAcceleratorsTo last registered; on first SetPillar before
@@ -379,7 +379,7 @@ public sealed partial class HubChrome : UserControl
         RefreshAcceleratorMirror(bundle);
     }
 
-    // 2026-05-22 (arch-bug #ctrl-z-noop) — window-wide accelerator mirror.
+    // Window-wide accelerator mirror.
     //
     // Pre-fix: KeyboardAccelerators registered on a MenuFlyoutItem only fire
     // window-wide AFTER the parent MenuFlyout has been opened at least once
@@ -411,7 +411,7 @@ public sealed partial class HubChrome : UserControl
         // accelerators on the old scope.
         ClearAcceleratorMirror();
         _acceleratorMirrorScope = scopeRoot;
-        //  The mirror scope is the window-root UIElement, so
+        // The mirror scope is the window-root UIElement, so
         // its accelerators fire window-wide — but WinUI's default placement also
         // pops the chord's tooltip ("Ctrl+L", …) on pointer-over / focus ANYWHERE
         // in the window, which is the stray chip Majo saw drifting over the canvas
@@ -481,7 +481,7 @@ public sealed partial class HubChrome : UserControl
     {
         if (string.IsNullOrEmpty(title)) return;
 
-        // M25 (2026-05-14): kept subscribed for the bar's lifetime instead
+        // Kept subscribed for the bar's lifetime instead
         // of auto-removing after the first fire. Pre-built bundles get
         // detached from HubMenuBar and re-attached on pillar swap; WinUI
         // may re-realize the template on re-attach, which discards the
@@ -563,7 +563,7 @@ public sealed partial class HubChrome : UserControl
     {
         // Marshal to UI thread — the source may raise on whichever thread
         // mutated the stack (e.g. graph load runs off the UI thread for the
-        // initial decode). Perf-review H1: HasThreadAccess fast-path skips
+        // initial decode). HasThreadAccess fast-path skips
         // the dispatcher hop on UI-thread-originated changes.
         if (DispatcherQueue is null) { RefreshUndoRedoEnabled(); return; }
         if (DispatcherQueue.HasThreadAccess) RefreshUndoRedoEnabled();
@@ -579,7 +579,7 @@ public sealed partial class HubChrome : UserControl
     }
 
     /// <summary>
-    ///  — parse a MenuDefinition accelerator string (e.g. "Ctrl+S",
+    /// Parse a MenuDefinition accelerator string (e.g. "Ctrl+S",
     /// "Ctrl+Shift+S", "Ctrl+,", "F", "F1") into a real
     /// <see cref="KeyboardAccelerator"/>. Returns null when the spec is
     /// empty, malformed, or intentionally skipped (Alt+F4 — WinUI handles
@@ -624,7 +624,7 @@ public sealed partial class HubChrome : UserControl
             VirtualKey key;
             if (keyToken == ",")
             {
-                //  VK_OEM_COMMA (0xBC = 188) has no named VirtualKey
+                // VK_OEM_COMMA (0xBC = 188) has no named VirtualKey
                 // member. A KeyboardAccelerator { Key = (VirtualKey)188 } is accepted at
                 // build time, but WinUI's NATIVE accelerator validation rejects the
                 // undefined-enum key when the owning MenuFlyoutItem is REALIZED (the
@@ -708,13 +708,13 @@ internal static class MenuDefinition
             new("chat",      "chrome.hub.view.chat"),
             new("script",    "chrome.hub.view.script"),
             new("systemLog", "chrome.hub.view.systemLog", "Ctrl+Shift+L"),
-            // B43 (audit/winui-regressions-2026-05-24) — opens the EventLog
+            // Opens the EventLog
             // tail panel in a new window. Not toggleable like the four
             // workspace panels because the EventLog has no slot in the
             // 4-pane grid; clicking it spawns a fresh pop-out window via
             // HubWorkspaceView.OpenEventLogPopOut.
             new("eventLog",  "chrome.hub.view.eventLog"),
-            // C16 (audit/winui-regressions-2026-05-24) — opens the
+            // Opens the
             // "Recent Webhooks" activity tail panel in a new window.
             // Same out-of-band pop-out shape as eventLog above; the
             // panel subscribes to HUDServer.OnWebhookFired for live
@@ -754,13 +754,13 @@ internal static class MenuDefinition
             new("architect.file.new",        "chrome.architect.file.newGraph",  "Ctrl+N"),
             new("architect.file.open",       "chrome.architect.file.open",      "Ctrl+O"),
             new("architect.file.openRecent", "chrome.architect.file.openRecent"),
-            // TODO §2 resolution — force-shows the always-available Welcome
+            // Force-shows the always-available Welcome
             // card overlay (non-destructive: the open graph stays loaded
             // behind it). Dispatched to MainView.ShowWelcome.
             new("architect.file.welcome",    "chrome.architect.file.welcome"),
             new("architect.file.save",       "chrome.architect.file.save",      "Ctrl+S"),
             MenuEntry.Sep,
-            // 0.10.0 (arch-ux-state #5) — surfaces the rolling .phxg.bak[1-3]
+            // 0.10.0 — surfaces the rolling .phxg.bak[1-3]
             // chain. Dispatched to MainView.RestoreFromBackupAsync.
             new("architect.file.restoreBackup", "chrome.architect.file.restoreBackup"),
             MenuEntry.Sep,
@@ -776,7 +776,7 @@ internal static class MenuDefinition
         }),
         new MenuSection("view", "chrome.menu.view", new MenuEntry[]
         {
-            //  — accelerators rebound to match the canvas chord
+            // Accelerators rebound to match the canvas chord
             // authority in LogicCanvasView.Keyboard.cs (the canvas owns the
             // live bindings). Pre-fix the chrome advertised Shift+F / Ctrl+G
             // for Frame / Show Grid, but the canvas actually fires F →
@@ -834,7 +834,7 @@ internal static class MenuDefinition
             new("visualist.view.layerCanvas",  "chrome.visualist.view.layerCanvas"),
             new("visualist.view.widgetEditor", "chrome.visualist.view.widgetEditor"),
         }),
-        // B26 (audit/winui-regressions-2026-05-24) — Window → New Visualist
+        // Window → New Visualist
         // Window. Mirrors Architect's File → New behaviour (each invocation
         // spawns a sibling top-level window) but lives under its own
         // "window" section so the entry is discoverable as the multi-window
@@ -853,14 +853,14 @@ internal static class MenuDefinition
             // dialog is the lane-compatible dynamic switcher. The sibling
             // window itself carries an inline Window → Switch To submenu.
             new("visualist.window.switch",        "chrome.visualist.window.switch"),
-            // C3 (audit/winui-regressions-2026-05-24) — Preset Gallery.
+            // Preset Gallery.
             // Surfaced under Window because the gallery is a standalone
             // top-level window (matches the "New Visualist Window" entry's
             // placement). The Hub menu dispatcher routes the token through
             // MainView.OpenPresetGallery.
             new("visualist.window.presetGallery", "chrome.visualist.window.presetGallery"),
         }),
-        // Sprint C — Tools menu reintroduces the pre-0.9.0 media-library
+        // Tools menu reintroduces the pre-0.9.0 media-library
         // delete affordance (CHANGELOG 0.6.4) via a single Visualist
         // dialog. Token + label localisation falls through Localizer.T
         // defaults so a fresh lang file doesn't need a regeneration.

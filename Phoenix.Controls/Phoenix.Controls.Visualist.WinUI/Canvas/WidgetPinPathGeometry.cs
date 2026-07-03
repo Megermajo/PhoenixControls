@@ -2,10 +2,10 @@ using Phoenix.Controls.Shared.Models;
 
 namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 
-// A2 (audit 2026-05-24) — per-pillar twin of Architect's PinPathGeometry.
+// Per-pillar twin of Architect's PinPathGeometry.
 //
-// The standing rule (feedback_visualist_architect_chrome_independence) is
-// that each pillar owns its own paint helpers. This file is Visualist's
+// The standing rule is that each pillar owns its own paint helpers.
+// This file is Visualist's
 // copy of the path data; Architect's lives at
 // Phoenix.Controls.Architect.WinUI/Canvas/PinPathGeometry.cs.
 //

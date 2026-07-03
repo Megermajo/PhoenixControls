@@ -21,7 +21,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     private const int DefaultMaxRows = 10_000;
     private readonly int _maxRows;
 
-    // QC11-03 — overflow trim batch size. When _buffer / VisibleRows blow
+    // Overflow trim batch size. When _buffer / VisibleRows blow
     // past _maxRows we trim this many entries at the head in a single
     // operation rather than per-entry. _buffer.RemoveRange is O(n) for the
     // shift but called once per OverflowTrimBatch entries (instead of N
@@ -34,16 +34,16 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     private const int OverflowTrimBatch = 128;
 
     private readonly ISystemLogSource _source;
-    // C1 (2026-05-14): per-VM dispatcher pump, ctor-injected by PanelFactory.
+    // Per-VM dispatcher pump, ctor-injected by PanelFactory.
     private readonly UiDispatcherPump _ui;
     // _buffer holds every level-filtered row that arrived from the source.
     // VisibleRows is the search-filtered subset rendered in the panel — the
     // search predicate runs at the VM (not the source) because the source
     // filter is shared across consumers; a per-keystroke source filter would
-    // corrupt Snapshot() for other observers (TODO 2026-05-07 round 2 P2).
+    // corrupt Snapshot() for other observers.
     private readonly List<SystemLogRowVm> _buffer = new();
 
-    // Perf-review C3 (2026-05-14): dispatcher-hop coalescing. EntryAdded
+    // Dispatcher-hop coalescing. EntryAdded
     // fires synchronously on the producer thread; the previous code did one
     // dq.TryEnqueue per entry, which under a 1000-logs/sec burst (script
     // engine debug + bus log fan-out) queued 1000 dispatcher items/sec. We
@@ -59,8 +59,8 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     // verbose tracing.
     private SystemLogLevel _filterMask = SystemLogLevel.Info | SystemLogLevel.Warn | SystemLogLevel.Error;
     private string _searchText = string.Empty;
-    // C7 (audit 2026-05-24) — exact-match source filter wired through the
-    // row right-click "Filter to source: <Source>" menu item (B6). Null /
+    // Exact-match source filter wired through the
+    // row right-click "Filter to source: <Source>" menu item. Null /
     // empty means "no source filter" — every row that passes the level +
     // search predicates surfaces. Persisted to AppConfig.SystemLogSourceFilter.
     private string? _sourceFilter;
@@ -77,7 +77,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
         int configured = ConfigManager.Current?.SystemLogMaxRows ?? DefaultMaxRows;
         _maxRows = configured > 0 ? configured : DefaultMaxRows;
 
-        // C7 (audit 2026-05-24) — restore persisted filter state. The level
+        // Restore persisted filter state. The level
         // chips persist as a list of SystemLogLevel string names; if any
         // names parse cleanly we use that set instead of the default mask.
         // An empty list (or unrecognised contents) leaves the default
@@ -101,7 +101,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
         }
 
         _source.EntryAdded += OnEntryAdded;
-        // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber to EntryAdded
+        // Fan-out: every subscriber to EntryAdded
         // gets every log row; no primary-subscriber gate.
         // Push the initial filter mask down to the source so it can drop
         // unsubscribed levels before the per-entry roundtrip. The VM also
@@ -115,7 +115,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
             _buffer.Add(row);
             if (RowMatchesAll(row)) VisibleRows.Add(row);
         }
-        // QC11-03 — single batched trim post-snapshot. A snapshot replay
+        // Single batched trim post-snapshot. A snapshot replay
         // larger than _maxRows is the only realistic way to overflow at
         // ctor time, and even then we'd rather pay one RemoveRange than N
         // RemoveAt(0)s. _buffer is the only collection that can actually
@@ -151,7 +151,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C7 (audit 2026-05-24) — exact-match source filter. Setting persists
+    /// Exact-match source filter. Setting persists
     /// the value to AppConfig.SystemLogSourceFilter (debounced via
     /// ConfigManager.Save) and rebuilds VisibleRows so the panel reflects
     /// the new predicate immediately. Null / empty clears the filter.
@@ -176,7 +176,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     public bool HasSourceFilter => !string.IsNullOrEmpty(_sourceFilter);
 
     /// <summary>
-    /// B2 (audit 2026-05-24) — clears the panel's local buffer. The upstream
+    /// Clears the panel's local buffer. The upstream
     /// GlobalLogger ring is NOT touched (its public API has no Clear() and
     /// rewriting that is out of scope); per-process restart is still required
     /// to drop the upstream history. Operators get an immediate "empty panel"
@@ -221,7 +221,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
         // the buffer stayed visible after the user unticked their level
         // until the buffer rolled over.
         RebuildVisibleRows();
-        // C7 (audit 2026-05-24) — persist chip state so a relaunch lands at
+        // Persist chip state so a relaunch lands at
         // the same set of visible levels. The save is fire-and-forget; a
         // disk failure surfaces as a log entry, not a thrown exception that
         // would tear the chip handler.
@@ -233,7 +233,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C7 (audit 2026-05-24) — writes the active level chip set + source
+    /// Writes the active level chip set + source
     /// filter to AppConfig and asks ConfigManager to persist. Called on
     /// every level toggle and on every SourceFilter setter; the save
     /// itself is cheap (a single JSON write) but we still swallow IO
@@ -264,10 +264,10 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
 
     private void OnEntryAdded(object? sender, SystemLogEntry entry)
     {
-        // HUB-UX-D7 (2026-05-14) — fan-out: this VM is one of N subscribers.
+        // Fan-out: this VM is one of N subscribers.
         var row = new SystemLogRowVm(entry);
 
-        // Perf-review C3: enqueue once per "burst gap", then drain everything
+        // Enqueue once per "burst gap", then drain everything
         // that piled up between schedule and execution. A 1000-log/sec burst
         // typically produces ~1-2 dispatcher hops per frame instead of 1000.
         bool needsSchedule;
@@ -279,7 +279,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
         }
         if (!needsSchedule) return;
 
-        // Perf-review H1: HasThreadAccess fast-path baked into Post.
+        // HasThreadAccess fast-path baked into Post.
         _ui.Post(FlushPending);
     }
 
@@ -292,7 +292,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
             _pendingAdds = new List<SystemLogRowVm>();
             _flushScheduled = false;
         }
-        // QC11-03 — append every row first, then trim once at the tail of
+        // Append every row first, then trim once at the tail of
         // the batch. The previous code did a per-entry RemoveAt(0) on both
         // _buffer and VisibleRows; each call is O(n) (List shifts every
         // remaining element down, ObservableCollection raises one Remove
@@ -366,7 +366,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// QC11-09/10 — runtime theme-swap hook. Drops the static fallback
+    /// Runtime theme-swap hook. Drops the static fallback
     /// brush cache and re-resolves LevelBrush / MessageBrush on every
     /// buffered row so x:Bind OneWay picks up the new theme without
     /// rebuilding the row VMs. Hub doesn't ship a live theme switcher
@@ -388,7 +388,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     private bool RowMatchesAll(SystemLogRowVm row)
     {
         if ((_filterMask & row.Level) == 0) return false;
-        // C7 (audit 2026-05-24) — exact, case-insensitive source filter.
+        // Exact, case-insensitive source filter.
         // Applied alongside the level mask and search predicate so all
         // three contributions compose without re-ordering at call sites.
         if (_sourceFilter is { Length: > 0 }

@@ -12,13 +12,13 @@ using Windows.UI;
 namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 
 /// <summary>
-/// C3 (audit/winui-regressions-2026-05-24) — Visualist preset gallery
+/// Visualist preset gallery
 /// window. Lists every built-in <see cref="WidgetPreset"/> as a tile in a
 /// 3-column GridView; each tile has an Apply / Drop-on-canvas button that
 /// routes through <see cref="VisualistViewModel.ApplyPreset"/>.
 ///
 /// <para>
-/// The audit calls for "presets discovered in data/presets/" — that path
+/// The intended design is "presets discovered in data/presets/" — that path
 /// is not populated yet (no user-authored preset format ships). The
 /// gallery currently surfaces the built-in <see cref="WidgetPreset"/>
 /// enum (Image / Video / Text / Audio / WebSource / Particles / Chat / CC)
@@ -28,10 +28,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 /// (as a "starter" section) or migrate to authored .phxpreset files.
 /// </para>
 ///
-/// <para>Per <c>feedback_visualist_architect_chrome_independence.md</c> the
-/// window owns its own paint helpers (no Phoenix.Controls.Shared/UI/).
-/// Per <c>feedback_no_modal_dialogs_for_repeatable_rejections.md</c>
-/// applying a preset commits silently — no confirmation modal.</para>
+/// <para>The window owns its own paint helpers (no Phoenix.Controls.Shared/UI/).
+/// Applying a preset commits silently — no confirmation modal.</para>
 /// </summary>
 public sealed partial class PresetGalleryWindow : Window
 {

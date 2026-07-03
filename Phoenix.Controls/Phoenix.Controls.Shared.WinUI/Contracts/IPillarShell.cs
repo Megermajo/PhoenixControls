@@ -5,11 +5,10 @@ namespace Phoenix.Controls.Shared.WinUI.Contracts;
 // Lightweight shell-level abstraction. Each pillar (Hub / Architect /
 // Visualist) exposes one of these so cross-cutting concerns
 // (chrome wiring, launcher bookkeeping) can talk in pillar-neutral terms.
-// The pillars do NOT share paint code — chrome XAML lives per-pillar
-// per feedback_visualist_architect_chrome_independence.md. This contract
-// is data-only.
+// The pillars do NOT share paint code — chrome XAML lives per-pillar.
+// This contract is data-only.
 //
-//  CanLaunchOtherPillars was removed in R5 — the pre-T15 launcher
+// CanLaunchOtherPillars was removed — the pre-T15 launcher
 // chrome that gated cross-pillar Open from this flag is gone (Architect and
 // Visualist are sibling libraries hosted inside Hub.WinUI now, not separate
 // exes the user launches sibling-style). Re-add when a new cross-pillar
@@ -24,7 +23,7 @@ public interface IPillarShell
 /// Identifies which of the three pillars a shell instance represents.
 /// </summary>
 /// <remarks>
-///  Ordinals are <b>load-bearing</b>. Hub=0 is the implicit
+/// Ordinals are <b>load-bearing</b>. Hub=0 is the implicit
 /// default for any caller that compares <see cref="PillarKind"/> as
 /// <c>int</c> (e.g. cross-pillar focus ordering, settings keys persisted
 /// as integers, or any future bit-flag aggregation). Explicit ordinals
@@ -43,7 +42,7 @@ public enum PillarKind
 // Per-pillar save-prompt contract. Implemented by the embedded MainView
 // of each editor pillar so MainWindow.AppWindow.Closing can ask "is there
 // unsaved work? do you want to save / discard / cancel?" without coupling
-// itself to either pillar's VM internals (TODO 2026-05-07 round 2 P0 #1).
+// itself to either pillar's VM internals.
 //
 // Default implementations make this opt-in: a pillar that hasn't wired
 // dirty tracking yet (Architect today) exposes IsDirty=false +
@@ -60,7 +59,7 @@ public interface IPillarShellHost
     /// marker — Hub's chrome composes the bullet/asterisk prefix based on
     /// <see cref="IsDirty"/> separately. Used by MainWindow to push the
     /// active pillar's filename into HubChrome.FileName when the user
-    /// switches pillars or saves a file (TODO 2026-05-07 round 2 P2 — the
+    /// switches pillars or saves a file (the
     /// filename chip used to stay empty for both pillars).
     /// </summary>
     string CurrentDocumentDisplayName { get; }

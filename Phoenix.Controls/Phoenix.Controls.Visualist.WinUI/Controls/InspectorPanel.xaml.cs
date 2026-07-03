@@ -21,7 +21,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 /// InspectorPanel — single right-pane host for layer + widget properties.
 /// All edits push undo on the document, mark dirty, and re-broadcast through
 /// the VM so the canvas + chrome stay in sync. Per-pillar; not shared with
-/// Architect (per feedback_visualist_architect_chrome_independence.md).
+/// Architect.
 /// </summary>
 public sealed partial class InspectorPanel : UserControl
 {
@@ -33,7 +33,7 @@ public sealed partial class InspectorPanel : UserControl
     // those bounce-backs.
     private bool _suppressEcho;
 
-    // C13 (audit 2026-05-24) — aspect-ratio lock. Captured once at toggle-on
+    // Aspect-ratio lock. Captured once at toggle-on
     // time; subsequent W/H edits reapply the ratio so dragging width snaps
     // height proportionally (and vice-versa). _aspectRatio = W/H. Both fields
     // reset when the user un-toggles the chain, or when the selected layer
@@ -43,8 +43,8 @@ public sealed partial class InspectorPanel : UserControl
 
     private static readonly LayerPreset[]   LayerPresets   = (LayerPreset[])Enum.GetValues(typeof(LayerPreset));
 
-    // R18 — TRIGGERS section. Bus presence drives the per-trigger Test chips +
-    // the R60 offline hint; subscription is paired Loaded/Unloaded. The Test
+    // TRIGGERS section. Bus presence drives the per-trigger Test chips +
+    // the offline hint; subscription is paired Loaded/Unloaded. The Test
     // buttons are tracked so a connection flip re-gates them without a full
     // section rebuild. _feedbackTimer clears the transient copy/test confirmation.
     private Action<bool>? _onBusConnChanged;
@@ -52,7 +52,7 @@ public sealed partial class InspectorPanel : UserControl
     private readonly List<Button> _testButtons = new();
     private DispatcherTimer? _feedbackTimer;
 
-    // Track A — NODE section. The param rows are rebuilt imperatively from
+    // NODE section. The param rows are rebuilt imperatively from
     // VM.SelectedNodeParams (mirrors RefreshTriggersSection). Per-param VM
     // PropertyChanged is tracked so the keyframe diamond + bound controls
     // refresh when a value / IsAnimated flips externally (canvas record,
@@ -84,7 +84,7 @@ public sealed partial class InspectorPanel : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // R18/R60 — track Hub bus presence so the Test chips + offline hint
+        // Track Hub bus presence so the Test chips + offline hint
         // stay live. OnConnectionStatusChanged fires off the UI thread; the
         // handler marshals before touching XAML.
         if (_onBusConnChanged is null)
@@ -113,7 +113,7 @@ public sealed partial class InspectorPanel : UserControl
             _onBusConnChanged = null;
         }
         try { _feedbackTimer?.Stop(); } catch { }
-        // Track A — drop per-param subscriptions so a recycled inspector doesn't
+        // Drop per-param subscriptions so a recycled inspector doesn't
         // leak the NodeParamVm instances through their PropertyChanged.
         UnsubscribeNodeParams();
     }
@@ -129,7 +129,7 @@ public sealed partial class InspectorPanel : UserControl
         if (_vm is { } vm)
         {
             vm.PropertyChanged += OnVmPropertyChanged;
-            // Bug #3/B — when a node-BODY inline pill commits, the canvas raises
+            // When a node-BODY inline pill commits, the canvas raises
             // NodeBodyCommitted; rebuild the NODE section so the right-pane fields
             // mirror the change. The reverse direction (Inspector → node pill) is
             // driven by WidgetEditorView listening to NodeParamCommitted, kept as a
@@ -139,11 +139,11 @@ public sealed partial class InspectorPanel : UserControl
             RefreshWidgetRoster(vm);
             RefreshWidgetForm(vm);
             RefreshTriggersSection(vm);
-            RefreshNodeForm(vm);   // Track A — typed per-node inspector
+            RefreshNodeForm(vm);   // typed per-node inspector
         }
     }
 
-    // Bug #3/B — echo a node-body pill edit into the Inspector's NODE form. Only
+    // Echo a node-body pill edit into the Inspector's NODE form. Only
     // rebuilds when the committed node is the one currently shown, and the
     // RefreshNodeForm rebuild is guarded (_suppressEcho / _suppressNodeEcho) so it
     // can't re-fire a commit and loop.
@@ -155,13 +155,13 @@ public sealed partial class InspectorPanel : UserControl
     }
 
     /// <summary>
-    /// R17 — driven by MainView.SelectSubTab. In Widget Editor mode the LAYER
+    /// Driven by MainView.SelectSubTab. In Widget Editor mode the LAYER
     /// settings section is collapsed (resolution/preset/name are irrelevant while
     /// editing a widget — "why do I need layer settings when editing a widget?").
     /// The WIDGETS roster (the in-editor widget switcher) and the WIDGET context
     /// stay. Layer Canvas mode restores the full pane.
     ///
-    /// Named item #2 — additionally collapse the read-only geometry mirrors
+    /// Additionally collapse the read-only geometry mirrors
     /// (x/y/w/h/preset) in widget-editor mode: they're stale noise while
     /// authoring a node graph (the live values + edits live on the canvas pills).
     /// The editable widget NAME and z-index stay, so this is a partial collapse
@@ -172,7 +172,7 @@ public sealed partial class InspectorPanel : UserControl
         var vis = widgetEditing ? Visibility.Collapsed : Visibility.Visible;
         if (LayerSection is not null)         LayerSection.Visibility         = vis;
         if (LayerSectionDivider is not null)  LayerSectionDivider.Visibility  = vis;
-        // Named item #2 — hide the dead geometry mirrors while editing a widget;
+        // Hide the dead geometry mirrors while editing a widget;
         // keep name + z-index editors visible.
         if (WidgetGeometryMirrors is not null) WidgetGeometryMirrors.Visibility = vis;
     }
@@ -184,22 +184,22 @@ public sealed partial class InspectorPanel : UserControl
         {
             case nameof(VisualistViewModel.SelectedLayer):
                 RefreshLayerForm(vm);
-                RefreshWidgetRoster(vm);   // R7 — widget set may have changed
+                RefreshWidgetRoster(vm);   // widget set may have changed
                 RefreshWidgetForm(vm);
-                RefreshTriggersSection(vm); // R18 — save can mint the LayerID
+                RefreshTriggersSection(vm); // save can mint the LayerID
                 break;
             case nameof(VisualistViewModel.SelectedWidget):
-                RefreshWidgetRoster(vm);   // R7 — sync the highlighted row
+                RefreshWidgetRoster(vm);   // sync the highlighted row
                 RefreshWidgetForm(vm);
-                RefreshTriggersSection(vm); // R18 — IDs + per-trigger chips
+                RefreshTriggersSection(vm); // IDs + per-trigger chips
                 // A widget switch implicitly drops the node selection — the VM
                 // nulls SelectedNode, but rebuild defensively so a stale NODE
                 // section never lingers over the wrong widget.
                 RefreshNodeForm(vm);
                 break;
             case nameof(VisualistViewModel.SelectedNode):
-                // Track A — the widget-graph canvas routes node selection into
-                // VM.SelectedNode (Agent3); the VM rebuilds SelectedNodeParams.
+                // The widget-graph canvas routes node selection into
+                // VM.SelectedNode; the VM rebuilds SelectedNodeParams.
                 // Re-render the NODE section against the new selection.
                 RefreshNodeForm(vm);
                 break;
@@ -228,7 +228,7 @@ public sealed partial class InspectorPanel : UserControl
         bool enabled = layer is not null;
         SetChildrenEnabled(LayerForm, enabled);
 
-        // Named item #4 — "Copy OBS URL" is layer-level and lives in the LAYER
+        // "Copy OBS URL" is layer-level and lives in the LAYER
         // section now. Gate it on a saved layer (LayerID = .phxlayer file stem)
         // and show the unsaved hint when it isn't actionable yet.
         bool savedLayer = ResolveLayerId(vm) is not null;
@@ -245,7 +245,7 @@ public sealed partial class InspectorPanel : UserControl
             LayerWidthBox.Value     = layer.Resolution.Width;
             LayerHeightBox.Value    = layer.Resolution.Height;
             LayerPresetBox.SelectedIndex = Array.IndexOf(LayerPresets, layer.Preset);
-            // C13 — clear the chain-link state on layer change. The captured
+            // Clear the chain-link state on layer change. The captured
             // aspect ratio is layer-specific; carrying it across layer switches
             // would silently rescale the next layer's height on the first
             // width edit. Resetting to "unlocked" matches what a user sees.
@@ -263,7 +263,7 @@ public sealed partial class InspectorPanel : UserControl
         _vm.Document?.PushUndo();
         layer.Name = LayerNameBox.Text;
         _vm.Document?.MarkDirty();
-        // QC23-07 — the layer name appears in the canvas resolution badge
+        // The layer name appears in the canvas resolution badge
         // ("$name · WxH"); refresh so renames land immediately.
         _vm.RaiseSelectedLayerChanged();
     }
@@ -275,7 +275,7 @@ public sealed partial class InspectorPanel : UserControl
         int newW = (int)Math.Round(args.NewValue);
         if (layer.Resolution.Width == newW) return;
 
-        // C13 — when the chain-link is on, mirror the height to the captured
+        // When the chain-link is on, mirror the height to the captured
         // aspect ratio. Use _suppressEcho around the LayerHeightBox.Value write
         // so the OnLayerHeightChanged handler doesn't push a second undo /
         // re-fire the same mutation.
@@ -296,19 +296,19 @@ public sealed partial class InspectorPanel : UserControl
             try { LayerHeightBox.Value = newH; }
             finally { _suppressEcho = false; }
         }
-        // B35 — auto-flip the preset combo to Custom when the user manually
+        // Auto-flip the preset combo to Custom when the user manually
         // edits W/H to a value that doesn't match any preset. MatchPreset
         // returns Custom for any (W,H) pair that isn't on the canonical list,
         // so this is just a single equality check from the layer side. Mirror
         // the new preset into the ComboBox via _suppressEcho so we don't
         // re-enter OnLayerPresetChanged.
         ApplyPresetFromResolution(layer);
-        // C14 (audit 2026-05-24) — user-initiated resolution change. Prompt
+        // User-initiated resolution change. Prompt
         // for Yes / No / Cancel when widgets overflow the new bounds. Cancel
         // reverts; Yes proportional-scales; No leaves widgets in place + logs.
         await HandleResolutionChangeAsync(layer, oldW, oldH);
         _vm.Document?.MarkDirty();
-        // QC23-07 — resolution changes need to ripple to the canvas so the
+        // Resolution changes need to ripple to the canvas so the
         // WidgetSurface and resolution badge refresh without a re-selection.
         // SelectedLayer is the same reference so the property's own setter
         // short-circuits on equality; RaiseSelectedLayerChanged forces the
@@ -323,7 +323,7 @@ public sealed partial class InspectorPanel : UserControl
         int newH = (int)Math.Round(args.NewValue);
         if (layer.Resolution.Height == newH) return;
 
-        // C13 — symmetric of OnLayerWidthChanged: mirror width when locked.
+        // Symmetric of OnLayerWidthChanged: mirror width when locked.
         int oldW = layer.Resolution.Width;
         int oldH = layer.Resolution.Height;
         int newW = oldW;
@@ -341,11 +341,11 @@ public sealed partial class InspectorPanel : UserControl
             try { LayerWidthBox.Value = newW; }
             finally { _suppressEcho = false; }
         }
-        // B35 — see OnLayerWidthChanged.
+        // See OnLayerWidthChanged.
         ApplyPresetFromResolution(layer);
         await HandleResolutionChangeAsync(layer, oldW, oldH);
         _vm.Document?.MarkDirty();
-        // QC23-07 — see OnLayerWidthChanged.
+        // See OnLayerWidthChanged.
         _vm.RaiseSelectedLayerChanged();
     }
 
@@ -362,7 +362,7 @@ public sealed partial class InspectorPanel : UserControl
         _vm.Document?.PushUndo();
         layer.Preset = newPreset;
 
-        // B35 (audit 2026-05-24) — when the new preset is one of the named
+        // When the new preset is one of the named
         // sizes, push the canonical (W,H) into Resolution and reflect into
         // the NumberBoxes. Custom keeps the existing values per spec — callers
         // are expected to interpret the (0,0) sentinel from
@@ -383,7 +383,7 @@ public sealed partial class InspectorPanel : UserControl
                     if (heightChanged) LayerHeightBox.Value = h;
                 }
                 finally { _suppressEcho = false; }
-                // C14 — preset switch is just as much a resolution change as a
+                // Preset switch is just as much a resolution change as a
                 // manual W/H edit; route through the same prompt. If the user
                 // cancels we restore the preset selection too, not just the
                 // numeric resolution.
@@ -403,12 +403,12 @@ public sealed partial class InspectorPanel : UserControl
         }
 
         _vm.Document?.MarkDirty();
-        // QC23-07 — preset change can recolour / re-letterbox the canvas
+        // Preset change can recolour / re-letterbox the canvas
         // backdrop too; same refresh path as the resolution edits.
         _vm.RaiseSelectedLayerChanged();
     }
 
-    // ─── C13 aspect-ratio lock ──────────────────────────────────────────
+    // ─── aspect-ratio lock ──────────────────────────────────────────
 
     private void OnAspectLockToggled(object sender, RoutedEventArgs e)
     {
@@ -424,7 +424,7 @@ public sealed partial class InspectorPanel : UserControl
         }
     }
 
-    // ─── B35 / C14 helpers ──────────────────────────────────────────────
+    // ─── resolution helpers ──────────────────────────────────────────────
 
     private void ApplyPresetFromResolution(Layer layer)
     {
@@ -440,15 +440,15 @@ public sealed partial class InspectorPanel : UserControl
     }
 
     /// <summary>
-    /// C14 (audit 2026-05-24) — user-initiated resolution change handler.
+    /// User-initiated resolution change handler.
     ///
     /// Called AFTER the new resolution has been written to <paramref
     /// name="layer"/>. Walks the widget list; if any widget's Rect overflows
     /// the new bounds, shows a Yes / No / Cancel <see cref="ContentDialog"/>
     /// asking whether to rescale them proportionally. Per the audit spec a
     /// resolution change is a user-initiated decision, so the modal is
-    /// appropriate here — this is NOT a repeatable rejection
-    /// (feedback_no_modal_dialogs_for_repeatable_rejections does not apply).
+    /// appropriate here — this is NOT a repeatable rejection, so the
+    /// no-modal-dialogs guideline does not apply.
     ///
     /// Returns <c>true</c> when the user picked Cancel and the resolution
     /// was reverted to (<paramref name="oldW"/>, <paramref name="oldH"/>);
@@ -585,13 +585,13 @@ public sealed partial class InspectorPanel : UserControl
         return true;
     }
 
-    // ─── R7 widget roster ───────────────────────────────────────────────
+    // ─── widget roster ───────────────────────────────────────────────
     //
     // Restores the pre-WinUI _widgetTree picker (left tree in the WinForms
     // LayerDocumentForm). Imperatively rebuilt from the layer's Widgets — the
     // list is a plain List, not observable, so we re-read it whenever
     // SelectedLayer / SelectedWidget fires (every widget-mutating VM path raises
-    // one of those). Visualist-local per feedback_visualist_architect_chrome_independence.
+    // one of those). Visualist-local.
 
     private void RefreshWidgetRoster(VisualistViewModel vm)
     {
@@ -650,13 +650,13 @@ public sealed partial class InspectorPanel : UserControl
 
     private void OnWidgetRosterDoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        // R7 — double-click a roster row enters that widget's editor (parity with
+        // Double-click a roster row enters that widget's editor (parity with
         // the pre-WinUI widget-tree NodeMouseDoubleClick → OpenWidgetEditor).
         if (_vm?.SelectedWidget is { } w) FindPillarMainView()?.EnterWidget(w);
     }
 
-    // R7 — Visualist-local visual-tree walk to the embedding MainView (copied,
-    // not lifted, per feedback_visualist_architect_chrome_independence).
+    // Visualist-local visual-tree walk to the embedding MainView (copied,
+    // not lifted, to keep the pillar's chrome independent).
     private Phoenix.Controls.Visualist.WinUI.MainView? FindPillarMainView()
     {
         DependencyObject? cur = this;
@@ -684,10 +684,9 @@ public sealed partial class InspectorPanel : UserControl
         try
         {
             WidgetNameBox.Text   = widget!.Name;
-            //  (P1-U1) — x/y/w/h/preset are read-only mirrors of the
+            // x/y/w/h/preset are read-only mirrors of the
             // inline pills on the widget body (Canvas/WidgetView.xaml). The
-            // editable affordance is the pill row per
-            // feedback_node_ui_inline_sockets.md.
+            // editable affordance is the inline pill row.
             WidgetXMirror.Text      = widget.Rect.X.ToString();
             WidgetYMirror.Text      = widget.Rect.Y.ToString();
             WidgetWidthMirror.Text  = widget.Rect.Width.ToString();
@@ -789,7 +788,7 @@ public sealed partial class InspectorPanel : UserControl
             if (child is Control ctl) ctl.IsEnabled = enabled;
     }
 
-    // ─── TRIGGERS section (named item #4) ────────────────────────────────
+    // ─── TRIGGERS section ────────────────────────────────
     //
     // Per-widget trigger management: a list of the widget's triggers (each row =
     // name + Test / Copy / Delete) plus a "New Trigger" button. Copy emits an
@@ -800,7 +799,7 @@ public sealed partial class InspectorPanel : UserControl
     // deletable — so its row hides Test / Copy / Delete and shows a hint instead.
     // Per-pillar chrome; section rebuilt imperatively (Triggers is a plain List,
     // not observable). The Test chips gate on a saved layer + live Hub bus; the
-    // R60 offline hint stays.
+    // offline hint stays.
 
     // onStartup is the auto-firing idle loop; its row is read-only (no Test /
     // Copy / Delete). Case-insensitive to match WidgetTrigger.IsValidName.
@@ -858,7 +857,7 @@ public sealed partial class InspectorPanel : UserControl
         Grid.SetColumn(name, 0);
         grid.Children.Add(name);
 
-        // Named item #4 — onStartup is the idle loop: it auto-fires on layer load
+        // onStartup is the idle loop: it auto-fires on layer load
         // and can't be Architect-triggered, so it gets NO Test / Copy / Delete.
         // Show a tiny "auto-fires on load" hint in their place instead.
         bool isStartup = string.Equals(trigger.Name, StartupTriggerName, StringComparison.OrdinalIgnoreCase);
@@ -936,7 +935,7 @@ public sealed partial class InspectorPanel : UserControl
 
     private void OnCopyObsUrl(object sender, RoutedEventArgs e)
     {
-        // Named item #4 — OBS URL is layer-level (lives in the LAYER section).
+        // OBS URL is layer-level (lives in the LAYER section).
         if (ResolveLayerId(_vm) is not { } id)
         {
             ShowTriggerFeedback("Save the layer first to get its OBS URL.", warn: true);
@@ -947,7 +946,7 @@ public sealed partial class InspectorPanel : UserControl
         ShowTriggerFeedback("Copied OBS URL.");
     }
 
-    // Named item #4 — user-initiated trigger create. Prompt for a name (modal OK,
+    // User-initiated trigger create. Prompt for a name (modal OK,
     // since this is a user-initiated decision, not a repeatable rejection), then
     // VM.AddTrigger. A null return = dup / invalid name (per WidgetTrigger.
     // IsValidName) → non-blocking inline warning, NOT a modal error.
@@ -979,7 +978,7 @@ public sealed partial class InspectorPanel : UserControl
         ShowTriggerFeedback($"Added trigger: {added.Name}");
     }
 
-    // Named item #4 — delete a trigger. onStartup rows never render a Delete chip,
+    // Delete a trigger. onStartup rows never render a Delete chip,
     // so this only ever fires for deletable triggers. Removal is undoable (the VM
     // pushes undo); per the no-modal rule a trigger delete is a frequent,
     // reversible action, so we delete inline + confirm via feedback rather than
@@ -1081,7 +1080,7 @@ public sealed partial class InspectorPanel : UserControl
         catch (Exception ex) { GlobalLogger.Error("InspectorPanel", "CopyPlainText", ex); }
     }
 
-    // R60 — bus presence gates the Test chips; the offline hint explains why
+    // Bus presence gates the Test chips; the offline hint explains why
     // they're greyed (non-modal, persistent — matches the disabled affordance).
     private void OnBusConnectionChanged(bool connected)
     {
@@ -1099,7 +1098,7 @@ public sealed partial class InspectorPanel : UserControl
 
     private void UpdateTriggerTestButtons()
     {
-        // Lane finding — bring the button gate into parity with OnTestTrigger's
+        // Bring the button gate into parity with OnTestTrigger's
         // defensive checks: a widget can be selected yet have an empty Id (the
         // model allows it), in which case OnTestTrigger would bail with an error.
         // Gate the IsEnabled on the same widget.Id-not-empty guard so the button
@@ -1133,17 +1132,17 @@ public sealed partial class InspectorPanel : UserControl
         return t;
     }
 
-    // ─── Track A — typed per-node inspector (NODE section) ───────────────
+    // ─── typed per-node inspector (NODE section) ───────────────
     //
     // Fusion-style: when the widget-graph canvas selects a node it forwards it
-    // into VM.SelectedNode (Agent3); the VM rebuilds SelectedNodeParams (one
+    // into VM.SelectedNode; the VM rebuilds SelectedNodeParams (one
     // NodeParamVm per editable attribute key, with companion __Range /
     // __KnownValues meta folded in). This section renders those params as
     // proper controls — Scalar→slider+numbox, Color→picker, Bool→toggle,
     // String→textbox, Enum→dropdown, VectorN→N slider+numbox pairs,
     // MediaPath→Browse… — each with a keyframe diamond on animatable rows.
     //
-    // The node-body inline pills stay TEXT-ENTRY only (Agent4); the rich
+    // The node-body inline pills stay TEXT-ENTRY only; the rich
     // controls live ONLY here. NodeParamVm.Commit is the single persistence
     // path (PushUndo + write + MarkDirty + preview refresh) — these controls
     // only push the live *Value onto the param and let it commit. Each animatable

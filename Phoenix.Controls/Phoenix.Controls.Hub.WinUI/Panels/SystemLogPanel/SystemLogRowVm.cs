@@ -9,7 +9,7 @@ using Phoenix.Controls.Shared.WinUI.Contracts;
 
 namespace Phoenix.Controls.Hub.WinUI.Panels.SystemLogPanel;
 
-// QC11-09/10 — row VMs snapshot their brushes at ctor time (LevelBrush /
+// Row VMs snapshot their brushes at ctor time (LevelBrush /
 // MessageBrush), which keeps the bind path trivial (x:Bind to a property
 // rather than a {ThemeResource …}) but makes the row blind to runtime
 // theme swaps. Hub doesn't currently support live theme switching, but
@@ -66,7 +66,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    // C6 (audit 2026-05-24) — per-row expandable exception view. The
+    // Per-row expandable exception view. The
     // SystemLogEntry already carries an Exception? on the model; the panel
     // never surfaced it. We expose a chevron glyph that flips on tap, a
     // formatted multi-line stack-trace block (including the InnerException
@@ -137,7 +137,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// QC11-09/10 — re-resolve LevelBrush / MessageBrush against the
+    /// Re-resolve LevelBrush / MessageBrush against the
     /// current Application.Resources so a runtime theme swap reaches the
     /// row without recreating it. Caller is the panel VM, which fires
     /// this on every materialised row when a theme-change signal arrives.
@@ -148,7 +148,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
         MessageBrush = MessageBrushFor(IsError);
     }
 
-    // QC11-09/10 — guards every static brush cache below (s_levelBrushCache,
+    // Guards every static brush cache below (s_levelBrushCache,
     // s_messageBrush*, s_cachedFallback). RefreshBrushes() and FlushPending()
     // hop the dispatcher, but InvalidateBrushCache() can fire from a theme-swap
     // signal while rows are still resolving, so the read/write/Clear paths are
@@ -156,7 +156,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
     // this lock.
     private static readonly object s_brushCacheLock = new();
 
-    // QC11-09/10 — message brush cache. Only two distinct keys (error vs
+    // Message brush cache. Only two distinct keys (error vs
     // not), so a 2-slot pair is cheaper than a Dictionary. Same lifecycle
     // as s_levelBrushCache — cleared by InvalidateBrushCache on theme swap.
     private static Brush? s_messageBrushError;
@@ -183,7 +183,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
         _                    => "—",
     };
 
-    // QC11-09/10 — per-level brush cache. RefreshBrushes() iterates the
+    // Per-level brush cache. RefreshBrushes() iterates the
     // entire buffered ring on theme swap (up to AppConfig.SystemLogMaxRows,
     // default 10 000) and each row used to walk Application.Resources twice
     // (LevelBrush + MessageBrush) — 20 000 dict lookups per swap. With this
@@ -215,7 +215,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
         }
     }
 
-    // HUB-UX P2 — token-coverage audit. The coal-toned fallback brush
+    // The coal-toned fallback brush
     // replaces the bare `new SolidColorBrush(Colors.Gray)` so a missing
     // theme key surfaces in the suite palette instead of as a foreign
     // OS grey. Resolved lazily on first miss, cached statically so
@@ -247,7 +247,7 @@ public sealed class SystemLogRowVm : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// QC11-09/10 — drop both the per-level / message-tier brush caches
+    /// Drop both the per-level / message-tier brush caches
     /// and the cached fallback so the next <see cref="BrushFor"/> /
     /// <see cref="MessageBrushFor"/> / <see cref="ResolveBrush"/> call
     /// re-walks Application.Resources against the freshly-merged theme

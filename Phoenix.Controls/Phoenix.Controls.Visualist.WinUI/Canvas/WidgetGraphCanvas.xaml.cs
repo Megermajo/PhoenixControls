@@ -18,9 +18,9 @@ using Windows.UI;
 
 namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 
-// T13b sprint A — interactive widget-graph canvas for Visualist's per-trigger
-// graph editor. Replaces the read-only stack-of-cards `GraphNodeStack` from
-// Track 7 with a positioned canvas that supports:
+// Interactive widget-graph canvas for Visualist's per-trigger
+// graph editor. Replaces the read-only stack-of-cards `GraphNodeStack`
+// with a positioned canvas that supports:
 //
 //   • Pan      — middle-mouse drag on empty canvas (CompositeTransform.TranslateX/Y).
 //   • Zoom     — mouse wheel; cursor-anchored so the point under the wheel
@@ -31,9 +31,9 @@ namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 //   • Select   — left-click on a node selects it; clicking empty space
 //                clears. Shift-click toggles a node in/out of the
 //                multi-select. Lasso (rubber-band) and the spawn palette /
-//                right-click menus all landed in sprint C.
+//                right-click menus all landed later.
 //
-// Still out of scope (TODO P1 #3 follow-ups):
+// Still out of scope (follow-ups):
 //   live preview thumbnails on each node body, timeline scrubbing,
 //   widget gallery / preset thumbnails, group-drag for multi-select,
 //   right-click numeric pin → Animate keyframe context. The seam where
@@ -51,11 +51,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private const double MaxZoom = 3.0;
     private const double DragDeadZonePx = 2.0;
 
-    // Sprint L — grid snap. 20px matches the loose visual rhythm of pin rows
+    // Grid snap. 20px matches the loose visual rhythm of pin rows
     // (~22px each) without being so coarse that small adjustments feel jumpy.
     // Suppress-snap is wired to Alt rather than Shift because Shift is already
     // taken by multi-select extend (OnNodePointerPressed / IsShiftDown). Alt's
-    // sole canvas role today is the momentary-disable modifier (QC51-04) — no
+    // sole canvas role today is the momentary-disable modifier — no
     // conflict.
     private const int SnapStepPx = 20;
 
@@ -66,11 +66,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
     /// </summary>
     private bool SnapEnabled;
 
-    //  — re-entrancy guard for SnapToggle.Checked/Unchecked. The
+    // Re-entrancy guard for SnapToggle.Checked/Unchecked. The
     // setter syncs the CheckBox state, which would otherwise re-fire the
     // CheckBox event and recurse back into the setter.
     //
-    // [Lane B P3] Upgraded from a bool to a nesting DEPTH counter so overlapping
+    // Upgraded from a bool to a nesting DEPTH counter so overlapping
     // sync passes (checkbox click + RMB-flyout toggle landing in the same frame)
     // can't have an inner finally reset the flag while an outer pass is still
     // suppressing — the event only fires when depth returns to 0. Guard reads as
@@ -78,11 +78,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private int _suppressSnapToggleDepth;
 
     /// <summary>
-    ///  — public surface for the canvas header strip's snap toggle.
+    /// Public surface for the canvas header strip's snap toggle.
     /// Reads/writes the same <see cref="SnapEnabled"/> field the RMB flyout
     /// owns so both UI paths stay coherent. Setter logs a single System line
-    /// the same shape as the flyout path (no modal, per
-    /// feedback_no_modal_dialogs_for_repeatable_rejections).
+    /// the same shape as the flyout path (no modal).
     /// </summary>
     public bool IsSnapEnabled
     {
@@ -101,7 +100,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // [QC18-S7-followup] Dotted-grid backdrop. Paints small ember-tinted dots
+    // Dotted-grid backdrop. Paints small ember-tinted dots
     // at every SnapStepPx grid intersection in the currently-visible viewport
     // when SnapEnabled is true. Hidden / empty when off. Called from:
     //   - IsSnapEnabled setter (toggle on/off)
@@ -256,7 +255,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // brush instead of throwing — callers route the wire-preview colours
     // through this so future theme tweaks ripple here without code edits.
     //
-    // [Lane B P3] The ARGB fallbacks the wire-preview path passes are NOT
+    // The ARGB fallbacks the wire-preview path passes are NOT
     // arbitrary placeholders — they are deliberate, theme-agnostic SEMANTIC
     // constants matching Design_Orders §2 (green = compatible/connected, red =
     // error/incompatible). They are chosen so that if the "OkBrush"/"ErrBrush"
@@ -291,7 +290,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private bool   _isPanning;
     private Point  _panStartPointerWorld;
 
-    // Wire-drag state (sprint B). When the user presses on a pin we capture
+    // Wire-drag state. When the user presses on a pin we capture
     // the source socket + node and start drawing a temp path into LinkLayer
     // until the pointer comes up — over a target pin → create Link
     // (if compatible); over empty space or an incompatible pin → log and
@@ -304,7 +303,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private FrameworkElement?  _wireSourcePin;
     private Microsoft.UI.Xaml.Shapes.Path? _tempWirePath;
 
-    // [Lane B P1] Reverse-drag support. Unreal / Fusion (and the pre-WinUI
+    // Reverse-drag support. Unreal / Fusion (and the pre-WinUI
     // Visualist baseline's NormalizeLinkDirection) let the author begin a wire
     // from EITHER end of an edge. When the drag starts on an INPUT pin this is
     // true; the move/release paths then look for an OUTPUT drop target and swap
@@ -314,7 +313,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // of the _wireSource* state.
     private bool _wireSourceIsInput;
 
-    // [#7-WIREDRAG] Deterministic pin-press hand-off — ported from Architect's
+    // Deterministic pin-press hand-off — ported from Architect's
     // LogicCanvasView.Pointer.cs (_pendingPinPress / NotePinPress /
     // ConsumePendingPinPress). The pin's own pointer-pressed handler stamps the
     // pressed socket here; because routed PointerPressed BUBBLES, the pin
@@ -330,7 +329,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private Node?   _pendingPinPressNode;
 
     /// <summary>
-    /// [#7-WIREDRAG] Called from a socket pin's pointer-pressed
+    /// Called from a socket pin's pointer-pressed
     /// (WidgetGraphNodeView raises it via the canvas hook) to stamp the pressed
     /// socket + owner for the imminent OnNodePointerPressed. See
     /// <see cref="_pendingPinPress"/>.
@@ -342,7 +341,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// [#7-WIREDRAG] Read-and-clear the pin stamped by the most recent
+    /// Read-and-clear the pin stamped by the most recent
     /// pin-target press. Always clears so a stamp can never leak into a later,
     /// unrelated press (e.g. a node-body press that never reached a pin handler).
     /// Returns null when no pin was pressed this pass.
@@ -357,33 +356,33 @@ public sealed partial class WidgetGraphCanvas : UserControl
         return (node, sock);
     }
 
-    // Sprint C — lasso multi-select state.
+    // Lasso multi-select state.
     private readonly List<WidgetGraphNodeView> _selectedNodes = new();
     private bool _isLassoing;
     private Point _lassoStart;
     private Microsoft.UI.Xaml.Shapes.Rectangle? _lassoRect;
 
-    //  — group-drag state. When the press lands on a node that's
+    // Group-drag state. When the press lands on a node that's
     // already in the multi-select set, we snapshot every selected node's
     // origin so PointerMoved can apply the same dx/dy to all of them
     // instead of the single-node path.
     private bool _isGroupDragging;
     private readonly Dictionary<WidgetGraphNodeView, Point> _groupDragOrigins = new();
 
-    // R26 — parameter paths armed for DaVinci-style record. While armed, an
+    // Parameter paths armed for DaVinci-style record. While armed, an
     // inline value-pill commit drops/updates a keyframe at the playhead instead
     // of only writing the static attribute. Canvas-scoped (the node views are
     // recreated on every Rebuild); cleared on Bind so arm state never bleeds
     // across triggers/widgets.
     private readonly HashSet<string> _armedParams = new(StringComparer.Ordinal);
 
-    // R42 — selected wire (gold highlight). The wire model has no selection
+    // Selected wire (gold highlight). The wire model has no selection
     // concept, so we track the Link + its rendered Path here; RedrawLinks
     // re-applies the highlight if the link survived the rebuild.
     private Link? _selectedLink;
     private Microsoft.UI.Xaml.Shapes.Path? _selectedLinkPath;
 
-    // QC51-02 — frame-coalesce parity with Architect's LogicCanvasView. Pointer
+    // Frame-coalesce parity with Architect's LogicCanvasView. Pointer
     // moves during a node drag previously called RedrawLinks() per pointer
     // event, which on a high-Hz mouse + a dense graph fired the full wire
     // rebuild dozens of times per frame. The Rendering tick consumes the dirty
@@ -394,7 +393,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private bool _redrawDirty;
     private bool _renderingHooked;
 
-    // [wire-vanish 2026-06-23] Self-healing wire redraw. RedrawLinks skips any wire
+    // Self-healing wire redraw. RedrawLinks skips any wire
     // whose pin centre can't be resolved yet (the node body hasn't finished its
     // measure/arrange, so the pin reports zero size / a stale transform). Before,
     // nothing re-ran the pass once layout settled, so the wire stayed invisible until
@@ -406,7 +405,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private const int RedrawRetryBudgetMax = 8;
     private int _redrawRetryBudget = RedrawRetryBudgetMax;
 
-    // [z-clip 2026-06-10] Sentinel size for the viewport clip rect before the
+    // Sentinel size for the viewport clip rect before the
     // first layout pass measures HostGrid (ActualWidth/Height are 0 in the
     // ctor). Large enough never to clip real content; the SizeChanged handler
     // replaces it with the live footprint. Mirrors WidgetView's ClipSentinel.
@@ -416,7 +415,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         InitializeComponent();
 
-        //  — wire the canvas-header snap toggle to the same SnapEnabled
+        // Wire the canvas-header snap toggle to the same SnapEnabled
         // state the RMB flyout owns. _suppressSnapToggleDepth guards against
         // re-entrancy when the setter syncs the visual.
         SnapToggle.Content = Localizer.T("visualist.canvas.snap.toggle", "Snap to grid");
@@ -433,8 +432,8 @@ public sealed partial class WidgetGraphCanvas : UserControl
         HostGrid.Tapped += OnHostTapped;
         HostGrid.RightTapped += OnHostRightTapped;
 
-        // Keyboard zoom — Ctrl+0 reset, Ctrl++/= zoom in, Ctrl+- zoom out
-        // (TODO 2026-05-07 round 2 P3 — no keyboard zoom). Make HostGrid
+        // Keyboard zoom — Ctrl+0 reset, Ctrl++/= zoom in, Ctrl+- zoom out.
+        // Make HostGrid
         // focusable + Focus on PointerPressed so the keys land on the canvas
         // rather than bubbling to the embedding view.
         HostGrid.IsTabStop = true;
@@ -444,7 +443,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             try { HostGrid.Focus(FocusState.Programmatic); } catch { }
         };
 
-        // [z-clip 2026-06-10] Clip the graph viewport to its own bounds. WinUI
+        // Clip the graph viewport to its own bounds. WinUI
         // Grid/Canvas do NOT clip their children (there is no WPF-style
         // ClipToBounds), so a node panned/zoomed so its transformed position
         // lands above the viewport top used to render OVER the editor toolbar
@@ -459,9 +458,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
             Rect = new Windows.Foundation.Rect(0, 0, GraphViewportClipSentinel, GraphViewportClipSentinel),
         };
 
-        // [QC18-S7-followup] Repaint the dotted-grid backdrop when the host
-        // viewport resizes (pillar split-bar drag, pop-out window). [z-clip
-        // 2026-06-10] also re-stamp the viewport clip rect so it tracks the
+        // Repaint the dotted-grid backdrop when the host
+        // viewport resizes (pillar split-bar drag, pop-out window). Also
+        // re-stamp the viewport clip rect so it tracks the
         // live size and keeps clipping out-of-bounds nodes off the toolbar.
         HostGrid.SizeChanged += (_, e) =>
         {
@@ -470,7 +469,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
                 rg.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
         };
 
-        // QC51-02 — single CompositionTarget.Rendering subscription for the
+        // Single CompositionTarget.Rendering subscription for the
         // frame-coalesced wire-redraw pipeline. Symmetric Loaded/Unloaded so
         // a tab-swap recycle doesn't leak the handler.
         Loaded   += OnCanvasLoaded;
@@ -492,7 +491,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// QC51-02 — per-frame consumer of the redraw dirty flag. Cheap when
+    /// Per-frame consumer of the redraw dirty flag. Cheap when
     /// nothing changed (single bool check), so the permanent subscription
     /// doesn't waste cycles on an idle canvas. Mirrors Architect's
     /// LogicCanvasView.OnRenderingTick.
@@ -512,7 +511,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// QC51-02 — pointer-move handlers call this instead of RedrawLinks()
+    /// Pointer-move handlers call this instead of RedrawLinks()
     /// directly so multiple moves within one frame collapse to a single
     /// rebuild. Setting the flag is O(1); the actual wire pass runs on the
     /// next CompositionTarget.Rendering tick.
@@ -521,15 +520,15 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
     private void OnHostKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        // R52 — when an inline value-pill or F2-rename TextBox owns focus, none
+        // When an inline value-pill or F2-rename TextBox owns focus, none
         // of the canvas shortcuts may fire: F2 would re-target the rename, Delete
         // would destroy the node being edited (data loss), Ctrl+A/C/X/V would act
         // on nodes instead of text. The focused TextBox owns its keys — bail
-        // before any canvas handling. (R3 added IsTextInputFocused for the
+        // before any canvas handling. (IsTextInputFocused was added for the
         // F/Space palette; this extends the guard to the whole handler.)
         if (IsTextInputFocused()) return;
 
-        // R53 — Esc clears the node + wire selection at canvas scope (parity with
+        // Esc clears the node + wire selection at canvas scope (parity with
         // the layer canvas + every blueprint editor). A focused pill / rename box
         // consumes Esc itself (cancel), so this only fires on the bare canvas.
         if (e.Key == Windows.System.VirtualKey.Escape)
@@ -544,7 +543,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         bool ctrl = (InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
                      & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
 
-        //  — Save / SaveAs / Undo / Redo chords. HubChrome registers
+        // Save / SaveAs / Undo / Redo chords. HubChrome registers
         // matching KeyboardAccelerator objects at the chrome scope; this is
         // the canvas-focus path (focus lands on HostGrid after a click). Save
         // is VirtualKey.S — same row across QWERTY/QWERTZ/AZERTY.
@@ -602,7 +601,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             GlobalLogger.Error("WidgetGraphCanvas", "Save/Undo chord", ex);
         }
 
-        // [Visualist regression audit 2026-05-31, Lane D P2] F2 — inline rename
+        // F2 — inline rename
         // of the selected node. See BeginNodeRename for the label-vs-type
         // rationale (Title is the registry template key and must stay immutable;
         // the editor writes the per-instance Node.Description label instead).
@@ -613,7 +612,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        // R3 — F (and Space, for Architect muscle-memory) opens the searchable
+        // F (and Space, for Architect muscle-memory) opens the searchable
         // spawn palette. Manifesto §4.6: "Search palette (F key) and compatible-
         // socket spawn menus carry over from Architect." The WinUI Visualist
         // dropped it (only the cascading right-click menu remained). Guard against
@@ -628,11 +627,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        // Sprint B (TODO cleanup) — Cut/Copy/Paste/Select-All/Delete on the
+        // Cut/Copy/Paste/Select-All/Delete on the
         // node multi-selection. Per-pillar Visualist clipboard buffer.
         if (e.Key == Windows.System.VirtualKey.Delete)
         {
-            // R42 — a selected wire takes Delete precedence over node deletion.
+            // A selected wire takes Delete precedence over node deletion.
             if (_selectedLink is { } link)
             {
                 DeleteLink(link);
@@ -661,11 +660,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
                     e.Handled = true;
                     return;
                 case Windows.System.VirtualKey.V:
-                    // B31 — paste now reads the OS clipboard's
+                    // Paste now reads the OS clipboard's
                     // PhoenixControls.SubGraph payload (Architect copy) when
                     // the in-process buffer is empty, so fire-and-forget the
                     // async path via the dispatcher.
-                    // [P1 swarm-audit 2026-05-29] route through the error-boundary
+                    // route through the error-boundary
                     // wrapper so a clipboard / deserialize fault doesn't fault an
                     // unobserved Task (AsyncErrorBoundary is Hub-only, off-limits here).
                     _ = PasteWithErrorBoundaryAsync();
@@ -706,9 +705,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
         e.Handled = true;
     }
 
-    // ── F2 inline rename (Lane D P2) ─────────────────────────────────────────
+    // ── F2 inline rename ─────────────────────────────────────────────────────
     //
-    // The pre-T15 audit (Area 1 P2) flagged the missing F2=rename idiom. There
+    // The pre-T15 audit flagged the missing F2=rename idiom. There
     // is a constraint the baseline never hit: a Visualist node's `Title` is the
     // WidgetNodeRegistry template key (DuplicateNode / preview / the exporter all
     // resolve off it), so renaming Title would break node identity. The faithful
@@ -876,12 +875,12 @@ public sealed partial class WidgetGraphCanvas : UserControl
     public void Bind(VisualistViewModel vm, WidgetTrigger? trigger)
     {
         _vm = vm;
-        // R26 — record-arm is a transient authoring mode scoped to the trigger
+        // Record-arm is a transient authoring mode scoped to the trigger
         // being edited; reset it when the bound trigger changes so a pill that
         // was armed on one trigger doesn't silently record on another.
         if (!ReferenceEquals(_trigger, trigger)) _armedParams.Clear();
         _trigger = trigger;
-        // R42 — wire selection doesn't survive a trigger swap.
+        // Wire selection doesn't survive a trigger swap.
         _selectedLink = null;
         _selectedLinkPath = null;
         Rebuild();
@@ -913,7 +912,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         WorldCanvas.Children.Clear();
         LinkLayer.Children.Clear();
-        // [P1 swarm-audit 2026-05-29] unhook pin pointer / right-tap handlers from
+        // unhook pin pointer / right-tap handlers from
         // the outgoing node views before dropping them, otherwise every Rebuild
         // (graph load / add / delete / paste) leaks the prior views via their live
         // routed-event subscriptions. Symmetric to HookPinHandlers (called per view
@@ -922,7 +921,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             UnhookPinHandlers(oldView);
         _nodeViews.Clear();
         _selectedNode = null;
-        NotifySelectedNodeChanged(null);   // R6 — graph rebind clears the manipulator
+        NotifySelectedNodeChanged(null);   // graph rebind clears the manipulator
         _tempWirePath = null;
         _wireSourceNode   = null;
         _wireSourceSocket = null;
@@ -931,7 +930,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         var nodes = _trigger?.Graph?.Nodes;
         if (_trigger is null)
         {
-            // R48 — advertise only the gesture that works in this state.
+            // Advertise only the gesture that works in this state.
             EmptyHint.Text = Localizer.T("visualist.canvas.emptyHint.noWidget",
                 "No widget selected.\n\nDouble-click a widget on the Layer Canvas (or pick one from the Widgets list) to author its trigger graphs here.");
             EmptyHint.Visibility = Visibility.Visible;
@@ -966,7 +965,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (nodes is null || nodes.Count == 0)
         {
-            // R48 — onboarding for an empty trigger graph, listing only gestures
+            // Onboarding for an empty trigger graph, listing only gestures
             // that work today: right-click spawn palette, F search, drag-from-Media.
             string body = Localizer.T("visualist.canvas.emptyHint.body",
                 "is empty.\n\n· Right-click the canvas to open the spawn palette\n· Press F to search for a node\n· Drag a tile from the Media library onto the canvas");
@@ -1003,12 +1002,12 @@ public sealed partial class WidgetGraphCanvas : UserControl
             WorldCanvas.Children.Add(view);
             _nodeViews[node.Id] = view;
 
-            // R2 — inline value-pill commit. The node view renders an editable
+            // Inline value-pill commit. The node view renders an editable
             // pill next to every input socket with a matching Node.Attributes
             // key; commits route here so the write gets undo + dirty + rebuild.
             view.SetAttributeCommit(OnNodeAttributeCommitted);
 
-            // R26 — inline ◀ ◇ ▶ arm/seek cluster on animatable scalar pills.
+            // Inline ◀ ◇ ▶ arm/seek cluster on animatable scalar pills.
             // Capture `node` so the per-attr callbacks resolve the parameter
             // path. SetPillAnimation re-renders the node so the clusters appear.
             var capturedNode = node;
@@ -1019,13 +1018,13 @@ public sealed partial class WidgetGraphCanvas : UserControl
                 seekPrev:  key => SeekParam(capturedNode, key, -1),
                 seekNext:  key => SeekParam(capturedNode, key, +1));
 
-            // Sprint B — wire-drag from any pin. Hooked at Add-time so the
+            // Wire-drag from any pin. Hooked at Add-time so the
             // event seam survives Refresh()-driven re-renders within the node.
             HookPinHandlers(view);
-            // Sprint C — right-click context menu (Duplicate / Delete +
+            // Right-click context menu (Duplicate / Delete +
             // contextual Edit Shape / Browse Media / Animate entries).
             HookNodeContextFlyout(view);
-            // Lane D P2 — surface a persisted F2-rename label as the node's
+            // Surface a persisted F2-rename label as the node's
             // hover tooltip so it survives graph reloads.
             ApplyNodeLabelTooltip(view);
         }
@@ -1045,14 +1044,14 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private void OnFirstLayoutUpdated(object? sender, object e)
     {
         WorldCanvas.LayoutUpdated -= OnFirstLayoutUpdated;
-        // [wire-vanish 2026-06-23] Fresh layout cycle → fresh retry budget so the
+        // Fresh layout cycle → fresh retry budget so the
         // self-healing redraw always has attempts to spend after a load / trigger swap.
         _redrawRetryBudget = RedrawRetryBudgetMax;
         RedrawLinks();
-        //  — populate body-preview thumbnails after the first layout
+        // Populate body-preview thumbnails after the first layout
         // pass so the node views exist when SetPreview is called.
         RefreshPreviews();
-        // [QC18-S7-followup] Initial dotted-grid paint once HostGrid has
+        // Initial dotted-grid paint once HostGrid has
         // measured. SnapEnabled defaults to off, but seeding here means the
         // first toggle-on paints immediately rather than waiting for a pan.
         RefreshGridDots();
@@ -1074,7 +1073,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         // Preserve the temp wire (if a drag is active) — only links from the
         // graph model are reset. Strip everything else.
-        // [Lane B P3] Re-add the in-flight temp wire LAST (after the model links
+        // Re-add the in-flight temp wire LAST (after the model links
         // below) rather than first, so the drag preview always renders ON TOP of
         // the committed wires. Previously it was re-added first, which let a
         // model wire painted afterward obscure the preview when a RedrawLinks()
@@ -1087,7 +1086,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         var links = _trigger?.Graph?.Links;
         if (links is null) { _selectedLink = null; _selectedLinkPath = null; return; }
 
-        // R42 — drop a stale wire selection if the link was deleted since the
+        // Drop a stale wire selection if the link was deleted since the
         // last paint, so the highlight + Delete-key target never dangle.
         if (_selectedLink is { } sel0 && !links.Any(l => l.Id == sel0.Id))
             _selectedLink = null;
@@ -1099,7 +1098,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             if (!_nodeViews.TryGetValue(link.FromNodeId, out var fromView)) continue;
             if (!_nodeViews.TryGetValue(link.ToNodeId,   out var toView))   continue;
 
-            // [wire-vanish 2026-06-23] Both endpoint nodes are realised; if a pin
+            // Both endpoint nodes are realised; if a pin
             // centre still can't be resolved it's almost always because the node body
             // hasn't completed measure/arrange (pin size 0 / stale transform). Flag
             // that as layoutPending so the post-loop schedules a retry — instead of
@@ -1115,7 +1114,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
                 continue;
             }
 
-            // R42 — resolve the source socket so the wire reflects the Flow/data
+            // Resolve the source socket so the wire reflects the Flow/data
             // distinction (exec wires read white + heavier; data wires carry the
             // type colour) instead of a single flat neutral.
             Socket? srcSocket = fromView.Node.Sockets?
@@ -1126,13 +1125,13 @@ public sealed partial class WidgetGraphCanvas : UserControl
             var path = BuildBezierWire(p1, p2,
                 WireBrushFor(srcSocket, isFlow, selected),
                 WireThicknessFor(isFlow, selected));
-            // Sprint C — wire right-click flyout. The wire is hit-testable
+            // Wire right-click flyout. The wire is hit-testable
             // because we leave LinkLayer.IsHitTestVisible=False but each
             // path opts back in with its own hit visibility (XAML inherits
             // false from the parent if the parent is false-hit, so we lift
             // the parent at runtime instead).
             AttachWireContextFlyout(path, link);
-            // R42 — left-tap selects the wire (gold highlight). Capture the link
+            // Left-tap selects the wire (gold highlight). Capture the link
             // + path so the selection survives the closure and the next redraw.
             var capturedLink = link;
             path.Tapped += (s, ev) => { SelectLink(capturedLink); ev.Handled = true; };
@@ -1140,18 +1139,18 @@ public sealed partial class WidgetGraphCanvas : UserControl
             if (selected) _selectedLinkPath = path;
         }
 
-        // [Lane B P3] Re-add the in-flight temp wire LAST so the drag preview
+        // Re-add the in-flight temp wire LAST so the drag preview
         // sits on top of every committed wire (z-order), and re-attaches even if
         // a mid-drag RedrawLinks() cleared the layer beneath it.
         if (keep is not null) LinkLayer.Children.Add(keep);
 
         // Lift LinkLayer hit-test so right-click on a wire reaches the
         // path's ContextFlyout. Done after children are added so the temp
-        // wire (sprint B) and the lasso rectangle still render but stay
+        // wire and the lasso rectangle still render but stay
         // non-blocking via their own IsHitTestVisible=false flags.
         LinkLayer.IsHitTestVisible = true;
 
-        // [wire-vanish 2026-06-23] Self-heal a pass that skipped wires only because
+        // Self-heal a pass that skipped wires only because
         // their nodes weren't laid out yet: re-run on a later (Low) tick so they
         // appear on their own. Bounded by _redrawRetryBudget against a node that
         // never lays out; a fully-resolved pass refills the budget.
@@ -1167,7 +1166,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // [wire-vanish 2026-06-23] True when the socket's pin element EXISTS on the node
+    // True when the socket's pin element EXISTS on the node
     // view but hasn't been measured yet (zero size) — i.e. the wire skip is a layout
     // race a retry will clear, not a genuinely absent pin (stale link / removed
     // socket), which must NOT arm a retry. Mirrors TryGetPinCenter's size guard.
@@ -1175,7 +1174,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         => nodeView.PinElements.TryGetValue(socketId, out var pin)
            && (pin.ActualWidth <= 0 || pin.ActualHeight <= 0);
 
-    // [#7-WIREDRAG] Resolve the pin FrameworkElement for a (node, socket) pair so
+    // Resolve the pin FrameworkElement for a (node, socket) pair so
     // BeginWireDrag can record _wireSourcePin when the drag is started from the
     // deterministic hand-off path (where we only hold the resolved socket, not the
     // pin element the press landed on). Best-effort: a missing view/socket yields
@@ -1209,7 +1208,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // R42 — wire brush. A selected wire is §2 gold; a Flow (exec) wire reads as
+    // Wire brush. A selected wire is §2 gold; a Flow (exec) wire reads as
     // a bright neutral white the way every blueprint editor paints exec lines;
     // a data wire carries its source socket's DataType colour
     // (WidgetSocketPalette.EffectiveColor — back-filled when Socket.Color is the
@@ -1228,16 +1227,16 @@ public sealed partial class WidgetGraphCanvas : UserControl
         return s_wireFallback;
     }
 
-    // R42 — exec wires are heavier than data wires; selection thickens further.
+    // Exec wires are heavier than data wires; selection thickens further.
     private static double WireThicknessFor(bool isFlow, bool selected)
         => selected ? 3.5 : (isFlow ? 3.0 : 2.0);
 
-    // [P1 swarm-audit 2026-05-29] pre-allocated neutral wire fallback when the
+    // pre-allocated neutral wire fallback when the
     // source socket can't be resolved.
     private static readonly Brush s_wireFallback =
         new SolidColorBrush(Color.FromArgb(0x60, 0xA8, 0x96, 0x83));
 
-    // R42 — left-tap on a wire selects it (gold highlight). Clearing node /
+    // Left-tap on a wire selects it (gold highlight). Clearing node /
     // wire selection is symmetric so a wire and a node are never both "selected".
     private void SelectLink(Link link)
     {
@@ -1254,7 +1253,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         RedrawLinks();
     }
 
-    // [#7-WIREDRAG] Bezier control-point math ported from Architect's
+    // Bezier control-point math ported from Architect's
     // BezierPath.cs (chrome-independence: COPIED, not referenced). The naive
     // `dx = |p2.X - p1.X| * 0.5` collapses to a near-straight line on
     // back-routing feedback loops (target sits LEFT of source) — the wire dives
@@ -1265,7 +1264,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // curve. Plus a self-loop branch (both endpoints coincident → arc upward and
     // around the source) so a self-connection is discoverable instead of a tight
     // arc hidden behind the node body. Visualist-local mirror — kept here so the
-    // pillar owns its own wire paint per feedback_visualist_architect_chrome_independence.
+    // pillar owns its own wire paint.
     private const double WireMinTangent      = 40.0;
     private const double WireSelfLoopEpsilon = 0.5;
     private const double WireSelfLoopArc     = 80.0;
@@ -1330,7 +1329,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        // Sprint C — left-button on empty canvas starts a lasso. Inside-node
+        // Left-button on empty canvas starts a lasso. Inside-node
         // presses are handled by OnNodePointerPressed and never bubble here
         // because the node-view is in front of the empty canvas region.
         if (pp.Properties.IsLeftButtonPressed
@@ -1344,7 +1343,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             _lassoStart = worldPos;
             _lassoRect = new Microsoft.UI.Xaml.Shapes.Rectangle
             {
-                // R40 — §2 gold marquee (SelectionBrush #FFD700), not brass Ember.
+                // §2 gold marquee (SelectionBrush #FFD700), not brass Ember.
                 Stroke          = ResolveBrush("SelectionBrush", 0xFF, 0xFF, 0xD7, 0x00),
                 StrokeThickness = 1,
                 StrokeDashArray = new DoubleCollection { 4, 3 },
@@ -1491,12 +1490,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private void OnHostTapped(object sender, TappedRoutedEventArgs e)
     {
         // A tap that didn't bubble through a node means the user clicked
-        // empty canvas — clear selection. Sprint C will replace this with
-        // lasso-aware selection.
+        // empty canvas — clear selection.
         if (e.OriginalSource is FrameworkElement fe && IsInsideAnyNodeView(fe))
             return;
         SelectNode(null);
-        ClearLinkSelection();   // R42 — empty-canvas click also drops a wire highlight
+        ClearLinkSelection();   // empty-canvas click also drops a wire highlight
     }
 
     private bool IsInsideAnyNodeView(DependencyObject? element)
@@ -1517,7 +1515,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     /// a pill press is left to the pill's own Tapped→TextBox edit instead of capturing
     /// the pointer for a node-drag (which opens the edit box but blocks all typing).
     /// Per-pillar copy of the same helper in LayerCanvasView — Visualist owns its
-    /// gesture helpers per feedback_visualist_architect_chrome_independence.
+    /// gesture helpers.
     /// </summary>
     private static bool IsEditAffordancePress(object? source)
     {
@@ -1546,7 +1544,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _selectedNodes.Clear();
         if (_selectedNode is { } old) old.IsSelected = false;
         _selectedNode = null;
-        NotifySelectedNodeChanged(null);   // R6
+        NotifySelectedNodeChanged(null);
         RecomputeHotkeyContext();
     }
 
@@ -1558,7 +1556,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // Keep the legacy _selectedNode pointer in sync for single-target
         // operations (delete-via-key, duplicate) until they grow batch logic.
         _selectedNode = view;
-        NotifySelectedNodeChanged(view.Node);   // R6
+        NotifySelectedNodeChanged(view.Node);
         RecomputeHotkeyContext();
     }
 
@@ -1581,7 +1579,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        // [#7-WIREDRAG] Wire-drag branch — runs FIRST so a press on (or right at
+        // Wire-drag branch — runs FIRST so a press on (or right at
         // the edge of) a pin starts a wire-drag instead of a node-drag. Mirrors
         // Architect's OnHostPointerPressed: PRIMARY source is the deterministic
         // note the pin's own pointer-pressed stamped via NotePinPress (this
@@ -1604,12 +1602,12 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        // R42 — pressing a node drops any wire highlight (a node and a wire are
+        // Pressing a node drops any wire highlight (a node and a wire are
         // never both "selected").
         if (_selectedLink is not null) ClearLinkSelection();
 
-        // Shift-click extends the multi-select set without starting a drag —
-        // closes TODO P1 #3 (the previous SelectNode unconditionally cleared
+        // Shift-click extends the multi-select set without starting a drag
+        // (the previous SelectNode unconditionally cleared
         // the prior multi-select). Group-drag is a separate follow-up;
         // shift-click is just for adjusting the selection set today.
         if (IsShiftDown())
@@ -1631,7 +1629,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
 
         // No shift. If the pressed node is already part of the multi-select
-        // set, all selected nodes drag together (). Otherwise the
+        // set, all selected nodes drag together. Otherwise the
         // press collapses the selection to just this node and starts a
         // single-node drag.
         if (_selectedNodes.Contains(view) && _selectedNodes.Count > 1)
@@ -1657,8 +1655,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         e.Handled = true;
     }
 
-    // Visualist owns its own copy of the keyboard-state probe per
-    // feedback_visualist_architect_chrome_independence.md — Architect's
+    // Visualist owns its own copy of the keyboard-state probe — Architect's
     // LogicCanvasView.Marquee.cs has the equivalent helper.
     private static bool IsShiftDown()
         => (InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
@@ -1672,13 +1669,13 @@ public sealed partial class WidgetGraphCanvas : UserControl
             & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
 
     /// <summary>
-    /// Sprint L / QC51-04 — true when grid snap should apply right now.
+    /// True when grid snap should apply right now.
     ///
     /// Semantics: <see cref="SnapEnabled"/> is the persistent toggle; Alt held
     /// during a drag is a MOMENTARY DISABLE (matches the CHANGELOG 0.9.10 spec
     /// "Alt-hold momentary disable" and the Photoshop / Fusion convention
     /// where the modifier suppresses the active constraint rather than adding
-    /// one). Pre-QC51-04 the operator was `SnapEnabled || IsAltDown()`, which
+    /// one). The operator was previously `SnapEnabled || IsAltDown()`, which
     /// inverted the intent — Alt would force snap on while the toggle was off,
     /// the exact opposite of what the docs promised.
     /// </summary>
@@ -1689,7 +1686,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private static int SnapToGrid(int v, int step = SnapStepPx)
         => (int)Math.Round(v / (double)step) * step;
 
-    //  — walk up the visual tree until we hit the Visualist pillar's
+    // Walk up the visual tree until we hit the Visualist pillar's
     // MainView. Used by the Save / SaveAs / Undo / Redo chord handlers to
     // route into the existing public surface (SaveLayer / SaveLayerAs / Undo /
     // Redo) without adding a new public event on this canvas. The walk is
@@ -1705,24 +1702,24 @@ public sealed partial class WidgetGraphCanvas : UserControl
         return null;
     }
 
-    //  — CheckBox event handler. Routes through the IsSnapEnabled
+    // CheckBox event handler. Routes through the IsSnapEnabled
     // setter so the System-log line and (eventually) the dotted-grid backdrop
     // fire from one place regardless of which surface the user touched.
     private void OnSnapToggleChanged(object sender, RoutedEventArgs e)
     {
-        // [Lane B P3] Suppressed while any sync pass is in flight (depth > 0).
+        // Suppressed while any sync pass is in flight (depth > 0).
         if (_suppressSnapToggleDepth > 0) return;
         IsSnapEnabled = SnapToggle.IsChecked == true;
     }
 
-    //  — push SnapEnabled into the CheckBox visual without re-firing
+    // Push SnapEnabled into the CheckBox visual without re-firing
     // the Checked/Unchecked handler. Called by the IsSnapEnabled setter and
     // by the RMB-flyout toggle path so both stay in sync.
     private void SyncSnapToggleVisual()
     {
         try
         {
-            // [Lane B P3] Increment/decrement the nesting depth instead of a flat
+            // Increment/decrement the nesting depth instead of a flat
             // bool so a nested sync (e.g. RMB-flyout toggle inside a checkbox-driven
             // sync) doesn't clear suppression for the outer pass on its own finally.
             _suppressSnapToggleDepth++;
@@ -1734,7 +1731,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    //  — push the engine-side PreviewSnapshot map into each node view.
+    // Push the engine-side PreviewSnapshot map into each node view.
     // Called after Rebuild() and after every graph-mutating commit
     // (paste / wire add / wire delete / node delete / attribute commit
     // path via MarkDirty). NodeEvaluator.EvaluatePreviews is a sync graph
@@ -1762,7 +1759,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // R2 — commit an inline value-pill edit. Mirrors every other attribute
+    // Commit an inline value-pill edit. Mirrors every other attribute
     // mutation on this canvas (Browse Media / Edit Shape / manipulator): snapshot
     // for undo, write the raw value, mark dirty, rebuild (Rebuild's LayoutUpdated
     // re-runs RefreshPreviews so a changed value re-renders the node thumbnail).
@@ -1780,13 +1777,13 @@ public sealed partial class WidgetGraphCanvas : UserControl
             if (string.Equals(original, newValue, StringComparison.Ordinal) && !armed) return;
             _vm?.Document?.PushUndo();
             node.Attributes[attrKey] = newValue;
-            // R26 — record-on-change: an armed pill drops/updates a keyframe at
+            // Record-on-change: an armed pill drops/updates a keyframe at
             // the playhead with the committed value (the static attribute stays
             // as the at-rest fallback).
             if (armed) RecordKeyframeAtPlayhead(node, attrKey, newValue);
             _vm?.Document?.MarkDirty();
             Rebuild();
-            // Bug #3/B — mirror this node-BODY pill edit onto the right-pane
+            // Mirror this node-BODY pill edit onto the right-pane
             // Inspector (which listens to NodeBodyCommitted), so editing a value on
             // the node and editing it in the Inspector stay in sync both ways. Uses
             // the dedicated event (not NodeParamCommitted) so an Inspector edit can't
@@ -1799,7 +1796,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // ─── R26 — keyframe arm + record + seek helpers ──────────────────────
+    // ─── keyframe arm + record + seek helpers ──────────────────────
 
     private string ParamPath(Node node, string attrKey)
         => AnimatedPinRegistry.MakeParameterPath(node, attrKey);
@@ -1908,7 +1905,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         if (!double.IsNaN(best)) _vm.PlayheadMs = best;
     }
 
-    // ─── R20 — drag a media tile from the docked panel onto the graph ────
+    // ─── drag a media tile from the docked panel onto the graph ────
     //
     // Restores the pre-WinUI "drag a tile, see it in OBS" gesture: dropping a
     // MediaLibraryPanel tile spawns the matching loader node (Image/Video/Audio.Load)
@@ -1917,7 +1914,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // output, so it spawns unwired. Single PushUndo covers the spawn + wire.
     private void OnMediaDragOver(object sender, DragEventArgs e)
     {
-        // NAMED-1 — accept the drop when EITHER the custom media format OR the
+        // Accept the drop when EITHER the custom media format OR the
         // StandardDataFormats.Text payload is present. The custom DataPackage
         // format (e.Data.SetData/GetDataAsync) does NOT reliably survive the
         // round-trip across controls in WinUI 3, so DragOver was rejecting the
@@ -1950,7 +1947,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         var deferral = e.GetDeferral();
         try
         {
-            // NAMED-1 — resolve the payload from StandardDataFormats.Text FIRST
+            // Resolve the payload from StandardDataFormats.Text FIRST
             // (the reliable round-trip channel), falling back to the custom
             // DataPackage format only if Text is absent. Both carry the same
             // "{kind}|{relativePath}" contract. The custom format alone was the
@@ -2003,7 +2000,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             node.Attributes["Path"] = System.Text.Json.JsonSerializer.Serialize(rel);
             graph.Nodes.Add(node);
 
-            // Auto-wire image/video → the Display sink (R34 single fan-in: replace
+            // Auto-wire image/video → the Display sink (single fan-in: replace
             // any prior inbound link on the sink). Audio.Load has no Image output.
             if (kind is "image" or "video")
             {
@@ -2029,7 +2026,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             if (_vm?.Document is { } d2) d2.MarkDirty();
             Rebuild();
 
-            // NAMED-1 — success breadcrumb so a future no-op is diagnosable from
+            // Success breadcrumb so a future no-op is diagnosable from
             // the System log (did the drop reach here at all, or fail upstream?).
             GlobalLogger.Log($"Visualist: spawned {title} from media drop", "WidgetGraphCanvas", LogLevel.System);
         }
@@ -2040,7 +2037,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         finally { deferral.Complete(); }
     }
 
-    // ─── R6 — node-selection → preview manipulator wire ──────────────────
+    // ─── node-selection → preview manipulator wire ──────────────────
     //
     // The pre-WinUI WidgetGraphCanvas exposed OnSelectedNodeChanged, which
     // WidgetEditorForm forwarded to the preview so selecting a spatial node lit
@@ -2090,7 +2087,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             // coordinates are valid and Architect's logic canvas does the
             // same on its group-drag.
             //
-            // Sprint L — when snap is active we snap the *delta* (not each
+            // When snap is active we snap the *delta* (not each
             // resulting position). Snapping the per-node positions would
             // shear the formation: two nodes 10px apart on the X axis would
             // collapse onto the same column the moment the cursor crossed a
@@ -2122,9 +2119,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
 
         // Re-route wires that touch the moved node(s) so they trail in real
-        // time. QC51-02 — frame-coalesced via QueueRedrawLinks; the next
+        // time. Frame-coalesced via QueueRedrawLinks; the next
         // CompositionTarget.Rendering tick runs the rebuild exactly once per
-        // displayed frame. Pre-QC51-02 this was a direct RedrawLinks() call
+        // displayed frame. Previously this was a direct RedrawLinks() call
         // per pointer-move event, which fired the full wire pass dozens of
         // times per frame on a high-Hz mouse.
         QueueRedrawLinks();
@@ -2149,7 +2146,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         e.Handled = true;
     }
 
-    // ─── pin-press → wire-drop (sprint B) ────────────────────────────────
+    // ─── pin-press → wire-drop ───────────────────────────────────────────
 
     private void HookPinHandlers(WidgetGraphNodeView nodeView)
     {
@@ -2168,13 +2165,13 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
             // Right-click on a pin opens a context flyout. Two distinct
             // affordances share OnPinRightTapped, gated by socket side:
-            //   • INPUT animatable pins → Animate / Remove-animation menu
-            //     (). Non-animatable inputs (Flow / String / Bool /
+            //   • INPUT animatable pins → Animate / Remove-animation menu.
+            //     Non-animatable inputs (Flow / String / Bool /
             //     Image / Color …) get no Animate item.
-            //   • OUTPUT pins → compatible-socket spawn submenu (Lane B P2,
-            //     R3 baseline parity) — spawn a node whose input matches this
+            //   • OUTPUT pins → compatible-socket spawn submenu
+            //     (baseline parity) — spawn a node whose input matches this
             //     output's type, pre-grouped by category.
-            // [Lane B P2] We attach RightTapped ONLY where the handler will do
+            // We attach RightTapped ONLY where the handler will do
             // something (the predicate below mirrors OnPinRightTapped's own
             // branch gate). Previously RightTapped was attached to ANY
             // animatable pin regardless of side, leaving dead subscriptions on
@@ -2186,7 +2183,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // [P1 swarm-audit 2026-05-29] symmetric teardown for HookPinHandlers. Without
+    // symmetric teardown for HookPinHandlers. Without
     // it, Rebuild() dropped its old node views with the pin pointer / right-tap
     // handlers still subscribed — a per-rebuild handler leak (graph load / add /
     // delete / paste all rebuild). Mirrors the `+=` set above with `-=`, including
@@ -2205,7 +2202,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // [Lane B P2] Single source of truth for which sockets get a RightTapped
+    // Single source of truth for which sockets get a RightTapped
     // subscription, so Hook / Unhook stay symmetric and OnPinRightTapped never
     // fires on a pin that has no menu to show. OUTPUT pins always carry the
     // compatible-socket spawn submenu; INPUT pins carry the Animate menu only
@@ -2222,7 +2219,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         if (owner is null) return;
         if (_trigger is null || _vm is null) return;
 
-        // [Lane B P2] OUTPUT pins → compatible-socket spawn submenu (R3 baseline
+        // OUTPUT pins → compatible-socket spawn submenu (baseline
         // parity). The Animate gesture below is INPUT-only (you keyframe a node's
         // input parameter, not its computed output), so the two affordances split
         // cleanly by socket side. HookPinHandlers only attaches RightTapped to the
@@ -2255,7 +2252,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         e.Handled = true;
     }
 
-    // [Lane B P2] Compatible-socket spawn menu (R3 baseline parity). Right-clicking
+    // Compatible-socket spawn menu (baseline parity). Right-clicking
     // an OUTPUT pin offers to spawn a node whose INPUT type is compatible with this
     // output, grouped by category, then auto-wires the new node's matching input to
     // the source pin. Mirrors BuildPaletteSubmenu's category grouping but pre-filters
@@ -2311,7 +2308,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         if (!any)
         {
             // No compatible template — show a disabled hint rather than an empty
-            // submenu (no modal, per feedback_no_modal_dialogs_for_repeatable_rejections).
+            // submenu (no modal).
             spawn.Items.Add(new MenuFlyoutItem
             {
                 Text       = "(no compatible nodes)",
@@ -2323,7 +2320,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         flyout.ShowAt(pin);
     }
 
-    // [Lane B P2] Spawn a node by title at the world point, then auto-wire the
+    // Spawn a node by title at the world point, then auto-wire the
     // source output into the new node's first compatible input. Reuses SpawnNodeAt's
     // guards (Audio.Play singleton, snap, undo) by spawning through it, then adds the
     // wire as part of the same undo step the spawn pushed.
@@ -2344,7 +2341,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             s.Type == SocketType.Input && AreDataTypesCompatible(sourceOutput.DataType, s.DataType));
         if (inSocket is null) return;   // nothing to wire (shouldn't happen — we pre-filtered)
 
-        // Single fan-in (R34): replace any prior inbound wire on the chosen input.
+        // Single fan-in: replace any prior inbound wire on the chosen input.
         graph.Links.RemoveAll(l => l.ToNodeId == newNode.Id && l.ToSocketId == inSocket.Id);
         graph.Links.Add(new Link
         {
@@ -2416,7 +2413,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         Node? sourceNode = ResolveOwnerNode(pin);
         if (sourceNode is null) return;
 
-        // [#7-WIREDRAG] This handler IS the press landing precisely on the pin —
+        // This handler IS the press landing precisely on the pin —
         // start the drag directly (BeginWireDrag clears any pending stamp the
         // node-view's hand-off handler may have set on this same press, so it
         // can't leak past this Handled press). The deterministic NotePinPress /
@@ -2428,7 +2425,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// [#7-WIREDRAG] Start a wire-drag from <paramref name="socket"/> on
+    /// Start a wire-drag from <paramref name="socket"/> on
     /// <paramref name="sourceNode"/>. Factored out of OnPinPointerPressed so the
     /// deterministic hand-off path (OnNodePointerPressed → ConsumePendingPinPress /
     /// HitTestPinAt) can begin the identical drag when the press routed to the
@@ -2437,7 +2434,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     /// </summary>
     private void BeginWireDrag(Node sourceNode, Socket socket, FrameworkElement? pin, Pointer pointer, Point worldPos)
     {
-        // [#7-WIREDRAG] Once a drag has actually begun, drop any pending pin
+        // Once a drag has actually begun, drop any pending pin
         // stamp so it can't leak into a later, unrelated node-body press. This
         // matters because the direct pin path (OnPinPointerPressed) sets
         // e.Handled=true, which stops the bubble before OnNodePointerPressed can
@@ -2448,7 +2445,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _wireSourceNode    = sourceNode;
         _wireSourceSocket  = socket;
         _wireSourcePin     = pin;
-        // [Lane B P1] Remember which end we grabbed so the move/release paths can
+        // Remember which end we grabbed so the move/release paths can
         // reverse producer/consumer roles for an input-initiated (reverse) drag.
         _wireSourceIsInput = socket.Type == SocketType.Input;
         SetTransientHotkeyContext(VisualistHotkeyContext.WidgetGraphDraggingWire);
@@ -2504,7 +2501,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // on type-compat. This is the "preview" the parity plan calls out —
         // author sees ahead of release whether the drop will succeed.
         //
-        // [Lane B P1] Reverse-drag aware: a forward drag (source = output) looks
+        // Reverse-drag aware: a forward drag (source = output) looks
         // for an INPUT drop target; a reverse drag (source = input) looks for an
         // OUTPUT drop target. In the reverse case the compat check is re-issued
         // with swapped roles (hovered output as producer, source input as
@@ -2521,8 +2518,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
                 ? IsCompatibleDrop(hover.Value.Socket, _wireSourceSocket, hover.Value.Node, _wireSourceNode)
                 : IsCompatibleDrop(_wireSourceSocket, hover.Value.Socket, _wireSourceNode, hover.Value.Node);
             // Wire-preview brushes route through the theme's status tokens
-            // so the green/red read consistent with the rest of the suite
-            // (TODO 2026-05-07 P3 — non-theme greens/reds in WidgetGraphCanvas).
+            // so the green/red read consistent with the rest of the suite.
             stroke = ok
                 ? ResolveBrush("OkBrush",  0xEE, 0x6F, 0xA4, 0x6B)
                 : ResolveBrush("ErrBrush", 0xEE, 0xC9, 0x53, 0x3C);
@@ -2532,7 +2528,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             stroke = ResolveBrush("EmberPrimaryBrush", 0xCC, 0xE5, 0xA2, 0x4E);
         }
 
-        // [Lane B P3] Mutate the existing temp Path in place instead of removing
+        // Mutate the existing temp Path in place instead of removing
         // + recreating it every frame. Recreating the visual element caused a
         // visible pop on each pointer-move (and churned LinkLayer.Children); now
         // we update only the geometry (Data) and Stroke brush of the one stable
@@ -2555,13 +2551,13 @@ public sealed partial class WidgetGraphCanvas : UserControl
         e.Handled = true;
     }
 
-    // [Lane B P3] Recompute an existing wire Path's bezier geometry + swap its
+    // Recompute an existing wire Path's bezier geometry + swap its
     // Stroke without allocating a new Path. Mirrors BuildBezierWire's control-
     // point math so the curve shape is identical; only the visual element is
     // reused. Keeps mid-drag wire-preview updates jank-free (no element pop).
     private static void UpdateBezierWire(Microsoft.UI.Xaml.Shapes.Path path, Point p1, Point p2, Brush stroke)
     {
-        // [#7-WIREDRAG] Use the SAME control-point math as BuildBezierWire (incl.
+        // Use the SAME control-point math as BuildBezierWire (incl.
         // the back-routing kicker + self-loop branch) so the in-flight drag
         // preview's curve shape matches the committed wire exactly — previously
         // this duplicated the naive `dx = Max(40, |dx|*0.5)` formula, so a
@@ -2601,7 +2597,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         var hover = HitTestPinAt(pp.Position);
         if (hover is null) return;
 
-        // [Lane B P1] Resolve producer (output) / consumer (input) honouring the
+        // Resolve producer (output) / consumer (input) honouring the
         // drag direction. Forward drag: src is the output, the drop target must
         // be an input. Reverse drag (src is an input): the drop target must be an
         // OUTPUT, and we swap roles so the producer is the hovered output and the
@@ -2612,8 +2608,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         {
             // Released over the wrong-side pin or non-pin region — silent discard,
             // log via GlobalLogger so a curious user can find a trail in the
-            // System Log panel without a modal dialog (per
-            // feedback_no_modal_dialogs_for_repeatable_rejections).
+            // System Log panel without a modal dialog.
             string want = srcIsInput ? "output" : "input";
             GlobalLogger.Log(
                 $"WidgetGraphCanvas: wire from '{src.Name}' rejected — drop target was not an {want} socket.",
@@ -2650,14 +2645,14 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (_vm?.Document is { } doc) doc.PushUndo();
 
-        // R34 — single fan-in: an input socket takes exactly ONE inbound wire.
+        // Single fan-in: an input socket takes exactly ONE inbound wire.
         // Dropping a wire onto an already-connected input REPLACES the prior link
         // (the WinForms editor did RemoveAll before Add). Appending a second wire
         // left a dead link that NodeEvaluator's FirstOrDefault input-resolution
         // silently ignored — the author saw two wires but the graph evaluated one
         // (non-deterministic source) and the orphan persisted in the .phxlayer.
         // One PushUndo (above) covers the remove+add as a single step.
-        // [Lane B P1] Keyed on the resolved consumer (input) end so the fan-in
+        // Keyed on the resolved consumer (input) end so the fan-in
         // rule holds for reverse-drag too.
         graph.Links.RemoveAll(l =>
             l.ToNodeId == toNode.Id && l.ToSocketId == toSocket.Id);
@@ -2672,14 +2667,14 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (_vm?.Document is { } d2) d2.MarkDirty();
         RedrawLinks();
-        //  — a new wire can change an UpstreamImage preview's source.
+        // A new wire can change an UpstreamImage preview's source.
         RefreshPreviews();
         e.Handled = true;
     }
 
     private void OnPinPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        // Cosmetic — could grow the pin or show a tooltip in sprint C. No-op
+        // Cosmetic — could grow the pin or show a tooltip later. No-op
         // for now so the seam is visible in code review.
     }
 
@@ -2717,18 +2712,18 @@ public sealed partial class WidgetGraphCanvas : UserControl
                 }
                 catch (Exception ex)
                 {
-                    // [#7-WIREDRAG] Log instead of silently skipping. A
+                    // Log instead of silently skipping. A
                     // TransformToVisual failure here means this pin can never be a
                     // drop target (its position is unresolvable), which would look
                     // like a dead socket to the author — surface it in the System
-                    // log (no modal, per feedback_no_modal_dialogs_for_repeatable_rejections)
+                    // log (no modal)
                     // so the failure is diagnosable rather than invisible.
                     GlobalLogger.Error("WidgetGraphCanvas",
                         $"HitTestPinAt.TransformToVisual (node '{view.Node.Title}', socket '{socketId}')", ex);
                     continue;
                 }
 
-                // [#7-WIREDRAG] Widened hit radius (~16px, was ~12px) ported from
+                // Widened hit radius (~16px, was ~12px) ported from
                 // Architect's generous pin targeting — the painted glyph is small
                 // (14×14, the visible shape smaller still), so a 16px catch radius
                 // means the cursor doesn't have to land pixel-perfect to start /
@@ -2760,7 +2755,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         return AreDataTypesCompatible(src.DataType, dst.DataType);
     }
 
-    // [Lane B P2] Pure DataType-pair compat — the table that IsCompatibleDrop's
+    // Pure DataType-pair compat — the table that IsCompatibleDrop's
     // socket check delegates to, exposed so the compatible-socket spawn menu can
     // filter registry templates (which carry SocketSpec DataTypes, not live
     // Sockets). Same rules as above: Any ↔ anything, equal types, Int↔Float
@@ -2790,10 +2785,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         var flyout = new MenuFlyout();
 
-        // Sprint L — grid-snap toggle. ToggleMenuFlyoutItem renders the
+        // Grid-snap toggle. ToggleMenuFlyoutItem renders the
         // checkmark for free; click flips SnapEnabled and logs a single
         // System line so the System Log panel carries a trail without a
-        // modal (per feedback_no_modal_dialogs_for_repeatable_rejections).
+        // modal.
         var snapToggle = new ToggleMenuFlyoutItem
         {
             Text      = $"Snap to Grid ({SnapStepPx}px)",
@@ -2801,10 +2796,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
         };
         snapToggle.Click += (_, _) =>
         {
-            //  — route through IsSnapEnabled so the canvas-header
+            // Route through IsSnapEnabled so the canvas-header
             // CheckBox stays coherent with the flyout state. The setter
             // emits the System log line itself; no separate log call here.
-            // QC51-04 — labels reflect the corrected Alt-hold semantics
+            // Labels reflect the corrected Alt-hold semantics
             // (momentary DISABLE while held). The pre-fix copy advertised the
             // opposite behaviour, which drifted from CHANGELOG 0.9.10.
             IsSnapEnabled = !SnapEnabled;
@@ -2812,7 +2807,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         flyout.Items.Add(snapToggle);
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        // R3 — searchable spawn palette atop the cascading category menu, so a
+        // Searchable spawn palette atop the cascading category menu, so a
         // node can be found by name without walking 50+ templates across submenus.
         var search = new MenuFlyoutItem
         {
@@ -2828,7 +2823,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         e.Handled = true;
     }
 
-    // R3 — true when keyboard focus sits in a text-input control (inline value
+    // True when keyboard focus sits in a text-input control (inline value
     // pill, F2 rename box, search palette box) so the bare-F / Space palette
     // shortcut doesn't fire while the user is typing.
     private bool IsTextInputFocused()
@@ -2847,7 +2842,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// R3 — show the searchable spawn palette. A flyout with a filter TextBox +
+    /// Show the searchable spawn palette. A flyout with a filter TextBox +
     /// result list over <see cref="WidgetNodeRegistry"/> templates; Enter / click
     /// spawns the selected node via <see cref="SpawnNodeAt"/> (which carries the
     /// snap / singleton / wire-splice logic). <paramref name="worldPosOverride"/>
@@ -2872,7 +2867,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             SelectionMode = ListViewSelectionMode.Single,
             IsItemClickEnabled = true,
         };
-        // [palette-click 2026-06-23] Items are plain DATA objects (SpawnPaletteItem),
+        // Items are plain DATA objects (SpawnPaletteItem),
         // NOT pre-built ListViewItem containers. Stuffing ListViewItem instances
         // straight into Items made the list highlight on click but never raise
         // ItemClick — the reported "I can click a result but no node spawns" — because
@@ -2947,7 +2942,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// [palette-click 2026-06-23] Backing data item for the spawn search palette.
+    /// Backing data item for the spawn search palette.
     /// A plain data object (not a ListViewItem container) so the ListView generates
     /// its own containers and raises ItemClick on a mouse click — see the note in
     /// ShowSpawnSearchPalette. <see cref="ToString"/> returns the display title so
@@ -2994,11 +2989,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         if (_trigger?.Graph is not { } graph) return;
 
-        // B29 — Audio.Play singleton-per-trigger guard. The DeleteNode flyout
+        // Audio.Play singleton-per-trigger guard. The DeleteNode flyout
         // comment claims "the only one Audio.Play per trigger rule already
         // gates duplicate drops" but no such gate exists on the spawn path —
-        // this is that gate. Logs via GlobalLogger (no modal) per
-        // feedback_no_modal_dialogs_for_repeatable_rejections. Mirror gates
+        // this is that gate. Logs via GlobalLogger (no modal). Mirror gates
         // live in DuplicateNode and PasteNodesFromClipboard.
         if (string.Equals(title, AudioSinkNode.Title, StringComparison.Ordinal)
             && HasAudioPlay(graph))
@@ -3010,7 +3004,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        // B36 — Viewer node drop-on-wire splice (Manifesto §4.6). Before
+        // Viewer node drop-on-wire splice (Manifesto §4.6). Before
         // pushing undo + spawning, check whether the drop point lies on top
         // of an existing wire. If so, splice the Viewer node into that wire
         // (source → Viewer.In and Viewer.Out → destination) instead of
@@ -3024,7 +3018,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (_vm?.Document is { } doc) doc.PushUndo();
 
-        // Sprint L — snap the spawn point to the 20px grid when snap is on so
+        // Snap the spawn point to the 20px grid when snap is on so
         // newly-spawned nodes sit aligned with anything else the user has
         // dropped on grid. Same rule as the drag path.
         bool snap = ShouldSnap();
@@ -3041,7 +3035,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// B29 — true when the trigger graph already carries an Audio.Play sink.
+    /// True when the trigger graph already carries an Audio.Play sink.
     /// Visualist-local check (per-pillar isolation) — no AudioSinkNode count
     /// helper exists on the engine surface today.
     /// </summary>
@@ -3055,7 +3049,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// B36 — locate a Link whose rendered Path passes within
+    /// Locate a Link whose rendered Path passes within
     /// <see cref="WireHitTolerancePx"/> of <paramref name="worldPoint"/>.
     /// Uses a sampled-bezier hit test (matches the BuildBezierWire control
     /// point geometry above) so the math doesn't depend on the Path's
@@ -3080,7 +3074,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             // Sample 32 points along the bezier — enough resolution that a
             // 6px-tolerance hit test catches a 200px wire reliably without
             // the cost of an analytic distance solver.
-            // [#7-WIREDRAG] Use the SAME control-point math as BuildBezierWire
+            // Use the SAME control-point math as BuildBezierWire
             // (back-routing kicker + self-loop branch) so the click hit-test
             // samples the curve that is actually drawn — otherwise a back-routed
             // or self-looping wire would be selectable along a phantom path while
@@ -3109,7 +3103,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// B36 — sever <paramref name="hitLink"/> and spawn a Viewer node at
+    /// Sever <paramref name="hitLink"/> and spawn a Viewer node at
     /// <paramref name="worldPoint"/>, wiring source → Viewer.In and
     /// Viewer.Out → destination. Bookkeeps a single undo entry so Ctrl+Z
     /// restores the original wire + drops the Viewer in one step.
@@ -3197,7 +3191,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             "WidgetGraphCanvas", LogLevel.System);
     }
 
-    // B36 — pixel tolerance used by TryFindLinkUnderPoint. Six pixels matches
+    // Pixel tolerance used by TryFindLinkUnderPoint. Six pixels matches
     // the audit brief's suggested hit radius and keeps the splice forgiving
     // without grabbing a wire the user wasn't pointing at.
     private const double WireHitTolerancePx = 6.0;
@@ -3206,7 +3200,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // Browse Media… / Animate <param>…) + Duplicate + Delete. Wired in
     // HookNodeContextFlyout, called from Rebuild.
     //
-    // [Visualist regression audit 2026-05-31, Lane D] The pre-T15 WinForms
+    // The pre-T15 WinForms
     // canvas hit-tested the right-click position at menu-open time to decide
     // which contextual entries to surface (Edit Shape on Mask.Polygon/Bezier,
     // Browse Media on a media-loader Path pill, Animate <name> on a numeric
@@ -3229,7 +3223,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
     private void RebuildNodeFlyout(MenuFlyout flyout, Node node)
     {
-        // [Lane B P3] Flush any in-flight inline edit before reading the node's
+        // Flush any in-flight inline edit before reading the node's
         // attributes so the Animate "<param>" entries reflect the value the
         // author just typed — not the last committed one. Inline pill / rename
         // editors commit on LostFocus; the flyout's Opening event fires BEFORE
@@ -3256,7 +3250,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
 
         // ── Browse Media… (Image/Video/Audio.Load) ─────────────────────────
-        // [Lane B P2] Always show Browse Media for media-loader nodes, matching
+        // Always show Browse Media for media-loader nodes, matching
         // the baseline WinForms behaviour. Previously the menu item was gated on
         // the Path attribute already EXISTING (attrs.ContainsKey), so a freshly
         // spawned loader (or one whose Path key hadn't been seeded yet) showed no
@@ -3301,7 +3295,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         flyout.Items.Add(del);
     }
 
-    // [Lane B P3] If an inline value-pill / numeric editor currently owns
+    // If an inline value-pill / numeric editor currently owns
     // keyboard focus, force its commit by moving focus to the canvas. Inline
     // editors in WidgetGraphNodeView commit on LostFocus → OnNodeAttributeCommitted,
     // which writes the typed value into node.Attributes. We can't reach into the
@@ -3330,7 +3324,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
     }
 
-    // ── contextual-menu helpers (Lane D) ─────────────────────────────────────
+    // ── contextual-menu helpers ──────────────────────────────────────────────
 
     private const string MediaPathAttributeKey = "Path";
 
@@ -3431,7 +3425,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             var vert = verts[vertexIndex];
 
             var timeline = _trigger.Timeline;
-            // R26 — seed vertex keyframes at the PLAYHEAD (was a hardcoded 0ms),
+            // Seed vertex keyframes at the PLAYHEAD (was a hardcoded 0ms),
             // matching the pin/parameter animate gestures.
             double seedMs = Math.Max(0, _vm.PlayheadMs);
             if (timeline.DurationMs < seedMs) timeline.DurationMs = seedMs;
@@ -3498,7 +3492,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             if (string.IsNullOrEmpty(rel)) return;
 
             _vm?.Document?.PushUndo();
-            // [Lane B P2] Guard against a null Attributes bag (the property has a
+            // Guard against a null Attributes bag (the property has a
             // public setter, so deserialization could leave it null). The indexer
             // below would NPE otherwise — now that Browse Media is shown for media
             // loaders unconditionally, a path-less node must still set cleanly.
@@ -3534,7 +3528,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         {
             string path = AnimatedPinRegistry.MakeParameterPath(node, attrKey);
             var timeline = _trigger.Timeline;
-            // R26 — seed at the PLAYHEAD, not a hardcoded TimeMs=0. Anchoring at
+            // Seed at the PLAYHEAD, not a hardcoded TimeMs=0. Anchoring at
             // 0 always dropped the keyframe at the start of the trigger
             // regardless of where the author had scrubbed, so a record at t≠0
             // landed in the wrong place and the value never animated from the
@@ -3579,7 +3573,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // Manifesto §4.5 — Display is the auto-injected, non-removable terminal
         // node for every per-trigger graph. Block the per-node Delete flyout +
         // surface a System log line so the rejection is discoverable without a
-        // modal (per feedback_no_modal_dialogs_for_repeatable_rejections).
+        // modal.
         // Same guard mirrored in DeleteSelectedNodes / CutSelectedNodes below.
         if (DisplaySinkNode.Is(node))
         {
@@ -3589,7 +3583,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
-        //  Audio.Play sink carries the same removable-guard parity as
+        // Audio.Play sink carries the same removable-guard parity as
         // Display once it's been placed. Audio.Play is not auto-injected (so
         // a graph that never authored one keeps producing no audio), but once
         // the sink is in the graph it's structurally a terminal — the
@@ -3597,7 +3591,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // drops, and removing it via the canvas would leave the user's
         // upstream wiring dangling. To opt out of audio, unwire the input
         // instead of deleting the sink. Same shape as the Display guard:
-        // silent System-tier log line per feedback_no_modal_dialogs_for_repeatable_rejections.
+        // silent System-tier log line.
         if (AudioSinkNode.Is(node))
         {
             GlobalLogger.Log(
@@ -3621,10 +3615,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         if (_trigger?.Graph is not { } graph) return;
 
-        // B29 — Audio.Play is singleton-per-trigger. Duplicating an existing
+        // Audio.Play is singleton-per-trigger. Duplicating an existing
         // Audio.Play would put a second one in the same graph; reject with a
-        // System-tier log line (no modal per
-        // feedback_no_modal_dialogs_for_repeatable_rejections).
+        // System-tier log line (no modal).
         if (AudioSinkNode.Is(src))
         {
             GlobalLogger.Log(
@@ -3652,7 +3645,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
     // Per-wire right-click — Delete. Wires are Path elements in LinkLayer
     // tagged with the Link they render. We turn LinkLayer
-    // hit-testing back on (sprint A had it off) just for the right-click
+    // hit-testing back on (it was off earlier) just for the right-click
     // path.
     private void AttachWireContextFlyout(Microsoft.UI.Xaml.Shapes.Path path, Link link)
     {
@@ -3670,11 +3663,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
         graph.Links.RemoveAll(l => l.Id == link.Id);
         if (_vm?.Document is { } d2) d2.MarkDirty();
         RedrawLinks();
-        //  — wire deletion can break an UpstreamImage chain; refresh.
+        // Wire deletion can break an UpstreamImage chain; refresh.
         RefreshPreviews();
     }
 
-    // ─── Cut / Copy / Paste / Select-All / Delete (sprint B) ─────────────
+    // ─── Cut / Copy / Paste / Select-All / Delete ─────────────
     // Operates on the node multi-selection (_selectedNodes). The clipboard
     // buffer is per-app-process — Visualist owns its own copy per the
     // per-pillar paint isolation rule. JSON shape mirrors what the
@@ -3726,7 +3719,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         // Strip the Display + Audio.Play sinks out of the selection before
         // the cut — neither may leave the graph (Manifesto §4.5 for Display;
-        //  for Audio.Play parity). Copy still grabs every selected
+        // for Audio.Play parity). Copy still grabs every selected
         // node (so a paste round-trip of "select all → cut → paste" doesn't
         // silently drop a sink the user expected to come along), and the
         // subsequent Delete pass enforces the non-removable rule for both.
@@ -3737,11 +3730,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // Synchronous fallback retained for the menu path and tests that call
     // the legacy entry point. New keyboard path uses the async overload
     // which adds OS-clipboard read for cross-pillar Architect → Visualist paste.
-    // [P1 swarm-audit 2026-05-29] route through the error-boundary wrapper so the
+    // route through the error-boundary wrapper so the
     // fire-and-forget Task can't fault unobserved.
     private void PasteNodesFromClipboard() => _ = PasteWithErrorBoundaryAsync();
 
-    // [P1 swarm-audit 2026-05-29] error boundary for the fire-and-forget paste
+    // error boundary for the fire-and-forget paste
     // callers (Ctrl+V in OnKeyDown, PasteNodesFromClipboard). PasteNodesFromClipboardAsync
     // try/catches its own body, but a synchronous throw before the first await
     // would fault the unobserved Task. This wrapper guarantees any fault — sync or
@@ -3760,7 +3753,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     }
 
     /// <summary>
-    /// B31 — paste path now tries the OS clipboard's
+    /// Paste path now tries the OS clipboard's
     /// PhoenixControls.SubGraph payload first (the same format Architect's
     /// Copy writes via <c>Windows.ApplicationModel.DataTransfer.Clipboard</c>)
     /// before falling back to the in-process Visualist buffer. Cross-pillar
@@ -3769,9 +3762,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
     /// Visualist template — Architect-only nodes (DB.GetValue / Twitch.* /
     /// Bus.* / etc.) are dropped silently with a single Communication-tier
     /// log line summarizing the skipped count
-    /// (no modal per feedback_no_modal_dialogs_for_repeatable_rejections).
+    /// (no modal).
     ///
-    /// B32 — same template-existence + category-allowlist guard runs on the
+    /// Same template-existence + category-allowlist guard runs on the
     /// in-process buffer too. Even a same-process Visualist→Visualist paste
     /// from a future palette swap can't smuggle in a forbidden category.
     /// </summary>
@@ -3809,7 +3802,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (snap is null || snap.Nodes is null || snap.Nodes.Count == 0) return;
 
-        // B32 — pillar-category validation. Reject any node whose title has
+        // Pillar-category validation. Reject any node whose title has
         // no Visualist template (Architect-only) OR whose template's
         // category isn't in AllowedCategories OR is explicitly in
         // ForbiddenCategories. The category check via the registry's
@@ -3837,11 +3830,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
         if (snap.Nodes.Count == 0) return;
 
-        // B29 — Audio.Play singleton-per-trigger. If the destination graph
+        // Audio.Play singleton-per-trigger. If the destination graph
         // already carries an Audio.Play, drop any Audio.Play coming in from
         // the clipboard before the paste lands (and surface a System log
-        // line per feedback_no_modal_dialogs_for_repeatable_rejections so
-        // the silent removal is still discoverable).
+        // line so the silent removal is still discoverable).
         bool hasExistingAudio = HasAudioPlay(graph);
         bool stripppedAudio = false;
         if (hasExistingAudio)
@@ -3901,7 +3893,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             }
             // +30px offset matches DuplicateNode so paste-then-paste makes
             // two visibly distinct copies that don't stack invisibly.
-            // Sprint L — snap each pasted node's final position to the grid
+            // Snap each pasted node's final position to the grid
             // when snap is on. Done after the +30px offset so a pasted
             // group doesn't visually overlap the originals when they were
             // already grid-aligned (snap of +30 lands at the next 20px row).
@@ -3961,7 +3953,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // surface a System log line when the filter actually removes a node
         // from the selection so the user understands why one node stayed.
         //
-        //  Same parity for Audio.Play — once placed it's a structural
+        // Same parity for Audio.Play — once placed it's a structural
         // terminal and the canvas keeps it pinned. Filter it out separately
         // so the user gets a distinct status line per sink kind instead of
         // one ambiguous "something stayed" message.
@@ -4000,7 +3992,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // Size round-trip through their X/Y / Width/Height properties, but
     // System.Drawing.Color does NOT: it has no settable members, so System.Text
     // .Json deserializes it to default(Color) == ARGB(0,0,0,0) (transparent
-    // black). [color-paste 2026-06-10] The old comment claimed Color "rides as a
+    // black). The old comment claimed Color "rides as a
     // struct (not load-bearing)" — wrong: a pasted Socket.Color came back fully
     // transparent, which defeats WidgetSocketPalette.EffectiveColor's
     // white-default → DataType back-fill (it only back-fills when Color is the
@@ -4009,7 +4001,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // Color↔ARGB-int converter — same fix Architect's clipboard already carries
     // (LogicCanvasView.Clipboard.cs ClipboardColorConverter) and the .phxlayer
     // serializer uses (LayerSerializer.LayerColorJsonConverter). Re-declared
-    // locally per feedback_visualist_architect_chrome_independence.md.
+    // locally per the pillar chrome-independence rule.
     private static readonly System.Text.Json.JsonSerializerOptions ClipboardJsonOptions =
         new()
         {
@@ -4017,7 +4009,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             Converters = { new WidgetClipboardColorConverter() },
         };
 
-    // [color-paste 2026-06-10] Round-trips System.Drawing.Color as an ARGB int
+    // Round-trips System.Drawing.Color as an ARGB int
     // (reads the legacy {R,G,B,A} object form too, for forward-compat with any
     // payload an older build may have produced). Without this the clipboard
     // round-trip silently transparent-blacks every socket colour on paste.
@@ -4063,17 +4055,17 @@ public sealed partial class WidgetGraphCanvas : UserControl
             => writer.WriteNumberValue(value.ToArgb());
     }
 
-    // B31 — OS-clipboard format identifier for cross-pillar sub-graph paste.
+    // OS-clipboard format identifier for cross-pillar sub-graph paste.
     // Mirrors Architect's `LogicCanvasView.Clipboard.cs:SubGraphClipboardFormat`
     // verbatim. Locally re-declared rather than lifted from Architect.Core
-    // per feedback_visualist_architect_chrome_independence.md — Visualist
+    // per the pillar chrome-independence rule — Visualist
     // and Architect each own their own clipboard chrome. If Architect ever
     // renames its constant, this one MUST be updated in lockstep (no
     // compile-time link between the two).
     private const string SubGraphClipboardFormat = "PhoenixControls.SubGraph";
 
     /// <summary>
-    /// B31 — try to read a PhoenixControls.SubGraph payload from the OS
+    /// Try to read a PhoenixControls.SubGraph payload from the OS
     /// clipboard. Returns null when the clipboard either doesn't contain
     /// the format (no Architect copy has run this session) or the payload
     /// fails to deserialize. The payload shape Architect writes carries
@@ -4135,8 +4127,8 @@ internal sealed class WidgetGraphClipboardPayload
 
 /// <summary>
 /// Per-app-process clipboard buffer for cut/copy/paste of widget-graph
-/// nodes. Visualist owns its own buffer per
-/// feedback_visualist_architect_chrome_independence.md — Architect's
+/// nodes. Visualist owns its own buffer per the pillar
+/// chrome-independence rule — Architect's
 /// equivalent lives next to LogicCanvasView, not in a shared spot.
 /// </summary>
 internal static class WidgetGraphClipboard

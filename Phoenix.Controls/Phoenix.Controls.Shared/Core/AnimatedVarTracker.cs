@@ -5,7 +5,7 @@ using System.Collections.Generic;
 namespace Phoenix.Controls.Shared.Core;
 
 /// <summary>
-/// B42 (audit/winui-regressions-2026-05-24) — cross-pillar registry that
+/// Cross-pillar registry that
 /// records which variable names currently have keyframe animation associated
 /// with them in Visualist. Architect reads this registry to light the
 /// per-pin animated-pin badge on Var.Set / Var.Get / Public.Set / Public.Get
@@ -25,7 +25,7 @@ namespace Phoenix.Controls.Shared.Core;
 /// guarded by lock-snapshot dispatch so a subscriber's exception in one
 /// pillar can't poison the registry for the other.
 ///
-/// Per <c>feedback_visualist_architect_chrome_independence.md</c>, the
+/// Per the chrome-independence rule, the
 /// pillar-specific paint code stays per-pillar — only the var-name → bool
 /// flag lives in shared. Visualist's <c>AnimatedPinRegistry</c> still owns
 /// the timeline / keyframe model.

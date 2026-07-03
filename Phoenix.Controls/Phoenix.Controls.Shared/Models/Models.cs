@@ -91,7 +91,7 @@ namespace Phoenix.Controls.Shared.Models
         VisualEvent,
         CriticalError,
         Debug,
-        //  Warning is the bridge from third-party / soft-fault
+        // Warning is the bridge from third-party / soft-fault
         // sources (OBS reconnect blip, rate-limit backoff, etc.) into the
         // SystemLog panel's WARN chip. Pre-fix the chip was wired to a level
         // SystemLogSource.MapLevel never produced, so it filtered to an
@@ -105,7 +105,7 @@ namespace Phoenix.Controls.Shared.Models
         public int Id { get; set; }
         public DateTime Timestamp { get; set; } = DateTime.Now;
 
-        //  Offset-aware companion to Timestamp. DateTime serializes
+        // Offset-aware companion to Timestamp. DateTime serializes
         // without a zone (the local wall-clock is written but the offset is
         // lost on a foreign reader), so any on-wire JSON sink — RemoteBridge,
         // a future telemetry exporter, the SystemLog JSON dump — should
@@ -119,7 +119,7 @@ namespace Phoenix.Controls.Shared.Models
         public string Message { get; set; } = "";
         public string RawData { get; set; } = "";
 
-        //  Live exception preserved through OnLogEntry / GetRecentLogs.
+        // Live exception preserved through OnLogEntry / GetRecentLogs.
         // Populated by GlobalLogger.Error(source, label, ex). Not surfaced via
         // DB.LogAsync (the SystemHistory table is string-only); persistence
         // sinks that want the stack trace should serialize Exception?.ToString()
@@ -138,7 +138,7 @@ namespace Phoenix.Controls.Shared.Models
         public DateTime ReceivedAt { get; set; } = DateTime.Now;
     }
 
-    // C20 (audit 2026-05-24) — distinct from `Phoenix.Controls.Shared.WinUI.Contracts.ChatMessage`
+    // Distinct from `Phoenix.Controls.Shared.WinUI.Contracts.ChatMessage`
     // (a record with `Body`, used by the Hub WinUI panel layer). THIS type is the SCRIPT-ENGINE-FACING
     // chat envelope — its `Message` field is read by the runtime (ScriptManager, ScriptEngine) and
     // its IsMod / IsSub / etc. flags drive script-side role gating. Do NOT swap the two without

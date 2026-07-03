@@ -49,7 +49,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 long nowTicks = DateTime.UtcNow.Ticks;
 
-                // [P1 swarm-audit 2026-05-29] The TryGetValue read + conditional roll-
+                // The TryGetValue read + conditional roll-
                 // forward write was a TOCTOU race: two Ready callers sharing a key could
                 // both observe ready==true and both pass before either armed the next
                 // expiry. Serialise the check + arm under the same per-key RMW lock that

@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Phoenix.Controls.Shared.Core
 {
     /// <summary>
-    /// R19 — typed argument schema for Script command registrations.
+    /// Typed argument schema for Script command registrations.
     ///
     /// Background: every <c>RegisterCommand</c> handler in <c>ScriptManager.cs</c> historically
     /// took a raw <c>string[] args</c> and parsed each entry by hand (<c>int.TryParse</c>,
@@ -24,10 +24,10 @@ namespace Phoenix.Controls.Shared.Core
     ///   * <see cref="CommandBinder"/> — pure static binder that turns <c>(spec, raw string[])</c>
     ///     into a typed <c>BoundArgs</c> dict.
     ///
-    /// Sweep 13 ships the binder + the schema types alongside the existing string-only registration
+    /// The binder ships + the schema types alongside the existing string-only registration
     /// path; the engine dispatch site is unchanged and handlers continue to receive
     /// <c>string[]</c>. Migration of individual handlers to opt into the typed dict is incremental
-    /// (sweep 14+) — handlers can call <c>CommandBinder.BindArgs(spec, rawArgs)</c> themselves to
+    /// — handlers can call <c>CommandBinder.BindArgs(spec, rawArgs)</c> themselves to
     /// pull the typed values, with <c>string[]</c> still available as the fallback.
     /// </summary>
     public enum ArgType
@@ -42,7 +42,7 @@ namespace Phoenix.Controls.Shared.Core
         Float,
 
         /// <summary>
-        /// Double-precision float (sweep 16). InvariantCulture; same parse style as <see cref="Float"/>
+        /// Double-precision float. InvariantCulture; same parse style as <see cref="Float"/>
         /// but stores 64-bit precision. Use for math.* handlers where the legacy code path uses
         /// <c>double.TryParse</c> and arithmetic stability matters; <see cref="Float"/> is for
         /// convenience args (percentages, speeds) where 32-bit suffices.
@@ -62,7 +62,7 @@ namespace Phoenix.Controls.Shared.Core
         /// Key-value pair dictionary parsed into <see cref="IReadOnlyDictionary{TKey,TValue}"/> of <c>string→string</c>.
         /// Two ingest shapes:
         ///   * Single arg of pipe-separated pairs: <c>"k1=v1|k2=v2"</c>
-        ///   * Variadic: each remaining raw arg is one <c>"k=v"</c> entry (sweep 16, paired with <see cref="ArgSpec.Variadic"/>).
+        ///   * Variadic: each remaining raw arg is one <c>"k=v"</c> entry (paired with <see cref="ArgSpec.Variadic"/>).
         /// Both produce the same dict shape. Keys are case-insensitive (mirrors the legacy
         /// hand-rolled <c>Dictionary&lt;string,string&gt;(StringComparer.OrdinalIgnoreCase)</c> in
         /// <c>visual.trigger_queued</c> / <c>wait_for_visual</c> / <c>event.trigger</c>). On a
@@ -76,7 +76,7 @@ namespace Phoenix.Controls.Shared.Core
     /// One positional argument's contract. <see cref="Optional"/> arguments can be omitted by the
     /// script — when missing, <see cref="Default"/> (or the type's natural default) is bound.
     ///
-    /// <see cref="Variadic"/> is a sweep-14 addition: when set on the LAST <see cref="ArgSpec"/>
+    /// <see cref="Variadic"/>: when set on the LAST <see cref="ArgSpec"/>
     /// of a command, the binder collects every remaining raw arg into an
     /// <see cref="IReadOnlyList{T}"/> of strings under that spec's name. Supports the
     /// <c>text.format(template, A, B, …, Z)</c> / <c>visual.trigger_queued(layer, widget,
@@ -154,12 +154,12 @@ namespace Phoenix.Controls.Shared.Core
             {
                 var spec = argSpecs[i];
 
-                // Sweep 14a — variadic LAST spec collects every remaining raw arg.
+                // Variadic LAST spec collects every remaining raw arg.
                 // Verified at registration time that this is the last entry; the binder
                 // tolerates it appearing mid-list by simply consuming the rest from
                 // here on out (callers who declare it mid-list deserve the surprise).
                 //
-                // Sweep 16 — Variadic + KvPairs collects each remaining raw arg as a
+                // Variadic + KvPairs collects each remaining raw arg as a
                 // "k=v" entry into IReadOnlyDictionary<string,string>. Mirrors the
                 // hand-rolled loop the migrated handlers (event.trigger /
                 // visual.trigger_queued / wait_for_visual / visual.trigger /

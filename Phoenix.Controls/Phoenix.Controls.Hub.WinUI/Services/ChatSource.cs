@@ -16,22 +16,19 @@ using ChatMessage      = Phoenix.Controls.Shared.WinUI.Contracts.ChatMessage;
 namespace Phoenix.Controls.Hub.WinUI.Services;
 
 // Chat panel feed. Wraps WS — its OnChatMessage event already
-// applies the AppConfig.BotUsername self-trigger guard (WS.cs
-// H52, lines 442-446) BEFORE invoking the event, so bot lines never reach
+// applies the AppConfig.BotUsername self-trigger guard in WS
+// BEFORE invoking the event, so bot lines never reach
 // this layer at all and we do not need to filter again.
 //
-// NOTE: this differs from the Track 4 prompt's expectation that bot
-// messages would still surface in IChatSource for visibility. The existing
-// Hub explicitly hides them from chat display per the H52 comment
-// ("ChatViewWindow doesn't render the bot's own line"). Following the live
-// code rather than the prompt — the prompt itself says "Confirm by reading
-// WS — don't double-filter", and the answer is "the ring is
-// already filtered, no Track-4 work needed".
+// NOTE: bot messages are not surfaced in IChatSource for visibility. The existing
+// Hub explicitly hides them from chat display
+// ("ChatViewWindow doesn't render the bot's own line"). The ring is
+// already filtered, so no extra filtering is needed here.
 public sealed class ChatSource : IChatSource, IDisposable
 {
     private readonly IUiDispatcher _ui;
     private readonly Action<ModelChatMessage> _onChat;
-    // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber to MessageReceived
+    // Fan-out: every subscriber to MessageReceived
     // receives every chat line; no primary-subscriber gate.
     private int _disposed;
 
@@ -65,8 +62,8 @@ public sealed class ChatSource : IChatSource, IDisposable
     {
         if (string.IsNullOrEmpty(text)) return Task.CompletedTask;
 
-        // Mirror the engine's twitch.send_chat command (ScriptManager.Twitch.cs
-        // line 522): cap at the 500-char Twitch IRC limit, dispatch through
+        // Mirror the engine's twitch.send_chat command (ScriptManager.Twitch.cs):
+        // cap at the 500-char Twitch IRC limit, dispatch through
         // the user-configured Streamer.bot DoAction so bot identity / chat
         // origin stay consistent with .phx scripts.
         if (text.Length > 500)
@@ -77,7 +74,7 @@ public sealed class ChatSource : IChatSource, IDisposable
             return Task.CompletedTask;
         }
 
-        // BH-027 — explicit guards for the two silent-failure modes the
+        // Explicit guards for the two silent-failure modes the
         // panel previously hid behind the raw WS→SB payload log:
         //   (a) StreamerBotChatAction blank in config → SB receives an
         //       empty action.name, drops the request without responding,

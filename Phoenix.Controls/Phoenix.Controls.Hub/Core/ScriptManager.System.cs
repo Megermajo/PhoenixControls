@@ -50,7 +50,7 @@ namespace Phoenix.Controls.Hub.Core
             // streamerbot.do_action(actionId)
             // Fires the named Streamer.bot action. Phase 2: composition routing removed —
             // this command is now strictly a Streamer.bot DoAction relay.
-            // M37 — guard with IsConnected before dispatch. Without the connection the
+            // Guard with IsConnected before dispatch. Without the connection the
             // SB websocket Send is a silent no-op, but the exporter's Done branch was
             // firing anyway because the handler returned cleanly. The fix is to:
             //   1) refuse to dispatch when SB isn't connected,
@@ -86,7 +86,7 @@ namespace Phoenix.Controls.Hub.Core
                     : new { name = actionId };
                 WS.Instance.Send(JsonSerializer.Serialize(new { request = "DoAction", action = selector }));
                 _engine.SetLocalResultVar("result.sb_dispatched", "true");
-                //  Was LogLevel.VisualEvent — wrong category (no
+                // Was LogLevel.VisualEvent — wrong category (no
                 // visual side-effect here). Streamer.bot dispatch is an
                 // outbound communication, so route through Communication.
                 GlobalLogger.Log($"Triggered Streamer.bot action: {actionId}", "Script", LogLevel.Communication);
@@ -168,7 +168,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // ── Internal event trigger ────────────────────────────────────────
             // event.trigger(EventName, Key1=Val1, Key2=Val2, ...)
-            // Sweep 16 — EventArgs via ArgType.KvPairs Variadic; binder produces the dict.
+            // EventArgs via ArgType.KvPairs Variadic; binder produces the dict.
             _engine.RegisterCommand("event.trigger", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
                 string eventName = bound?.GetOrDefault<string>("Name", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);

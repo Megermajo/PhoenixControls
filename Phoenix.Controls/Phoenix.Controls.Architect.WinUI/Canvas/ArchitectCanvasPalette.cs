@@ -16,13 +16,13 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 //   2) Self-documentation. A bare Color.FromArgb(255, 200, 80) at a call site
 //      is opaque — naming it CommentFrameDefault makes the intent obvious.
 //
-// Per feedback_visualist_architect_chrome_independence this stays inside
+// Per the per-pillar chrome rule this stays inside
 // Architect.WinUI.Canvas. Visualist owns its own copy of any colour it
 // needs from here; the two pillars are evolving independently (Visualist
 // nodes will host live preview thumbnails Architect has no analogue for, so
 // a shared palette would couple their visual evolution).
 //
-// Per feedback_no_root_doc_edits Design_Orders.md is read-only; this file
+// Design_Orders.md is read-only; this file
 // records the values it sources from, but doesn't update Design_Orders.
 //
 // All values are bit-identical to the previously inlined literals — no

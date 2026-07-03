@@ -12,9 +12,8 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 /// keys that have NO matching input socket on the node. Pre-fix the only
 /// place to author these keys (e.g. <c>Bus.OnMessage.EventType</c>,
 /// <c>Logic.If.Operator</c>, <c>Schedule.RunAt.DateTime</c>, ~20 templates)
-/// was the right-side inspector — which violated
-/// <c>feedback_node_ui_inline_sockets.md</c>: the inspector must stay slim,
-/// so the affordance has to live on the node body. 
+/// was the right-side inspector — which violated the node-UI rule: the
+/// inspector must stay slim, so the affordance has to live on the node body.
 ///
 /// Mirrors the editing contract on <see cref="SocketViewModel"/>:
 ///   • <see cref="BeginEdit"/> snapshots the baseline,
@@ -111,7 +110,7 @@ public sealed class MiddleAttributeViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsMultiline));
                 OnPropertyChanged(nameof(PillMaxWidth));
                 OnPropertyChanged(nameof(PillTextWrapping));
-                // B16 (audit 2026-05-24) — Tooltip embeds DisplayText so
+                // Tooltip embeds DisplayText so
                 // every value-edit needs to re-raise the tooltip binding or
                 // hover keeps showing the stale "Key: old-value" string.
                 OnPropertyChanged(nameof(Tooltip));
@@ -136,7 +135,7 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     public string BoolGlyph => BoolValue ? "☑" : "☐";
 
     /// <summary>
-    /// B16 (audit 2026-05-24) — hover-tooltip text for the middle-attribute
+    /// Hover-tooltip text for the middle-attribute
     /// row. <see cref="Phoenix.Controls.Architect.Core.NodeTemplate"/> has
     /// no per-attribute description map today (only
     /// <c>SocketDescriptions</c> covers per-socket strings); the falling-back
@@ -168,7 +167,7 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     /// </summary>
     public bool IsMultiline => NodeGeometry.IsMultilinePill(_key, _value);
 
-    /// <summary> The pill's MaxWidth — bound by NodeView.xaml as the
+    /// <summary>The pill's MaxWidth — bound by NodeView.xaml as the
     /// finite MEASURE-time constraint that forces the value to wrap WITHIN the node
     /// body instead of overflowing its right edge (which the rounded border then
     /// clips). It is the node's actual available width on this row
@@ -184,7 +183,7 @@ public sealed class MiddleAttributeViewModel : ObservableObject
               + (HasOptionsPicker ? NodeGeometry.MiddleAttrPickerChevronWidth : 0.0),
             IsMultiline, isDb: false);
 
-    /// <summary> Re-raise <see cref="PillMaxWidth"/> — called by
+    /// <summary>Re-raise <see cref="PillMaxWidth"/> — called by
     /// NodeViewModel when the node body width changes (e.g. a sibling row's pill
     /// edit) so this pill re-evaluates the width it may wrap within.</summary>
     internal void RaisePillConstraint() => OnPropertyChanged(nameof(PillMaxWidth));
@@ -192,13 +191,13 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     /// <summary>Text-wrapping mode for the read-only pill TextBlock. Always
     /// <see cref="Microsoft.UI.Xaml.TextWrapping.Wrap"/> now — middle-attr pills
     /// have no DB single-line case, so every value wraps to show in full rather
-    /// than ellipsis-truncating (Issue 1 / 1.2). Mirrors
+    /// than ellipsis-truncating. Mirrors
     /// <see cref="SocketViewModel.PillTextWrapping"/> for the non-DB path.</summary>
     public Microsoft.UI.Xaml.TextWrapping PillTextWrapping
         => Microsoft.UI.Xaml.TextWrapping.Wrap;
 
     /// <summary>Text-trimming for the read-only pill TextBlock — always None:
-    /// middle-attr pills wrap, so they must never truncate (Issue 1.2). Mirrors
+    /// middle-attr pills wrap, so they must never truncate. Mirrors
     /// the non-DB branch of <see cref="SocketViewModel.PillTextTrimming"/>.</summary>
     public Microsoft.UI.Xaml.TextTrimming PillTextTrimming
         => Microsoft.UI.Xaml.TextTrimming.None;

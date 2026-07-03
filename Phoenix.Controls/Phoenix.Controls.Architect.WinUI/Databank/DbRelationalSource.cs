@@ -16,12 +16,12 @@ namespace Phoenix.Controls.Architect.WinUI.Databank;
 // DB ensures its own lock + WAL setup; we never reach for a
 // SqliteConnection directly. The async methods all hop off the UI thread
 // because DB's _lock can hold for tens of ms on a contended
-// graph save — Track 5's view will await these from a background task.
+// graph save — the view awaits these from a background task.
 public sealed class DbRelationalSource : IRelationalSource
 {
     private readonly DB _db;
 
-    //  Per-table total-row-count cache. Pre-fix
+    // Per-table total-row-count cache. Pre-fix
     // GetRowSnapshotAsync issued a full COUNT(*) on every invocation —
     // including page navigation and sort, where the row count cannot have
     // changed. We cache the count keyed by table name and only re-query when
@@ -58,7 +58,7 @@ public sealed class DbRelationalSource : IRelationalSource
     }
 
     /// <summary>
-    ///  Drop the cached total-row-count for a
+    /// Drop the cached total-row-count for a
     /// table (or all tables when <paramref name="tableName"/> is null) so
     /// the next <see cref="GetRowSnapshotAsync"/> re-issues COUNT(*). Called
     /// from every mutation path so paging/sort stay cheap while edits stay
@@ -74,7 +74,7 @@ public sealed class DbRelationalSource : IRelationalSource
     }
 
     /// <summary>
-    ///  Selective single-table refresh used by
+    /// Selective single-table refresh used by
     /// the VM's mutation-refresh path. Pre-fix every cell edit re-listed ALL
     /// tables (including system tables) and re-counted rows + columns for each
     /// — O(tables) PRAGMA + COUNT round-trips per keystroke-level edit. This
@@ -133,12 +133,12 @@ public sealed class DbRelationalSource : IRelationalSource
             {
                 rows = await _db.GetRowCountAsync(name).ConfigureAwait(false);
                 // Seed the count cache so a subsequent snapshot of this table
-                // can skip its own COUNT(*) ().
+                // can skip its own COUNT(*).
                 StoreRowCount(name, rows);
             }
             catch (Exception ex)
             {
-                //  Keep the per-table degradation
+                // Keep the per-table degradation
                 // fallback (one bad table shouldn't blank the whole list) but
                 // log the cause — pre-fix a locked DB / schema mismatch silently
                 // showed "0 rows" with no breadcrumb.
@@ -164,7 +164,7 @@ public sealed class DbRelationalSource : IRelationalSource
 
     public async Task<IReadOnlyList<ColumnInfo>> GetColumnsAsync(string tableName, CancellationToken ct = default)
     {
-        //  Single PRAGMA table_info round-trip.
+        // Single PRAGMA table_info round-trip.
         // Pre-fix this issued TWO queries against PRAGMA table_info for the
         // same table — GetTableColumnTypesAsync (a Dictionary) plus
         // GetTableColumnsAsync (the ordered name list) — and merged them, so
@@ -206,7 +206,7 @@ public sealed class DbRelationalSource : IRelationalSource
         }
         // Total-row count lets the browser footer show "Showing 500 of 1247
         // rows" and the paging controls know when the user is on the last
-        // page.  The count is a property of the
+        // page. The count is a property of the
         // table, not of the page window — page navigation and sort can't
         // change it — so we cache it per table and only issue COUNT(*) on a
         // cache miss (first snapshot of this table) or after a mutation
@@ -227,7 +227,7 @@ public sealed class DbRelationalSource : IRelationalSource
             }
             catch (Exception ex)
             {
-                //  Keep the page-length fallback; log it.
+                // Keep the page-length fallback; log it.
                 GlobalLogger.Log($"DbRelationalSource: total-row-count failed for '{tableName}': {ex.Message}",
                     "DbRelationalSource", LogLevel.System);
                 totalRowCount = rows.Count;
@@ -255,7 +255,7 @@ public sealed class DbRelationalSource : IRelationalSource
         foreach (var kv in values)
             coerced[kv.Key] = kv.Value ?? string.Empty;
         long newId = await _db.InsertUserRowAsync(tableName, coerced).ConfigureAwait(false);
-        InvalidateRowCount(tableName); // 
+        InvalidateRowCount(tableName);
         return newId;
     }
 
@@ -268,7 +268,7 @@ public sealed class DbRelationalSource : IRelationalSource
     {
         ct.ThrowIfCancellationRequested();
 
-        // B9 — Vars is a protected system table on SetCellAsync, but the
+        // Vars is a protected system table on SetCellAsync, but the
         // segregated SetVariableAsync write path exists for exactly this
         // case. Route VarValue edits through it so the Databank Browser can
         // edit values in-place; leave non-VarValue Vars columns
@@ -297,7 +297,7 @@ public sealed class DbRelationalSource : IRelationalSource
     {
         ct.ThrowIfCancellationRequested();
         await _db.DeleteRowAsync(tableName, rowId).ConfigureAwait(false);
-        InvalidateRowCount(tableName); // 
+        InvalidateRowCount(tableName);
     }
 
     public async Task AddColumnAsync(
@@ -310,7 +310,7 @@ public sealed class DbRelationalSource : IRelationalSource
         await _db.AddColumnAsync(tableName, columnName, sqlType).ConfigureAwait(false);
     }
 
-    // C9 — Column-level mutations. Delegate to DB which holds the lock /
+    // Column-level mutations. Delegate to DB which holds the lock /
     // PRAGMA / DDL surface; we just forward the call. The browser VM
     // refreshes its local schema view after each one via
     // RefreshAfterColumnMutationAsync so the inspector + header strip stay
@@ -356,20 +356,20 @@ public sealed class DbRelationalSource : IRelationalSource
         // unknown types fall back to TEXT inside DB.
         var list = columns.Select(c => (c.Name, c.SqlType)).ToList();
         await _db.CreateUserTableAsync(tableName, list).ConfigureAwait(false);
-        InvalidateRowCount(tableName); // 
+        InvalidateRowCount(tableName);
     }
 
     public async Task ClearTableAsync(string tableName, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         await _db.ClearTableAsync(tableName).ConfigureAwait(false);
-        InvalidateRowCount(tableName); // 
+        InvalidateRowCount(tableName);
     }
 
     public async Task DropTableAsync(string tableName, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         await _db.DropUserTableAsync(tableName).ConfigureAwait(false);
-        InvalidateRowCount(tableName); // 
+        InvalidateRowCount(tableName);
     }
 }

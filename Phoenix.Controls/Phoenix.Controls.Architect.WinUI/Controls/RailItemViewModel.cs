@@ -55,10 +55,10 @@ public sealed class RailItemViewModel : ObservableObject
         }
     }
 
-    //  Shared, allocation-free selection brushes. The
+    // Shared, allocation-free selection brushes. The
     // SelectionBrush getter is hit on every binding re-read (selection toggles,
     // rail rebuilds) — pre-fix each read allocated a fresh SolidColorBrush.
-    //  Selected opacity raised from 0x55
+    // Selected opacity raised from 0x55
     // (33% — too faint to scan, risking rename/delete of the wrong row) to 0xB0
     // (~69%) so the active row is unmistakable. Brushes are read-only after
     // creation (bound as Background, never mutated) so one shared instance is safe.
@@ -70,7 +70,7 @@ public sealed class RailItemViewModel : ObservableObject
     /// <summary>Background brush — Ember-tinted when selected, transparent otherwise.</summary>
     public Brush SelectionBrush => _isSelected ? s_selectedBrush : s_unselectedBrush;
 
-    //  Color is init-only, so the swatch brush is
+    // Color is init-only, so the swatch brush is
     // computed once and cached instead of re-parsed + allocated per binding read.
     private Brush? _colorBrush;
     public Brush ColorBrush => _colorBrush ??= new SolidColorBrush(ParseHex(Color));

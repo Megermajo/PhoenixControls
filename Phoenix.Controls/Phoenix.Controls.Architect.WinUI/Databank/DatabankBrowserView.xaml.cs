@@ -19,9 +19,8 @@ namespace Phoenix.Controls.Architect.WinUI.Databank;
 
 // View for the Databank Browser tab — wraps DatabankBrowserViewModel as
 // DataContext and forwards row/table-selection clicks back to the VM.
-// Closes the "Databank tab is a literal blank" P0 from the 2026-05-07
-// review — Architect's MainView swaps this in when the Databank top-tab
-// is active.
+// Closes the "Databank tab is a literal blank" bug — Architect's MainView
+// swaps this in when the Databank top-tab is active.
 //
 // Edit surface: toolbar buttons (+ Table / + Column / + Row / Delete Row)
 // and inline cell editing via double-tap → ContentDialog. Cell edits
@@ -77,7 +76,7 @@ public sealed partial class DatabankBrowserView : UserControl
         if (_vm is { } old)
         {
             old.PropertyChanged -= OnVmPropertyChanged;
-            //  Dispose the VM on unload so its
+            // Dispose the VM on unload so its
             // in-flight load CancellationTokenSource and filter-debounce
             // DispatcherQueueTimer are released even when a load is still
             // pending. Dispose() is idempotent and guards its own re-entry.
@@ -206,7 +205,7 @@ public sealed partial class DatabankBrowserView : UserControl
     /// <summary>
     /// Drag-source for table-list rows — packages the table name as
     /// <c>phx-databank-table</c> so the canvas's drag-drop partial can
-    /// spawn a DB.RowCount node bound to it. Architect UX review P1-46;
+    /// spawn a DB.RowCount node bound to it.
     /// UE Blueprints lets the user drag a content-browser asset onto the
     /// graph to spawn a pre-wired node — this is the Databank equivalent.
     /// </summary>
@@ -257,7 +256,7 @@ public sealed partial class DatabankBrowserView : UserControl
         if (_vm is null) return;
         try
         {
-            //  Pre-fill dialog restored. Pre-fix this
+            // Pre-fill dialog restored. Pre-fix this
             // called InsertBlankRowAsync, dropping a row with seed defaults and
             // forcing the user to double-tap each cell individually. The
             // baseline WinForms AddRowDialog showed all columns at once for
@@ -325,7 +324,7 @@ public sealed partial class DatabankBrowserView : UserControl
 
     private async void OnDeleteTableClick(object sender, RoutedEventArgs e)
     {
-        //  Top-level guard on the async void so a
+        // Top-level guard on the async void so a
         // fault after the await can't escape to the dispatcher (the callee is
         // guarded today, but a top-level catch is the durable safety net).
         try
@@ -391,7 +390,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    ///  (P1-A18) — Drag source for column headers. Packages the
+    /// Drag source for column headers. Packages the
     /// <c>phx-databank-column={tableName}|{columnName}|{columnType}</c>
     /// payload so the canvas drag-drop partial can open the
     /// Get / Set / Increment / FindRow / GetColumn picker pre-bound to
@@ -422,15 +421,14 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    ///  (P1-A19) — Right-click context menu for column headers.
-    /// Originally only routed to the canvas spawn picker; C9 expanded it
+    /// Right-click context menu for column headers.
+    /// Originally only routed to the canvas spawn picker; later expanded
     /// to host the column-level schema mutations (Rename / Change Type /
     /// Delete) at the top of the flyout, with the canvas spawn picker
     /// nested under a "Spawn graph node…" item so both gestures stay
     /// reachable.
     ///
-    /// Per <c>feedback_no_modal_dialogs_for_repeatable_rejections.md</c>:
-    /// system-table + primary-key rejections gray the items out rather
+    /// System-table + primary-key rejections gray the items out rather
     /// than popping a modal. The three confirmation dialogs the user
     /// clicks through ARE user-initiated and confirmation-shaped, which
     /// is the carve-out.
@@ -485,7 +483,7 @@ public sealed partial class DatabankBrowserView : UserControl
 
             flyout.Items.Add(new MenuFlyoutSeparator());
 
-            // Preserve the  canvas spawn-picker entry point so
+            // Preserve the canvas spawn-picker entry point so
             // the historic gesture (drag a column header onto the canvas
             // OR right-click → Spawn) keeps working. We route into the
             // canvas's shared menu builder when one is reachable; if not,
@@ -535,7 +533,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    /// C9 — True when <paramref name="columnName"/> matches a primary-key
+    /// True when <paramref name="columnName"/> matches a primary-key
     /// column in the selected table's schema snapshot. Used to grey-out
     /// the column-mutation menu items rather than letting the user click
     /// through to a banner-error (per the no-modal-rejections rule).
@@ -552,7 +550,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    /// C9 — Confirmation dialog before dropping a column. The wording
+    /// Confirmation dialog before dropping a column. The wording
     /// matches the existing delete-table dialog ("permanently delete X
     /// and all its data") so the destructive-affordance language stays
     /// consistent across the Databank surface.
@@ -586,7 +584,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    /// C9 — Prompt for a new column name and call into the VM. Validation
+    /// Prompt for a new column name and call into the VM. Validation
     /// happens on three layers: this dialog's primary-button click can be
     /// gated by the user pressing Cancel; the VM's IsValidColumnIdentifier
     /// gate surfaces a banner on a malformed name; the DB layer enforces
@@ -657,7 +655,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    /// C9 — Prompt for a new SQLite affinity (TEXT / INTEGER / REAL /
+    /// Prompt for a new SQLite affinity (TEXT / INTEGER / REAL /
     /// BLOB / NUMERIC) and apply via the VM's ChangeColumnTypeAsync.
     /// Defaults the ComboBox to the column's current type when it matches
     /// one of the offered affinities, else falls back to TEXT.
@@ -735,7 +733,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    /// Shared payload builder for column drag — used by P1-A18. The drag
+    /// Shared payload builder for column drag. The drag
     /// path on the canvas side parses the same <c>{table}|{column}|{type}</c>
     /// triplet, so any future tweak to the schema only needs to change two
     /// call sites (this builder and the canvas's parser).
@@ -961,7 +959,7 @@ public sealed partial class DatabankBrowserView : UserControl
                     }
                     sb.Append("\r\n");
                 }
-                //  P1: async write keeps the UI thread responsive on
+                // Async write keeps the UI thread responsive on
                 // large CSVs. UTF-8 with BOM matches Excel's expectations.
                 await File.WriteAllTextAsync(path, sb.ToString(),
                     new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)).ConfigureAwait(false);
@@ -1046,7 +1044,7 @@ public sealed partial class DatabankBrowserView : UserControl
 
     // ─── Inline cell edit ───────────────────────────────────────────────
 
-    // ─── Inline cell edit (P0-4) ────────────────────────────────────────
+    // ─── Inline cell edit ───────────────────────────────────────────────
     // Pre-fix every double-tap on a cell opened a modal ContentDialog with
     // a generic TextBox regardless of column SqlType — BOOLEAN columns
     // forced the user to type "true"/"false", INTEGER columns accepted any
@@ -1054,7 +1052,7 @@ public sealed partial class DatabankBrowserView : UserControl
     // overlay (CheckBox / numeric TextBox / text TextBox). Commit on Enter
     // or focus-loss validates parse + persists via UpdateCellAsync.
 
-    //  The pre-edit baseline used to live here as a
+    // The pre-edit baseline used to live here as a
     // single view-level field, which raced when the user double-tapped a second
     // cell before the first edit committed (the second tap clobbered the first
     // cell's baseline). The baseline now lives per-cell on DatabankCellViewModel,
@@ -1080,7 +1078,7 @@ public sealed partial class DatabankBrowserView : UserControl
         else if (e.Key == Windows.System.VirtualKey.Escape)
         {
             // Esc rolls back to THIS cell's own baseline captured at double-tap
-            // time ().
+            // time.
             cell.Value = cell.EditBaselineValue;
             cell.IsEditing = false;
             e.Handled = true;
@@ -1097,15 +1095,14 @@ public sealed partial class DatabankBrowserView : UserControl
     private async void OnCellBoolToggled(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not DatabankCellViewModel cell) return;
-        //  Top-level guard so a fault after the await
+        // Top-level guard so a fault after the await
         // to PersistCellAsync can't escape this async void handler to the
         // dispatcher (unhandled-exception crash). Matches the pattern on every
         // peer handler (OnDeleteTableClick / OnExportTableClick / etc).
         try
         {
             // Capture this cell's baseline BEFORE clearing IsEditing — the cell
-            // VM only holds the baseline while in edit mode
-            // ().
+            // VM only holds the baseline while in edit mode.
             string? baseline = cell.EditBaselineValue;
             // CheckBox edits commit immediately — no separate Enter/blur step.
             cell.IsEditing = false;
@@ -1130,7 +1127,7 @@ public sealed partial class DatabankBrowserView : UserControl
             Phoenix.Controls.Shared.Services.GlobalLogger.Log(
                 $"Edit rejected: '{cell.Value}' is not an integer for column {cell.Column}",
                 "DatabankBrowserView", Phoenix.Controls.Shared.Models.LogLevel.System);
-            cell.Value = cell.EditBaselineValue; // 
+            cell.Value = cell.EditBaselineValue;
             cell.IsEditing = false;
             return;
         }
@@ -1141,14 +1138,14 @@ public sealed partial class DatabankBrowserView : UserControl
             Phoenix.Controls.Shared.Services.GlobalLogger.Log(
                 $"Edit rejected: '{cell.Value}' is not a number for column {cell.Column}",
                 "DatabankBrowserView", Phoenix.Controls.Shared.Models.LogLevel.System);
-            cell.Value = cell.EditBaselineValue; // 
+            cell.Value = cell.EditBaselineValue;
             cell.IsEditing = false;
             return;
         }
 
         // Capture the baseline BEFORE clearing IsEditing — the cell VM only
         // holds the baseline while in edit mode, and PersistCellAsync below
-        // needs it for its rollback ().
+        // needs it for its rollback.
         string? baseline = cell.EditBaselineValue;
         cell.IsEditing = false;
         if (string.Equals(cell.Value ?? string.Empty, baseline ?? string.Empty,
@@ -1161,8 +1158,7 @@ public sealed partial class DatabankBrowserView : UserControl
     /// Persist a committed cell edit. <paramref name="baselineValue"/> is this
     /// cell's own pre-edit value (captured before IsEditing was cleared) so a
     /// failed write rolls the cell back to ITS baseline, not whatever a
-    /// concurrently-edited sibling cell last left in a shared field
-    /// ().
+    /// concurrently-edited sibling cell last left in a shared field.
     /// </summary>
     private async System.Threading.Tasks.Task PersistCellAsync(DatabankCellViewModel cell, string? baselineValue)
     {
@@ -1223,7 +1219,7 @@ public sealed partial class DatabankBrowserView : UserControl
     // ─── ContentDialog prompts ──────────────────────────────────────────
 
     /// <summary>
-    ///  Batch-entry "Add row" dialog. Dynamically builds
+    /// Batch-entry "Add row" dialog. Dynamically builds
     /// one labelled field per non-rowid column in <see cref="DatabankBrowserViewModel.VisibleColumns"/>,
     /// type-aware: BOOLEAN → true/false ComboBox, INTEGER/REAL → numeric TextBox,
     /// everything else → text TextBox. Seeds each field with the same type-aware
@@ -1344,7 +1340,7 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    ///  Self-contained mirror of DatabankCellViewModel's
+    /// Self-contained mirror of DatabankCellViewModel's
     /// private ResolveEditor so the add-row dialog can pick a type-aware field
     /// without exposing the VM's internal resolver. Kept in lockstep with the
     /// VM's ResolveEditor / SeedDefaultForSqlType type-keyword rules.
@@ -1360,14 +1356,14 @@ public sealed partial class DatabankBrowserView : UserControl
         return DatabankCellEditor.Text;
     }
 
-    //  SQLite affinities offered in the per-column
+    // SQLite affinities offered in the per-column
     // type picker. Mirrors the change-column-type dialog's affinity set so the
     // table-creation and column-edit surfaces stay consistent.
     private static readonly string[] _newTableColumnAffinities =
         { "TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC" };
 
     /// <summary>
-    ///  Guided column-builder "Create table" dialog.
+    /// Guided column-builder "Create table" dialog.
     /// Pre-fix this was a single freeform TextBox ("col1:TEXT, col2:INTEGER")
     /// parsed by ParseColumnSpec — error-prone and undiscoverable. Now it builds
     /// the column list interactively: a table-name TextBox plus a growable list
@@ -1544,7 +1540,7 @@ public sealed partial class DatabankBrowserView : UserControl
         return (nameBox.Text?.Trim(), typeCombo.SelectedItem as string);
     }
 
-    //  ParseColumnSpec was removed — the freeform
+    // ParseColumnSpec was removed — the freeform
     // "col1:TEXT, col2:INTEGER" text path it parsed is gone, replaced by the
     // interactive column-builder in PromptNewTableAsync which reads the live
     // control state directly.

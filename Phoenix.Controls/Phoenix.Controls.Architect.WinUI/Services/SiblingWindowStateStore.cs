@@ -70,7 +70,7 @@ internal static class SiblingWindowStateStore
     /// lives on across destruction.
     /// </summary>
     /// <param name="flushSync">
-    ///  When true, the geometry is written
+    /// When true, the geometry is written
     /// synchronously instead of offloaded to the thread pool — used by the
     /// terminal window-close handler so the write lands before the host process
     /// can call Environment.Exit(0) (which would kill a still-queued Task.Run).
@@ -200,7 +200,7 @@ internal static class SiblingWindowStateStore
         {
             WriteIndented = true,
         });
-        //  On the terminal close path, write
+        // On the terminal close path, write
         // synchronously: the host process may Environment.Exit(0) immediately
         // after, killing a still-queued Task.Run and losing the geometry. The
         // record is tiny so the synchronous write is negligible at close time.

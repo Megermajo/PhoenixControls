@@ -4,8 +4,8 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // geometry the design package specifies in
 // redesign-plan/design/project/architect.jsx (PinShape function).
 //
-// Track 6 produces this classification from a Socket so that the
-// view layer Track 5 hosts on top can render the correct shape with no
+// Produces this classification from a Socket so that the
+// view layer on top can render the correct shape with no
 // further branching: NodeView binds a PinShape control to the Kind enum
 // and to PinPathGeometry.For(kind) for the SVG path string.
 //

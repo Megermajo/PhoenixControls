@@ -29,7 +29,7 @@ public enum UpdateOutcome
 /// <summary>
 /// UpdateRunner — the actual flow. Logs every step to <c>updater.log</c> in
 /// <c>%AppData%/PhoenixControls/Hub/</c> AND a per-run timestamped file under
-/// <c>%LocalAppData%/PhoenixControls/logs/</c> (the new Track 8 location); a
+/// <c>%LocalAppData%/PhoenixControls/logs/</c>; a
 /// JSON result file (<c>last-update-result.json</c>) is also written so the
 /// next Hub launch can surface success / rolled-back / failed without
 /// re-running anything.
@@ -41,7 +41,7 @@ public enum UpdateOutcome
 /// price for keeping the Updater self-contained.
 ///
 /// Two flows coexist:
-///   • <b>Update flow</b> (Track 8): caller pre-downloaded a <c>.phxupdate</c>
+///   • <b>Update flow</b>: caller pre-downloaded a <c>.phxupdate</c>
 ///     archive and verified its SHA before invoking us with <c>--update</c>.
 ///     We re-verify the archive SHA + Authenticode, stop the suite, swap.
 ///   • <b>Releases flow</b> (legacy URL-based): caller passes
@@ -81,7 +81,7 @@ public sealed class UpdateRunner
         // the try/catch in RunAsync — the process would die with no log file
         // and no result file, leaving Hub with nothing to surface. Fall back
         // to %TEMP% so we at least get diagnostics.
-        string preferred = Path.Combine(
+        string preferred = args.StateDirOverride ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             BrandFolder, "Hub");
         try
@@ -101,13 +101,17 @@ public sealed class UpdateRunner
         _sentinelPath = Path.Combine(_stateDir, "updating.lock");
         _cancelPath   = Path.Combine(_stateDir, "cancel.signal");
 
-        // Track 8 log path: %LocalAppData%/PhoenixControls/logs/updater-<utc>.log
+        // Local log path: %LocalAppData%/PhoenixControls/logs/updater-<utc>.log
         // (one file per run so a corrupt update + reattempt produces two distinct
         // logs the user can attach to a bug report). Best-effort: failures here
         // never propagate — we still have the roaming log + the in-memory tail.
-        string localLogDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            BrandFolder, "logs");
+        // StateDirOverride redirects this too — a test run must leave NOTHING
+        // in the machine's real profile, not even diagnostic logs.
+        string localLogDir = args.StateDirOverride is not null
+            ? Path.Combine(args.StateDirOverride, "logs")
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                BrandFolder, "logs");
         try { Directory.CreateDirectory(localLogDir); } catch { }
         _localLogPath = Path.Combine(localLogDir, $"updater-{DateTime.UtcNow:yyyyMMddTHHmmssZ}.log");
     }
@@ -125,7 +129,7 @@ public sealed class UpdateRunner
 
         try
         {
-            // Update mode (Track 8 spec): caller already downloaded an archive.
+            // Update mode: caller already downloaded an archive.
             if (_args.IsUpdateMode)
             {
                 await WaitForSuiteShutdownAsync().ConfigureAwait(false);
@@ -159,7 +163,7 @@ public sealed class UpdateRunner
         }
     }
 
-    // ── Update flow (.phxupdate, Track 8 spec) ──────────────────────────
+    // ── Update flow (.phxupdate) ────────────────────────────────────────
 
     private async Task<UpdateOutcome> RunUpdateFlowAsync()
     {
@@ -173,7 +177,7 @@ public sealed class UpdateRunner
             return UpdateOutcome.Failed;
         }
 
-        // P1-27: defensive staging-dir cleanup. The Update-flow consumes a
+        // Defensive staging-dir cleanup. The Update-flow consumes a
         // caller-provided archive, so we MUST NOT delete the archive itself;
         // the Releases flow's "wipe downloadDir on entry" pattern (line ~360)
         // can't be applied verbatim here. Instead, age out any *other* file
@@ -185,7 +189,7 @@ public sealed class UpdateRunner
         long bytes = new FileInfo(archive).Length;
         Log($"archive size: {bytes:N0} bytes");
 
-        // 1. QC08-03 contract: --update REQUIRES --archive-sha256. Skipping the
+        // 1. Contract: --update REQUIRES --archive-sha256. Skipping the
         //    archive-wide hash collapses to "trust any file on local disk",
         //    which means a malicious local writer can substitute the staging
         //    archive between download and apply. Manifest-per-file hashes are
@@ -207,7 +211,7 @@ public sealed class UpdateRunner
                 WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag, error: $"sha256 read failed: {ex.Message}");
                 return UpdateOutcome.Failed;
             }
-            // QC08-05: constant-time hex compare.
+            // Constant-time hex compare.
             if (!HexEqualsFixedTime(actual, _args.ArchiveSha256))
             {
                 Log($"sha256 mismatch -- expected {_args.ArchiveSha256}, got {actual}");
@@ -218,7 +222,7 @@ public sealed class UpdateRunner
             Log($"sha256 verified: {actual}");
         }
 
-        // 2. QC08-03 contract: Authenticode Unsigned is REJECTED in --update
+        // 2. Contract: Authenticode Unsigned is REJECTED in --update
         //    mode. Today's pipeline doesn't sign archives, so this hard-gates
         //    behind the signing infrastructure -- which is the intended fail-
         //    closed posture until that ships. Untrusted has always failed.
@@ -244,8 +248,8 @@ public sealed class UpdateRunner
         string installRoot = ResolveInstallRoot();
         Log($"installRoot resolved to: {installRoot}");
 
-        // QC39-04: reject system-critical install-root targets up-front.
-        // Combined with QC08-01/02 Zip Slip primitives the install-root was a
+        // Reject system-critical install-root targets up-front.
+        // Combined with the Zip Slip primitives the install-root was a
         // swap-anywhere vector; the elevated-installer flow will tighten this
         // further when it ships.
         if (!IsInstallRootSafe(installRoot, out string rootReason))
@@ -302,7 +306,7 @@ public sealed class UpdateRunner
             Log($"manifest verification: ok ({manifest.Files.Count} files)");
         }
 
-        // QC39-02: relaunch + hubAlive verification must precede WriteResult(Success).
+        // Relaunch + hubAlive verification must precede WriteResult(Success).
         // The new Hub's ReadAndClearLastUpdateResult otherwise races + clears the
         // success-file before a relaunch-failure overwrite has a chance to land,
         // so the user sees "Update applied" when it actually failed to relaunch.
@@ -337,10 +341,10 @@ public sealed class UpdateRunner
         // Phoenix Controls install. Either Hub.WinUI.exe is here at the
         // release-layout location (phoenix-controls/Hub/Phoenix.Controls.Hub.WinUI.exe),
         // or it is right next to us (a dev tree where the Updater was launched
-        // from a flat project bin). MINE-12: the WinForms Hub.exe was retired
+        // from a flat project bin). The WinForms Hub.exe was retired
         // in T15 and is no longer staged in either the zip or the installer.
         string installRoot = _args.InstallRoot!;
-        // QC39-04: same install-root sanity gate as Update mode.
+        // Same install-root sanity gate as Update mode.
         if (!IsInstallRootSafe(installRoot, out string rootReason))
         {
             Log($"refusing to update -- unsafe install root: {rootReason}");
@@ -391,11 +395,11 @@ public sealed class UpdateRunner
         string zipPath = Path.Combine(downloadDir, "release.zip");
 
         Log($"downloading {_args.AssetUrl}");
-        // HUB-UX-D6: download + size + SHA all sit inside one retry envelope.
+        // Download + size + SHA all sit inside one retry envelope.
         // The helper writes its own failure result/progress entries before
-        // returning false, so we just early-exit on its signal. 
+        // returning false, so we just early-exit on its signal.
         // cancellation is threaded through the helper's CancellationToken
-        // path; the QC08-11 inline-CTS approach is unnecessary now that the
+        // path; the inline-CTS approach is unnecessary now that the
         // helper exists.
         if (!await DownloadVerifiedZipWithRetryAsync(zipPath).ConfigureAwait(false))
             return UpdateOutcome.Failed;
@@ -438,7 +442,7 @@ public sealed class UpdateRunner
             return outcome;
         }
 
-        // QC39-02: relaunch + hubAlive verification must precede WriteResult(Success).
+        // Relaunch + hubAlive verification must precede WriteResult(Success).
         // The new Hub's ReadAndClearLastUpdateResult otherwise races + clears the
         // success-file before a relaunch-failure overwrite has a chance to land,
         // so the user sees "Update applied" when it actually failed to relaunch.
@@ -479,7 +483,7 @@ public sealed class UpdateRunner
     /// </summary>
     private UpdateOutcome ApplyArchiveSwap(string archivePath, string installRoot)
     {
-        // QC09-03: normalise the archive path up front. GetDirectoryName returns
+        // Normalise the archive path up front. GetDirectoryName returns
         // null on a bare filename, which would silently fall back to _stateDir
         // and stage the extract somewhere unrelated if the Updater's CWD has
         // drifted (e.g. relaunched from a transient working directory). A full
@@ -490,7 +494,7 @@ public sealed class UpdateRunner
 
         try
         {
-            // QC08-01: per-entry Zip Slip guard. ZipFile.ExtractToDirectory in
+            // Per-entry Zip Slip guard. ZipFile.ExtractToDirectory in
             // .NET 8 already rejects traversal entries, but we extract entry-by
             // -entry here so the contract is explicit + survives any future
             // BCL relaxation. Every resolved destination must be a child of
@@ -571,7 +575,7 @@ public sealed class UpdateRunner
             // Cross-volume safety: Directory.Move fails across volumes with
             // IOException. The state dir (%APPDATA%) and install dir are
             // typically on the same volume, but if they're not, fall back to
-            // a recursive copy. QC08-04: if the cross-volume copy throws
+            // a recursive copy. If the cross-volume copy throws
             // mid-way, CopyDirectory has already mkdir'd installRoot, so the
             // catch block's "!Directory.Exists(installRoot)" rollback gate
             // would have falsely failed. Wrap the copy so any failure tears
@@ -590,7 +594,7 @@ public sealed class UpdateRunner
                 }
                 catch
                 {
-                    // QC08-04: ensure rollback gate sees an empty install path.
+                    // Ensure rollback gate sees an empty install path.
                     try { if (Directory.Exists(installRoot)) Directory.Delete(installRoot, recursive: true); }
                     catch (Exception delEx) { Log($"could not clean partial copy: {delEx.Message}"); }
                     throw;
@@ -604,7 +608,7 @@ public sealed class UpdateRunner
         {
             Log($"atomic swap failed: {ex.Message}");
             // Try to restore the backup so the user isn't left without an install.
-            // QC08-04: if a partial-copy failure left installRoot present, the
+            // If a partial-copy failure left installRoot present, the
             // CopyDirectory catch above tore it down — so the gate below now
             // correctly returns true and the rollback runs.
             if (installRenamed && !Directory.Exists(installRoot) && Directory.Exists(backupDir))
@@ -664,7 +668,7 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// QC39-04: install-root sanity gate. Rejects targets that are obviously
+    /// Install-root sanity gate. Rejects targets that are obviously
     /// system-critical (Windows, System32, Program Files roots, drive roots).
     /// Conservative — the elevated-installer flow will tighten this further.
     /// </summary>
@@ -726,8 +730,7 @@ public sealed class UpdateRunner
     // singleton avoids the socket-exhaustion footgun if anyone refactors
     // this into a long-lived service later.
     //
-    // `internal static` settable for test-side injection (audit/near-reality-
-    // test-candidates-2026-05-22.md §Unit 31). A DelegatingHandler-wrapped
+    // `internal static` settable for test-side injection. A DelegatingHandler-wrapped
     // client lets UpdateRunnerDownloadResumeTests fake 200/206/416 server
     // responses without spinning a real HTTP server. Production callers
     // never reassign; the slot stays the default SocketsHttpHandler client.
@@ -765,7 +768,7 @@ public sealed class UpdateRunner
     /// or whether the upstream changed mid-retry and the work has to be
     /// thrown away.
     /// </summary>
-    // `internal` (was `private`) so Unit 31 tests can construct meta
+    // `internal` (was `private`) so tests can construct meta
     // instances to pin the read/write round-trip without crossing a private
     // boundary. Production usage is unchanged.
     internal sealed class DownloadResumeMeta
@@ -775,7 +778,7 @@ public sealed class UpdateRunner
         public long? TotalBytes { get; set; }
     }
 
-    // `internal static` (was `private`) so Unit 31 tests can pin the
+    // `internal static` (was `private`) so tests can pin the
     // resume-meta sidecar round-trip directly without driving a download.
     internal static string ResumeMetaPath(string destPath) => destPath + ".meta";
 
@@ -816,7 +819,7 @@ public sealed class UpdateRunner
         Action<long, long?>? onProgress = null,
         CancellationToken ct = default)
     {
-        // P1-26: resume mid-retry rather than throwing away every partial
+        // Resume mid-retry rather than throwing away every partial
         // download. If a previous attempt left bytes on disk, send a
         // Range: bytes=<n>- header and append to the existing file. The
         // server may answer:
@@ -856,12 +859,12 @@ public sealed class UpdateRunner
             }
         }
 
-        // QC08-11: thread the cancellation token through send + stream so a
+        // Thread the cancellation token through send + stream so a
         // Cancel button press during an in-flight download actually stops the
         // network read rather than waiting for the 10-minute HttpClient timeout.
         using HttpResponseMessage resp = await s_http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
 
-        // Hub UX P1 — terminal HTTP codes are surfaced as a permanent
+        // Terminal HTTP codes are surfaced as a permanent
         // exception so the retry envelope skips its backoff schedule.
         // 401 (auth), 403 (forbidden — eg. private repo), and 404 (asset
         // missing) won't succeed on the next call to the same URL; retrying
@@ -973,7 +976,7 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// Download-and-verify with exponential-backoff retry (HUB-UX-D6).
+    /// Download-and-verify with exponential-backoff retry.
     /// Calls <see cref="DownloadAsync"/>, then size-sanity-checks the
     /// payload, then verifies the SHA-256 against
     /// <see cref="UpdaterArgs.AssetSha256"/>. On any transient failure
@@ -992,7 +995,7 @@ public sealed class UpdateRunner
     /// </summary>
     private async Task<bool> DownloadVerifiedZipWithRetryAsync(string zipPath)
     {
-        // Backoff schedule per HUB-UX-D6: 1s / 2s / 4s between attempts.
+        // Backoff schedule: 1s / 2s / 4s between attempts.
         // Three retries = four attempts total in the worst case.
         // Doubling each step keeps the budget bounded at 7s of waiting.
         int[] backoffsMs = { 1_000, 2_000, 4_000 };
@@ -1094,7 +1097,7 @@ public sealed class UpdateRunner
 
             // 3. SHA-256 verify. Read failure is permanent (the file's on
             //    our own disk — retrying won't change anything).
-            //    QC08-06: SHA mismatch is ALSO permanent. The pre-image of the
+            //    SHA mismatch is ALSO permanent. The pre-image of the
             //    expected hash was signed/published; if the bytes on disk hash
             //    to anything else, an attacker (or, less excitingly, a broken
             //    proxy) substituted them. Retrying just hands the attacker
@@ -1110,10 +1113,10 @@ public sealed class UpdateRunner
                 WriteProgress("failed", -1, $"SHA-256 read failed: {ex.Message}");
                 return false;
             }
-            // QC08-05: constant-time hex compare.
+            // Constant-time hex compare.
             if (!HexEqualsFixedTime(actualSha, _args.AssetSha256))
             {
-                // QC08-06: permanent failure, no retry — surface immediately so
+                // Permanent failure, no retry — surface immediately so
                 // the user sees the integrity violation rather than spinning
                 // through the backoff schedule first.
                 Log($"sha256 mismatch -- expected {_args.AssetSha256}, got {actualSha} (PERMANENT — refusing to retry)");
@@ -1121,7 +1124,7 @@ public sealed class UpdateRunner
                     error: $"SHA-256 mismatch on downloaded asset (expected {_args.AssetSha256}, got {actualSha}). Aborted to protect the install — integrity failure is not retried.");
                 WriteProgress("failed", -1, $"SHA-256 mismatch — refusing to retry (integrity failure).");
                 // Wipe the corrupted file (and its resume meta) so a future
-                // run starts clean. P1-26: the .meta sidecar carries the ETag
+                // run starts clean. The .meta sidecar carries the ETag
                 // we just disproved -- leaving it behind would let a future
                 // resume believe the bad bytes match the upstream asset.
                 TryDeleteStagingPayload(zipPath);
@@ -1201,7 +1204,7 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// QC08-05: constant-time hex compare to drop the timing side-channel that
+    /// Constant-time hex compare to drop the timing side-channel that
     /// String.Equals leaks. Length mismatches are an immediate fail (no leak —
     /// the attacker already controls the input length they sent).
     /// </summary>
@@ -1229,7 +1232,7 @@ public sealed class UpdateRunner
 
     /// <summary>Recursive directory copy -- fallback for the cross-volume rename case.</summary>
     /// <remarks>
-    /// QC09-02: derive child paths via <see cref="Path.GetRelativePath"/> rather
+    /// Derive child paths via <see cref="Path.GetRelativePath"/> rather
     /// than string.Replace. Replace mangles the destination path whenever the
     /// source's basename legitimately repeats deeper in the tree (e.g. src
     /// <c>C:\foo</c>, child <c>C:\foo\bar\foo\file</c> would rewrite BOTH
@@ -1256,7 +1259,7 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// P1-27 defensive cleanup: age out anything in <paramref name="protectedFile"/>'s
+    /// Defensive cleanup: age out anything in <paramref name="protectedFile"/>'s
     /// directory older than <paramref name="ageDays"/>, while preserving the
     /// caller-provided archive itself. The staging dir is treated as scratch
     /// space — orphaned .meta sidecars, half-downloaded .zips, stale extract
@@ -1332,7 +1335,7 @@ public sealed class UpdateRunner
             {
                 try
                 {
-                    // QC08-07: parse the timestamp from the directory name rather
+                    // Parse the timestamp from the directory name rather
                     // than reading CreationTimeUtc — Directory.Move (used during
                     // swap) preserves the original creation time of the install
                     // tree, so every backup looks "old" and the 7-day window
@@ -1381,7 +1384,7 @@ public sealed class UpdateRunner
     };
 
     /// <summary>
-    /// [P1 swarm-audit 2026-05-29] True if any process with the given image
+    /// True if any process with the given image
     /// name is alive, disposing every Process handle the query materialises.
     /// <see cref="Process.GetProcessesByName(string)"/> returns owned Process
     /// objects; checking <c>.Length</c>/<c>.Any()</c> on the bare array leaks
@@ -1409,7 +1412,7 @@ public sealed class UpdateRunner
     {
         if (_args.HubPid > 0)
         {
-            // QC39-01: prefer the sentinel's (PID, StartTime) tuple over the
+            // Prefer the sentinel's (PID, StartTime) tuple over the
             // bare --hub-pid when available — covers the race where Hub exited
             // between spawning us and us reaching this line, and Windows
             // recycled its PID to an unrelated process.
@@ -1419,7 +1422,7 @@ public sealed class UpdateRunner
                 : null;
             try
             {
-                // [P1 swarm-audit 2026-05-29] dispose the Process handle on
+                // dispose the Process handle on
                 // every path — bare GetProcessById leaks the underlying OS
                 // handle (and the Process object) when this scope exits.
                 using var hub = Process.GetProcessById(_args.HubPid);
@@ -1470,7 +1473,7 @@ public sealed class UpdateRunner
         // Wait until the deadline OR everything's gone.
         while (DateTime.UtcNow < gracefulDeadline)
         {
-            // [P1 swarm-audit 2026-05-29] dispose every Process handle the
+            // dispose every Process handle the
             // liveness probe materialises — GetProcessesByName returns owned
             // Process objects that otherwise leak each poll cycle (every
             // 250ms across the whole graceful window).
@@ -1528,7 +1531,7 @@ public sealed class UpdateRunner
     /// <summary>
     /// Spawns the Hub after a successful swap. WinUI Hub wins when its exe is
     /// present at the post-swap location; falls back to the WinForms Hub.exe.
-    /// QC39-02: must precede WriteResult(Success) — returns true iff Hub came
+    /// Must precede WriteResult(Success) — returns true iff Hub came
     /// back up within the verification window, so the caller can write
     /// Success only after the suite is confirmed alive.
     /// </summary>
@@ -1559,7 +1562,7 @@ public sealed class UpdateRunner
             // never reappears. Wait briefly then verify Hub.exe is in the
             // process list; the caller writes Success / Failed accordingly.
             await Task.Delay(3000).ConfigureAwait(false);
-            // [P1 swarm-audit 2026-05-29] route the post-relaunch liveness
+            // route the post-relaunch liveness
             // probe through AnyLiveProcess so the Process handles returned by
             // GetProcessesByName are disposed instead of leaked.
             bool hubAlive = AnyLiveProcess("Phoenix.Controls.Hub")
@@ -1591,7 +1594,7 @@ public sealed class UpdateRunner
         string winuiHub = Path.Combine(installRoot, "Hub", "Phoenix.Controls.Hub.WinUI.exe");
         if (File.Exists(winuiHub)) return winuiHub;
 
-        // MINE-12: WinForms Hub.exe + LAUNCH_SUITE.bat fallbacks were retired in
+        // WinForms Hub.exe + LAUNCH_SUITE.bat fallbacks were retired in
         // T15; only the WinUI Hub ships now. The flat-bin dev case still applies.
         // Dev-tree fallback: flat bin where Hub.WinUI.exe sits next to the Updater.
         string flatHubWinUI = Path.Combine(installRoot, "Phoenix.Controls.Hub.WinUI.exe");
@@ -1612,7 +1615,7 @@ public sealed class UpdateRunner
     private void FlushLog()
     {
         // Roaming log: append (one big file across all updater runs -- Hub
-        // tails it). Track 8 local log: per-run timestamped file, easier to
+        // tails it). Local log: per-run timestamped file, easier to
         // attach to a bug report.
         try
         {
@@ -1712,7 +1715,7 @@ public sealed class UpdateRunner
                     Log($"sentinel PID {sentinel.Pid} has exited.");
                     return true;
                 }
-                // QC39-01: the live PID might have been recycled to a different
+                // The live PID might have been recycled to a different
                 // process after Hub exited. Compare against the recorded start
                 // time — a mismatch means Hub is already gone and we can stop
                 // waiting.

@@ -11,19 +11,19 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // EmberPrimaryBrush / OkBrush / etc. We don't read from PhoenixDark.xaml
 // directly here — the design package's per-pin colours are tighter than
 // the broad palette (e.g. number is a desaturated cyan #7FBED1 not the
-// full InfoBrush #6F94B0). When Track 5 hosts these VMs inside actual
-// XAML, the view-side bindings can reach for the design palette via
+// full InfoBrush #6F94B0). When the view layer hosts these VMs inside
+// actual XAML, the view-side bindings can reach for the design palette via
 // {StaticResource} for the surrounding chrome and use these hex values
 // for the pins themselves.
 //
 // CRITICAL: per the project conventions "Three-way contract", the *runtime* command-side
 // palette of socket colours lives in
 // Phoenix.Controls.Architect.Core.NodeRegistry (ColExec / ColString / ...).
-// Track 6's palette here is the *render-side* mirror used by the WinUI
+// The palette here is the *render-side* mirror used by the WinUI
 // canvas; both must stay in sync. NodeRegistry's mapping uses
-// System.Drawing.Color (WinForms) — Track 5 may swap this file's palette
+// System.Drawing.Color (WinForms) — this file's palette may later be swapped
 // over to read NodeRegistry directly once colour-conversion helpers exist
-// on its side. For this first commit they are decoupled.
+// on its side. For now they are decoupled.
 public static class SocketPalette
 {
     /// <summary>Hex-RGB colour string ("#RRGGBB") for a socket of the given data type.</summary>
@@ -31,7 +31,7 @@ public static class SocketPalette
     {
         SocketDataType.Flow       => "#F5EFE3",   // coal-paper (chevron stroke + fill)
         SocketDataType.String     => "#E5A24E",   // ember-300
-        // 0.11.5 canvas-polish r3 — Int + Float collapse to the rev-2 design's
+        // 0.11.5 canvas-polish — Int + Float collapse to the rev-2 design's
         // single "number" palette token (#7FBED1 sky cyan, circle shape) per
         // redesign-plan/design/project/architect.jsx. The prior Int=square
         // (#7FBED1) / Float=diamond (#9CFF9C) split predated the rev-2 plan;
@@ -64,7 +64,7 @@ public static class SocketPalette
     /// <summary>
     /// Pin-shape kind for a socket of the given data type.
     ///
-    /// A3 (audit 2026-05-24) — realigned to Majo's published legend:
+    /// Realigned to Majo's published legend:
     ///   ▶ flow      → Chevron
     ///   ● string    → Circle
     ///   ● number    → Circle  (Int + Float share)
@@ -72,14 +72,14 @@ public static class SocketPalette
     ///   ◆ user      → Diamond (mapped to <c>Any</c> + Vector* — "user data")
     ///   ▢ object    → RoundedSquare (mapped to <c>Collection</c>)
     ///
-    /// The 0.11.5 r3 collapse to "everything that isn't Flow/Bool/Vector is
+    /// The 0.11.5 collapse to "everything that isn't Flow/Bool/Vector is
     /// a Circle" lost two of the legend's six shapes (square + diamond)
     /// because it interpreted "object" / "user" loosely. The legend Majo
     /// published is the contract — restoring Collection→RoundedSquare and
     /// Any→Diamond keeps Visualist-only types (Image / Color / Scalar /
     /// Audio) on Circle since those have no legend equivalent.
     ///
-    /// S4-fix — Collection now maps to <see cref="SocketPinKind.RoundedSquare"/>
+    /// Collection now maps to <see cref="SocketPinKind.RoundedSquare"/>
     /// (not <c>Square</c>): SocketKind.cs documents RoundedSquare as the
     /// "Collection (slightly inset rounded square)" shape, and
     /// PinPathGeometry.cs / NodeView.BuildPinShape both wire a 2px-corner

@@ -13,13 +13,10 @@ namespace Phoenix.Controls.Visualist.WinUI.Services;
 /// process working directory when AppData isn't writable.
 ///
 /// Parallel of <c>Phoenix.Controls.Architect.WinUI.Services.RecentFiles</c>
-/// — kept per-pillar deliberately per
-/// feedback_visualist_architect_chrome_independence.md (each pillar owns
-/// its own MRU file) rather than lifting to Shared. The two are ~70 LOC of
-/// JSON-list scaffolding; duplicating beats coupling the pillars through a
-/// shared service for what is genuinely per-pillar metadata
-/// (TODO 2026-05-07 round 1 P2 — Recent Files menu PARTIAL — Hub still
-/// pending).
+/// — kept per-pillar deliberately (each pillar owns its own MRU file)
+/// rather than lifting to Shared. The two are ~70 LOC of JSON-list
+/// scaffolding; duplicating beats coupling the pillars through a
+/// shared service for what is genuinely per-pillar metadata.
 /// </summary>
 public static class RecentFiles
 {

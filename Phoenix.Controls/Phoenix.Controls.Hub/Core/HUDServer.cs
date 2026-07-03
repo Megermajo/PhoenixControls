@@ -34,7 +34,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly string _overlayPath;
         private CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly LayerRegistry _layerRegistry;
-        // L38 (sweep-6 follow-up) — TTL pulled from AppConfig.UrlImageCacheTtlHours so
+        // TTL pulled from AppConfig.UrlImageCacheTtlHours so
         // operators can tune the URL-image cache freshness from settings.json without
         // a recompile. Initialized in the ctor body because field-initializer ordering
         // can't reach ConfigManager.Current safely if the field were inline-`new`'d.
@@ -43,10 +43,10 @@ namespace Phoenix.Controls.Hub.Core
         // Per-socket send pumps. Each connected WebSocket gets one PerSocketSender
         // holding a bounded Channel<byte[]> (256 frames, DropOldest) drained by a
         // single-reader pump that owns the actual ws.SendAsync calls. Replaces the
-        // pre-2026-05-14 _layerSendLocks SemaphoreSlim approach:
+        // previous _layerSendLocks SemaphoreSlim approach:
         //
-        //   • H47 contract preserved — only the pump's reader calls SendAsync, so
-        //     concurrent producers never interleave frames on the same socket.
+        //   • Send-serialization contract preserved — only the pump's reader calls
+        //     SendAsync, so concurrent producers never interleave frames on the same socket.
         //   • New: bounded buffer with drop-oldest policy. Producers no longer
         //     queue behind a slow client indefinitely — old frames fall off the
         //     back of the channel when the cap is reached, and the producer
@@ -55,19 +55,19 @@ namespace Phoenix.Controls.Hub.Core
         //     stalling the script engine that owns the trigger.
         private readonly ConcurrentDictionary<WebSocket, PerSocketSender> _layerSenders = new();
 
-        // H48 — per-layer disconnect grace window. When OBS hides a browser source (or the
+        // Per-layer disconnect grace window. When OBS hides a browser source (or the
         // visibility flickers), the socket closes; we used to immediately drop the layer's
         // presence and any queued one-shot alerts. Instead, schedule a cancellable teardown
         // and let a fast reconnect restore presence without re-routing.
         private const int LAYER_DISCONNECT_GRACE_SECONDS = 3;
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _pendingTeardowns = new();
 
-        // M74 — recently-reloaded layer ids. PushLayerReloadedAsync stamps each broadcast
+        // Recently-reloaded layer ids. PushLayerReloadedAsync stamps each broadcast
         // so /api/layer/<id> can wait for the writer to settle before serving JSON. Five-
         // second TTL is an arbitrary "long enough that the writer is done, short enough
         // that a static layer doesn't permanently pay the wait" window.
         //
-        // QC35-07 — entries used to be removed only on the next /api/layer/<id> read,
+        // Entries used to be removed only on the next /api/layer/<id> read,
         // so a layer that gets reloaded without any browser following up would pin its
         // stamp forever. A periodic Timer sweep (see _recentlyReloadedSweeper, started
         // from StartAsync and disposed in Stop) evicts entries older than the TTL.
@@ -75,7 +75,7 @@ namespace Phoenix.Controls.Hub.Core
         private System.Threading.Timer? _recentlyReloadedSweeper;
         private const int RECENT_RELOAD_SWEEP_INTERVAL_SECONDS = 60;
 
-        // QC35-06 — per-layer WebSocket connection cap. OBS only opens a small fixed
+        // Per-layer WebSocket connection cap. OBS only opens a small fixed
         // number of browser sources per scene (Preview + Studio = 2; one or two spares
         // for multi-monitor layouts), so 4 is generous. Without this cap an attacker
         // could fuzz /hud/<layerId> until the HashSet inside LayerRegistry exhausted
@@ -83,14 +83,14 @@ namespace Phoenix.Controls.Hub.Core
         // 1013 (Try Again Later) and the receive loop never starts.
         private const int MAX_CONNECTIONS_PER_LAYER = 4;
 
-        // Perf-review H23: per-layer counter of "registered but no live socket"
+        // Per-layer counter of "registered but no live socket"
         // RUN_TRIGGER drops. Used to rate-limit the diagnostic log so a tight
         // script firing into an inactive layer doesn't saturate the syslog.
         private readonly ConcurrentDictionary<string, long> _layerDropCounts = new();
         private const int RECENT_RELOAD_TTL_SECONDS = 5;
 
-        // C14 — per-webhook-name fixed-window rate limiter. Counts only successful (200) posts.
-        // QC05-01 — _webhookHits is keyed by attacker-controlled path content. Cap the
+        // Per-webhook-name fixed-window rate limiter. Counts only successful (200) posts.
+        // _webhookHits is keyed by attacker-controlled path content. Cap the
         // dict at WebhookHitsMaxKeys; when full we prune the oldest entries (LRU by
         // windowStart) before inserting. Combined with the new IsValidWebhookName
         // guard below, an unauthenticated attacker can no longer trigger unbounded
@@ -98,14 +98,14 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly ConcurrentDictionary<string, (DateTime windowStart, int count, DateTime lastSeen)> _webhookHits = new();
         private const int WebhookRateLimitPerMin = 60;
         private const int WebhookHitsMaxKeys = 256;
-        // QC05-01 — webhook names must satisfy the same identifier shape as layer
+        // Webhook names must satisfy the same identifier shape as layer
         // ids. 64-char cap is generous for any human-written name; tighter than
         // typical filesystem identifiers and well inside what the rate-limiter
         // dict can afford.
         private const int WebhookNameMaxLength = 64;
 
-        // C14 — single-shot warning when WebhookSecret is unset and a request comes in.
-        // [QC18-S2 P3] Demoted from `static` to instance field. The previous
+        // Single-shot warning when WebhookSecret is unset and a request comes in.
+        // Demoted from `static` to instance field. The previous
         // process-static scope meant the operator-security warning fired once per
         // process even across HUDServer restarts (settings-reload, future hot-restart
         // surfaces), at which point a fresh-but-still-unset webhook secret would
@@ -124,12 +124,12 @@ namespace Phoenix.Controls.Hub.Core
         // Per-layer WebSocket connections live in `_layerRegistry`. ClientCount and
         // OnClientCountChanged read from there; the legacy single-broadcast `_clients`
         // list was retired alongside the rewrite of BroadcastRawAsync to fan out via
-        // the registry (TFVL "chat.overlay silent no-op" sweep).
+        // the registry.
         public int ClientCount => _layerRegistry.GetTotalConnectionCount();
         public event Action<int>? OnClientCountChanged;
 
         /// <summary>
-        /// C16 (audit/winui-regressions-2026-05-24) — webhook activity event.
+        /// Webhook activity event.
         /// Fires once per accepted /webhook/&lt;name&gt; POST that survives the
         /// validation guards (name shape, body size, secret check, rate
         /// limit). The Hub WebhookPanel subscribes through HubHost.HUD to
@@ -144,17 +144,17 @@ namespace Phoenix.Controls.Hub.Core
         public event Action<WebhookActivity>? OnWebhookFired;
 
         /// <summary>
-        /// B8 (audit 2026-05-24) — rolling-average broadcast FPS surfaced
+        /// Rolling-average broadcast FPS surfaced
         /// for the StatusStrip's center-zone readout. The compositor sends
         /// one FPS sample per layer per second (see the WS receive loop's
         /// "FPS" case); each sample is stored on
         /// <see cref="LayerRegistry"/> via <c>RecordFps</c>. This getter
         /// averages the most-recent FPS sample across every active layer
         /// (TTL-gated to 5 s by <see cref="LayerRegistry.GetSnapshot"/>);
-        /// the "rolling 60 frame" framing from the audit spec is folded
+        /// the "rolling 60 frame" framing is folded
         /// into the compositor's own 1 s windowed counter, so a separate
         /// 60-sample ring buffer in the send loop would be redundant —
-        /// and the audit's HUDServer guardrail forbids altering the
+        /// and the HUDServer guardrail forbids altering the
         /// HTTP / WS handlers, which is where a sender-side ring would
         /// have to plug in. Returns 0.0 when no active layer has a
         /// recent FPS sample. Property is read-only and cheap: one
@@ -192,11 +192,11 @@ namespace Phoenix.Controls.Hub.Core
         public HUDServer(int port = 18080, LayerRegistry? registry = null)
         {
             _layerRegistry = registry ?? LayerRegistry.Instance;
-            // T5 — re-emit LayerRegistry's connection-count changes as our own
+            // Re-emit LayerRegistry's connection-count changes as our own
             // OnClientCountChanged event so existing subscribers (status bar)
             // don't need to know about the registry.
             _layerRegistry.OnConnectionsChanged += FireClientCountChanged;
-            // QC05-07 — prune the per-layer drop-count diagnostic dict when a
+            // Prune the per-layer drop-count diagnostic dict when a
             // layer is removed from the registry (Deleted/Renamed-away in
             // LayerWatcher). Without this hook the dict grew across the Hub
             // process lifetime — bounded by attacker-controlled layer ids? no,
@@ -210,7 +210,7 @@ namespace Phoenix.Controls.Hub.Core
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Prefixes.Add($"http://localhost:{port}/");
 
-            // L38 — wire UrlImageCache TTL from AppConfig. Negative/zero values fall
+            // Wire UrlImageCache TTL from AppConfig. Negative/zero values fall
             // back to UrlImageCache's internal 24h default (its ctor rejects non-positive).
             _urlCache = new UrlImageCache(
                 ttl: TimeSpan.FromHours(ConfigManager.Current.UrlImageCacheTtlHours));
@@ -267,7 +267,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC05-07 — clear this layer's drop-count slot so the per-layer
+        /// Clear this layer's drop-count slot so the per-layer
         /// diagnostic dict can't grow without bound as layers come and go.
         /// Wired in the ctor; unhooked in <see cref="Stop"/>.
         /// </summary>
@@ -275,14 +275,14 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (string.IsNullOrEmpty(layerId)) return;
             _layerDropCounts.TryRemove(layerId, out _);
-            // QC35-07 — symmetric prune for the reload-stamp dict so a layer
+            // Symmetric prune for the reload-stamp dict so a layer
             // removed mid-grace-window doesn't leak its entry until the next
             // periodic sweep.
             _recentlyReloaded.TryRemove(layerId, out _);
         }
 
         /// <summary>
-        /// QC35-07 — drop <see cref="_recentlyReloaded"/> entries older than the
+        /// Drop <see cref="_recentlyReloaded"/> entries older than the
         /// TTL. Runs on the Timer wired in <see cref="StartAsync"/>; the cost is
         /// O(N) over a dict that's bounded by the active layer count, so a
         /// 60-second cadence is more than fast enough.
@@ -308,7 +308,7 @@ namespace Phoenix.Controls.Hub.Core
 
         public async Task StartAsync(CancellationToken ct = default)
         {
-            // P1-11 — accept a caller CT and link it to the internal _cts so a host
+            // Accept a caller CT and link it to the internal _cts so a host
             // shutdown signal (HubBootstrapper / app exit) tears the accept loop down
             // alongside an explicit Stop(). Bus.StartAsync already takes a CT; this
             // brings HUDServer to parity. The linked token is used for the accept
@@ -329,7 +329,7 @@ namespace Phoenix.Controls.Hub.Core
             GlobalLogger.Log($"HUD Server asset root: {AssetDirectory}", "HUDServer", LogLevel.System);
             GlobalLogger.Log($"HUD Server overlay root: {_overlayPath}", "HUDServer", LogLevel.System);
 
-            // QC35-07 — periodic sweep of _recentlyReloaded stale entries.
+            // Periodic sweep of _recentlyReloaded stale entries.
             // ServeLayerJsonAsync only removes the stamp on a hit, so a reload
             // without a follow-up /api/layer/<id> request used to pin the entry
             // forever. Sweep every 60s and drop entries older than the TTL.
@@ -367,15 +367,15 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
 
-            // T5 — unhook the registry forwarder so a recreated HUDServer doesn't
+            // Unhook the registry forwarder so a recreated HUDServer doesn't
             // accumulate stale subscriptions on the singleton LayerRegistry.
             try { _layerRegistry.OnConnectionsChanged -= FireClientCountChanged; } catch { }
-            // QC05-07 — symmetric unhook for the LayerRemoved subscription.
+            // Symmetric unhook for the LayerRemoved subscription.
             try { _layerRegistry.LayerRemoved -= OnLayerRemoved; } catch { }
 
             try { _cts.Cancel(); } catch { }
 
-            // QC35-07 — stop the recently-reloaded sweep before the dict is
+            // Stop the recently-reloaded sweep before the dict is
             // torn down so a late timer fire can't race the clear below.
             try { _recentlyReloadedSweeper?.Dispose(); } catch { }
             _recentlyReloadedSweeper = null;
@@ -384,7 +384,7 @@ namespace Phoenix.Controls.Hub.Core
             try { _listener.Stop(); }    catch (ObjectDisposedException) { } catch (Exception ex) { GlobalLogger.Error("HUDServer", "stop error", ex); }
             try { _listener.Close(); }   catch { }
 
-            // QC05-05 — cancel any pending grace-window teardowns BEFORE we
+            // Cancel any pending grace-window teardowns BEFORE we
             // dispose the per-socket senders. The previous order disposed the
             // _layerSenders first, leaving the teardown callbacks (still
             // queued through AsyncErrorBoundary) racing against a cleared
@@ -401,7 +401,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             _pendingTeardowns.Clear();
 
-            // L56 — unregister every per-layer connection from the LayerRegistry so
+            // Unregister every per-layer connection from the LayerRegistry so
             // presence reflects "no browsers attached" after Stop(). Without this the
             // next StartAsync() reuses a registry that still reports the previous
             // session's layers as active, which breaks LayerRuntime's "skip dispatch
@@ -431,7 +431,7 @@ namespace Phoenix.Controls.Hub.Core
             // a hard Stop() may abort sockets before they unwind so we sweep
             // the remainder here.
             //
-            // QC05-05 — runs AFTER _pendingTeardowns are cancelled above so a
+            // Runs AFTER _pendingTeardowns are cancelled above so a
             // late grace callback can't race the dict mutation below.
             foreach (var kv in _layerSenders)
             {
@@ -439,13 +439,13 @@ namespace Phoenix.Controls.Hub.Core
             }
             _layerSenders.Clear();
 
-            // QC05-07 — wipe the per-layer drop-count dict on Stop too. Even
+            // Wipe the per-layer drop-count dict on Stop too. Even
             // with the LayerRemoved hook, a Hub shutdown that occurs while
             // layers are still registered would leave entries pinned for the
             // next instance.
             _layerDropCounts.Clear();
 
-            // [P1 swarm-audit 2026-05-29] _listener (HttpListener) and _urlCache
+            // _listener (HttpListener) and _urlCache
             // (UrlImageCache, IDisposable) were Stop()/Close()'d / never disposed,
             // leaking the listener's OS handle and the cache's HttpClient/timer
             // across a Stop→Start restart. Dispose both here, after the per-socket
@@ -469,7 +469,7 @@ namespace Phoenix.Controls.Hub.Core
 
             try
             {
-                // QC35-01 — every route below assumes GET (or POST for /webhook).
+                // Every route below assumes GET (or POST for /webhook).
                 // Verbs other than the allowed set used to fall through to
                 // ServeStaticFileAsync, which happily served a 200 for DELETE /index.html
                 // or PUT /assets/foo.png. None of the handlers honor side-effecting
@@ -513,7 +513,7 @@ namespace Phoenix.Controls.Hub.Core
                     string name = path.Substring("/webhook/".Length).Trim('/');
                     string remote = context.Request.RemoteEndPoint?.ToString() ?? "?";
 
-                    // QC05-01 — same identifier shape as layer ids ([A-Za-z0-9_-]+),
+                    // Same identifier shape as layer ids ([A-Za-z0-9_-]+),
                     // capped at 64 chars. Without this, attacker-supplied names
                     // (path segments, embedded slashes, multi-MB strings) ended up
                     // as static dict keys in _webhookHits — unbounded RAM growth
@@ -526,7 +526,7 @@ namespace Phoenix.Controls.Hub.Core
                         return;
                     }
 
-                    // C14 (1): body size cap. Reject before reading the body.
+                    // Body size cap. Reject before reading the body.
                     int maxBody = ConfigManager.Current.MaxWebhookBodyBytes > 0
                         ? ConfigManager.Current.MaxWebhookBodyBytes
                         : 1024 * 1024;
@@ -539,8 +539,8 @@ namespace Phoenix.Controls.Hub.Core
                         return;
                     }
 
-                    // C14 (2): auth via X-PhoenixControls-Secret header (constant-time compare).
-                    // C17 (audit/winui-regressions-2026-05-24) — per-webhook secret
+                    // Auth via X-PhoenixControls-Secret header (constant-time compare).
+                    // Per-webhook secret
                     // override. WebhookSecrets[<name>] takes precedence when set;
                     // the legacy global WebhookSecret stays as the fallback so
                     // existing single-secret integrations keep working unchanged.
@@ -606,7 +606,7 @@ namespace Phoenix.Controls.Hub.Core
                         return;
                     }
 
-                    // C14 (3): rate-limit successful posts only — bump AFTER auth+size pass.
+                    // Rate-limit successful posts only — bump AFTER auth+size pass.
                     if (!TryRecordWebhookHit(name))
                     {
                         GlobalLogger.Log($"Webhook /{name} rate-limited (>{WebhookRateLimitPerMin}/min, from {remote})", "HUDServer", LogLevel.Communication);
@@ -617,7 +617,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
 
                     string safeBody = string.IsNullOrWhiteSpace(body) ? "{}" : body;
-                    // QC05-02 — the previous `using var doc = JsonDocument.Parse(...)`
+                    // The previous `using var doc = JsonDocument.Parse(...)`
                     // disposed the document at the end of this `try` block, but the
                     // fire-and-forget SafeRunAsync continuation reads `doc.RootElement`
                     // AFTER that point — racing the synchronous return of this method
@@ -639,7 +639,7 @@ namespace Phoenix.Controls.Hub.Core
 
                     var capturedName    = name;
                     var capturedPayload = payloadElement;
-                    // Audit fix — forward the raw body + path so the webhook node's
+                    // Forward the raw body + path so the webhook node's
                     // Body/Method/Path outputs resolve (method is always POST here).
                     var capturedBody    = safeBody;
                     var capturedPath    = path;
@@ -650,7 +650,7 @@ namespace Phoenix.Controls.Hub.Core
                     context.Response.Close();
                     GlobalLogger.Log($"Webhook: /{name}", "HUDServer", LogLevel.StreamEvent);
 
-                    // C16 (audit/winui-regressions-2026-05-24) — fan the activity
+                    // Fan the activity
                     // out to the WebhookPanel via the OnWebhookFired event. The
                     // event fires AFTER the response is queued so a slow
                     // subscriber can't add latency to the caller round-trip;
@@ -738,7 +738,7 @@ namespace Phoenix.Controls.Hub.Core
                 // /layer/<id> — serve overlay HTML (browser reads ?layer=<id> from URL)
                 if (path.StartsWith("/layer/", StringComparison.OrdinalIgnoreCase))
                 {
-                    // M75 — accept only [A-Za-z0-9_-]+ ids and reject paths with extra
+                    // Accept only [A-Za-z0-9_-]+ ids and reject paths with extra
                     // segments like `/layer/foo/bar` to keep the route surface tight.
                     string id = path.Substring("/layer/".Length).Trim('/');
                     if (!IsValidLayerId(id))
@@ -751,7 +751,7 @@ namespace Phoenix.Controls.Hub.Core
                     return;
                 }
 
-                // Overlay static files — only GET / HEAD accepted (QC35-01).
+                // Overlay static files — only GET / HEAD accepted.
                 if (!string.Equals(method, "GET",  StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
                 {
@@ -760,7 +760,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 if (path == "/" || path == "/overlay") path = "/index.html";
 
-                // BH-026 — pipe the /overlay static-file fallback through the same path-
+                // Pipe the /overlay static-file fallback through the same path-
                 // traversal guard /assets/ and /media/ enforce. Previously HttpListener's
                 // URL canonicalization was the sole defense; a malicious overlay HTML or
                 // a misconfigured browser source crafting `/..\..\foo` could escape
@@ -829,7 +829,7 @@ namespace Phoenix.Controls.Hub.Core
             context.Response.ContentType = mime;
             context.Response.Headers["Accept-Ranges"] = "bytes";
 
-            // BH-024 — delegate range parsing to the shared TryParseRange helper. The
+            // Delegate range parsing to the shared TryParseRange helper. The
             // previous inline parser threw on inverted (`bytes=100-50`) and out-of-range
             // headers — every malformed Range hit a 500 instead of a 416. The helper
             // already handles suffix, open-ended, multi-range, OOR, and inverted forms
@@ -851,7 +851,7 @@ namespace Phoenix.Controls.Hub.Core
                 while (remaining > 0)
                 {
                     int toRead = (int)Math.Min(buffer.Length, remaining);
-                    // BH-025 — thread _cts.Token through the disk read and response write.
+                    // Thread _cts.Token through the disk read and response write.
                     // ServeStaticFileAsync (line 812-814) already does this; ServeFileFromRootAsync
                     // was missed and would hang shutdown on a slow client.
                     int read = await fs.ReadAsync(buffer.AsMemory(0, toRead), _cts.Token).ConfigureAwait(false);
@@ -866,7 +866,7 @@ namespace Phoenix.Controls.Hub.Core
                 context.Response.StatusCode = 200;
                 context.Response.ContentLength64 = fileSize;
                 using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                // BH-025 — supply _cts.Token on the full-file copy too.
+                // Supply _cts.Token on the full-file copy too.
                 await fs.CopyToAsync(context.Response.OutputStream, bufferSize: 65536, _cts.Token).ConfigureAwait(false);
             }
             context.Response.Close();
@@ -887,7 +887,7 @@ namespace Phoenix.Controls.Hub.Core
                     context.Response.StatusCode = 200;
                     var empty = System.Text.Encoding.UTF8.GetBytes("[]");
                     context.Response.ContentLength64 = empty.Length;
-                    // P1-11 — thread _cts.Token through the OutputStream write so the
+                    // Thread _cts.Token through the OutputStream write so the
                     // empty-list response can be torn down on Stop(). Sister methods at
                     // ServeFileFromRootAsync / ServeStaticFileAsync already do this.
                     await context.Response.OutputStream.WriteAsync(empty.AsMemory(0, empty.Length), _cts.Token).ConfigureAwait(false);
@@ -918,7 +918,7 @@ namespace Phoenix.Controls.Hub.Core
                 context.Response.ContentType = "application/json";
                 context.Response.StatusCode = 200;
                 context.Response.ContentLength64 = body.Length;
-                // P1-11 — supply _cts.Token on the full-listing write so Stop() can
+                // Supply _cts.Token on the full-listing write so Stop() can
                 // abort a slow client mid-flush. Matches the CT-bearing writes at
                 // lines 703 / 714 / 1011.
                 await context.Response.OutputStream.WriteAsync(body.AsMemory(0, body.Length), _cts.Token).ConfigureAwait(false);
@@ -948,7 +948,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // C13 — cheap pre-reject before touching the cache directory.
+            // Cheap pre-reject before touching the cache directory.
             // UrlImageCache validates again as defense-in-depth.
             var (ok, reason) = await _urlCache.ValidateUrlForFetchAsync(remoteUrl, _cts.Token).ConfigureAwait(false);
             if (!ok)
@@ -967,10 +967,10 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // L39 — stream the cached file rather than buffering the whole thing into a
+            // Stream the cached file rather than buffering the whole thing into a
             // single byte[]. Multi-MB PNGs/GIFs would land on the LOH and stall GC; a
             // 64KB streaming copy stays well under the 85KB threshold. Mirrors the
-            // ServeStaticFileAsync success path landed in M76.
+            // ServeStaticFileAsync success path.
             context.Response.ContentType     = GetMimeType(cached);
             context.Response.StatusCode      = 200;
             await StreamFileToResponseAsync(cached, context.Response, _cts.Token).ConfigureAwait(false);
@@ -978,7 +978,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  L39 — STREAMING FILE COPY  (testable)
+        //  STREAMING FILE COPY  (testable)
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -1112,7 +1112,7 @@ namespace Phoenix.Controls.Hub.Core
                 context.Response.Close();
                 return;
             }
-            // QC05-08 — Content-Security-Policy hardens the OBS browser source
+            // Content-Security-Policy hardens the OBS browser source
             // page against third-party script injection / external script-src.
             // The directive permits 'self' (same-origin static files served
             // from /overlay) for everything; script-src additionally allows
@@ -1135,7 +1135,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task ServeLayerJsonAsync(HttpListenerContext context, string id)
         {
-            // M74 — if this layer was just reloaded, the writer (Visualist's atomic save)
+            // If this layer was just reloaded, the writer (Visualist's atomic save)
             // may not have fully flushed by the time the browser fetches us. Wait briefly
             // for the underlying .phxlayer file to stop growing before we serve. The wait
             // is a no-op when the file is already stable, so static layers don't pay it.
@@ -1167,7 +1167,7 @@ namespace Phoenix.Controls.Hub.Core
             byte[] bytes = Encoding.UTF8.GetBytes(json);
             context.Response.ContentType = "application/json";
             context.Response.ContentLength64 = bytes.Length;
-            // L59 — emphatic no-cache so a browser hitting /api/layer/<id> after a
+            // Emphatic no-cache so a browser hitting /api/layer/<id> after a
             // LAYER_RELOADED notice picks up the new JSON instead of serving a stale
             // intermediate-cached copy. Also relax CORS so an OBS browser source on a
             // different origin can fetch this without a flag (still loopback-only).
@@ -1182,7 +1182,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task ServeStaticFileAsync(HttpListenerContext context, string fullPath, string urlPath)
         {
-            // M76 — stream rather than buffer the whole file. Large URL-fetched images and
+            // Stream rather than buffer the whole file. Large URL-fetched images and
             // overlay assets used to allocate a single byte[] of the file size, blowing past
             // the LOH threshold for anything > 85KB. Now we stream through a 64KB buffer
             // and honor Range requests so video/audio scrubbing works without re-fetching
@@ -1272,7 +1272,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             else
             {
-                // Hub_CodeReview #14 / H46 — legacy broadcast `/hud` endpoint with no layer
+                // The legacy broadcast `/hud` endpoint with no layer
                 // id was a no-op accepting OBS sources that never received triggers (Phase 2
                 // dispatch is per-layer). Reject the route outright so misconfigured browser
                 // sources get a clear 400 instead of a silently-stuck connection.
@@ -1281,7 +1281,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            // QC35-06 — per-layer connection cap. Check BEFORE the upgrade
+            // Per-layer connection cap. Check BEFORE the upgrade
             // handshake so a flood of /hud/<layerId> fuzzes doesn't burn handle
             // counts spinning up doomed sockets. OBS realistically opens 2
             // sources (Preview + Studio); 4 leaves headroom for multi-monitor
@@ -1290,7 +1290,7 @@ namespace Phoenix.Controls.Hub.Core
             // tabs are still inside the grace window, the 5th client is the
             // one that won't survive a real concurrency spike anyway.
             //
-            // [QC18-S2 P2] This pre-upgrade count check is now a cheap
+            // This pre-upgrade count check is now a cheap
             // best-effort fast-path; the authoritative gate is the atomic
             // TryRegisterConnection below. Pre-fix this lone check was
             // TOCTOU — five concurrent handshakes could all observe
@@ -1332,12 +1332,12 @@ namespace Phoenix.Controls.Hub.Core
             var wsContext = await context.AcceptWebSocketAsync(null);
             var socket = wsContext.WebSocket;
 
-            // H48 — if a previous socket for this layer is still inside its grace window,
+            // If a previous socket for this layer is still inside its grace window,
             // cancel the pending teardown. The new socket inherits presence; any one-shot
             // alerts queued during the gap will dispatch as soon as the queue pump cycles.
             CancelPendingTeardown(layerId!, _pendingTeardowns);
 
-            // [QC18-S2 P2] Atomic gate. If five sockets all passed the
+            // Atomic gate. If five sockets all passed the
             // pre-upgrade fast-path within a microsecond of each other (their
             // GetConnections reads all returned the same value), this is the
             // step that authoritatively rejects the over-cap one. The fast-
@@ -1361,7 +1361,7 @@ namespace Phoenix.Controls.Hub.Core
                 finally { socket.Dispose(); }
                 return;
             }
-            // Perf-review H23 (2026-05-14): demote layer-presence chatter to
+            // Demote layer-presence chatter to
             // Communication tier. An OBS scene cycling through 5 browser-source
             // panels produced 10+ System-tier rows/sec in the syslog every time
             // the user toggled scenes, growing the SystemLog ring buffer with
@@ -1371,13 +1371,13 @@ namespace Phoenix.Controls.Hub.Core
 
             var buffer = new byte[16384];
             var inboundBuilder = new StringBuilder();
-            // BH-028 — cap the per-WS reassembly buffer at 1 MiB. Without this a malicious
+            // Cap the per-WS reassembly buffer at 1 MiB. Without this a malicious
             // overlay HTML loaded into OBS Browser Source could ship a fragmented WebSocket
             // frame that never sets EndOfMessage, growing inboundBuilder until the process
             // OOMs. Local-only listener limits the threat model but the sandboxed browser
             // page is not trusted (it loads user-provided HTML / external scripts).
             //
-            // QC35-02 — the cap MUST be tracked in *bytes*, not StringBuilder
+            // The cap MUST be tracked in *bytes*, not StringBuilder
             // chars. The previous code compared `inboundBuilder.Length` (UTF-16
             // code units) against `MaxInboundFrameBytes`, letting an emoji-laden
             // frame slip the cap by ratios up to 4 bytes per char. Track the
@@ -1410,7 +1410,7 @@ namespace Phoenix.Controls.Hub.Core
                     string json = inboundBuilder.ToString();
                     inboundBuilder.Clear();
                     inboundByteCount = 0;
-                    // [P1 swarm-audit 2026-05-29] HandleInboundFromBrowser was inside the
+                    // HandleInboundFromBrowser was inside the
                     // bare catch below, which hid any throw as "client disconnected" and
                     // tore down the socket. Wrap it so cancellation still propagates but
                     // other faults surface in GlobalLogger and keep the receive loop alive.
@@ -1435,7 +1435,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 socket.Dispose();
 
-                // BH-027 — DEFER the per-socket SemaphoreSlim cleanup until after the
+                // DEFER the per-socket SemaphoreSlim cleanup until after the
                 // registry no longer references this socket. Previously the receive-loop
                 // finally TryRemove'd the lock immediately while the socket was still in
                 // _layerRegistry's connection set; broadcast paths racing the teardown
@@ -1444,7 +1444,7 @@ namespace Phoenix.Controls.Hub.Core
                 // into the grace-teardown callback ensures UnregisterConnection runs
                 // first, so by the time we dispose, no broadcast can re-add a lock.
                 //
-                // H48 — DON'T immediately unregister the connection. Defer the
+                // DON'T immediately unregister the connection. Defer the
                 // unregister until the grace window elapses without a reconnect; if a
                 // new client connects to the same layer in the meantime, the connect
                 // path cancels this teardown and presence stays continuous so queued
@@ -1462,7 +1462,7 @@ namespace Phoenix.Controls.Hub.Core
                         {
                             try { sender.Dispose(); } catch { }
                         }
-                        // Perf-review H23: Communication tier for the symmetric
+                        // Communication tier for the symmetric
                         // disconnect line — see connect-side comment above.
                         GlobalLogger.Log(
                             $"Layer client disconnected (after {LAYER_DISCONNECT_GRACE_SECONDS}s grace): /hud/{capturedLayerId}",
@@ -1472,7 +1472,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  H48 — DISCONNECT GRACE HELPERS  (testable)
+        //  DISCONNECT GRACE HELPERS  (testable)
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -1521,7 +1521,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (pending.TryGetValue(key, out var current) && ReferenceEquals(current, cts))
                 {
                     pending.TryRemove(key, out _);
-                    // [P1 swarm-audit 2026-05-29] onTeardown was in a bare catch that
+                    // onTeardown was in a bare catch that
                     // silently dropped its throws. Log non-cancellation faults so a
                     // failing UnregisterConnection/sender.Dispose isn't invisible.
                     try { onTeardown(); }
@@ -1552,7 +1552,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  M74 — FILE STABILITY FENCE  (testable)
+        //  FILE STABILITY FENCE  (testable)
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -1594,7 +1594,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  M76 — RANGE HEADER PARSING  (testable)
+        //  RANGE HEADER PARSING  (testable)
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -1662,7 +1662,7 @@ namespace Phoenix.Controls.Hub.Core
 
         public Task BroadcastAsync(object message)
         {
-            // M33 (2026-05-14): SerializeToUtf8Bytes folds the
+            // SerializeToUtf8Bytes folds the
             // Serialize → string → GetBytes(string) double-allocation into a
             // single pass. Hot fan-out path (CAPTION_UPDATE / WIDGET_UPDATE /
             // VISUAL_SET_PROPERTY all flow through here), so the saved string
@@ -1671,7 +1671,7 @@ namespace Phoenix.Controls.Hub.Core
             return FanOutAsync(buff, EnumerateAllLayerSockets(), _cts.Token);
         }
 
-        // TFVL "chat.overlay silent no-op" sweep — broadcast now fans out across every
+        // Broadcast now fans out across every
         // connected per-layer WebSocket via `_layerRegistry`. Previously this iterated a
         // legacy `_clients` list that was never populated, so chat.overlay.push,
         // chat.overlay.clear, SET_TEXT, VISUAL_SET_VISIBLE and VISUAL_SET_PROPERTY all
@@ -1693,7 +1693,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public Task SendToLayerAsync(string layerId, object payload, CancellationToken ct = default)
         {
-            // M33 (2026-05-14): SerializeToUtf8Bytes — single pass into the
+            // SerializeToUtf8Bytes — single pass into the
             // wire byte[] for RUN_TRIGGER + LAYER_RELOADED + ad-hoc frames.
             // The diagnostic preview path used to need the string form too,
             // so we keep a lazily-built preview only on the cold drop branch.
@@ -1707,7 +1707,7 @@ namespace Phoenix.Controls.Hub.Core
             // can tell RUN_TRIGGER drops apart from LAYER_RELOADED / CAPTION_UPDATE
             // drops.
             //
-            // Perf-review H23 (2026-05-14): demoted from System to Communication
+            // Demoted from System to Communication
             // tier and rate-limited. A script that fires a trigger every chat
             // message into an inactive layer was log-spamming syslog at chat
             // rate; we now emit the first miss + every 100th miss per (layerId)
@@ -1735,7 +1735,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public Task PushLayerReloadedAsync(string layerId, CancellationToken ct = default)
         {
-            // M74 — mark the id as recently-reloaded so the next /api/layer/<id> fetch
+            // Mark the id as recently-reloaded so the next /api/layer/<id> fetch
             // waits for the writer to settle before reading. We stamp BEFORE sending so
             // the browser's reactive reload can't beat us to the API call.
             _recentlyReloaded[layerId] = DateTime.UtcNow;
@@ -1748,7 +1748,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public Task BroadcastToAllLayersAsync(object payload, CancellationToken ct = default)
         {
-            // M33 (2026-05-14): SerializeToUtf8Bytes — same single-pass
+            // SerializeToUtf8Bytes — same single-pass
             // allocation win as the SendToLayerAsync / BroadcastAsync paths.
             byte[] buff = JsonSerializer.SerializeToUtf8Bytes(payload);
             return FanOutAsync(buff, EnumerateAllLayerSockets(), ct);
@@ -1771,17 +1771,17 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// #27 fan-out collapse — shared per-socket send dispatch used by
+        /// Shared per-socket send dispatch used by
         /// <see cref="BroadcastRawAsync"/>, <see cref="SendToLayerAsync"/>, and
         /// <see cref="BroadcastToAllLayersAsync"/>.
         ///
         /// <para>
-        /// 2026-05-14 backpressure rewrite: enqueues the frame into each socket's
+        /// Backpressure design: enqueues the frame into each socket's
         /// <see cref="PerSocketSender"/> bounded channel (cap=256, DropOldest)
         /// rather than awaiting <c>ws.SendAsync</c> in-line. Each socket has
         /// exactly one pump task draining its channel, so:
         ///   • <see cref="WebSocket.SendAsync"/> still runs serialized per socket
-        ///     (only the pump reads the channel) — H47 contract preserved.
+        ///     (only the pump reads the channel) — the send-serialization contract is preserved.
         ///   • A slow client can no longer back-pressure the producer; the 257th
         ///     frame evicts the oldest (DropOldest) and TryWrite returns
         ///     immediately. The drop is counted and surfaced through
@@ -1877,7 +1877,7 @@ namespace Phoenix.Controls.Hub.Core
                         string reqId  = ReadString(doc.RootElement, "reqId");
                         string text   = ReadString(doc.RootElement, "text");
                         string target = ReadString(doc.RootElement, "targetLang");
-                        // L78 — basic input validation. Empty reqId or text means the browser
+                        // Basic input validation. Empty reqId or text means the browser
                         // sent garbage; reject before scheduling translation work.
                         if (string.IsNullOrEmpty(reqId) || string.IsNullOrEmpty(text)) break;
                         // Fire-and-forget the translation; the reply travels back over the same socket.
@@ -1896,7 +1896,7 @@ namespace Phoenix.Controls.Hub.Core
                         int fps = 0;
                         if (doc.RootElement.TryGetProperty("fps", out var fpsProp))
                         {
-                            // [P1 swarm-audit 2026-05-29] GetInt32() throws on a JSON number
+                            // GetInt32() throws on a JSON number
                             // out of Int32 range; TryGetInt32 fails closed to 0 instead.
                             if (fpsProp.ValueKind == JsonValueKind.Number && fpsProp.TryGetInt32(out fps)) { }
                             else if (fpsProp.ValueKind == JsonValueKind.String && int.TryParse(fpsProp.GetString(), out var parsed)) fps = parsed;
@@ -1928,7 +1928,7 @@ namespace Phoenix.Controls.Hub.Core
             try
             {
                 if (socket.State != WebSocketState.Open) return;
-                // M33 — SerializeToUtf8Bytes, same one-pass rationale as the
+                // SerializeToUtf8Bytes, same one-pass rationale as the
                 // fan-out paths above.
                 byte[] buff = JsonSerializer.SerializeToUtf8Bytes(new
                 {
@@ -1937,10 +1937,10 @@ namespace Phoenix.Controls.Hub.Core
                     translated,
                     targetLang,
                 });
-                // M92 / H47 — route through the per-socket sender so TRANSLATE_RESPONSE
+                // Route through the per-socket sender so TRANSLATE_RESPONSE
                 // doesn't race CAPTION_UPDATE / RUN_TRIGGER frames on the same socket
                 // (the pump's single reader serializes all sends naturally).
-                // BH-027 carried forward — TryGetValue (not GetOrAdd) so a translate
+                // TryGetValue (not GetOrAdd) so a translate
                 // request that arrived after the receive loop began tearing down doesn't
                 // resurrect a fresh sender against a dead socket. If no sender exists,
                 // the socket is unreachable and the translate response would have nowhere
@@ -1959,7 +1959,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  WEBHOOK HARDENING HELPERS  (C14)
+        //  WEBHOOK HARDENING HELPERS
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -1973,7 +1973,7 @@ namespace Phoenix.Controls.Hub.Core
             byte[] buf = new byte[8192];
             int total = 0;
             int read;
-            // BH-025 — observe ct on every ReadAsync so server shutdown unblocks even
+            // Observe ct on every ReadAsync so server shutdown unblocks even
             // when the webhook caller is slow-loris'ing the body. ServeStaticFileAsync
             // already threads its CT; this site was missed.
             while ((read = await input.ReadAsync(buf, 0, buf.Length, ct).ConfigureAwait(false)) > 0)
@@ -1990,7 +1990,7 @@ namespace Phoenix.Controls.Hub.Core
         /// would exceed <see cref="WebhookRateLimitPerMin"/>. Counts only successful posts
         /// (auth + size already verified before we call this).
         ///
-        /// QC05-01 — caps the dict at <see cref="WebhookHitsMaxKeys"/> entries; on
+        /// Caps the dict at <see cref="WebhookHitsMaxKeys"/> entries; on
         /// overflow we evict the least-recently-seen entries first. Combined with
         /// the IsValidWebhookName guard at the route entry, _webhookHits can no
         /// longer grow unboundedly.
@@ -2029,7 +2029,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC05-01 — evict entries from <see cref="_webhookHits"/> down to
+        /// Evict entries from <see cref="_webhookHits"/> down to
         /// <paramref name="targetCount"/>, oldest <c>lastSeen</c> first. Called
         /// from <see cref="TryRecordWebhookHit"/> when the dict is about to
         /// overflow. Exposed via the field's <c>internal</c> visibility for tests.
@@ -2051,7 +2051,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC05-01 — webhook names must match <c>[A-Za-z0-9_-]+</c> and be
+        /// Webhook names must match <c>[A-Za-z0-9_-]+</c> and be
         /// shorter than <see cref="WebhookNameMaxLength"/>. Mirrors
         /// <see cref="IsValidLayerId"/> but lives behind its own predicate so
         /// the two routes can diverge if they need to in the future.
@@ -2093,7 +2093,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC35-01 — write a 405 Method Not Allowed response with the right
+        /// Write a 405 Method Not Allowed response with the right
         /// <c>Allow</c> header. Keeps the dispatcher entry-points readable and
         /// makes proxies / scanners happy.
         /// </summary>
@@ -2114,7 +2114,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC35-01 — emit a CORS preflight response for the /webhook/ POST route.
+        /// Emit a CORS preflight response for the /webhook/ POST route.
         /// 204 No Content + Access-Control-Allow-{Origin,Methods,Headers} so a
         /// browser issuing a CORS POST (e.g. dashboard panel calling /webhook/
         /// from a different origin) gets the green light. Other routes are
@@ -2139,7 +2139,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// M75 — only accept layer ids matching `[A-Za-z0-9_-]+`. Anything else means
+        /// Only accept layer ids matching `[A-Za-z0-9_-]+`. Anything else means
         /// the route was passed extra path segments or unsafe characters.
         /// </summary>
         private static bool IsValidLayerId(string id)
@@ -2188,7 +2188,7 @@ namespace Phoenix.Controls.Hub.Core
                 ".woff"           => "font/woff",
                 ".woff2"          => "font/woff2",
                 ".ttf"            => "font/ttf",
-                // L57 — fill in the common modern types we were silently
+                // Fill in the common modern types we were silently
                 // serving as application/octet-stream. Browsers refuse to use
                 // .wasm if not labeled application/wasm; modern bundlers ship
                 // .map files with content-type sourcemap.
@@ -2202,7 +2202,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  PER-SOCKET SEND PUMP  (2026-05-14 backpressure)
+        //  PER-SOCKET SEND PUMP  (backpressure)
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -2230,7 +2230,7 @@ namespace Phoenix.Controls.Hub.Core
         /// Thread-safety: <see cref="WebSocket.SendAsync"/> is not thread-safe;
         /// the pump is the single reader of the channel and the only caller
         /// of SendAsync on its socket, so concurrent producers never interleave
-        /// frames on the same socket (H47 contract preserved).
+        /// frames on the same socket (the send-serialization contract is preserved).
         /// </para>
         /// </summary>
         private sealed class PerSocketSender : IDisposable
@@ -2332,7 +2332,7 @@ namespace Phoenix.Controls.Hub.Core
                                     true,
                                     ct).ConfigureAwait(false);
                             }
-                            // BH-029 carried forward: a misbehaving socket aborts its own
+                            // A misbehaving socket aborts its own
                             // pump but doesn't affect other sockets. The receive-loop
                             // finally + grace-teardown will dispose this sender when the
                             // disconnect is observed.
@@ -2364,7 +2364,7 @@ namespace Phoenix.Controls.Hub.Core
     }
 
     /// <summary>
-    /// C16 (audit/winui-regressions-2026-05-24) — payload for the
+    /// Payload for the
     /// <see cref="HUDServer.OnWebhookFired"/> event. One instance per accepted
     /// /webhook/&lt;name&gt; POST; the Hub WebhookPanel keeps the last N
     /// instances in a rolling buffer for its tail UI.

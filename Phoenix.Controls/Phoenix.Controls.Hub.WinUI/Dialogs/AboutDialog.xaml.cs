@@ -11,7 +11,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.WinUI.Dialogs;
 
 /// <summary>
-/// C10 (audit/winui-regressions-2026-05-24) — Hub "About" dialog.
+/// Hub "About" dialog.
 /// <para/>
 /// Before this sprint <c>Help → About</c> only logged a single version
 /// line to the System Log; the menu entry felt like a dead end. This
@@ -21,8 +21,7 @@ namespace Phoenix.Controls.Hub.WinUI.Dialogs;
 /// Visual treatment matches the Architect <c>KeyboardShortcutsDialog</c>
 /// (the other ContentDialog using the forged-charcoal Coal* / Ember* /
 /// Brass* tokens from PhoenixDark.xaml) so the dialog reads as the same
-/// shell-chrome family. Per the per-pillar paint-helper rule in
-/// <c>feedback_visualist_architect_chrome_independence.md</c> this stays
+/// shell-chrome family. Per the per-pillar paint-helper rule this stays
 /// in Hub.WinUI — no shared paint helper introduced for the dialog.
 /// </summary>
 public sealed partial class AboutDialog : ContentDialog
@@ -43,8 +42,7 @@ public sealed partial class AboutDialog : ContentDialog
             {
                 // The About dialog isn't load-bearing — failure to populate
                 // a field is far better than blocking dialog open. Failures
-                // route through System tier per
-                // feedback_no_modal_dialogs_for_repeatable_rejections.md.
+                // route through the System tier.
                 GlobalLogger.Error("AboutDialog", "metadata hydration failed", ex);
             }
         };

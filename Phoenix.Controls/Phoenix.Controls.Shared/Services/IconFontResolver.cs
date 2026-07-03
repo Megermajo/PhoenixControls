@@ -37,7 +37,7 @@ namespace Phoenix.Controls.Shared.Services
         private static volatile bool _initialized;
         private static string _fontFamily = string.Empty;
 
-        //  One-shot guard for ShowMissingFontWarningIfNeeded. The
+        // One-shot guard for ShowMissingFontWarningIfNeeded. The
         // method docstring promised "exactly once per process" but the
         // implementation relied solely on the caller honouring that — every
         // pillar's Program.cs calls it at startup, and any future caller

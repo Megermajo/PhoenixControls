@@ -12,7 +12,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Architect.WinUI.Controls;
 
 /// <summary>
-/// B14 (audit/winui-regressions-2026-05-24) — custom mouse-anchored tooltip
+/// Custom mouse-anchored tooltip
 /// primitive that restores the pre-T15 rich tooltip surface (title + optional
 /// glyph + body, dark Coal-themed pill with drop shadow, positioned relative
 /// to the current pointer rather than the anchor element).
@@ -26,7 +26,7 @@ namespace Phoenix.Controls.Architect.WinUI.Controls;
 ///     new content (no popup leak, no double-tip).
 ///   </description></item>
 ///   <item><description>
-///     Declarative attachment (S5 P0 — restores the pre-T15 WinForms
+///     Declarative attachment (restores the pre-T15 WinForms
 ///     <c>Tooltip.Attach</c>/<c>AttachDynamic</c>/<c>Detach</c> contract): wire a
 ///     FrameworkElement once via <see cref="Attach(FrameworkElement, string, string?, string?, Brush?)"/>
 ///     (static content) or <see cref="AttachDynamic(FrameworkElement, Func{Point, ValueTuple{string, string?, string?}}?)"/>
@@ -49,7 +49,7 @@ public sealed partial class TooltipPopup : UserControl
 {
     // ─── Tunables (Design_Orders §4.9 — mirror baseline WinForms Tooltip) ───
     /// <summary>
-    /// Hover dwell before the tip first paints. S5 P1: baseline
+    /// Hover dwell before the tip first paints. Baseline
     /// <c>Tooltip.InitialDelayMs</c> was 400; the post-T15 call site used 600.
     /// Exposed here as the recommended default so call sites can arm against
     /// it rather than re-declaring a private 600 ms constant — and so the
@@ -58,7 +58,7 @@ public sealed partial class TooltipPopup : UserControl
     public const int InitialDelayMs = 400;
 
     /// <summary>
-    /// S5 P2: fast-reshow window. When <see cref="Show"/> is called within
+    /// Fast-reshow window. When <see cref="Show"/> is called within
     /// this many ms of the last <see cref="Hide"/>, the initial delay is
     /// skipped and the tip paints immediately — so scanning across adjacent
     /// pins feels snappy instead of re-incurring the full dwell each hop.
@@ -66,19 +66,19 @@ public sealed partial class TooltipPopup : UserControl
     public const int ReshowDelayMs = 200;
 
     /// <summary>
-    /// S5 P1 (OWNER-OVERRIDE): auto-dismiss after this idle interval. Guards
+    /// Auto-dismiss after this idle interval. Guards
     /// against a dropped PointerExited (rapid window deactivation / tab
     /// switch) leaving a tip floating indefinitely.
     /// </summary>
     public const int AutoPopMs = 8000;
 
-    // S5 P2 (OWNER-OVERRIDE): anchor delta. Baseline AnchorOffset was (16, 24)
+    // Anchor delta. Baseline AnchorOffset was (16, 24)
     // — the +12/+12 the post-T15 port used put the tip closer to the cursor
     // and higher than the designed placement.
     private const double AnchorOffsetX = 16;
     private const double AnchorOffsetY = 24;
 
-    // S5 P2: screen-edge clearance, mirrors the baseline ClampToScreen 4px
+    // Screen-edge clearance, mirrors the baseline ClampToScreen 4px
     // safety margin. Enforced in the XamlRoot content coordinate space the
     // popup's Horizontal/VerticalOffset actually live in (see ClampToXamlRoot).
     private const double ScreenClearance = 4;
@@ -93,12 +93,12 @@ public sealed partial class TooltipPopup : UserControl
     private static TooltipPopup? s_sharedTooltip;
     private static FrameworkElement? s_currentAnchor;
 
-    // S5 P1 (OWNER-OVERRIDE): auto-dismiss timer. Armed in Show() after
+    // Auto-dismiss timer. Armed in Show() after
     // IsOpen flips true, stopped/restarted on every Show(), and torn down in
     // Hide(). DispatcherTimer ticks on the UI thread so Hide() is safe.
     private static DispatcherTimer? s_autoPopTimer;
 
-    // S5 P2: tracks the last Hide() instant so Show() can detect a fast
+    // Tracks the last Hide() instant so Show() can detect a fast
     // reshow and skip the initial delay.
     private static DateTime s_lastHideTime = DateTime.MinValue;
 
@@ -110,7 +110,7 @@ public sealed partial class TooltipPopup : UserControl
     /// </summary>
     private static Point s_lastPointerPosition;
 
-    // S5 P3: explicit "a real pointer position has been seeded" flag.
+    // Explicit "a real pointer position has been seeded" flag.
     // Replaces the (0,0) coordinate guard, which mis-fired when the cursor
     // genuinely sat at the XamlRoot origin (a valid coordinate) — forcing
     // the expensive TransformToVisual fallback on every legitimate origin
@@ -129,7 +129,7 @@ public sealed partial class TooltipPopup : UserControl
     /// primitive (e.g. richer inspector tooltips with multi-line body markup)
     /// can drive it directly.
     /// </summary>
-    /// <param name="glyphColor">S5 P1 (OWNER-OVERRIDE): optional override for
+    /// <param name="glyphColor">Optional override for
     /// the glyph foreground. <c>null</c> restores the default
     /// <c>CoalPaperBrush</c> resource so successive shows don't inherit a
     /// stale colour from a prior tip.</param>
@@ -154,7 +154,7 @@ public sealed partial class TooltipPopup : UserControl
         {
             GlyphIcon.Visibility = Visibility.Visible;
             GlyphIcon.Glyph = glyph;
-            // S5 P1: dynamic glyph colour. Fall back to the XAML default
+            // Dynamic glyph colour. Fall back to the XAML default
             // (CoalPaperBrush) when no override is supplied — resolved from the
             // shared instance's resources so the brush honours the dark theme.
             GlyphIcon.Foreground = glyphColor ?? ResolveDefaultGlyphBrush();
@@ -192,7 +192,7 @@ public sealed partial class TooltipPopup : UserControl
     /// rendered to the left of the title. Use the Unicode code-point
     /// string (e.g. <c>""</c> for Info). Collapsed when null or
     /// empty.</param>
-    /// <param name="glyphColor">S5 P1 (OWNER-OVERRIDE): optional glyph
+    /// <param name="glyphColor">Optional glyph
     /// foreground override; <c>null</c> uses the default Coal paper brush.</param>
     public static void Show(FrameworkElement anchor, string title, string? body = null, string? glyph = null, Brush? glyphColor = null)
     {
@@ -228,27 +228,44 @@ public sealed partial class TooltipPopup : UserControl
             }
 
             // Mount into the anchor's XamlRoot. WinUI 3 Popups require the
-            // XamlRoot to be set before IsOpen flips true; switching XamlRoots
-            // between Show() calls works as long as IsOpen is cycled (so we
-            // close first if the root changed under us).
-            if (s_sharedPopup.IsOpen && !ReferenceEquals(s_sharedPopup.XamlRoot, anchor.XamlRoot))
+            // XamlRoot to be set before IsOpen flips true — but a Popup's
+            // XamlRoot can only be ASSIGNED while unset: re-assigning it (even
+            // to the same root) throws "Cannot change XamlRoot when it is
+            // already set" (COMException), which made every hover after the
+            // first spam CriticalError and killed canvas tooltips. Assign only
+            // while null; when the anchor lives in a DIFFERENT root (pop-out /
+            // sub-graph window), recreate the shared Popup for the new root —
+            // the tooltip child is re-parented, so Shows stay allocation-free
+            // in the steady state.
+            if (s_sharedPopup.XamlRoot is not null
+                && !ReferenceEquals(s_sharedPopup.XamlRoot, anchor.XamlRoot))
+            {
                 s_sharedPopup.IsOpen = false;
-            s_sharedPopup.XamlRoot = anchor.XamlRoot;
+                s_sharedPopup.Child  = null;
+                s_sharedPopup = new Popup
+                {
+                    Child = s_sharedTooltip,
+                    IsLightDismissEnabled = false,
+                    ShouldConstrainToRootBounds = true,
+                };
+            }
+            if (s_sharedPopup.XamlRoot is null)
+                s_sharedPopup.XamlRoot = anchor.XamlRoot;
             s_currentAnchor = anchor;
 
             s_sharedTooltip.SetContent(title, body, glyph, glyphColor);
 
             // Position relative to the last pointer position recorded on the
             // anchor. The +16 / +24 offset keeps the tooltip out from under the
-            // cursor while staying visually anchored to it (S5 P2 OWNER-OVERRIDE
-            // — restores the baseline AnchorOffset of (16, 24); Design_Orders
+            // cursor while staying visually anchored to it (restores the
+            // baseline AnchorOffset of (16, 24); Design_Orders
             // §4.9). We resolve the pointer position via the anchor transform
             // if the caller hasn't pushed a position into s_lastPointerPosition.
             var pos = ResolvePointerPositionForAnchor(anchor);
             double offsetX = pos.X + AnchorOffsetX;
             double offsetY = pos.Y + AnchorOffsetY;
 
-            // S5 P2: explicit screen-edge clamp with a 4px clearance, in the
+            // Explicit screen-edge clamp with a 4px clearance, in the
             // XamlRoot content coordinate space the offsets live in.
             (offsetX, offsetY) = ClampToXamlRoot(anchor, s_sharedTooltip, offsetX, offsetY);
 
@@ -257,7 +274,7 @@ public sealed partial class TooltipPopup : UserControl
 
             if (!s_sharedPopup.IsOpen) s_sharedPopup.IsOpen = true;
 
-            // S5 P1 (OWNER-OVERRIDE): (re)arm the auto-dismiss timer so the tip
+            // (re)arm the auto-dismiss timer so the tip
             // self-closes if no Hide() arrives within AutoPopMs.
             ArmAutoPopTimer();
         }
@@ -268,7 +285,7 @@ public sealed partial class TooltipPopup : UserControl
     }
 
     /// <summary>
-    /// S5 P1/P2 — request a tooltip after the configured initial delay, with
+    /// Request a tooltip after the configured initial delay, with
     /// the fast-reshow optimisation applied. When less than
     /// <see cref="ReshowDelayMs"/> ms has elapsed since the last <see cref="Hide"/>,
     /// the tip paints immediately; otherwise it paints after
@@ -363,13 +380,13 @@ public sealed partial class TooltipPopup : UserControl
         }
         s_currentAnchor = null;
 
-        // S5 P3: reset the seeded flag so the next hover session re-seeds a
+        // Reset the seeded flag so the next hover session re-seeds a
         // fresh pointer position (and the (0,0)-origin case is handled by the
         // flag, not an ambiguous coordinate test).
         s_pointerPositionWasSeeded = false;
     }
 
-    // ─── S5 P0: control-attachment API (Attach / AttachDynamic / Detach) ────
+    // ─── Control-attachment API (Attach / AttachDynamic / Detach) ────
     // Restores the pre-T15 WinForms Tooltip.Attach/AttachDynamic/Detach
     // contract on the WinUI primitive. Each attached element gets one
     // AttachmentRecord tracking its hover handlers; the record drives
@@ -379,7 +396,7 @@ public sealed partial class TooltipPopup : UserControl
     private static readonly Dictionary<FrameworkElement, AttachmentRecord> s_attachments = new();
 
     /// <summary>
-    /// S5 P0 — attach a static tooltip to an element. Idempotent: re-attaching
+    /// Attach a static tooltip to an element. Idempotent: re-attaching
     /// replaces the prior content/handlers. The primitive owns the pointer
     /// enter/move/exit wiring, the initial-show delay, the fast-reshow
     /// optimisation and the auto-hide timer for the lifetime of the
@@ -392,7 +409,7 @@ public sealed partial class TooltipPopup : UserControl
     }
 
     /// <summary>
-    /// S5 P0 / P1 — attach a dynamic resolver invoked on every pointer move
+    /// Attach a dynamic resolver invoked on every pointer move
     /// to compute per-cursor-position content (e.g. a different tip per socket
     /// under a single canvas element). The resolver receives the pointer
     /// position in the element's local coordinate space. Returning a tuple
@@ -406,7 +423,7 @@ public sealed partial class TooltipPopup : UserControl
     }
 
     /// <summary>
-    /// S5 P0 — remove any tooltip attachment from <paramref name="element"/>
+    /// Remove any tooltip attachment from <paramref name="element"/>
     /// and unhook its pointer handlers. Safe to call on an un-attached
     /// element. Hides the shared popup if it's currently anchored to this
     /// element so a detach mid-hover doesn't strand a tip.
@@ -558,7 +575,7 @@ public sealed partial class TooltipPopup : UserControl
         }
     }
 
-    // ─── Auto-pop timer (S5 P1 OWNER-OVERRIDE) ──────────────────────────────
+    // ─── Auto-pop timer ──────────────────────────────
 
     private static void ArmAutoPopTimer()
     {
@@ -594,7 +611,7 @@ public sealed partial class TooltipPopup : UserControl
     /// </summary>
     private static Point ResolvePointerPositionForAnchor(FrameworkElement anchor)
     {
-        // S5 P3: use the explicit seeded flag rather than an (0,0)-coordinate
+        // Use the explicit seeded flag rather than an (0,0)-coordinate
         // test. A cursor genuinely at the XamlRoot origin is a valid position
         // and must not force the TransformToVisual fallback.
         if (s_pointerPositionWasSeeded)
@@ -606,7 +623,7 @@ public sealed partial class TooltipPopup : UserControl
         }
         catch (Exception ex)
         {
-            // S5 P3: surface the layout failure instead of silently returning
+            // Surface the layout failure instead of silently returning
             // origin. ResolvePointerPositionForAnchor runs inside Show()'s
             // try/catch, but a TransformToVisual fault here would otherwise be
             // swallowed without a breadcrumb. Log at Warning (repeatable, not
@@ -620,7 +637,7 @@ public sealed partial class TooltipPopup : UserControl
     }
 
     /// <summary>
-    /// S5 P2 — clamp the popup offsets so the tip stays inside the XamlRoot
+    /// Clamp the popup offsets so the tip stays inside the XamlRoot
     /// content bounds with a <see cref="ScreenClearance"/> px margin, flipping
     /// to the opposite side of the cursor when it would overrun the right /
     /// bottom edge (mirrors the baseline ClampToScreen flip behaviour).

@@ -12,7 +12,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ScriptPanel;
 public sealed class ScriptViewModel : ObservableObject, IDisposable
 {
     private readonly IScriptHostMonitor _monitor;
-    // C1 (2026-05-14): per-VM dispatcher pump, ctor-injected by PanelFactory.
+    // Per-VM dispatcher pump, ctor-injected by PanelFactory.
     private readonly UiDispatcherPump _ui;
     private readonly Dictionary<string, ScriptRowVm> _byPath = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
@@ -22,8 +22,8 @@ public sealed class ScriptViewModel : ObservableObject, IDisposable
         _monitor = monitor;
         _ui = new UiDispatcherPump(dispatcher);
         _monitor.StatusChanged += OnStatusChanged;
-        // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber to StatusChanged
-        // gets every update; no primary-subscriber gate.
+        // Fan-out: every subscriber to StatusChanged gets every update;
+        // no primary-subscriber gate.
         foreach (var s in _monitor.Snapshot())
         {
             var row = new ScriptRowVm(s);
@@ -42,7 +42,7 @@ public sealed class ScriptViewModel : ObservableObject, IDisposable
     public ObservableCollection<ScriptRowVm> Rows { get; } = new();
 
     /// <summary>
-    ///  Runtime theme-swap hook. Drops the static row-tint brush
+    /// Runtime theme-swap hook. Drops the static row-tint brush
     /// cache and re-raises StateBrush / RowBackgroundBrush PropertyChanged
     /// on every row so x:Bind OneWay picks up the new theme without
     /// rebuilding the row VMs.
@@ -78,7 +78,7 @@ public sealed class ScriptViewModel : ObservableObject, IDisposable
 
     private void OnStatusChanged(object? sender, ScriptStatus updated)
     {
-        // HUB-UX-D7 (2026-05-14) — fan-out: this VM is one of N subscribers.
+        // Fan-out: this VM is one of N subscribers.
         void Apply()
         {
             // Cache the SummaryText inputs (loaded count + errored count) before
@@ -105,7 +105,7 @@ public sealed class ScriptViewModel : ObservableObject, IDisposable
                 Raise(nameof(SummaryText));
         }
 
-        // Perf-review H1: HasThreadAccess fast-path baked into Post.
+        // HasThreadAccess fast-path baked into Post.
         _ui.Post(Apply);
     }
 }

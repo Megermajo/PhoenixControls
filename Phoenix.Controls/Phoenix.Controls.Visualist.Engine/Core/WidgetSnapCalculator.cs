@@ -20,7 +20,7 @@ namespace Phoenix.Controls.Visualist.Core
     {
         public const int SnapThreshold = 6;
 
-        // QC22-05 — minimum widget dimension enforced during resize. Below this
+        // Minimum widget dimension enforced during resize. Below this
         // the widget becomes a visually unusable sliver (smaller than the
         // resize-handle hit zone). When a snap would collapse the moving edge
         // below this floor, the snap is dropped and the edge is pinned to the
@@ -153,7 +153,7 @@ namespace Phoenix.Controls.Visualist.Core
             }
             else
             {
-                // QC22-05 — when the snap-adjusted right edge would push width
+                // When the snap-adjusted right edge would push width
                 // below MinResizeDim, drop the snap rather than honouring both
                 // (which produces the visually-broken combination of "guide
                 // visible at X, but widget right edge is actually at X+sliver

@@ -26,23 +26,21 @@ public sealed partial class WidgetEditorView : UserControl
 {
     private VisualistViewModel? _vm;
 
-    // ─── Live-preview / bus / transport wiring (Lane B — Tasks 3-8) ──────
+    // ─── Live-preview / bus / transport wiring ──────
     //
     // The pre-T15 WinForms WidgetEditorForm carried: a green Test Run button →
     // VisualistBusClient.SendVisualTriggerAsync; Preview Layer / Preview Widget
     // popouts; a floating WidgetSinglePreviewPanel; a TimelinePlayback transport;
-    // and a bottom StatusStrip. This restores all of them on WinUI. Per
-    // feedback_visualist_architect_chrome_independence the chrome stays
-    // Visualist-local; per feedback_no_modal_dialogs_for_repeatable_rejections
-    // failures + offline rejections route to the status bar / GlobalLogger, not
-    // modal dialogs.
+    // and a bottom StatusStrip. This restores all of them on WinUI. The chrome
+    // stays Visualist-local; failures + offline rejections route to the status
+    // bar / GlobalLogger, not modal dialogs.
 
     // Design-time playback engine for the active trigger's timeline. Drives
     // VM.PlayheadMs per tick + bridges PLAY/SCRUB/STOP into the open preview
     // surfaces. Created lazily on first use; disposed on Unloaded.
     private TimelinePlayback? _playback;
 
-    // Popout windows. R22 — the LAYER preview window is now owned by the pillar
+    // Popout windows. The LAYER preview window is now owned by the pillar
     // shell (MainView.PreviewLayer / ActiveLayerPreviewWindow) so the editor
     // toolbar and the layer-canvas command bar share one instance; the editor
     // still owns the single-WIDGET preview popout.
@@ -53,11 +51,11 @@ public sealed partial class WidgetEditorView : UserControl
     private Action<bool>?   _onBusConnChanged;
     private Action?         _onConfigChanged;
 
-    // Status-bar auto-clear timer (Area 5 P2) — resets the label to "Ready"
+    // Status-bar auto-clear timer — resets the label to "Ready"
     // ~5s after the last SetStatus call.
     private DispatcherTimer? _statusClearTimer;
 
-    // Trigger-tab drop insertion marker (Area 1 P2) — a thin vertical line added
+    // Trigger-tab drop insertion marker — a thin vertical line added
     // to TabDropMarkerLayer during the armed drag, cleared on release.
     private Microsoft.UI.Xaml.Shapes.Rectangle? _tabDropMarker;
 
@@ -79,7 +77,7 @@ public sealed partial class WidgetEditorView : UserControl
         DataContextChanged += OnDataContextChanged;
         Loaded   += OnLoaded;
         Unloaded += OnUnloaded;
-        // R28 — Delete-key keyframe removal. The view is IsTabStop so a timeline
+        // Delete-key keyframe removal. The view is IsTabStop so a timeline
         // interaction can focus it; the guarded handler only consumes Delete
         // when a keyframe is selected (otherwise it bubbles to the graph canvas).
         KeyDown += OnEditorKeyDown;
@@ -105,7 +103,7 @@ public sealed partial class WidgetEditorView : UserControl
         DispatcherQueue?.TryEnqueue(RedrawTimeline);
     }
 
-    // ─── Lane B init / teardown ──────────────────────────────────────────
+    // ─── init / teardown ──────────────────────────────────────────
 
     private void InitPreviewAndTransport()
     {
@@ -124,12 +122,11 @@ public sealed partial class WidgetEditorView : UserControl
             _onBusConnChanged = OnBusConnectionChanged;
             VisualistBusClient.Instance.OnConnectionStatusChanged += _onBusConnChanged;
         }
-        // The VisualistBusClient (Lane A foundation) connects to Hub's bus
+        // The VisualistBusClient connects to Hub's bus
         // (port 18081). Nothing in the WinUI assembly starts it today, so we
         // ensure it's running here — guarded process-wide so multiple editor
         // instances don't spawn duplicate connect loops. The CANONICAL start
-        // belongs in the Visualist pillar bootstrap (MainView), which is NOT an
-        // owned file for this task — REPORTED rather than edited. Starting it
+        // belongs in the Visualist pillar bootstrap (MainView). Starting it
         // here is idempotent via the guard and harmless when Hub is unreachable
         // (the connect loop just retries every 5s; the dot stays red, Test Run
         // stays disabled).
@@ -164,11 +161,11 @@ public sealed partial class WidgetEditorView : UserControl
                 Controls.WidgetSinglePreviewPanel.MaxPreviewWidth);
         }
 
-        // R6 — forward graph-canvas node selection into the embedded preview's
+        // Forward graph-canvas node selection into the embedded preview's
         // manipulator overlay, so selecting a spatial node lights its drag handles
         // (parity with the WinForms WidgetEditorForm._canvas.OnSelectedNodeChanged
         // → _widgetPreview.SetActiveNode wire). WidgetGraphCanvas now exposes
-        // OnSelectedNodeChanged (R6). Idempotent across Loaded cycles. The inbound
+        // OnSelectedNodeChanged. Idempotent across Loaded cycles. The inbound
         // ATTR_CHANGED → node merge (OnManipulatorAttrChanged) was already wired;
         // this closes the outbound select → manipulator direction.
         GraphCanvas.OnSelectedNodeChanged -= OnGraphNodeSelectionChanged;
@@ -177,7 +174,7 @@ public sealed partial class WidgetEditorView : UserControl
         ApplyEmbeddedPreviewVisibility();
         ApplyButtonGating();
 
-        // Track E — rebuild the audio-mixer rows each time its flyout opens so it
+        // Rebuild the audio-mixer rows each time its flyout opens so it
         // always reflects the live active trigger. Idempotent across Loaded cycles.
         // Seed once now too: on some WinUI builds Opening doesn't fire before the
         // first show (same quirk WidgetGraphCanvas's node flyout guards against).
@@ -195,10 +192,10 @@ public sealed partial class WidgetEditorView : UserControl
         TimelineSurface.PointerPressed      += OnTimelineScrubPressed;
         TimelineSurface.PointerMoved        += OnTimelineScrubMoved;
         TimelineSurface.PointerReleased     += OnTimelineScrubReleased;
-        // QC52-03: Ctrl+wheel zoom anchored on the pointer, plain wheel pans
+        // Ctrl+wheel zoom anchored on the pointer, plain wheel pans
         // the visible window when zoomed in past fit-to-width.
         TimelineSurface.PointerWheelChanged += OnTimelineWheelChanged;
-        // R28 — double-click an empty track adds a keyframe on that row.
+        // Double-click an empty track adds a keyframe on that row.
         TimelineSurface.DoubleTapped        += OnTimelineDoubleTapped;
         _timelineHandlersSubscribed = true;
     }
@@ -215,10 +212,9 @@ public sealed partial class WidgetEditorView : UserControl
     }
 
     // Theme-key + literal-ARGB fallback for tinted brushes. Per-pillar copy
-    // of WidgetGraphCanvas.ResolveBrush per
-    // feedback_visualist_architect_chrome_independence (Visualist owns its own
-    // paint helpers, never lifted to Shared). Theme lookup wins; the literal
-    // ARGB triple is the designer / pre-app / missing-key fallback.
+    // of WidgetGraphCanvas.ResolveBrush (Visualist owns its own paint helpers,
+    // never lifted to Shared). Theme lookup wins; the literal ARGB triple is the
+    // designer / pre-app / missing-key fallback.
     private static Brush ResolveBrushTinted(string key, byte a, byte r, byte g, byte b)
     {
         try
@@ -234,14 +230,13 @@ public sealed partial class WidgetEditorView : UserControl
         return new SolidColorBrush(Color.FromArgb(a, r, g, b));
     }
 
-    // [LANE-C P2] Safe theme-brush resolve with a literal-ARGB fallback. The
+    // Safe theme-brush resolve with a literal-ARGB fallback. The
     // RedrawTimeline path previously mixed safe (ResolveBrushTinted) and UNSAFE
     // direct `(Brush)Application.Current.Resources[key]` casts — a missing key or
     // a non-Brush value (theme swap, designer load, resource-injection test)
     // throws InvalidCastException / KeyNotFoundException and aborts the whole
     // redraw. This mirrors CurveEditorDialog.ResolveBrush: theme lookup wins, the
-    // ARGB triple is the fallback. Per feedback_visualist_architect_chrome_
-    // independence this is a per-pillar copy, never lifted to Shared.
+    // ARGB triple is the fallback. This is a per-pillar copy, never lifted to Shared.
     private static Brush ResolveBrush(string key, byte r, byte g, byte b)
     {
         try
@@ -273,7 +268,7 @@ public sealed partial class WidgetEditorView : UserControl
         _zoomByTrigger.Clear();
         _zoom = null;
 
-        // ─── Lane B teardown ──────────────────────────────────────────────
+        // ─── teardown ──────────────────────────────────────────────
         if (_onBusConnChanged is not null)
         {
             try { VisualistBusClient.Instance.OnConnectionStatusChanged -= _onBusConnChanged; } catch { }
@@ -291,7 +286,7 @@ public sealed partial class WidgetEditorView : UserControl
             try { _playback.Dispose(); } catch { }
             _playback = null;
         }
-        // R6 — drop the canvas node-selection forward.
+        // Drop the canvas node-selection forward.
         try { GraphCanvas.OnSelectedNodeChanged -= OnGraphNodeSelectionChanged; } catch { }
         if (EmbeddedPreview is not null)
         {
@@ -312,14 +307,14 @@ public sealed partial class WidgetEditorView : UserControl
         try { _statusClearTimer?.Stop(); } catch { }
         _statusClearTimer = null;
 
-        // Track E — drop the audio-mixer flyout subscription.
+        // Drop the audio-mixer flyout subscription.
         if (AudioMixerFlyout is not null)
         {
             try { AudioMixerFlyout.Opening -= OnAudioMixerOpening; } catch { }
         }
 
         // Close the editor-owned widget popout so its WebView2 process tears down
-        // with the editor. The shared LAYER preview window (R22) is owned by the
+        // with the editor. The shared LAYER preview window is owned by the
         // pillar shell, which closes it on its own teardown.
         try { _widgetPreviewWindow?.Close(); } catch { }
         _widgetPreviewWindow = null;
@@ -395,7 +390,7 @@ public sealed partial class WidgetEditorView : UserControl
                 // the preview shows the new trigger at its start.
                 _playback?.Stop();
                 SyncPlaybackTimeline();
-                // Track C — tell the embedded in-widget preview which trigger is
+                // Tell the embedded in-widget preview which trigger is
                 // now being edited so it renders THAT trigger (not the static
                 // onStartup its ?widget= page loads with) at t=0. The panel tracks
                 // its own widget id, so only the trigger name is passed; it posts
@@ -423,7 +418,7 @@ public sealed partial class WidgetEditorView : UserControl
     {
         TriggerTabStrip.Children.Clear();
 
-        // R13 — leading "← Back" returns to the Layer Canvas, matching the
+        // Leading "← Back" returns to the Layer Canvas, matching the
         // manifesto §4.5 "[← Back] [onStartup] … [+]" strip and the pre-WinUI
         // WidgetEditorForm "Back to Layout" button. Under the 2-tab shell the
         // Layer Canvas tab is also always visible, but Back reinforces the
@@ -454,7 +449,7 @@ public sealed partial class WidgetEditorView : UserControl
             };
             tab.Click += (s, e) => vm.ActiveTrigger = capture;
 
-            // B34 — drag-to-reorder. WinUI's StackPanel doesn't ship a reorder
+            // Drag-to-reorder. WinUI's StackPanel doesn't ship a reorder
             // facility, so we wire pointer-based detection per tab: a press
             // captures the source index + pointer, a move past a horizontal
             // threshold opens the drag (the tab's Click handler still fires if
@@ -485,7 +480,7 @@ public sealed partial class WidgetEditorView : UserControl
         TriggerTabStrip.Children.Add(add);
     }
 
-    // ─── B34 trigger tab drag-to-reorder ────────────────────────────────
+    // ─── trigger tab drag-to-reorder ────────────────────────────────
     //
     // Plain ToggleButton drag (no WinUI TabView reorder facility available
     // here — the tab strip is a custom StackPanel). Track the source tab on
@@ -527,7 +522,7 @@ public sealed partial class WidgetEditorView : UserControl
             _dragSourceTab.Opacity = 0.45;
             try { _dragSourceTab.CapturePointer(e.Pointer); } catch { /* best-effort */ }
         }
-        // Area 1 P2 — once armed, render an insertion marker at the computed
+        // Once armed, render an insertion marker at the computed
         // drop slot so the user can see where the tab will land. The marker is
         // an absolutely-positioned line in TabDropMarkerLayer (a Canvas sibling
         // of the StackPanel) so it doesn't disturb the tab layout.
@@ -649,7 +644,7 @@ public sealed partial class WidgetEditorView : UserControl
         {
             _dragSourceTab.Opacity = 1.0;
         }
-        // Area 1 P2 — drop the insertion marker on release / cancel.
+        // Drop the insertion marker on release / cancel.
         ClearTabDropMarker();
         _dragSourceTab  = null;
         _dragSourceName = null;
@@ -668,10 +663,10 @@ public sealed partial class WidgetEditorView : UserControl
         delete.Click += async (s, e) => await ConfirmDeleteTrigger(vm, triggerName);
         flyout.Items.Add(delete);
 
-        // B34 (audit 2026-05-24) — Duplicate / Move Left / Move Right. Duplicate
+        // Duplicate / Move Left / Move Right. Duplicate
         // deep-clones the trigger including graph + timeline with an _copy
-        // suffix (underscore — the hyphen the audit specced fails the
-        // WidgetTrigger.Name regex; see VisualistViewModel.DuplicateTrigger).
+        // suffix (underscore — a hyphen fails the WidgetTrigger.Name regex;
+        // see VisualistViewModel.DuplicateTrigger).
         // Move Left/Right shift the trigger in its parent collection; both
         // grey out at the strip edges via IsEnabled below.
         flyout.Items.Add(new MenuFlyoutSeparator());
@@ -703,7 +698,7 @@ public sealed partial class WidgetEditorView : UserControl
         moveRight.Click += (s, e) => vm.MoveTriggerRight(triggerName);
         flyout.Items.Add(moveRight);
 
-        // Sprint B — cross-pillar snippet producer. Right-clicking a trigger
+        // Cross-pillar snippet producer. Right-clicking a trigger
         // tab and choosing this menu item writes a VisualTriggerSnippet payload
         // to the system clipboard; the Architect canvas's Ctrl+V handler
         // (LogicCanvasView.TryPasteVisualTriggerSnippetAsync) spawns a fully-
@@ -717,13 +712,13 @@ public sealed partial class WidgetEditorView : UserControl
                 "visualist.context.copy_architect_snippet",
                 "Copy as Architect snippet"),
         };
-        // [LANE-C P3] onStartup is semantically auto-fired — it cannot be called
+        // onStartup is semantically auto-fired — it cannot be called
         // from Architect via a Visual.Trigger node (which is exactly what the
         // snippet produces), so copying a snippet for it would author a node that
         // never matches a callable trigger. Disable the item for onStartup and
         // explain why via tooltip, mirroring how the old InspectorPanel hid
-        // Copy/Test for onStartup. (Per feedback_no_modal_dialogs_for_repeatable_
-        // rejections we disable rather than pop a rejection dialog.)
+        // Copy/Test for onStartup. (This is a repeatable rejection, so we disable
+        // rather than pop a rejection dialog.)
         bool isStartup = string.Equals(triggerName, "onStartup", StringComparison.OrdinalIgnoreCase);
         if (isStartup)
         {
@@ -747,8 +742,7 @@ public sealed partial class WidgetEditorView : UserControl
     /// time, not the live ActiveTrigger, so a right-click on a non-active tab
     /// still copies the snippet for THAT tab's trigger) and routes through
     /// <see cref="VisualTriggerSnippetProducer.CopyToClipboard"/>. All failure
-    /// paths log via GlobalLogger — no modal dialogs, per
-    /// feedback_no_modal_dialogs_for_repeatable_rejections.
+    /// paths log via GlobalLogger — no modal dialogs.
     /// </summary>
     private void OnCopyArchitectSnippetClicked(VisualistViewModel vm, string triggerName)
     {
@@ -763,14 +757,14 @@ public sealed partial class WidgetEditorView : UserControl
     {
         if (vm.SelectedWidget is null)
         {
-            // R8/R1 — the "+" is disabled without a selected widget, but guard
+            // The "+" is disabled without a selected widget, but guard
             // anyway and tell the user why instead of silently no-oping.
             SetStatus("Select or enter a widget before adding a trigger.");
             return;
         }
         string? name = await PromptForName("New Trigger", "onTrigger:new", "");
         if (string.IsNullOrWhiteSpace(name)) return;
-        // R15 — vm.AddTrigger returns null on empty / duplicate / invalid name.
+        // vm.AddTrigger returns null on empty / duplicate / invalid name.
         // The pre-fix code discarded the result, so a rejected add looked like a
         // dead "+". A bare name like "raid" is now auto-prefixed to onTrigger:raid,
         // so only genuinely-bad input fails — and we surface the SPECIFIC reason.
@@ -792,7 +786,7 @@ public sealed partial class WidgetEditorView : UserControl
             SetStatus("Rename failed — name is invalid or in use.");
             return;
         }
-        // [LANE-C P2] Zoom-state key follows the rename. _zoomByTrigger is keyed
+        // Zoom-state key follows the rename. _zoomByTrigger is keyed
         // on "{widget.Id}|{trigger.Name}" (a USER-EDITABLE name, not a stable id).
         // A rename leaves the old key orphaned AND seeds a fresh fit-to-width zoom
         // under the new key — the user's zoom level silently resets on rename.
@@ -800,7 +794,7 @@ public sealed partial class WidgetEditorView : UserControl
         MigrateZoomKeyForRename(vm.SelectedWidget, oldName, name.Trim());
     }
 
-    // [LANE-C P2/P3] Move the zoom entry from the old trigger-name key to the new
+    // Move the zoom entry from the old trigger-name key to the new
     // one after a rename, so a rename keeps the user's zoom and doesn't strand a
     // stale dictionary entry. No-op when the old key has no stored state.
     private void MigrateZoomKeyForRename(LayerWidget? widget, string oldName, string newName)
@@ -868,15 +862,15 @@ public sealed partial class WidgetEditorView : UserControl
 
     // ─── graph view ─────────────────────────────────────────────────────
     //
-    // Sprint A swapped the read-only stack-of-cards for an interactive
+    // The read-only stack-of-cards was swapped for an interactive
     // [WidgetGraphCanvas](WidgetGraphCanvas.xaml.cs) — pan / zoom / node
     // drag against absolute Location. The canvas owns its own empty-state
     // hint, so this method just hands it the active VM + trigger; the
     // canvas re-renders nodes whenever Bind is called.
     //
-    // Sprints B–D layer wire-drop, palette, lasso, context menus, live
-    // preview thumbnails, and timeline scrubbing on top — see the parity
-    // plan §T13b for cadence and the canvas's own header for the seam map.
+    // Wire-drop, palette, lasso, context menus, live preview thumbnails, and
+    // timeline scrubbing layer on top — see the canvas's own header for the
+    // seam map.
 
     private void RebuildGraphView(VisualistViewModel vm)
     {
@@ -891,7 +885,7 @@ public sealed partial class WidgetEditorView : UserControl
         SyncDurationBox();
     }
 
-    // ─── R5 — trigger duration editor + Fit ──────────────────────────────
+    // ─── trigger duration editor + Fit ──────────────────────────────
     //
     // Restores the pre-WinUI TimelinePanel _numDuration NumericUpDown +
     // _btnFitDuration button. Writes Timeline.DurationMs through PushUndo +
@@ -949,9 +943,9 @@ public sealed partial class WidgetEditorView : UserControl
         SetStatus($"Duration fit to {fit:0} ms.");
     }
 
-    // ─── R8 — empty-state + R13 Back navigation ──────────────────────────
+    // ─── empty-state + Back navigation ──────────────────────────
 
-    /// <summary>R8 — show the "no widget selected" hint over the graph when
+    /// <summary>Show the "no widget selected" hint over the graph when
     /// there's no widget to edit; otherwise hide it.</summary>
     private void ApplyEmptyState()
     {
@@ -963,9 +957,9 @@ public sealed partial class WidgetEditorView : UserControl
     private void OnEmptyStateBackClicked(object sender, RoutedEventArgs e)
         => FindPillarMainView()?.ShowLayerCanvas();
 
-    // R13 — Visualist-local copy of the visual-tree walk to the embedding
-    // MainView (per feedback_visualist_architect_chrome_independence — copied,
-    // not lifted to Shared). Mirrors LayerCanvasView.FindPillarMainView.
+    // Visualist-local copy of the visual-tree walk to the embedding
+    // MainView (copied, not lifted to Shared). Mirrors
+    // LayerCanvasView.FindPillarMainView.
     private Phoenix.Controls.Visualist.WinUI.MainView? FindPillarMainView()
     {
         DependencyObject? cur = this;
@@ -977,20 +971,20 @@ public sealed partial class WidgetEditorView : UserControl
         return null;
     }
 
-    // ─── timeline scrubber (sprint D) ───────────────────────────────────
+    // ─── timeline scrubber ───────────────────────────────────
     //
-    // Replaces the Track 7 mock bars with a real time-axis + keyframe
+    // Replaces the earlier mock bars with a real time-axis + keyframe
     // markers + draggable playhead bound to VisualistViewModel.PlayheadMs.
     // The trigger's WidgetTimeline.DurationMs sets the right edge; tick
     // marks land on a human-friendly ramp picked from the active
-    // pixels-per-second zoom (see QC52-03 zoom section below).
+    // pixels-per-second zoom (see the zoom section below).
 
     private double _playheadMsCache;
     private Microsoft.UI.Xaml.Shapes.Rectangle? _playheadLine;
     private Microsoft.UI.Xaml.Shapes.Rectangle? _playheadHalo;
     private bool _isScrubbing;
 
-    // Keyframe-marker drag state (QC52-02). _selectedKeyframe is the
+    // Keyframe-marker drag state. _selectedKeyframe is the
     // currently-highlighted keyframe (rendered with the Ember200 fill); set
     // on PointerPressed, persists until a different marker is pressed or the
     // timeline is rebuilt with a now-removed keyframe (auto-cleared below).
@@ -998,9 +992,9 @@ public sealed partial class WidgetEditorView : UserControl
     private Keyframe? _draggingKeyframe;
     private bool _keyframeDragDirty;
 
-    // R27/R38 — per-ParameterPath track rows. Rebuilt each RedrawTimeline from
+    // Per-ParameterPath track rows. Rebuilt each RedrawTimeline from
     // the active trigger's keyframe set (insertion order = stable track order);
-    // double-click-add (R28) maps the cursor Y back to a row → ParameterPath.
+    // double-click-add maps the cursor Y back to a row → ParameterPath.
     private sealed class TimelineTrackRow
     {
         public string Path = "";
@@ -1014,7 +1008,7 @@ public sealed partial class WidgetEditorView : UserControl
     private const double TrackMinHeight = 10;
     private const double TrackMaxHeight = 26;
 
-    // [LANE-C P3] Explicit timeline Z-order. Pre-fix the layering was implicit in
+    // Explicit timeline Z-order. Pre-fix the layering was implicit in
     // the Children.Add() call sequence (ticks → baselines → markers → playhead),
     // so a future refactor that batched or reordered the Add() calls could
     // silently put the playhead behind the markers. These structural Z bands make
@@ -1025,7 +1019,7 @@ public sealed partial class WidgetEditorView : UserControl
     private const int ZMarker   = 10;
     private const int ZPlayhead = 20;
 
-    // ─── timeline zoom (QC52-03) ────────────────────────────────────────
+    // ─── timeline zoom ────────────────────────────────────────
     //
     // Pre-fix the timeline was permanently fit-to-width with a hardcoded
     // 0.5s/1s/2s/5s/10s/30s/60s tick ramp — multi-minute durations capped at
@@ -1035,12 +1029,12 @@ public sealed partial class WidgetEditorView : UserControl
     // zoom whose tick interval is picked off a wider ramp under a 40px
     // minimum-spacing constraint.
     //
-    // Persistence (point 4 in the QC fix shape) is *session-local* per
+    // Persistence is *session-local* per
     // (widget.Id, trigger.Name) — same scope as PlayheadMs, which is also
     // not written to .phxlayer. The zoom level survives panel close inside
     // a single Visualist process; closing and re-opening the layer resets
     // to the fit-to-width default. Persisting to disk would require a
-    // .phxlayer schema bump that's out of scope for this QC slice.
+    // .phxlayer schema bump that's out of scope here.
 
     private const double MinPxPerSec      = 5.0;      // multi-minute fit
     private const double MaxPxPerSec      = 2000.0;   // ms-level authoring
@@ -1207,7 +1201,7 @@ public sealed partial class WidgetEditorView : UserControl
         double pxPerSec      = _zoom.PxPerSec;
         double scrollOffsetMs = _zoom.ScrollOffsetMs;
 
-        // QC52-03 — tick density now derives from pixels-per-second under a
+        // Tick density now derives from pixels-per-second under a
         // 40px minimum-spacing constraint, so the ramp scales smoothly from
         // 1ms (deep zoom) to 30min (multi-minute fit-to-width) instead of
         // capping at 60s. Compute the visible window in ms once and emit
@@ -1234,13 +1228,13 @@ public sealed partial class WidgetEditorView : UserControl
             {
                 Width  = 1,
                 Height = h,
-                Fill   = ResolveBrush("CoalCardBrush", 0x22, 0x1C, 0x16), // [LANE-C P2] safe resolve
+                Fill   = ResolveBrush("CoalCardBrush", 0x22, 0x1C, 0x16), // safe resolve
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment   = VerticalAlignment.Stretch,
                 Margin = new Thickness(x, 0, 0, 0),
                 IsHitTestVisible = false,
             };
-            Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(line, ZTick); // [LANE-C P3] explicit Z-order
+            Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(line, ZTick); // explicit Z-order
             TimelineSurface.Children.Add(line);
 
             var label = new TextBlock
@@ -1248,13 +1242,13 @@ public sealed partial class WidgetEditorView : UserControl
                 Text       = FormatTickLabel(t / 1000.0, tickSec),
                 FontFamily = new FontFamily(Application.Current.Resources["MonoFont"] as string ?? "Consolas"), // [FONTCAST] MonoFont is an <x:String>; a direct cast throws
                 FontSize   = 9,
-                Foreground = ResolveBrush("CoalSecondaryTextBrush", 0x9C, 0x8A, 0x72), // [LANE-C P2] safe resolve
+                Foreground = ResolveBrush("CoalSecondaryTextBrush", 0x9C, 0x8A, 0x72), // safe resolve
                 Margin     = new Thickness(x + 2, 0, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment   = VerticalAlignment.Top,
                 IsHitTestVisible = false,
             };
-            Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(label, ZTick); // [LANE-C P3] explicit Z-order
+            Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(label, ZTick); // explicit Z-order
             TimelineSurface.Children.Add(label);
         }
 
@@ -1262,23 +1256,23 @@ public sealed partial class WidgetEditorView : UserControl
         // along a baseline track. Multiple keyframes at the same TimeMs (one
         // per ParameterPath) overlap; sprint future-polish can stagger.
         //
-        // QC52-02 — diamonds are now hit-testable. PointerPressed on a marker
+        // Diamonds are now hit-testable. PointerPressed on a marker
         // captures + snaps the playhead to the keyframe's time (so the value
         // displays in any keyframe inspector); PointerMoved drags the keyframe
         // along the timeline (mutating Keyframe.TimeMs + marking the document
         // dirty); PointerReleased commits. Per-marker e.Handled stops the
         // surface-level scrub handler from also firing.
         //
-        // QC52-03 — keyframes outside the visible scroll window are skipped
+        // Keyframes outside the visible scroll window are skipped
         // entirely so a 1ms-zoom on a 10min trigger doesn't allocate markers
         // for the thousands of keyframes off-screen.
-        // QC52-NaN — render from the NaN/Infinity-filtered, sorted projection
+        // Render from the NaN/Infinity-filtered, sorted projection
         // (WidgetTimeline.SortedKeyframes) rather than the raw authoring list.
         // A NaN TimeMs would produce a NaN x here: TimeToX(NaN) → NaN, the
         // off-screen bounds check below stays false for NaN, and a NaN Thickness
         // margin then corrupts the WinUI layout engine. SortedKeyframes drops
         // those poisoned values before they reach the markers.
-        // R27 / R38 — one track ROW per ParameterPath, each curve a distinct
+        // One track ROW per ParameterPath, each curve a distinct
         // colour. Pre-fix every keyframe collapsed onto a single centered
         // baseline, so two parameters animating at the same time rendered as one
         // overlapping diamond and you couldn't tell which curve a marker
@@ -1300,7 +1294,7 @@ public sealed partial class WidgetEditorView : UserControl
                     Margin = new Thickness(0, row.CenterY, 0, 0),
                     IsHitTestVisible = false,
                 };
-                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(line, ZBaseline); // [LANE-C P3] explicit Z-order
+                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(line, ZBaseline); // explicit Z-order
                 TimelineSurface.Children.Add(line);
 
                 var lbl = new TextBlock
@@ -1308,7 +1302,7 @@ public sealed partial class WidgetEditorView : UserControl
                     Text       = PrettyParamLabel(row.Path, trigger?.Graph),
                     FontFamily = new FontFamily(Application.Current.Resources["MonoFont"] as string ?? "Consolas"),
                     FontSize   = 8,
-                    Foreground = ResolveBrush("CoalSecondaryTextBrush", 0x9C, 0x8A, 0x72), // [LANE-C P2] safe resolve
+                    Foreground = ResolveBrush("CoalSecondaryTextBrush", 0x9C, 0x8A, 0x72), // safe resolve
                     Opacity    = 0.65,
                     Margin     = new Thickness(3, Math.Max(0, row.CenterY - 11), 0, 0),
                     HorizontalAlignment = HorizontalAlignment.Left,
@@ -1317,14 +1311,14 @@ public sealed partial class WidgetEditorView : UserControl
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     MaxWidth = 140,
                 };
-                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(lbl, ZBaseline); // [LANE-C P3] explicit Z-order
+                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(lbl, ZBaseline); // explicit Z-order
                 TimelineSurface.Children.Add(lbl);
             }
 
             var goldStroke   = ResolveBrushTinted("SelectionBrush", 0xFF, 0xFF, 0xD7, 0x00);
-            var normalStroke = ResolveBrush("Ember700Brush", 0x4A, 0x2A, 0x08); // [LANE-C P2] safe resolve
+            var normalStroke = ResolveBrush("Ember700Brush", 0x4A, 0x2A, 0x08); // safe resolve
 
-            // [LANE-C P3] Off-screen cull in TIME space, not a fixed pixel margin.
+            // Off-screen cull in TIME space, not a fixed pixel margin.
             // A rotated 9px diamond has a ~6.4px half-diagonal, so the old ±8px
             // pixel margin was borderline; more importantly, a pixel margin makes
             // the visible-edge tail shrink (in ms) as you zoom in, which is the
@@ -1354,7 +1348,7 @@ public sealed partial class WidgetEditorView : UserControl
                 {
                     Width  = 9,
                     Height = 9,
-                    // R38 — fill is the per-curve colour; selection moves to the
+                    // Fill is the per-curve colour; selection moves to the
                     // STROKE (gold, heavier) so the curve identity is never lost
                     // when a keyframe is selected.
                     Fill   = CurveBrush(rowIdx),
@@ -1368,14 +1362,14 @@ public sealed partial class WidgetEditorView : UserControl
                     IsHitTestVisible = true,
                 };
                 marker.PointerPressed  += (s, args) => OnKeyframeMarkerPressed(s, args, captureKf);
-                // [LANE-C P2] PointerMoved now captures the keyframe identity in
+                // PointerMoved now captures the keyframe identity in
                 // its closure (parity with Pressed/Released/RightTapped) instead
                 // of relying solely on the _draggingKeyframe field, so a stray
                 // PointerMoved on the wrong marker (before CapturePointer fully
                 // isolates events) can't mutate a different keyframe.
                 marker.PointerMoved    += (s, args) => OnKeyframeMarkerMoved(s, args, captureKf);
                 marker.PointerReleased += OnKeyframeMarkerReleased;
-                // [LANE-C P2] Hover cursor affordance — restores the WinForms
+                // Hover cursor affordance — restores the WinForms
                 // baseline's "hover to discover drag" hint lost in the per-marker
                 // port. ProtectedCursor is protected and only settable from this
                 // derived UserControl (see WidgetGraphCanvas / WidgetSinglePreview
@@ -1385,14 +1379,14 @@ public sealed partial class WidgetEditorView : UserControl
                 // designer / pre-app hosts.
                 marker.PointerEntered  += OnKeyframeMarkerPointerEntered;
                 marker.PointerExited   += OnKeyframeMarkerPointerExited;
-                // B27 — right-click context menu (Delete / Edit Curve… /
+                // Right-click context menu (Delete / Edit Curve… /
                 // Cycle Curve). Attached per-marker so the menu carries the
                 // keyframe-under-cursor identity. RightTapped is the WinUI
                 // event for right-click — PointerPressed sees both buttons
                 // but RightTapped only fires for the right press, which is
                 // what we want here.
                 marker.RightTapped += (s, args) => OnKeyframeMarkerRightTapped(s, args, captureKf);
-                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(marker, ZMarker); // [LANE-C P3] explicit Z-order — markers above ticks/baselines
+                Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(marker, ZMarker); // explicit Z-order — markers above ticks/baselines
                 TimelineSurface.Children.Add(marker);
             }
         }
@@ -1403,7 +1397,7 @@ public sealed partial class WidgetEditorView : UserControl
         // the elements so the cached references stay non-null for smooth
         // scrub, just clamp their X into the visible band.
         //
-        // [LANE-C P3] Playhead-skip fix: a full redraw re-allocates the playhead
+        // Playhead-skip fix: a full redraw re-allocates the playhead
         // element, so it must rebuild at the LIVE time, not a possibly-stale
         // cache. _vm.PlayheadMs is the source of truth (advanced by playback ticks
         // + scrub). The scrub/drag paths maintain _playheadMsCache + reposition
@@ -1434,14 +1428,14 @@ public sealed partial class WidgetEditorView : UserControl
         _playheadLine = new Microsoft.UI.Xaml.Shapes.Rectangle
         {
             Width  = 2,
-            Fill   = ResolveBrush("Ember200Brush", 0xF2, 0xC7, 0x7F), // [LANE-C P2] safe resolve
+            Fill   = ResolveBrush("Ember200Brush", 0xF2, 0xC7, 0x7F), // safe resolve
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment   = VerticalAlignment.Stretch,
             Margin = new Thickness(phX, 0, 0, 0),
             IsHitTestVisible = false,
             Visibility = (phXRaw < -1 || phXRaw > w + 1) ? Visibility.Collapsed : Visibility.Visible,
         };
-        // [LANE-C P3] Playhead always renders on top of markers/ticks via an
+        // Playhead always renders on top of markers/ticks via an
         // explicit Z band, not the Add() order, so a future redraw refactor can't
         // accidentally bury it behind the keyframe markers.
         Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(_playheadHalo, ZPlayhead);
@@ -1449,7 +1443,7 @@ public sealed partial class WidgetEditorView : UserControl
         TimelineSurface.Children.Add(_playheadHalo);
         TimelineSurface.Children.Add(_playheadLine);
 
-        // QC52-04: scrub handlers are now subscribed once on Loaded and
+        // Scrub handlers are now subscribed once on Loaded and
         // unsubscribed on Unloaded — see SubscribeTimelineHandlers /
         // UnsubscribeTimelineHandlers up top. Redraw no longer touches them.
         // If the timeline ever needs to swap surfaces dynamically, route the
@@ -1487,7 +1481,7 @@ public sealed partial class WidgetEditorView : UserControl
                 : $"x{mult:0.00}";
     }
 
-    // QC52-03 — Ctrl+wheel zooms (cursor-anchored), plain wheel pans the
+    // Ctrl+wheel zooms (cursor-anchored), plain wheel pans the
     // visible window when we're zoomed past fit-to-width. Pointer position
     // determines both the anchor for zoom and the pan direction's sign-of-
     // life when wheeling without Ctrl.
@@ -1542,7 +1536,7 @@ public sealed partial class WidgetEditorView : UserControl
         }
 
         e.Handled = true;
-        // [LANE-C P3] RedrawTimeline now re-syncs _playheadMsCache from the live
+        // RedrawTimeline now re-syncs _playheadMsCache from the live
         // _vm.PlayheadMs (when not mid-scrub/drag) before rebuilding the playhead,
         // so a zoom mid-playback rebuilds it at the authoritative time instead of a
         // stale cache — no visible jump.
@@ -1554,7 +1548,7 @@ public sealed partial class WidgetEditorView : UserControl
         if (_vm?.ActiveTriggerObject?.Timeline is null) return;
         _isScrubbing = true;
         TimelineSurface.CapturePointer(e.Pointer);
-        // R28 — focus the editor so a subsequent Delete targets the timeline
+        // Focus the editor so a subsequent Delete targets the timeline
         // (clears any stale graph focus too).
         try { Focus(FocusState.Programmatic); } catch { /* pre-realised */ }
         UpdatePlayheadFromPointer(e.GetCurrentPoint(TimelineSurface).Position.X);
@@ -1576,7 +1570,7 @@ public sealed partial class WidgetEditorView : UserControl
         e.Handled = true;
     }
 
-    // ─── keyframe-marker drag (QC52-02) ─────────────────────────────────
+    // ─── keyframe-marker drag ─────────────────────────────────
 
     private void OnKeyframeMarkerPressed(object sender, PointerRoutedEventArgs e, Keyframe kf)
     {
@@ -1585,7 +1579,7 @@ public sealed partial class WidgetEditorView : UserControl
         // PointerMoved events bound to the marker keep firing even when the
         // pointer leaves the small 9×9 rect during drag.
         try { marker.CapturePointer(e.Pointer); } catch { /* best-effort */ }
-        // R28 — take keyboard focus so Delete removes this keyframe.
+        // Take keyboard focus so Delete removes this keyframe.
         try { Focus(FocusState.Programmatic); } catch { /* pre-realised */ }
         _selectedKeyframe  = kf;
         _draggingKeyframe  = kf;
@@ -1604,7 +1598,7 @@ public sealed partial class WidgetEditorView : UserControl
 
     private void OnKeyframeMarkerMoved(object sender, PointerRoutedEventArgs e, Keyframe captureKf)
     {
-        // [LANE-C P2] Identity guard — only act when the keyframe this handler
+        // Identity guard — only act when the keyframe this handler
         // was wired for is the one actually being dragged. A PointerMoved that
         // arrives on a non-source marker (before CapturePointer isolates the
         // stream) is ignored rather than mutating _draggingKeyframe's keyframe by
@@ -1617,7 +1611,7 @@ public sealed partial class WidgetEditorView : UserControl
         double w = TimelineSurface.ActualWidth;
         if (w <= 0) return;
 
-        // QC52-03 — drag math now goes through the zoom transform so dragging
+        // Drag math now goes through the zoom transform so dragging
         // at any zoom level produces a millisecond delta proportional to the
         // pointer's pixel delta, not to the surface width.
         var zoom = _zoom ?? ResolveZoomState(_vm.SelectedWidget, _vm.ActiveTriggerObject, durationMs, w);
@@ -1652,7 +1646,7 @@ public sealed partial class WidgetEditorView : UserControl
         e.Handled = true;
     }
 
-    // ─── [LANE-C P2] keyframe hover cursor affordance ────────────────────
+    // ─── keyframe hover cursor affordance ────────────────────
     //
     // The pre-T15 WinForms timeline ran a centralized mouse-tracking loop that
     // swapped the cursor to a move glyph when hovering a keyframe. The WinUI
@@ -1676,7 +1670,7 @@ public sealed partial class WidgetEditorView : UserControl
         catch { /* cursor API unavailable in designer / pre-app — ignore */ }
     }
 
-    // ─── R27/R38 — per-parameter track rows + per-curve colours ──────────
+    // ─── per-parameter track rows + per-curve colours ──────────
 
     private void BuildTrackRows(WidgetTrigger? trigger, double h)
     {
@@ -1710,7 +1704,7 @@ public sealed partial class WidgetEditorView : UserControl
         }
     }
 
-    // R38 — distinct per-curve colour. Hue rotates by the golden angle so any
+    // Distinct per-curve colour. Hue rotates by the golden angle so any
     // number of tracks stay visually separated; functional track-tinting (à la
     // DaVinci / After Effects), not a brand palette.
     private static Brush CurveBrush(int index)
@@ -1760,7 +1754,7 @@ public sealed partial class WidgetEditorView : UserControl
         return path;
     }
 
-    // ─── R28 — double-click-to-add + Delete-key removal ──────────────────
+    // ─── double-click-to-add + Delete-key removal ──────────────────
 
     private void OnTimelineDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
@@ -1771,7 +1765,7 @@ public sealed partial class WidgetEditorView : UserControl
 
         var pos = e.GetPosition(TimelineSurface);
         // Resolve the row under the cursor (the track whose band contains Y).
-        // [LANE-C P1] Hit zone now maps 1:1 to the row's visual band (no ±2px
+        // Hit zone now maps 1:1 to the row's visual band (no ±2px
         // slop). The old ±2px margin was ambiguous at small track heights
         // (TrackMinHeight=10 → 20% of the row), letting a click on the boundary
         // resolve to the wrong row. Half-open interval [Top, Top+Height) so two
@@ -1832,7 +1826,7 @@ public sealed partial class WidgetEditorView : UserControl
 
     private void OnEditorKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        // R28 — Delete / Backspace removes the selected keyframe. Guarded on a
+        // Delete / Backspace removes the selected keyframe. Guarded on a
         // live selection so the key bubbling up from the graph canvas (node
         // delete) isn't shadowed when no keyframe is active.
         if ((e.Key == Windows.System.VirtualKey.Delete || e.Key == Windows.System.VirtualKey.Back)
@@ -1843,7 +1837,7 @@ public sealed partial class WidgetEditorView : UserControl
         }
     }
 
-    // ─── R39 — prev/next keyframe transport ──────────────────────────────
+    // ─── prev/next keyframe transport ──────────────────────────────
 
     private void OnPrevKeyframeClicked(object sender, RoutedEventArgs e) => StepToKeyframe(-1);
     private void OnNextKeyframeClicked(object sender, RoutedEventArgs e) => StepToKeyframe(+1);
@@ -1889,7 +1883,7 @@ public sealed partial class WidgetEditorView : UserControl
         double w = TimelineSurface.ActualWidth;
         if (w <= 0) return;
 
-        // QC52-03 — scrub math now goes through the zoom transform so the
+        // Scrub math now goes through the zoom transform so the
         // pointer X maps to the visible-window-relative time, not duration *
         // (x/w). Without this the playhead would jump to the full-duration
         // position regardless of how far we'd zoomed in.
@@ -1953,9 +1947,9 @@ public sealed partial class WidgetEditorView : UserControl
         }
     }
 
-    // ─── B27 keyframe right-click context menu ──────────────────────────
+    // ─── keyframe right-click context menu ──────────────────────────
     //
-    // Three items per the audit:
+    // Three items:
     //   - Delete           → removes the keyframe; pushes undo + marks dirty.
     //   - Edit Curve…      → opens CurveEditorDialog for fine-grained editing.
     //   - Cycle Curve      → walks Linear → EaseIn → EaseOut → Bezier → Step
@@ -2013,7 +2007,7 @@ public sealed partial class WidgetEditorView : UserControl
         args.Handled = true;
     }
 
-    // [LANE-C P1] Trigger-switch race guard. A keyframe captured in a context-
+    // Trigger-switch race guard. A keyframe captured in a context-
     // menu / drag closure can be acted on AFTER a trigger switch (e.g. the user
     // right-clicks a marker, then clicks a different trigger tab, then the menu
     // item fires). At that point ActiveTriggerObject is a DIFFERENT trigger, and
@@ -2042,7 +2036,7 @@ public sealed partial class WidgetEditorView : UserControl
 
     private void DeleteKeyframe(Keyframe kf)
     {
-        // [LANE-C P1] Race guard — confirm the captured keyframe is still on the
+        // Race guard — confirm the captured keyframe is still on the
         // active timeline before deleting (a trigger switch could have replaced it).
         if (ValidateKeyframeOnActiveTimeline(kf, "Delete keyframe") is not WidgetTimeline tl) return;
         if (_vm?.Document is { } doc) doc.PushUndo();
@@ -2066,7 +2060,7 @@ public sealed partial class WidgetEditorView : UserControl
         {
             var res = await dlg.ShowAsync();
             if (res != ContentDialogResult.Primary) return;
-            // [LANE-C P1] Trigger-switch race — the dialog is modal-async, so the
+            // Trigger-switch race — the dialog is modal-async, so the
             // user could have switched triggers (or deleted this keyframe) while
             // it was open. The dialog already wrote into `kf`, but if `kf` no
             // longer belongs to the active timeline we must NOT push undo / mark
@@ -2166,12 +2160,12 @@ public sealed partial class WidgetEditorView : UserControl
 
     private void CycleKeyframeCurve(Keyframe kf)
     {
-        // [LANE-C P1] Race guard — the context menu captured this keyframe; a
+        // Race guard — the context menu captured this keyframe; a
         // trigger switch between right-click and click would orphan it. Validate
         // it still belongs to the active timeline before mutating + dirtying.
         if (ValidateKeyframeOnActiveTimeline(kf, "Cycle curve") is null) return;
-        // Cycle ramp per audit B27 — Linear → EaseIn → EaseOut → EaseInOut →
-        // Bezier → Step → Linear. [LANE-C P3 R61] EaseInOut is now included in
+        // Cycle ramp — Linear → EaseIn → EaseOut → EaseInOut →
+        // Bezier → Step → Linear. EaseInOut is included in
         // the cycle so right-click discoverability reaches every preset (it was
         // previously dialog-only, which was undiscoverable from the menu).
         KeyframeCurve next = kf.Curve switch
@@ -2198,7 +2192,7 @@ public sealed partial class WidgetEditorView : UserControl
         RedrawTimeline();
     }
 
-    // ─── Lane B: layer id + active trigger helpers ───────────────────────
+    // ─── layer id + active trigger helpers ───────────────────────
 
     // Hub serves overlays under /layer/<file-stem>; LayerRegistry keys each
     // entry by the same stem. Layer.Name is the DISPLAY name and is NOT what Hub
@@ -2214,12 +2208,12 @@ public sealed partial class WidgetEditorView : UserControl
     private string ActiveTriggerName()
         => string.IsNullOrEmpty(_vm?.ActiveTrigger) ? "onStartup" : _vm!.ActiveTrigger;
 
-    // ─── Task 3: Test Run ────────────────────────────────────────────────
+    // ─── Test Run ────────────────────────────────────────────────
     //
     // Fire-and-forget VISUAL_TRIGGER for the active trigger over the bus so the
     // live OBS source executes it. Disabled when the bus is offline so an offline
     // click can't pile into the bounded outbound queue. Feedback goes to the
-    // status bar — no modal (feedback_no_modal_dialogs_for_repeatable_rejections).
+    // status bar — no modal.
     private async void OnTestRunClicked(object sender, RoutedEventArgs e)
     {
         if (!VisualistBusClient.Instance.IsConnected)
@@ -2325,7 +2319,7 @@ public sealed partial class WidgetEditorView : UserControl
         if (PreviewWidgetButton is not null) PreviewWidgetButton.IsEnabled = popoutEnabled && _vm?.SelectedWidget is not null;
     }
 
-    // ─── Task 7: embedded floating preview ───────────────────────────────
+    // ─── embedded floating preview ───────────────────────────────
 
     private void OnPreviewConfigChanged()
     {
@@ -2362,7 +2356,7 @@ public sealed partial class WidgetEditorView : UserControl
         try
         {
             await EmbeddedPreview.LoadAsync(layerId, widgetId);
-            // Track C — the ?widget= page loads on onStartup; once the widget is
+            // The ?widget= page loads on onStartup; once the widget is
             // (re)pointed, tell the preview which trigger the editor is actually
             // editing so the in-widget preview renders THAT sequence. This also
             // arms the trigger name the timeline-transport bridge (PostScrub /
@@ -2393,13 +2387,13 @@ public sealed partial class WidgetEditorView : UserControl
         SetStatus($"Preview width: {newWidth}px");
     }
 
-    // R6 — a node was selected/deselected in the graph; light (or clear) the
+    // A node was selected/deselected in the graph; light (or clear) the
     // matching manipulator in the embedded preview. SET_MANIPULATOR/CLEAR_MANIPULATOR
     // is posted to compositor.js by WidgetSinglePreviewPanel.SetActiveNode. The
     // layer/widget popouts host a LayerPreviewPanel (no per-node manipulator), so
     // only the embedded single-widget preview takes the active-node forward.
     //
-    // Track A — the same selection also drives the Inspector's typed per-node
+    // The same selection also drives the Inspector's typed per-node
     // NODE section. Setting VM.SelectedNode (null on deselect) rebuilds
     // SelectedNodeParams; InspectorPanel reacts to the SelectedNode
     // PropertyChanged and shows the NODE section in widget-editor mode (where
@@ -2409,7 +2403,7 @@ public sealed partial class WidgetEditorView : UserControl
     // surface must not suppress the Inspector update.
     private void OnGraphNodeSelectionChanged(Node? node)
     {
-        // Inspector routing (Track A) — always runs, even when there's no
+        // Inspector routing — always runs, even when there's no
         // embedded preview surface or no selected widget.
         if (_vm is not null) _vm.SelectedNode = node;
 
@@ -2510,13 +2504,13 @@ public sealed partial class WidgetEditorView : UserControl
         EmbeddedPreview.SetActiveNode(widgetId!, ActiveTriggerName(), node);
     }
 
-    // ─── Task 8: Preview Layer / Preview Widget popouts ──────────────────
+    // ─── Preview Layer / Preview Widget popouts ──────────────────
 
     private void OnPreviewLayerClicked(object sender, RoutedEventArgs e)
     {
         if (!VisualistUserConfig.Instance.EditorPopoutPreviewEnabled) return;
         if (ResolveLayerId() is null) { SetStatus("Preview unavailable — save the layer first."); return; }
-        // R22 — route through the shared pillar-owned popout so the editor and
+        // Route through the shared pillar-owned popout so the editor and
         // the layer-canvas command bar use one window.
         bool ok = FindPillarMainView()?.PreviewLayer() == true;
         SetStatus(ok ? "Opened layer preview." : "Could not open layer preview.");
@@ -2554,7 +2548,7 @@ public sealed partial class WidgetEditorView : UserControl
         }
     }
 
-    // ─── Task 6: timeline transport (TimelinePlayback) ───────────────────
+    // ─── timeline transport (TimelinePlayback) ───────────────────
 
     private void SyncPlaybackTimeline()
     {
@@ -2624,7 +2618,7 @@ public sealed partial class WidgetEditorView : UserControl
         // tracks the playhead. compositor.js applies SCRUB directly via the
         // LayerPreviewPanel message bridge.
         //
-        // Track C — the EMBEDDED single-widget preview also takes the scrub now.
+        // The EMBEDDED single-widget preview also takes the scrub now.
         // Its ?widget= page renders the active trigger (SET_ACTIVE_TRIGGER, see
         // the ActiveTrigger PropertyChanged case), and SCRUB samples that
         // trigger's graph at timeMs — so dragging the playhead animates the
@@ -2634,9 +2628,9 @@ public sealed partial class WidgetEditorView : UserControl
         string? widgetId = _vm?.SelectedWidget?.Id;
         if (!string.IsNullOrEmpty(widgetId))
         {
-            // R22 — bridge into the shared pillar-owned layer preview window.
+            // Bridge into the shared pillar-owned layer preview window.
             FindPillarMainView()?.ActiveLayerPreviewWindow?.Preview?.PostScrub(widgetId!, trig, timeMs);
-            // Track C — embedded in-widget preview follows the playhead too. It
+            // Embedded in-widget preview follows the playhead too. It
             // tracks its own widget id + active trigger (set on LoadAsync /
             // SetActiveTrigger), so the scrub call only carries the time.
             EmbeddedPreview?.PostScrub(timeMs);
@@ -2650,12 +2644,12 @@ public sealed partial class WidgetEditorView : UserControl
         string? widgetId = _vm?.SelectedWidget?.Id;
         var tl = _vm?.ActiveTriggerObject?.Timeline;
         if (string.IsNullOrEmpty(widgetId)) return;
-        // R22 — bridge into the shared pillar-owned layer preview window.
+        // Bridge into the shared pillar-owned layer preview window.
         var preview = FindPillarMainView()?.ActiveLayerPreviewWindow?.Preview;
         if (playing)
         {
             preview?.PostPlay(widgetId!, trig, tl?.DurationMs ?? 0, _playback?.Loop ?? false);
-            // Track C — animate the embedded in-widget preview in lockstep. It
+            // Animate the embedded in-widget preview in lockstep. It
             // already knows its widget + active trigger, so only duration + loop
             // are passed.
             EmbeddedPreview?.PostPlay(tl?.DurationMs ?? 0, _playback?.Loop ?? false);
@@ -2686,7 +2680,7 @@ public sealed partial class WidgetEditorView : UserControl
         }
     }
 
-    // ─── Task 4: status bar ──────────────────────────────────────────────
+    // ─── status bar ──────────────────────────────────────────────
 
     /// <summary>Surface a transient status message in the bottom strip and
     /// auto-clear it to "Ready" after ~5s. Public so other surfaces can feed
@@ -2721,7 +2715,7 @@ public sealed partial class WidgetEditorView : UserControl
         return t;
     }
 
-    // R16 — show/hide the docked media library rail (column 1). Default visible
+    // Show/hide the docked media library rail (column 1). Default visible
     // for discoverability; the toggle persists only for the session.
     private void OnMediaToggleClick(object sender, RoutedEventArgs e)
     {
@@ -2730,7 +2724,7 @@ public sealed partial class WidgetEditorView : UserControl
         if (MediaPanel is not null)  MediaPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    // ─── Track E — simple per-trigger audio mixer ────────────────────────
+    // ─── simple per-trigger audio mixer ────────────────────────
     //
     // A deliberately-minimal mixer: a MASTER fader bound to the active
     // WidgetTrigger.Volume (compositor.js multiplies every Audio.Play node's
@@ -2740,8 +2734,8 @@ public sealed partial class WidgetEditorView : UserControl
     //
     // Both fader kinds reuse the editor's existing undo/dirty/preview-refresh
     // discipline:
-    //   * node faders  → VM.CommitNodeAttribute(node, "Volume", value) (Track A
-    //     chokepoint: PushUndo → write → MarkDirty → visual refresh).
+    //   * node faders  → VM.CommitNodeAttribute(node, "Volume", value) (the
+    //     attribute-commit chokepoint: PushUndo → write → MarkDirty → visual refresh).
     //   * master fader → the same PushUndo → set → MarkDirty → NotifyActive-
     //     TriggerChanged → ReloadEmbeddedPreview path OnDurationChanged uses,
     //     with one undo entry per drag gesture (_masterVolumeGestureDirty).
@@ -2834,8 +2828,9 @@ public sealed partial class WidgetEditorView : UserControl
         return row;
     }
 
-    // Per-node row — edits the node's "Volume" attribute through the Track A
-    // chokepoint (VM.CommitNodeAttribute), which owns PushUndo/MarkDirty/refresh.
+    // Per-node row — edits the node's "Volume" attribute through the
+    // attribute-commit chokepoint (VM.CommitNodeAttribute), which owns
+    // PushUndo/MarkDirty/refresh.
     private FrameworkElement BuildNodeRow(Node node, string label)
     {
         double cur = ReadNodeVolume(node);
@@ -2915,7 +2910,7 @@ public sealed partial class WidgetEditorView : UserControl
     private static string FormatVolume(double v)
         => $"{Math.Clamp(v, 0, 1) * 100:0}%";
 
-    // Audio.Play stores "Volume" as a BARE scalar (matching the Track A scalar
+    // Audio.Play stores "Volume" as a BARE scalar (matching the scalar
     // commit convention); default 1.0 when absent or unparsable.
     private static double ReadNodeVolume(Node node)
     {

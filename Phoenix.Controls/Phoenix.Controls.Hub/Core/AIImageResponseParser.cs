@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    ///  — extracts the first image URL from an OpenAI
+    /// Extracts the first image URL from an OpenAI
     /// <c>/v1/images/generations</c> response. Lifted to a static
     /// helper so the response shape contract has a unit-testable
     /// surface independent of the live HTTP path.
@@ -44,12 +44,12 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC37-13 — extracts the first entry's <c>b64_json</c> payload when
+        /// Extracts the first entry's <c>b64_json</c> payload when
         /// the request set <c>response_format = "b64_json"</c>. Returns
         /// <c>null</c> on the same set of failure cases as <see cref="ExtractFirstUrl"/>
         /// (malformed body, missing data array, empty array, missing b64
         /// field, non-string value). Pairs with a future download-and-host
-        /// fix for the 1-hour SAS-expiry issue on DALL-E URLs (QC37-04).
+        /// fix for the 1-hour SAS-expiry issue on DALL-E URLs.
         /// </summary>
         public static string? ExtractFirstB64Json(string? responseBody)
         {

@@ -117,7 +117,7 @@ public sealed partial class InspectorField : UserControl
         if (IsReadOnly) return;
         bool next = !BoolValue;
         BoolValue = next;
-        // QC19-03 — mirror the text-field commit flow. Pre-fix the DP
+        // Mirror the text-field commit flow. Pre-fix the DP
         // flip was the only side-effect; nothing raised ValueChanged for
         // parents that wire to the event, and the control-level
         // WriteBack closure (if attached) never fired for the bool path.
@@ -149,7 +149,7 @@ public sealed partial class InspectorField : UserControl
 
     private void RenderValue(string raw)
     {
-        // ARCH-UI-D4 — empty pill chrome stays visible as a clickable
+        // Empty pill chrome stays visible as a clickable
         // affordance with NO placeholder text. The Border + MinWidth in
         // XAML keep the surface hit-targetable for double-tap-to-edit
         // even when ValueText is blank.

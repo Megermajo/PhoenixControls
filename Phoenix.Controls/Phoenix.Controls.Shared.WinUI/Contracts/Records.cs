@@ -8,14 +8,14 @@ public record LiveFeedEntry(
 
 public enum LiveFeedKind { Sub, Chat, Redeem, Raid, Visual, Follow }
 
-//  /  /  Redeem + Follow added so the filter
+// Redeem + Follow added so the filter
 // can target every kind LiveFeedKind emits — without them the feed
 // surfaced Redeem / Follow rows the UI had no way to filter to. New
 // values appended (not inserted) to preserve binary compatibility for
 // any persisted filter state that round-trips the underlying int.
 public enum LiveFeedFilter { All, Chat, Subs, Raids, Visual, Redeem, Follow }
 
-//  Role-vs-flags invariant — the model carries BOTH a single
+// Role-vs-flags invariant — the model carries BOTH a single
 // precedence-collapsed <see cref="ChatRole"/> AND the four original
 // Twitch IRC tag-bag bools (IsBroadcaster / IsMod / IsVip / IsSubscriber).
 // They are redundant by design, not a bug:
@@ -24,7 +24,7 @@ public enum LiveFeedFilter { All, Chat, Subs, Raids, Visual, Redeem, Follow }
 //     1:1 to the Twitch payload and survive role combinations
 //     (a Mod who is also a Sub, a Broadcaster who is also a VIP, etc.).
 //     RoleColorBrush.Resolve / ResolveGeometry / ResolveLabel key off
-//     them directly per feedback_chat_role_coloring.md.
+//     them directly.
 //
 //   * <see cref="ChatRole"/> is a DERIVED precedence collapse
 //     (Broadcaster > Mod > Vip > Sub > Viewer / Bot) used for coarse
@@ -38,11 +38,11 @@ public enum LiveFeedFilter { All, Chat, Subs, Raids, Visual, Redeem, Follow }
 // If you need to add a new role category, add it to the flag set first,
 // then extend ChatRole + ChatSource.ToRole. Never flip Role without
 // flipping the matching flag.
-// C20 (audit 2026-05-24) — distinct from `Phoenix.Controls.Shared.Models.ChatMessage`
+// Distinct from `Phoenix.Controls.Shared.Models.ChatMessage`
 // (a class with `Message`, used by the script runtime). THIS record is the WinUI-CHROME-FACING
 // chat envelope — its `Body` field is what `ChatRowVm.Body` reads. The script runtime never
 // sees this type; the Hub `ChatSource` adapter translates Models.ChatMessage → this record on
-// the way to the panel VM. Wave-4 audit workers tripped on the dual-type definition twice;
+// the way to the panel VM. The dual-type definition has tripped readers up;
 // this comment is preventive grep-bait so future spelunkers don't repeat the confusion.
 public record ChatMessage(
     DateTimeOffset Timestamp,
@@ -101,7 +101,7 @@ public enum ConnectionState { Disconnected, Connecting, Connected, Degraded, Err
 /// <see cref="IConnectionStatus"/> raised a transition.
 /// </summary>
 /// <remarks>
-///  Mirrors the three live properties on the contract
+/// Mirrors the three live properties on the contract
 /// (<see cref="IConnectionStatus.StreamerBot"/>,
 /// <see cref="IConnectionStatus.HudOverlay"/>,
 /// <see cref="IConnectionStatus.IpcBus"/>). Subscribers that only care
@@ -121,7 +121,7 @@ public enum ConnectionChannel
 /// subscribers can diff without re-snapshotting the aggregator.
 /// </summary>
 /// <remarks>
-///  Pre-R5 the event was a bare <c>EventHandler</c> with an
+/// Previously the event was a bare <c>EventHandler</c> with an
 /// <see cref="EventArgs.Empty"/> payload; subscribers had to re-read all
 /// three channels on every fire to figure out what changed. The new
 /// payload makes the transition self-describing — and the producer now

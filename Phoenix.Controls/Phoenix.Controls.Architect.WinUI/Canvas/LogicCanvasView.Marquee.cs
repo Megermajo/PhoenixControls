@@ -30,7 +30,7 @@ public sealed partial class LogicCanvasView
     private List<LinkViewModel>  _marqueeBaselineLinks  = new();
     private List<FrameViewModel> _marqueeBaselineFrames = new();
 
-    //  Frame-coalesced marquee apply state. Pre-fix every PointerMoved
+    // Frame-coalesced marquee apply state. Pre-fix every PointerMoved
     // event during a marquee drag (120 Hz on touchpads) directly called
     // ApplyMarqueeSelection which allocated 3 fresh Lists + per-Node Rect + 2
     // fresh HashSets and walked Nodes/Links/Frames. Now UpdateMarquee just
@@ -57,7 +57,7 @@ public sealed partial class LogicCanvasView
     // and translate them all together as the cursor moves.
     private List<(NodeViewModel Node, double X, double Y)> _groupDragStarts = new();
 
-    //  Stroke/fill the marquee per selection mode:
+    // Stroke/fill the marquee per selection mode:
     // Add → sage green, Remove → rust red, Replace/Toggle → selection gold.
     private void ApplyMarqueeModeVisual()
     {
@@ -95,7 +95,7 @@ public sealed partial class LogicCanvasView
             _marqueeOverlay = new Rectangle
             {
                 Stroke = stroke,
-                //  2px (was 1px) — a 1px gold dash was
+                // 2px (was 1px) — a 1px gold dash was
                 // weak on the dark canvas.
                 StrokeThickness = 2,
                 StrokeDashArray = new DoubleCollection { 4, 2 },
@@ -109,7 +109,7 @@ public sealed partial class LogicCanvasView
             OverlayLayer.Children.Add(_marqueeOverlay);
         }
 
-        //  Tint the rubber-band per mode so Add /
+        // Tint the rubber-band per mode so Add /
         // Remove / Replace+Toggle are distinguishable mid-drag. Pre-fix all
         // modes painted the same light-blue dashed rectangle regardless of
         // Add/Remove/Toggle/Replace mode (baseline Color.FromArgb(100, 180, 255)).
@@ -174,7 +174,7 @@ public sealed partial class LogicCanvasView
             bottomRightCanvas.X - topLeftCanvas.X,
             bottomRightCanvas.Y - topLeftCanvas.Y);
 
-        //  Defer ApplyMarqueeSelection to the next rendering tick.
+        // Defer ApplyMarqueeSelection to the next rendering tick.
         // Pre-fix this ran inline per PointerMoved (120 Hz on touchpads),
         // doing 3 List + 2 HashSet + per-Node Rect allocations every event.
         // Now the rendering tick reads _marqueeApplyDirty + the cached rect
@@ -185,7 +185,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Drained from <see cref="LogicCanvasView.OnRenderingTick"/>
+    /// Drained from <see cref="LogicCanvasView.OnRenderingTick"/>
     /// at frame cadence — applies any pending marquee selection exactly once
     /// per displayed frame regardless of how many PointerMoved events fired.
     /// </summary>
@@ -198,7 +198,7 @@ public sealed partial class LogicCanvasView
 
     private void EndMarquee()
     {
-        //  Drain any pending apply so the marquee's last cursor
+        // Drain any pending apply so the marquee's last cursor
         // position commits even if no rendering tick fired between the final
         // PointerMoved and EndMarquee. Without this a fast release-after-
         // move would leave the selection at one tick stale.
@@ -231,7 +231,7 @@ public sealed partial class LogicCanvasView
     {
         if (_vm is null) return;
 
-        //  Reusable hit buffers — cleared at entry, refilled with
+        // Reusable hit buffers — cleared at entry, refilled with
         // intersections, then composed via mode-aware buffers and pushed
         // to the VM. Avoids per-event List allocations.
         _marqueeNodeHitsBuffer.Clear();
@@ -442,7 +442,7 @@ public sealed partial class LogicCanvasView
     private void ApplyLinkSelection(IReadOnlyList<LinkViewModel> selected)
     {
         if (_vm is null) return;
-        //  Pre-fix this method ran an unconditional "every non-picked
+        // Pre-fix this method ran an unconditional "every non-picked
         // wire → IsSelected = false" pre-loop AND then SetSelectedLinks, which
         // internally also clears every currently-selected wire's flag. For
         // wires that were neither in the prior nor new selection the pre-loop
@@ -458,7 +458,7 @@ public sealed partial class LogicCanvasView
     private void ApplyFrameSelection(IReadOnlyList<FrameViewModel> selected)
     {
         if (_vm is null) return;
-        //  Same rationale as ApplyLinkSelection — SetSelectedFrames
+        // Same rationale as ApplyLinkSelection — SetSelectedFrames
         // already clears the prior selection flags before refilling, so the
         // pre-loop is redundant per-frame work during a marquee drag.
         _vm.SetSelectedFrames(selected);
@@ -477,7 +477,7 @@ public sealed partial class LogicCanvasView
         && a.Y < b.Y + b.Height && a.Y + a.Height > b.Y;
 
     /// <summary>
-    ///  Drop the lazily-allocated marquee overlay Rectangle from
+    /// Drop the lazily-allocated marquee overlay Rectangle from
     /// OverlayLayer.Children on canvas tear-down. Pre-fix the overlay was
     /// added to OverlayLayer the first time BeginMarquee ran and never
     /// removed — only Collapsed. With 0.10.0 multi-window Architect each

@@ -9,7 +9,7 @@ using Phoenix.Controls.Shared.Models;
 namespace Phoenix.Controls.Shared.Services
 {
     /// <summary>
-    ///  DPAPI-based at-rest protection for the nine secret fields on
+    /// DPAPI-based at-rest protection for the nine secret fields on
     /// <see cref="AppConfig"/> (Streamer.bot password, OpenAI / Anthropic /
     /// Cerebras API keys, Discord bot token, webhook secret, translation API
     /// key, WebSocket server token, remote pairing TLS cert path).
@@ -57,7 +57,7 @@ namespace Phoenix.Controls.Shared.Services
         /// </summary>
         public const string PrefixV2 = "dpapi:v2:";
 
-        //  App-scoped entropy. Pre-fix the wrap call passed
+        // App-scoped entropy. Pre-fix the wrap call passed
         // optionalEntropy: null, which means any same-user process —
         // browser extension via native messaging, opportunistic malware,
         // drive-by RAT — can ProtectedData.Unprotect the on-disk ciphertext
@@ -128,7 +128,7 @@ namespace Phoenix.Controls.Shared.Services
         /// Inverse of <see cref="Protect"/>. A value lacking either prefix is
         /// treated as legacy plaintext and returned unchanged (the migration
         /// path: next save re-wraps it). v1 values unwrap with null entropy
-        /// for backwards compatibility with pre-Sprint-11 config.json on
+        /// for backwards compatibility with legacy config.json on
         /// disk; v2 values unwrap with the app-scoped entropy. A value with
         /// a prefix whose body fails to decrypt is logged at CriticalError
         /// and returned as-is — see class docs for the rationale.

@@ -17,9 +17,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// disconnected library dialog cannot reach the host App.Resources at that
 /// moment, so it throws <c>XamlParseException</c>. This is the same defect that
 /// burned the Architect rail dialogs across release cycles 1.0.2–1.0.5; the
-/// pillar-local copy here mirrors Architect's <c>DialogTheme</c> per
-/// feedback_visualist_architect_chrome_independence (each pillar owns its own
-/// chrome helper).</para>
+/// pillar-local copy here mirrors Architect's <c>DialogTheme</c> because each
+/// pillar owns its own chrome helper.</para>
 ///
 /// <para><b>The reliable path.</b> Keep the dialog XAML free of directly-resolved
 /// resource markup and apply the theme here, from

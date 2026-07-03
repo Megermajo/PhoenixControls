@@ -15,14 +15,14 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 
 /// <summary>
-/// B26 (audit/winui-regressions-2026-05-24) — Visualist multi-window
+/// Visualist multi-window
 /// registry. Tracks every open Visualist sibling window so File → Open /
 /// drag-drop / recent-files can dedupe by absolute .phxlayer path
 /// (case-insensitive on Windows): a second open of the same file focuses
 /// the existing window instead of spawning a duplicate.
 ///
-/// Shape mirrors <c>Architect.WinUI/Services/ArchitectWindowRegistry.cs</c>
-/// per <c>feedback_visualist_architect_chrome_independence.md</c> — each
+/// Shape mirrors <c>Architect.WinUI/Services/ArchitectWindowRegistry.cs</c>;
+/// each
 /// pillar owns its own copy of the pattern rather than sharing code, so
 /// Visualist's live preview / layer keying needs can evolve independently
 /// of Architect's graph keying.

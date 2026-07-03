@@ -22,7 +22,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // into the host (LogicCanvasViewModel.LoadGraph) so node/link VM collections
 // rebind in lockstep.
 //
-//  — Operation entries: in addition to whole-graph snapshot
+// Operation entries: in addition to whole-graph snapshot
 // entries, callers may push callback-driven *operations* via
 // <see cref="CreateOperation"/>. These carry their own Undo / Redo
 // callbacks and live in the same undo stack as graph snapshots so Ctrl+Z
@@ -31,7 +31,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // tripping the (graph-only) JSON snapshot through the DB.
 public sealed class UndoRedoController
 {
-    //  Restored to 1000 to match the WinForms baseline
+    // Restored to 1000 to match the WinForms baseline
     // (Canvas.UndoRedo.cs MaxUndoStackDepth). The WinUI port had silently cut
     // it to 100 — a 10x reduction with no justification — so users could undo
     // 90% fewer operations than the prior shell. The baseline's note holds:
@@ -41,7 +41,7 @@ public sealed class UndoRedoController
     // nothing in the common case while honouring the authoring guarantee.
     private const int MaxHistoryDepth = 1000;
 
-    //  Secondary cap on the accumulated size of the
+    // Secondary cap on the accumulated size of the
     // JSON graph snapshots on the undo stack. Each Push serializes the WHOLE
     // graph, so a deep history of a large (e.g. 1000-node) graph could pin
     // 100 x ~1 MB ≈ 100 MB. This budget trims the OLDEST entries early when the
@@ -63,7 +63,7 @@ public sealed class UndoRedoController
     private readonly Stack<object> _redo = new();
     private bool _suppressed;
 
-    //  Running total of the UTF-16 byte size of every JSON
+    // Running total of the UTF-16 byte size of every JSON
     // snapshot string currently on the _undo stack (UndoOperation entries count
     // as 0). Maintained incrementally by Push / CreateOperation / TrimUndo /
     // Reset / Undo / Redo so TrimUndo's MaxHistoryBytes fast-path is O(1)
@@ -125,7 +125,7 @@ public sealed class UndoRedoController
     }
 
     /// <summary>
-    ///  (P1-A7) — push a callback-driven operation onto the same
+    /// Push a callback-driven operation onto the same
     /// undo stack the graph snapshots use. <paramref name="undo"/> reverses
     /// the side effect the caller has already applied; <paramref name="redo"/>
     /// reapplies it (so the redo stack can replay the change after Undo).
@@ -153,7 +153,7 @@ public sealed class UndoRedoController
     // carries both JSON snapshot strings and UndoOperation entries.
     private void TrimUndo()
     {
-        //  Enforce BOTH the depth cap and the byte budget,
+        // Enforce BOTH the depth cap and the byte budget,
         // using the cached _undoBytes accumulator instead of re-summing the
         // whole stack. Pre-fix this iterated every entry on EVERY Push /
         // CreateOperation (O(n) per push → quadratic over a session); the cache
@@ -191,7 +191,7 @@ public sealed class UndoRedoController
     {
         _undo.Clear();
         _redo.Clear();
-        _undoBytes = 0; //  keep the accumulator in step.
+        _undoBytes = 0; // keep the accumulator in step.
         RaiseCanExecuteChanged();
     }
 
@@ -199,10 +199,10 @@ public sealed class UndoRedoController
     {
         if (_undo.Count == 0) return false;
         var entry = _undo.Pop();
-        //  Keep the byte accumulator in step with
+        // Keep the byte accumulator in step with
         // the pop — TrimUndo's O(1) fast path depends on it (see _undoBytes).
         if (entry is string poppedSnap) _undoBytes -= (long)poppedSnap.Length * 2;
-        //  Track whether the redo mirror was pushed so a
+        // Track whether the redo mirror was pushed so a
         // failure can roll it back symmetrically with the popped undo entry.
         bool redoPushed = false;
         _suppressed = true;
@@ -227,7 +227,7 @@ public sealed class UndoRedoController
                     var current = JsonSerializer.Serialize(_capture(), s_opts);
                     _redo.Push(current);
                     redoPushed = true;
-                    //  Pre-fix this used
+                    // Pre-fix this used
                     // `?? new Graph()`, so a deserialisation that threw OR
                     // returned null silently replaced the live graph with an
                     // EMPTY one — total, irreversible data loss disguised as a
@@ -253,7 +253,7 @@ public sealed class UndoRedoController
         }
         catch (Exception ex)
         {
-            //  The entry was popped BEFORE the try; an
+            // The entry was popped BEFORE the try; an
             // uncaught throw here would permanently lose that undo state AND
             // propagate to the dispatcher (the keyboard handlers have no
             // try/catch). Roll back to a consistent state: pop the redo mirror
@@ -275,7 +275,7 @@ public sealed class UndoRedoController
     {
         if (_redo.Count == 0) return false;
         var entry = _redo.Pop();
-        //  Track the undo mirror push for symmetric rollback.
+        // Track the undo mirror push for symmetric rollback.
         bool undoPushed = false;
         // Snapshot the byte delta this re-push would add so a failure can undo
         // the accumulator change too.
@@ -301,7 +301,7 @@ public sealed class UndoRedoController
                     undoPushed = true;
                     undoBytesAdded = (long)current.Length * 2;
                     _undoBytes += undoBytesAdded;
-                    //  Same null-guard as Undo: never
+                    // Same null-guard as Undo: never
                     // replace the live graph with an empty one on a failed
                     // deserialise.
                     var graph = JsonSerializer.Deserialize<Graph>(json, s_opts);
@@ -322,7 +322,7 @@ public sealed class UndoRedoController
         }
         catch (Exception ex)
         {
-            //  Roll back the undo mirror and restore the
+            // Roll back the undo mirror and restore the
             // popped redo entry so Redo can be retried, then report failure.
             if (undoPushed && _undo.Count > 0)
             {
@@ -353,7 +353,7 @@ public sealed class UndoRedoController
     }
 
     /// <summary>
-    ///  — callback-driven entry on the undo stack. Carries its
+    /// Callback-driven entry on the undo stack. Carries its
     /// own Undo / Redo so the controller can reverse side effects that
     /// don't live in the captured Graph (e.g. SQLite cell writes that
     /// JSON snapshots would miss).

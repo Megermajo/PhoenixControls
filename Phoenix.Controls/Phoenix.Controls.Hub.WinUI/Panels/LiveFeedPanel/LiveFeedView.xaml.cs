@@ -20,7 +20,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     public LiveFeedViewModel ViewModel { get; }
     private bool _disposed;
 
-    // P1-21 — guard against Loaded re-firing on tab / pop-out reparents
+    // Guard against Loaded re-firing on tab / pop-out reparents
     // (panels detach + re-attach across pillar swaps, each cycle raises
     // Loaded again). Without this, FeedScrollViewer.ViewChanged accrues
     // duplicate subscriptions and the Dispose -= only removes one. Mirrors
@@ -38,7 +38,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     private double _prevVerticalOffset;
 
     // Hold the root-level wheel handler so Dispose can pair AddHandler with
-    // RemoveHandler — perf-review M23 parity with SystemLogView.
+    // RemoveHandler — parity with SystemLogView.
     private readonly PointerEventHandler _onRootWheelHandler;
 
     // HubWorkspaceView listens and opens a Window with a fresh panel instance.
@@ -48,12 +48,12 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     {
         ViewModel = viewModel;
         InitializeComponent();
-        // C1 (2026-05-14): VM owns its dispatcher via ctor injection — no
+        // VM owns its dispatcher via ctor injection — no
         // shared static slot to capture from the View side anymore.
         ApplyLocalizedStrings();
         ViewModel.Rows.CollectionChanged += OnRowsChanged;
         Loaded += OnViewLoaded;
-        //  Mirror the SystemLogView pattern: ActualThemeChanged fires
+        // Mirror the SystemLogView pattern: ActualThemeChanged fires
         // on OS high-contrast engage, parent RequestedTheme override, or a
         // future in-app settings toggle.
         ActualThemeChanged += OnActualThemeChanged;
@@ -71,7 +71,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
 
     private void OnViewLoaded(object sender, RoutedEventArgs e)
     {
-        // P1-21 — guard against Loaded re-firing on tab/pop-out reparents.
+        // Guard against Loaded re-firing on tab/pop-out reparents.
         // Subscribing ViewChanged on every Loaded would accumulate duplicate
         // handlers and the Dispose -= only removes one.
         if (_loadedHandlerRan) return;
@@ -123,7 +123,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     {
         if (_autoScrollPaused) return;
         if (_scrollRequestPending) return;
-        // [Hub panel audit 2026-05-31, Lane A P1] Guard the dispatcher (null on a
+        // Guard the dispatcher (null on a
         // pop-out/test host) and — critically — reset _scrollRequestPending if the
         // enqueue FAILS. The flag is otherwise only cleared inside the queued
         // callback; a failed TryEnqueue would leave it stuck true and permanently
@@ -137,7 +137,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
         {
             _scrollRequestPending = false;
             if (_autoScrollPaused) return;
-            // [Hub panel audit 2026-05-31, Lane A P1] The view can be torn down
+            // The view can be torn down
             // (pop-out tear-down / tab swap) between enqueue and dispatch, leaving
             // FeedScrollViewer disposed-or-null. Bail before touching it so a
             // genuine teardown isn't routed through the catch-all below (which
@@ -167,7 +167,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     }
 
     /// <summary>
-    ///  Runtime theme-swap handler — marshal RefreshBrushes onto the
+    /// Runtime theme-swap handler — marshal RefreshBrushes onto the
     /// UI thread (ActualThemeChanged usually fires there but stay defensive).
     /// </summary>
     private void OnActualThemeChanged(FrameworkElement sender, object args)
@@ -188,26 +188,26 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
         }
     }
 
-    // HUB-UX P1 — ToggleButton.Click handlers route into the VM. The
+    // ToggleButton.Click handlers route into the VM. The
     // chip's IsChecked is bound OneWay to ViewModel.Is*Selected so the
     // toggle state flows from VM truth on the way back, which keeps a
     // user double-clicking the same chip from toggling it OFF (the VM
     // never enters "no filter" — there's always a SelectedFilter).
     private void OnChipAllClick(object sender, RoutedEventArgs e)    => ViewModel.SelectAll();
-    //  OnChipChatClick retired alongside ChipChat — the source never
+    // OnChipChatClick retired alongside ChipChat — the source never
     // emits Kind=Chat by design (chat surfaces in the Chat panel).
     private void OnChipSubsClick(object sender, RoutedEventArgs e)   => ViewModel.SelectSubs();
     private void OnChipRaidsClick(object sender, RoutedEventArgs e)  => ViewModel.SelectRaids();
     private void OnChipVisualClick(object sender, RoutedEventArgs e) => ViewModel.SelectVisual();
-    //  Pair the new REDEEM + FOLLOW chips with VM selectors.
+    // Pair the new REDEEM + FOLLOW chips with VM selectors.
     private void OnChipRedeemClick(object sender, RoutedEventArgs e) => ViewModel.SelectRedeem();
     private void OnChipFollowClick(object sender, RoutedEventArgs e) => ViewModel.SelectFollow();
-    // B3 (audit 2026-05-24) — Errors chip handler. Mutually exclusive
+    // Errors chip handler. Mutually exclusive
     // with the other chips; the VM toggles via SelectErrors.
     private void OnChipErrorsClick(object sender, RoutedEventArgs e) => ViewModel.SelectErrors();
 
     /// <summary>
-    /// C5 (audit 2026-05-24) — Clear feed button. No confirmation dialog
+    /// Clear feed button. No confirmation dialog
     /// because the LiveFeed is non-destructive — every row reappears on
     /// restart from the source's persistent stream, and no on-disk data
     /// is touched. Mirrors SystemLog's confirm exception which only
@@ -220,7 +220,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// C5 (audit 2026-05-24) — row right-click menu. Copy row text
+    /// Row right-click menu. Copy row text
     /// (system clipboard) + "Filter to user: &lt;Who&gt;" / "Clear user
     /// filter" entries. Disabled-state on filter-to-user when the
     /// row has no Who value so the menu stays honest.
@@ -275,10 +275,10 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     private void OnPopOutClick(object sender, RoutedEventArgs e)
         => PopOutRequested?.Invoke(this, EventArgs.Empty);
 
-    // Hub UI sweep P2 — pop-out child dead-↗ fix. When this view is itself
+    // Pop-out child dead-↗ fix. When this view is itself
     // the content of a pop-out window, hide the ↗ button so pop-out
-    // spawning flows from the embedded workspace only. Post HUB-UX-D7
-    // (2026-05-14) the workspace allows arbitrary-depth fan-out, but
+    // spawning flows from the embedded workspace only. The workspace
+    // allows arbitrary-depth fan-out, but
     // anchoring spawning to the embedded panel keeps PopOutStateStore
     // single-rooted on the workspace.
     public void MarkAsPopOutChild() => PopOutButton.Visibility = Visibility.Collapsed;
@@ -292,16 +292,16 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     private void ApplyLocalizedStrings()
     {
         ChipAllLabel.Text    = Localizer.T("panel.livefeed.chip.all",    "ALL");
-        //  ChipChatLabel retired alongside the CHAT chip.
+        // ChipChatLabel retired alongside the CHAT chip.
         ChipSubsLabel.Text   = Localizer.T("panel.livefeed.chip.subs",   "SUBS");
         ChipRaidsLabel.Text  = Localizer.T("panel.livefeed.chip.raids",  "RAIDS");
         ChipVisualLabel.Text = Localizer.T("panel.livefeed.chip.visual", "VISUAL");
-        //  New REDEEM + FOLLOW chip labels.
+        // New REDEEM + FOLLOW chip labels.
         ChipRedeemLabel.Text = Localizer.T("panel.livefeed.chip.redeem", "REDEEM");
         ChipFollowLabel.Text = Localizer.T("panel.livefeed.chip.follow", "FOLLOW");
-        // B3 (audit 2026-05-24) — Errors chip label.
+        // Errors chip label.
         ChipErrorsLabel.Text = Localizer.T("panel.livefeed.chip.errors", "ERRORS");
-        // C5 (audit 2026-05-24) — Clear feed button label + tooltip.
+        // Clear feed button label + tooltip.
         ClearLabel.Text = Localizer.T("panel.livefeed.button.clear", "clear");
         ToolTipService.SetToolTip(ClearButton,
             Localizer.T("panel.livefeed.button.clear.tooltip",
@@ -317,7 +317,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
         AutomationProperties.SetName(ChipFollow, Localizer.T("panel.livefeed.chip.follow.aria", "Filter to follow events"));
         AutomationProperties.SetName(ChipErrors, Localizer.T("panel.livefeed.chip.errors.aria", "Filter to critical-error events"));
 
-        // Hub UI sweep 2026-05-22 — visible "pop-out" label next to the
+        // Visible "pop-out" label next to the
         // icon (matches SystemLogView pattern).
         PopOutLabel.Text = Localizer.T("panel.common.button.popout", "pop-out");
         ToolTipService.SetToolTip(PopOutButton,

@@ -19,7 +19,7 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        //  Explicit PerMonitorV2 prelude — WebView2 hosts on multi-monitor
+        // Explicit PerMonitorV2 prelude — WebView2 hosts on multi-monitor
         // setups with mixed DPI need this to keep the chrome from re-virtualizing
         // the browser surface during DPI changes. Must precede
         // ApplicationConfiguration.Initialize() and any window construction;
@@ -70,7 +70,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            //  Previously swallowed silently — a malformed or
+            // Previously swallowed silently — a malformed or
             // permission-locked url.txt would leave the user wondering
             // why the Viewer points at the default port. Surface it
             // through the central log so SystemLog / LiveFeed pick it up.

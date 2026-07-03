@@ -12,11 +12,11 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ScriptPanel;
 
 public sealed class ScriptRowVm : ObservableObject
 {
-    // Hub UI sweep P1 — exclude Twitch.ChatMessage event-trigger nodes
+    // Exclude Twitch.ChatMessage event-trigger nodes
     // upstream of ScriptStatusDot. The actual filter is enforced one layer
     // up in Hub.Core's ScriptManager.IsEventTriggerNode, which drops
     // "Twitch.ChatMessage" titles from the Trigger-phase lifecycle stream
-    // (project_script_window_redesign.md — chat would flood the view).
+    // (chat would otherwise flood the view).
     // ScriptHostMonitor.Live + the early-return on Phase==Trigger in this
     // file's ScriptViewModel.OnStatusChanged keep the dot inert for
     // decorative pings. This constant documents the contract at the
@@ -49,7 +49,7 @@ public sealed class ScriptRowVm : ObservableObject
             Raise(nameof(RowBackgroundBrush));
             Raise(nameof(HasError));
             Raise(nameof(EnableActionLabel));
-            // B5 (audit 2026-05-24) — re-raise QueueDepthText on every
+            // Re-raise QueueDepthText on every
             // Status change. StatusChanged fires on slot acquire/release
             // (Running / Finished / Queued / Error transitions), and the
             // depth is exactly the value that drifts across those —
@@ -78,14 +78,14 @@ public sealed class ScriptRowVm : ObservableObject
         _                   => "—",
     };
 
-    // Perf-review H9 (2026-05-14): static brush singletons. Previous code
+    // Static brush singletons. Previous code
     // allocated a fresh SolidColorBrush on every getter call — and the Status
     // setter raises 11 PropertyChanged events, so a busy script panel was
     // churning the brush count every metric tick. RowBackgroundBrush was the
     // worst offender: a new transparent SolidColorBrush per row per Raise.
-    // QC12-03: errored-row tint uses StatusRed (#E66464) family at 6% alpha.
+    // Errored-row tint uses StatusRed (#E66464) family at 6% alpha.
     //
-    //  Errored-row tint resolves through the StatusRedTintBrush
+    // Errored-row tint resolves through the StatusRedTintBrush
     // theme token (PhoenixDark.xaml). The hardcoded ARGB below is a defensive
     // fallback that matches the token literal — it only fires if the merged
     // dictionary fails to resolve the key (e.g. a test host without the
@@ -109,7 +109,7 @@ public sealed class ScriptRowVm : ObservableObject
     }
 
     /// <summary>
-    ///  Runtime theme-swap hook. Drops the cached errored-row tint
+    /// Runtime theme-swap hook. Drops the cached errored-row tint
     /// brush and re-raises StateBrush / RowBackgroundBrush PropertyChanged
     /// so x:Bind OneWay re-resolves both against the freshly-merged theme.
     /// StateBrush goes through <see cref="ScriptStatusDot.ResolveStateBrush"/>
@@ -125,7 +125,7 @@ public sealed class ScriptRowVm : ObservableObject
     }
 
     /// <summary>
-    ///  Drop the cached errored-row tint brush so the next
+    /// Drop the cached errored-row tint brush so the next
     /// <see cref="ResolveErrorRowTintBrush"/> call re-walks Application.Resources
     /// against the freshly-merged theme dictionary.
     /// </summary>
@@ -134,7 +134,7 @@ public sealed class ScriptRowVm : ObservableObject
         s_errorRowTintBrush = null;
     }
 
-    // QC12-02 — route through the shared resolver on ScriptStatusDot so the
+    // Route through the shared resolver on ScriptStatusDot so the
     // row text and the dot fill cannot drift apart. Previously the dot used
     // OkBrush (muted green) for Running while this property also used
     // OkBrush — but the design mandate is StatusGreenBrush (§2 Accents),
@@ -142,11 +142,11 @@ public sealed class ScriptRowVm : ObservableObject
     // function and they stay aligned by construction.
     public Brush StateBrush => ScriptStatusDot.ResolveStateBrush(_status.State);
 
-    // Hub UI sweep 2026-05-22 — format technical readouts with
+    // Format technical readouts with
     // InvariantCulture so the decimal separator is always "." regardless of
     // the user's OS locale. Pre-fix on a German install the CpuText rendered
     // as "40,9ms" (comma decimal) while RamText kept its no-decimal
-    // formatting, producing the locale-mixed look Majo's 0.10.6 report
+    // formatting, producing the locale-mixed look Majo's report
     // called out. The runtime number model is technical; the user is
     // reading milliseconds and bytes, not currency.
     public string CpuText => _status.State == ScriptState.Errored
@@ -160,7 +160,7 @@ public sealed class ScriptRowVm : ObservableObject
     public string RunsText => _status.RunCount.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// B5 (audit 2026-05-24) — concurrent-execution slot indicator
+    /// Concurrent-execution slot indicator
     /// formatted as "N / M" where N is the in-flight count and M the
     /// configured concurrency cap (or "∞" when unlimited). Reads
     /// ScriptManager.GetQueueDepth on every PropertyChanged tick — that
@@ -204,10 +204,10 @@ public sealed class ScriptRowVm : ObservableObject
 
     public bool HasError => _status.State == ScriptState.Errored;
 
-    // QC12-03 — errored-row highlight uses the StatusRed traffic-light color
+    // Errored-row highlight uses the StatusRed traffic-light color
     // (Design_Orders §2 Accents = 230,100,100 = #E66464) at ~6% alpha so the
     // tint matches the dot family rather than the muted ErrBrush. The static
-    // singleton (s_errorRowTintBrush) preserves the perf-review H9 fix —
+    // singleton (s_errorRowTintBrush) preserves the brush-singleton fix —
     // avoiding fresh brush allocation per PropertyChanged tick.
     public Brush RowBackgroundBrush =>
         _status.State == ScriptState.Errored ? ResolveErrorRowTintBrush() : s_transparentBrush;
@@ -215,7 +215,7 @@ public sealed class ScriptRowVm : ObservableObject
 
     private static string FormatBytes(long bytes)
     {
-        // Hub UI sweep 2026-05-22 — InvariantCulture so the decimal separator
+        // InvariantCulture so the decimal separator
         // is always "." regardless of the user's OS locale (see CpuText above).
         var inv = CultureInfo.InvariantCulture;
         if (bytes < 1024) return string.Format(inv, "{0}B", bytes);

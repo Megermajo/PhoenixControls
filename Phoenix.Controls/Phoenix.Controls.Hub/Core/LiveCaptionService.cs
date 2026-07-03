@@ -31,14 +31,14 @@ namespace Phoenix.Controls.Hub.Core
     {
         private const string ProcessName       = "LiveCaptions";
 
-        // M47 — adaptive poll cadence. Default fast rate while captions are flowing,
+        // Adaptive poll cadence. Default fast rate while captions are flowing,
         // slow rate after the same text has been read repeatedly (no one is talking).
         internal const int PollIntervalFastMs  = 250;
         internal const int PollIntervalSlowMs  = 1000;
         internal const int PollSlowThreshold   = 3;     // unchanged reads before slowing
         private  const int DiscoveryDelayMs    = 1500;  // wait after auto-launch for the UI to materialize
 
-        // M88 — give the in-flight UIA RPC time to return before we dispose its element.
+        // Give the in-flight UIA RPC time to return before we dispose its element.
         // UIA RPCs are not cancellable from C#, so a too-short wait leaves the call to
         // hit a disposed element with a NullReference / InvalidOperation / ObjectDisposed.
         // 1.5s is the Hub-shutdown budget: long enough for a healthy poll iteration to
@@ -46,7 +46,7 @@ namespace Phoenix.Controls.Hub.Core
         // a stuck UIA call doesn't keep the Hub.WinUI process alive past Window.Closed.
         private const int StopDrainTimeoutMs   = 1500;
 
-        // M89 — stale-element detection thresholds. Re-discover when either the element
+        // Stale-element detection thresholds. Re-discover when either the element
         // keeps throwing or it keeps returning the same text while the process is alive.
         internal const int RediscoverErrorThreshold      = 3;
         internal const int RediscoverSilentThreshold     = 10;
@@ -60,7 +60,7 @@ namespace Phoenix.Controls.Hub.Core
         private CancellationTokenSource? _cts;
         private Task? _loop;
 
-        // M48 — _captionElement is touched from the poll task and from Stop() on the
+        // _captionElement is touched from the poll task and from Stop() on the
         // calling thread; guard the reference (not the RPC) with this lock.
         private AutomationElement? _captionElement;
         private readonly object _sync = new();
@@ -88,7 +88,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             try { _cts?.Cancel(); } catch { }
 
-            // M88 — wait longer than the legacy 1s and tolerate a still-running RPC.
+            // Wait longer than the legacy 1s and tolerate a still-running RPC.
             // If the loop hasn't drained, log it at Communication-tier so the user
             // sees the rough shutdown without a crash.
             bool drained = false;
@@ -105,7 +105,7 @@ namespace Phoenix.Controls.Hub.Core
                     "LiveCaption", LogLevel.Communication);
             }
 
-            // M88 — disposing the UIA reference can race a late-arriving RPC result;
+            // Disposing the UIA reference can race a late-arriving RPC result;
             // swallow the documented exception types instead of crashing teardown.
             try { _cts?.Dispose(); }
             catch (ObjectDisposedException) { }
@@ -113,7 +113,7 @@ namespace Phoenix.Controls.Hub.Core
             _cts  = null;
             _loop = null;
 
-            // M48 — null the reference under lock so the poll task (if it survived
+            // Null the reference under lock so the poll task (if it survived
             // the drain) sees a consistent snapshot on its next iteration.
             lock (_sync) { _captionElement = null; }
 
@@ -124,7 +124,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task PollLoopAsync(CancellationToken ct)
         {
-            // M49 — short-circuit on Win10 / pre-22H2. The UIA discovery would otherwise
+            // Short-circuit on Win10 / pre-22H2. The UIA discovery would otherwise
             // spin forever waiting for a process that will never appear. Mirrors the
             // H59 auto-launch guard pattern.
             if (!IsLiveCaptionsSupported(Environment.OSVersion.Version))
@@ -163,7 +163,7 @@ namespace Phoenix.Controls.Hub.Core
 
                 try
                 {
-                    // M48 — snapshot the cached element under lock, then use the snapshot
+                    // Snapshot the cached element under lock, then use the snapshot
                     // lock-free. Never hold _sync across the UIA RPC (can block 100s of ms).
                     AutomationElement? snapshot;
                     lock (_sync) { snapshot = _captionElement; }
@@ -184,7 +184,7 @@ namespace Phoenix.Controls.Hub.Core
                         string text = ReadElementText(snapshot);
                         consecutiveErrors = 0; // a successful read clears the error streak
 
-                        // M89 — track raw read repetition independent of "did we publish";
+                        // Track raw read repetition independent of "did we publish";
                         // a stale element keeps returning the same text for many polls.
                         if (string.Equals(text, lastRaw, StringComparison.Ordinal))
                             consecutiveSameRaw++;
@@ -207,7 +207,7 @@ namespace Phoenix.Controls.Hub.Core
 
                             if (changed)
                             {
-                                // M47 — text changed: snap back to the fast cadence.
+                                // Text changed: snap back to the fast cadence.
                                 unchangedReads = 0;
                                 try { CaptionChanged?.Invoke(text); }
                                 catch (Exception subEx)
@@ -226,7 +226,7 @@ namespace Phoenix.Controls.Hub.Core
                             unchangedReads++;
                         }
 
-                        // M89 — silent staleness: same raw text for many polls AND the
+                        // Silent staleness: same raw text for many polls AND the
                         // process is still alive (so it isn't simply gone). Drop the
                         // cached element so the next iteration re-discovers it.
                         if (consecutiveSameRaw >= RediscoverSilentThreshold && IsLiveCaptionsRunning())
@@ -253,7 +253,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    // BH-037 — clean shutdown. Without this, the generic catch logged the
+                    // Clean shutdown. Without this, the generic catch logged the
                     // cancellation as a "poll error #N" and bumped the rediscovery counter,
                     // spuriously firing the rediscover branch on every Stop().
                     break;
@@ -264,7 +264,7 @@ namespace Phoenix.Controls.Hub.Core
                     HandleStaleError(ex, consecutiveErrors);
                 }
 
-                // M89 — error-based staleness: trigger rediscovery once we've seen
+                // Error-based staleness: trigger rediscovery once we've seen
                 // enough consecutive UIA failures. Keeps a one-off blip from churning
                 // the cache, but recovers from the language-change / minimize cases.
                 if (ShouldRediscover(consecutiveErrors, 0))
@@ -293,7 +293,7 @@ namespace Phoenix.Controls.Hub.Core
         // ── Adaptive poll cadence (M47) ──────────────────────────────────────
 
         /// <summary>
-        /// M47 — adaptive poll-rate helper. Returns the fast interval (250 ms) until
+        /// Adaptive poll-rate helper. Returns the fast interval (250 ms) until
         /// <see cref="PollSlowThreshold"/> consecutive reads have been unchanged, then
         /// drops to the slow interval (1000 ms) and stays there. Caller resets the
         /// counter to zero on any text change.
@@ -307,7 +307,7 @@ namespace Phoenix.Controls.Hub.Core
         // ── Stale-element detection (M89) ────────────────────────────────────
 
         /// <summary>
-        /// M89 — pure helper for the stale-element decision. Triggers rediscovery if
+        /// Pure helper for the stale-element decision. Triggers rediscovery if
         /// the UIA element has thrown <see cref="RediscoverErrorThreshold"/> times in
         /// a row, OR if it has returned identical text for <see cref="RediscoverSilentThreshold"/>
         /// consecutive polls (silent staleness — language change, minimize, etc.).
@@ -348,7 +348,7 @@ namespace Phoenix.Controls.Hub.Core
         /// unbound or mapped to something destructive (lock screen) AND the
         /// LiveCaptions process simply doesn't exist for UIA to find.
         ///
-        /// QC40-01 — promoted to public so the Hub.WinUI bootstrapper can pre-flight
+        /// Promoted to public so the Hub.WinUI bootstrapper can pre-flight
         /// the OS check at construction time. Without this, callers outside this
         /// assembly had to duplicate the build-number probe.
         /// </summary>
@@ -440,7 +440,7 @@ namespace Phoenix.Controls.Hub.Core
         /// slower but reaches windows on non-primary virtual desktops or otherwise
         /// nested under a non-direct child of the desktop root.
         ///
-        /// QC40-04 — previously, on a fast-path timeout we kicked off a second UIA
+        /// Previously, on a fast-path timeout we kicked off a second UIA
         /// RPC (Subtree) while the first (Children) was still in flight, holding
         /// two server slots and racing on the UIA RPC pool. We can't truly cancel
         /// a UIA call from C#, but we can flag the fast task as abandoned via a
@@ -462,7 +462,7 @@ namespace Phoenix.Controls.Hub.Core
                 try
                 {
                     var r = AutomationElement.RootElement.FindFirst(TreeScope.Children, pidCondition);
-                    // QC40-04 — once we've been abandoned, skip publishing the
+                    // Once we've been abandoned, skip publishing the
                     // result so we don't mutate a shared variable after the caller
                     // has moved on to the Subtree path.
                     if (fastCts.IsCancellationRequested) return null;
@@ -487,11 +487,11 @@ namespace Phoenix.Controls.Hub.Core
             }
             else
             {
-                // QC40-04 — abandon the fast task before kicking off Subtree so a
+                // Abandon the fast task before kicking off Subtree so a
                 // late-returning Children result is discarded inside the task body.
                 try { fastCts.Cancel(); } catch { }
 
-                // QC40-04 — properly observe the abandoned fast task to prevent
+                // Properly observe the abandoned fast task to prevent
                 // UnobservedTaskException tearing down the process. If the task
                 // body throws AFTER we've timed out, the unawaited exception would
                 // otherwise surface on TaskScheduler.UnobservedTaskException at GC
@@ -553,7 +553,7 @@ namespace Phoenix.Controls.Hub.Core
         [DllImport("user32.dll")]
         private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
-        // QC40-05 — one-shot guard for the unsupported-OS warning. Without it, a
+        // One-shot guard for the unsupported-OS warning. Without it, a
         // call site looping over PressWinCtrlL on Win10 would spam SystemLog with
         // the same line every iteration. Interlocked so a future multi-threaded
         // caller can't double-log either.
@@ -561,7 +561,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private static void PressWinCtrlL()
         {
-            // QC40-05 — defense-in-depth OS guard at the key-event call site.
+            // Defense-in-depth OS guard at the key-event call site.
             // PollLoopAsync already shorts on Win10/pre-22621 via IsLiveCaptionsSupported,
             // but a future refactor (or a direct unit-test call into this method) could
             // bypass that guard and synthesize the chord on a build where Win+Ctrl+L is

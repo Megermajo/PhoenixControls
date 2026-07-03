@@ -33,7 +33,7 @@ public sealed class LinkViewModel : ObservableObject
     private readonly Link _link;
     private readonly Graph _graph;
     private string _pathData = string.Empty;
-    private string _strokeColorHex = SocketPalette.HexFor(SocketDataType.Any); //  route via SocketPalette.HexFor(Any) instead of literal #A89683
+    private string _strokeColorHex = SocketPalette.HexFor(SocketDataType.Any); // route via SocketPalette.HexFor(Any) instead of literal #A89683
     private bool _isSelected;
     private bool _isHovered;
     private bool _isInvalid;
@@ -60,7 +60,7 @@ public sealed class LinkViewModel : ObservableObject
     // resolved once from the theme dictionary; the type-side brush refreshes
     // when the resolved socket type changes.
     private static SolidColorBrush? s_selectionBrushCached;
-    private SolidColorBrush _typeBrush = HexBrush(SocketPalette.HexFor(SocketDataType.Any)); //  route via SocketPalette.HexFor(Any) instead of literal 0xA89683
+    private SolidColorBrush _typeBrush = HexBrush(SocketPalette.HexFor(SocketDataType.Any)); // route via SocketPalette.HexFor(Any) instead of literal 0xA89683
 
     // Hover brush cache — the +20% brightness lift used to live inline in
     // the EffectiveStrokeBrush getter, allocating a fresh SolidColorBrush
@@ -386,7 +386,7 @@ public sealed class LinkViewModel : ObservableObject
     /// </summary>
     /// <returns>
     /// true if this link was dirty and got recomputed; false if it was clean
-    /// (a bool no-op).  The canvas's render-tick drain uses the
+    /// (a bool no-op). The canvas's render-tick drain uses the
     /// return to count actual recomputes so it can time-slice the pass —
     /// clean links cost nothing toward the per-tick budget.
     /// </returns>
@@ -490,7 +490,7 @@ public sealed class LinkViewModel : ObservableObject
         if (nowDangling) LogDanglingOnce();
         else
         {
-            //  Both endpoints resolved — reset the once-per-link
+            // Both endpoints resolved — reset the once-per-link
             // dangling-log guard so a future re-dangle (template re-add then
             // re-delete, undo of a delete then re-delete) re-logs once
             // instead of staying silent for the rest of the session.
@@ -546,13 +546,13 @@ public sealed class LinkViewModel : ObservableObject
         return 0;
     }
 
-    //  Drop the shared selection-brush cache so it
+    // Drop the shared selection-brush cache so it
     // re-resolves from the (theme-/HC-current) resource dictionary on the next
     // EffectiveStrokeBrush read. Called from the node-view theme-change handler.
     internal static void InvalidateThemeBrushCache() => s_selectionBrushCached = null;
 
     /// <summary>
-    ///  Repaint this wire's stroke in the current
+    /// Repaint this wire's stroke in the current
     /// theme: drop the per-instance hover caches and re-fire EffectiveStrokeBrush
     /// so a selected / hovered wire picks up the refreshed theme brushes. The
     /// canvas calls this for every link on a runtime theme / high-contrast switch.
@@ -581,7 +581,7 @@ public sealed class LinkViewModel : ObservableObject
             }
         }
         catch { /* designer / pre-app */ }
-        s_selectionBrushCached = new SolidColorBrush(ArchitectCanvasPalette.SelectionGold); //  route via ArchitectCanvasPalette.SelectionGold instead of literal 0xFFD700
+        s_selectionBrushCached = new SolidColorBrush(ArchitectCanvasPalette.SelectionGold); // route via ArchitectCanvasPalette.SelectionGold instead of literal 0xFFD700
         return s_selectionBrushCached;
     }
 
@@ -595,7 +595,7 @@ public sealed class LinkViewModel : ObservableObject
                 return b;
         }
         catch { /* designer / pre-app */ }
-        return new SolidColorBrush(ArchitectCanvasPalette.ErrRustRed); //  route via ArchitectCanvasPalette.ErrRustRed instead of literal 0xCB4D3F
+        return new SolidColorBrush(ArchitectCanvasPalette.ErrRustRed); // route via ArchitectCanvasPalette.ErrRustRed instead of literal 0xCB4D3F
     }
 
     private static SolidColorBrush HexBrush(string hex)

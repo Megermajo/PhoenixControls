@@ -192,7 +192,7 @@ internal static class PopOutStateStore
         }
     }
 
-    // ───  Auto-save on geometry change + per-window close ──────
+    // ─── Auto-save on geometry change + per-window close ──────
     //
     // Pre-fix: Save fired only from HubWorkspaceView.Dispose() (i.e. once
     // at app shutdown). Mid-session pop-out closes left no breadcrumb on
@@ -216,7 +216,7 @@ internal static class PopOutStateStore
         public Window Window = default!;
         public PopOutKind Kind;
         public DispatcherQueueTimer? Timer;
-        // [P1] Keep the AppWindow + the exact Changed delegate so a re-track
+        // Keep the AppWindow + the exact Changed delegate so a re-track
         // or Untrack can unsubscribe the prior handler instead of stacking
         // duplicate handlers on the same AppWindow.
         public AppWindow? AppWindow;
@@ -272,7 +272,7 @@ internal static class PopOutStateStore
                 if (s_tracked.TryGetValue(window, out var prior))
                 {
                     try { prior.Timer?.Stop(); } catch { /* best-effort */ }
-                    // [P1] Unsubscribe the prior handler so it stops firing
+                    // Unsubscribe the prior handler so it stops firing
                     // on every geometry change — otherwise re-tracks pile up
                     // handlers that all schedule redundant debounced saves.
                     if (prior.AppWindow is not null && prior.ChangedHandler is not null)
@@ -285,7 +285,7 @@ internal static class PopOutStateStore
 
             appWindow.Changed += entry.ChangedHandler;
 
-            //  Final save on Closed so a mid-session close drops
+            // Final save on Closed so a mid-session close drops
             // immediately, and a Hub crash later doesn't restore the now-
             // gone pop-out. Saves are best-effort (Save() already swallows
             // IO faults to a log entry).

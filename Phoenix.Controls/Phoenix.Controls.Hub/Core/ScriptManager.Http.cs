@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    //  Redact key fingerprints from the exception
+                    // Redact key fingerprints from the exception
                     // message before persisting / logging. Mirrors the AI
                     // command path (ScriptManager.AI.cs RedactSecretsForLog).
                     string redacted = RedactSecretsForLog(ex.Message);
@@ -72,7 +72,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    //  Redact key fingerprints before persisting.
+                    // Redact key fingerprints before persisting.
                     string redacted = RedactSecretsForLog(ex.Message);
                     await _engine.SetScriptVarAsync("result.api_response", "");
                     await _engine.SetScriptVarAsync("result.api_error",    redacted);
@@ -106,7 +106,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    //  Redact key fingerprints before persisting.
+                    // Redact key fingerprints before persisting.
                     string redacted = RedactSecretsForLog(ex.Message);
                     await _engine.SetScriptVarAsync("result.http_error", redacted);
                     GlobalLogger.Log($"HTTP POST Failed: {redacted}", "Script", LogLevel.CriticalError);
@@ -139,7 +139,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    //  Redact key fingerprints before persisting.
+                    // Redact key fingerprints before persisting.
                     string redacted = RedactSecretsForLog(ex.Message);
                     await _engine.SetScriptVarAsync("result.http_error", redacted);
                     GlobalLogger.Log($"HTTP PUT Failed: {redacted}", "Script", LogLevel.CriticalError);
@@ -174,7 +174,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    //  Redact key fingerprints before persisting.
+                    // Redact key fingerprints before persisting.
                     string redacted = RedactSecretsForLog(ex.Message);
                     await _engine.SetScriptVarAsync("result.http_error", redacted);
                     GlobalLogger.Log($"HTTP PATCH Failed: {redacted}", "Script", LogLevel.CriticalError);
@@ -190,7 +190,7 @@ namespace Phoenix.Controls.Hub.Core
                 try
                 {
                     using var req = new HttpRequestMessage(HttpMethod.Delete, url);
-                    // M35 — symmetric verb support: accept optional Body/ContentType/Headers
+                    // Symmetric verb support: accept optional Body/ContentType/Headers
                     // to match http.post / http.put. Manifest declares only Url; the
                     // optional trailing args stay raw-args side-channel.
                     if (args.Length >= 2 && !string.IsNullOrEmpty(args[1]))
@@ -208,7 +208,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    //  Redact key fingerprints before persisting.
+                    // Redact key fingerprints before persisting.
                     string redacted = RedactSecretsForLog(ex.Message);
                     await _engine.SetScriptVarAsync("result.http_error", redacted);
                     GlobalLogger.Log($"HTTP DELETE Failed: {redacted}", "Script", LogLevel.CriticalError);
@@ -218,7 +218,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // http.parse_json(json, path) — dot-path extraction, stores result in result.json_value
             // Example: http.parse_json("{\"temp\":22}", "temp")  →  result.json_value = "22"
-            // M36 — JSON keys may contain literal dots (e.g. "user.name"). The previous
+            // JSON keys may contain literal dots (e.g. "user.name"). The previous
             // tokenizer split on every '.', collapsing that into two segments. Now `\.`
             // (backslash-dot) escapes a literal dot inside a path segment so the right
             // key is addressable. Backslash-backslash (`\\`) escapes a literal backslash.

@@ -17,8 +17,7 @@ public sealed record VisualistHotkeyEntry(
 /// Visualist canvas hotkey catalog — single source of truth for the
 /// chord vocabulary surfaced inside both <c>LayerCanvasView</c> (widget
 /// composition) and <c>WidgetGraphCanvas</c> / <c>WidgetEditorView</c>
-/// (per-trigger node graphs). Per the chrome-independence rule
-/// (<c>feedback_visualist_architect_chrome_independence.md</c>) this is
+/// (per-trigger node graphs). Per the chrome-independence rule this is
 /// a deliberately separate copy from Architect's
 /// <c>ArchitectHotkeyCatalog</c>, even though the data shape is the same.
 /// </summary>

@@ -9,14 +9,12 @@ using Phoenix.Controls.Visualist.WinUI.Services;
 
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 
-// Visualist-side parallel of Architect's RecentFilesDialog. Kept duplicated
-// per feedback_visualist_architect_chrome_independence.md — dialog chrome is
-// paint code, not a cross-pillar service. The MRU backing
+// Visualist-side parallel of Architect's RecentFilesDialog. Kept duplicated —
+// dialog chrome is paint code, not a cross-pillar service. The MRU backing
 // (Phoenix.Controls.Visualist.WinUI.Services.RecentFiles) is also a pillar-
-// local copy of the same pattern. (TODO 2026-05-07 round 1 P2 PARTIAL —
-// completes the Recent Files surface for Visualist.)
+// local copy of the same pattern.
 //
-// [DIALOG-NO-XAML-FIX 2026-06-29] No .xaml / InitializeComponent — a
+// No .xaml / InitializeComponent — a
 // code-constructed library ContentDialog (Visualist.WinUI) throws
 // XamlParseException at Application.LoadComponent when `new`'d detached
 // (proven by the 1.0.6 runtime stack trace; resource stripping never helped

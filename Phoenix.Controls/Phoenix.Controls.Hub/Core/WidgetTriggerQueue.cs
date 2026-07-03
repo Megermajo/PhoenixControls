@@ -15,7 +15,7 @@ namespace Phoenix.Controls.Hub.Core
     public delegate Task LayerDispatchDelegate(string layerId, object payload, CancellationToken ct);
 
     /// <summary>
-    /// [QC18-S4 cluster B] Clock + delay seam for the idle-loop watchdog.
+    /// Clock + delay seam for the idle-loop watchdog.
     ///
     /// The watchdog (<see cref="WidgetTriggerQueue.IdleLoopWatchdogAsync"/>) polls
     /// for inactivity on a background task. In production that polling is driven by
@@ -49,7 +49,7 @@ namespace Phoenix.Controls.Hub.Core
     }
 
     /// <summary>
-    /// [QC18-S4 cluster B] Production <see cref="IIdleLoopClock"/>: real wall-clock
+    /// Production <see cref="IIdleLoopClock"/>: real wall-clock
     /// time and a real <see cref="Task.Delay(TimeSpan, CancellationToken)"/>.
     /// <see cref="NotifyCycleCompleted"/> is a no-op — nothing in production
     /// observes idle-loop poll cycles. The deterministic observer lives only in
@@ -100,7 +100,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly Task _pump;
         private readonly int _completionTimeoutMs;
 
-        // [QC18-S4 cluster B] Clock seam for the idle-loop watchdog. Defaults to
+        // Clock seam for the idle-loop watchdog. Defaults to
         // the real system clock (SystemIdleLoopClock); tests inject a fake to make
         // the watchdog's poll cycle deterministic. Only the idle-loop path reads
         // this — the enqueue/evict path (cluster C) is untouched.
@@ -111,7 +111,7 @@ namespace Phoenix.Controls.Hub.Core
         private TriggerInvocation? _inFlight;
         private readonly object _inFlightLock = new();
 
-        // [QC18-S4 P1-4] Serializes the pre-emptive head-pop + TryWrite sequence in
+        // Serializes the pre-emptive head-pop + TryWrite sequence in
         // EnqueueAsync. Without it, two concurrent producers observing Count >= 256
         // can each TryRead a different head, then both TryWrite — the second write
         // triggers DropOldest, silently evicting an invocation whose awaiter we
@@ -134,7 +134,7 @@ namespace Phoenix.Controls.Hub.Core
         // ──────────────────────────────────────────────────────────────────────────
         private volatile bool _idleLoopEnabled = false;
         private int _idleLoopSeconds = DefaultIdleLoopSeconds;
-        // [QC18-S4 P1-5] Plain DateTime writes are not guaranteed atomic per ECMA-335
+        // Plain DateTime writes are not guaranteed atomic per ECMA-335
         // (8-byte struct on a 32-bit runtime can tear). Store the ticks as a long
         // and gate writes/reads through Interlocked so the idle-loop watchdog never
         // observes a torn timestamp.
@@ -161,22 +161,22 @@ namespace Phoenix.Controls.Hub.Core
             _widgetId = widgetId;
             _dispatch = dispatch;
             _registry = registry;
-            // [P1] Guard against zero/negative completion timeouts — a negative
+            // Guard against zero/negative completion timeouts — a negative
             // value flows into Task.Delay(_completionTimeoutMs, ...) in PumpAsync
             // and throws ArgumentOutOfRangeException, faulting the trigger instead
             // of timing out gracefully as the contract promises.
             if (completionTimeoutMs <= 0)
                 throw new ArgumentOutOfRangeException(nameof(completionTimeoutMs), "Completion timeout must be positive.");
             _completionTimeoutMs = completionTimeoutMs;
-            // [QC18-S4 cluster B] Default to the real system clock; tests inject a fake.
+            // Default to the real system clock; tests inject a fake.
             _idleLoopClock = idleLoopClock ?? new SystemIdleLoopClock();
-            // BH-032 — bounded channel so a hung dispatcher can't grow the buffer
+            // Bounded channel so a hung dispatcher can't grow the buffer
             // indefinitely under chat-rate triggers. Wait mode means TryWrite returns
             // false on overflow; the existing fail path in EnqueueAsync surfaces an
             // InvalidOperationException to the caller. Cap chosen as a generous safety
             // net (chat is ~10/s peak; 256 buffers ~25s of queued work before
             // back-pressure surfaces).
-            // QC05-04 — pair FullMode with the writer mode. The pump uses
+            // Pair FullMode with the writer mode. The pump uses
             // TryWrite (a sync writer), so a Wait full-mode produces no
             // back-pressure: TryWrite returns false on overflow and the
             // previous error path threw "WidgetTriggerQueue is shut down."
@@ -209,7 +209,7 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
             _idleLoopSeconds  = inactivitySeconds;
-            // [QC18-S4 cluster B] Seed the inactivity window through the clock seam
+            // Seed the inactivity window through the clock seam
             // so a fake clock fully controls the watchdog's notion of "now".
             Interlocked.Exchange(ref _lastActivityUtcTicks, _idleLoopClock.UtcNow.Ticks);
             _idleLoopEnabled  = true;
@@ -225,7 +225,7 @@ namespace Phoenix.Controls.Hub.Core
         /// arrives for that invocation (or the hard-timeout fires). The returned Task's result
         /// is `true` on real completion and `false` on timeout.
         ///
-        /// QC05-04 — under DropOldest, TryWrite always returns true while the channel
+        /// Under DropOldest, TryWrite always returns true while the channel
         /// is open and silently evicts the head invocation when the buffer is full.
         /// We log the eviction via GlobalLogger so operators can see when triggers
         /// fall behind, and complete the evicted invocation's Done TCS with
@@ -239,7 +239,7 @@ namespace Phoenix.Controls.Hub.Core
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var invocation = new TriggerInvocation(triggerName, eventData, waitId, tcs);
 
-            // [QC18-S2 P1] When the channel is at capacity, DropOldest would
+            // When the channel is at capacity, DropOldest would
             // silently evict the head invocation on the next TryWrite — but
             // Channel<T> doesn't expose the evicted item to a callback, so its
             // awaiter would hang for the full 10-second hard-timeout. Pre-fix
@@ -256,7 +256,7 @@ namespace Phoenix.Controls.Hub.Core
             // (TriggerVisualAndWaitAsync collapses false → return false → the
             // script's visual.trigger reports `completed=false`).
             //
-            // [QC18-S4 P1-4] Serialise the pop+TryWrite pair under _enqueueLock so
+            // Serialise the pop+TryWrite pair under _enqueueLock so
             // concurrent producers can't race past the cap check and have
             // DropOldest silently evict a *different* invocation between our pop
             // and our write. Inside the monitor only one producer at a time
@@ -296,7 +296,7 @@ namespace Phoenix.Controls.Hub.Core
             lock (_inFlightLock) current = _inFlight;
             if (current is null) return false;
 
-            // M61 — waitId is the strong correlation token. When it's present, both
+            // waitId is the strong correlation token. When it's present, both
             // sides MUST match it; when it's absent, the triggerName fallback applies
             // ONLY if the in-flight invocation also has no waitId. Previously the
             // empty-waitId path was matching on triggerName alone, which routed
@@ -322,7 +322,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 await foreach (var inv in _channel.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
                 {
-                    // [QC18-S4 P1-7] Publish the invocation as in-flight BEFORE the
+                    // Publish the invocation as in-flight BEFORE the
                     // IsLayerActive check. Previously, the check + TrySetResult(true)
                     // fast-success path ran with _inFlight still null, so a real
                     // VISUAL_COMPLETE arriving in the same window (NotifyComplete-
@@ -342,7 +342,7 @@ namespace Phoenix.Controls.Hub.Core
                         // succeed instead of waiting the full hard timeout.
                         if (_registry is not null && !_registry.IsLayerActive(_layerId))
                         {
-                            // [QC18-S4 P1-7] Route through the same NotifyComplete
+                            // Route through the same NotifyComplete
                             // matcher a real browser-side echo would use, so any
                             // tied real completion sharing this invocation's TCS
                             // wins idempotently. NotifyComplete's TrySetResult is
@@ -390,7 +390,7 @@ namespace Phoenix.Controls.Hub.Core
                                     triggerName = inv.TriggerName,
                                     timeoutMs   = _completionTimeoutMs,
                                 };
-                                // [QC18-S2 P1] Route through AsyncErrorBoundary — the
+                                // Route through AsyncErrorBoundary — the
                                 // bare _ = Bus.Instance.BroadcastAsync(...) outlier was
                                 // the only WIDGET_TIMEOUT broadcast that didn't fan
                                 // its faults into the standard log surface (BroadcastAsync
@@ -463,7 +463,7 @@ namespace Phoenix.Controls.Hub.Core
             // a second or two of the deadline, not millisecond-precise. Tests can
             // use a small IdleLoopSeconds to drive the path quickly.
             //
-            // [QC18-S4 cluster B] All time reads and the inter-poll wait go through
+            // All time reads and the inter-poll wait go through
             // _idleLoopClock so a fake clock can drive the cycle deterministically.
             // The production clock is the real system clock, so behaviour is
             // identical to before this seam was introduced.
@@ -536,7 +536,7 @@ namespace Phoenix.Controls.Hub.Core
                 inv.Done.TrySetCanceled();
             lock (_inFlightLock) _inFlight?.Done.TrySetCanceled();
 
-            // [P1 swarm-audit 2026-05-29] The _pump / _idleWatchdog tasks capture
+            // The _pump / _idleWatchdog tasks capture
             // _cts.Token. Previously Stop() disposed _cts immediately after Cancel()
             // without waiting for those tasks to observe cancellation and exit — a
             // use-after-free race where a still-running task touches the disposed CTS.

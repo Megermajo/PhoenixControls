@@ -75,7 +75,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (entries == null || entries.Count == 0) return 0;
             int count = 0;
-            // BH-035 — snapshot the token at queue time so each task observes the CTS that
+            // Snapshot the token at queue time so each task observes the CTS that
             // was alive when its schedule was registered. Reading `_cts.Token` lazily inside
             // the lambda made each Reload() bind queued tasks to the FRESH (uncancelled)
             // token, so Stop() never actually stopped the previous-generation tasks and
@@ -107,7 +107,7 @@ namespace Phoenix.Controls.Hub.Core
             if (string.IsNullOrEmpty(logicPath) || !Directory.Exists(logicPath)) return 0;
 
             int count = 0;
-            // BH-035 — same snapshot rationale as StartConfigSchedules.
+            // Same snapshot rationale as StartConfigSchedules.
             var token = _cts.Token;
             string[] files;
             try { files = Directory.GetFiles(logicPath, "*.phx"); }
@@ -227,7 +227,7 @@ namespace Phoenix.Controls.Hub.Core
                 // ── Mode 1: RunAt (once at a specific time) ──────────────
                 if (!string.IsNullOrWhiteSpace(entry.RunAt))
                 {
-                    // M30 — DateTimeOffset.Now folds the local offset in so a RunAt with
+                    // DateTimeOffset.Now folds the local offset in so a RunAt with
                     // a timezone designator resolves without DST skip/double-fire.
                     if (DateTimeOffset.TryParse(entry.RunAt, out DateTimeOffset fireAt))
                     {
@@ -257,7 +257,7 @@ namespace Phoenix.Controls.Hub.Core
                     int fireCount = 0;
                     while (!ct.IsCancellationRequested)
                     {
-                        // P0-5 — compute next occurrence + wait-delta in UTC (DST safety).
+                        // Compute next occurrence + wait-delta in UTC (DST safety).
                         DateTime next = GetNextCronOccurrence(entry.CronExpression, DateTime.UtcNow);
                         if (next == DateTime.MaxValue) return; // invalid cron, already logged
                         TimeSpan wait = next - DateTime.UtcNow;
@@ -283,7 +283,7 @@ namespace Phoenix.Controls.Hub.Core
                     Username = "scheduler",
                     Message  = $"#{scriptName}"
                 };
-                // Audit fix — populate the Schedule node payload outputs: Timestamp
+                // Populate the Schedule node payload outputs: Timestamp
                 // (all modes, ISO-8601 fire time) and Count (Recurring/interval running
                 // fire number). Previously {event.timestamp}/{event.count} resolved empty.
                 var extraVars = new System.Collections.Generic.Dictionary<string, string>
@@ -356,7 +356,7 @@ namespace Phoenix.Controls.Hub.Core
             string dayField = fields[2];
             string dowField = fields[4];
 
-            // Hub_CodeReview #16 — Vixie cron rule: when EITHER day-of-month OR
+            // Vixie cron rule: when EITHER day-of-month OR
             // day-of-week is `*`, the candidate matches if the other one matches
             // (AND semantics). When BOTH fields are restricted, EITHER one matching
             // is enough (OR semantics). The previous code unconditionally AND-ed,
@@ -418,7 +418,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (field == "L")
                 return candidate.Day == DateTime.DaysInMonth(candidate.Year, candidate.Month);
-            // BH-036 — day-of-month starts at 1 in Vixie cron, so `*/5` resolves to
+            // Day-of-month starts at 1 in Vixie cron, so `*/5` resolves to
             // 1, 6, 11, 16, 21, 26, 31 — not 5, 10, 15, 20, 25, 30.
             return FieldMatches(field, candidate.Day, fieldMin: 1);
         }
@@ -456,7 +456,7 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>Returns true if <paramref name="value"/> satisfies a cron field expression (no # or L).</summary>
         /// <param name="fieldMin">
-        /// BH-036 — per-field minimum used as the start when the step expression is `*/n`.
+        /// Per-field minimum used as the start when the step expression is `*/n`.
         /// Minute/hour/dow start at 0; day-of-month and month start at 1. The previous code
         /// hard-coded 0, which made `*/5` on the day field match 5,10,15,20,25,30 instead of
         /// the standard 1,6,11,16,21,26,31. Same defect on the month field.

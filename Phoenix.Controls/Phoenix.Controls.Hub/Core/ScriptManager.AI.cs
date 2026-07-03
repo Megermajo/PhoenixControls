@@ -17,7 +17,7 @@ namespace Phoenix.Controls.Hub.Core
     // result.ai_flagged / result.ai_category contracts preserved.
     public partial class ScriptManager
     {
-        //  Provider error bodies (OpenAI / Anthropic / Cerebras /
+        // Provider error bodies (OpenAI / Anthropic / Cerebras /
         // Ollama) routinely echo back the leading and/or trailing characters
         // of the failing API key inside `"error.message"` strings — partial
         // key fingerprints that, when persisted into SystemHistory via
@@ -52,7 +52,7 @@ namespace Phoenix.Controls.Hub.Core
                 RegexOptions.Compiled);
 
         /// <summary>
-        ///  Strips API keys and bearer tokens from a provider
+        /// Strips API keys and bearer tokens from a provider
         /// response body before it is logged or persisted. Idempotent
         /// (running the output through it again is a no-op) and
         /// allocation-cheap on the happy path (no matches → returns the
@@ -80,7 +80,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// [ / P1-24] Exception-walking overload of
+        /// Exception-walking overload of
         /// <see cref="RedactSecretsForLog(string)"/>. Walks the InnerException
         /// chain (cap 5, same bound as <see cref="GlobalLogger"/>'s cascade
         /// formatter) and applies the same redaction regex to each leaf's
@@ -120,7 +120,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (string.IsNullOrEmpty(userPrompt)) return null;
                 string model = !string.IsNullOrWhiteSpace(modelArg)
                     ? modelArg : ConfigManager.Current.DefaultAIModel;
-                // QC37-02 — max_tokens flows from AppConfig.AiMaxTokens
+                // max_tokens flows from AppConfig.AiMaxTokens
                 // (default 2048) so the cap is tunable per install instead
                 // of being hardcoded to 1024.
                 int aiMaxTokens = ConfigManager.Current.AiMaxTokens > 0
@@ -129,7 +129,7 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     string response;
                     string stopReason = "";
-                    //  Provider routing goes through AIProviderRouter
+                    // Provider routing goes through AIProviderRouter
                     // so the prefix rules (claude- with hyphen, not bare
                     // "claude*") match the single source of truth. The bare
                     // .StartsWith("claude", ...) check this replaced would have
@@ -157,7 +157,7 @@ namespace Phoenix.Controls.Hub.Core
                         response = doc.RootElement
                             .GetProperty("content")[0]
                             .GetProperty("text").GetString() ?? "";
-                        // QC37-02 — surface Anthropic's stop_reason
+                        // Surface Anthropic's stop_reason
                         // (end_turn / max_tokens / stop_sequence / tool_use)
                         // so scripts can branch on cap-hit vs clean stop.
                         if (doc.RootElement.TryGetProperty("stop_reason", out var srEl) &&
@@ -195,7 +195,7 @@ namespace Phoenix.Controls.Hub.Core
                         response = firstChoice
                             .GetProperty("message")
                             .GetProperty("content").GetString() ?? "";
-                        // QC37-02 — surface OpenAI's finish_reason as the
+                        // Surface OpenAI's finish_reason as the
                         // same result.stop_reason var so authored scripts
                         // see one contract across providers (stop / length
                         // / content_filter / tool_calls / function_call).
@@ -211,7 +211,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24] Persist a redacted error to the
+                    // Persist a redacted error to the
                     // script var contract, but route the original exception
                     // (with InnerException chain + stack) through
                     // GlobalLogger.Error so the in-memory ring buffer carries
@@ -224,7 +224,7 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            //  — ai.generate_image(prompt, model?, size?). Calls
+            // ai.generate_image(prompt, model?, size?). Calls
             // OpenAI's /v1/images/generations endpoint (DALL-E family).
             // Synchronous (no streaming surface — the API returns a single
             // image URL once generation completes). Result contract:
@@ -261,7 +261,7 @@ namespace Phoenix.Controls.Hub.Core
                 try
                 {
                     string apiKey = ConfigManager.Current.OpenAIApiKey;
-                    // QC37-04 — request b64_json so the image bytes ride in
+                    // Request b64_json so the image bytes ride in
                     // the response. The SAS URL OpenAI otherwise returns
                     // expires after one hour (Azure Blob signature), so any
                     // script that persisted result.ai_image_url for later
@@ -293,7 +293,7 @@ namespace Phoenix.Controls.Hub.Core
                         return null;
                     }
 
-                    // QC37-04 — prefer b64_json; download the URL if the
+                    // Prefer b64_json; download the URL if the
                     // provider ignored response_format. Bytes get written
                     // under the file sandbox so file.* commands can read
                     // them with the same chroot rules.
@@ -342,7 +342,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     catch (Exception wex)
                     {
-                        // [ / P1-24] Persist a short message to the
+                        // Persist a short message to the
                         // script var, route the full exception (chain + stack)
                         // through GlobalLogger.Error.
                         await _engine.SetScriptVarAsync("result.ai_image_error", $"Failed to persist DALL-E image: {wex.Message}");
@@ -363,7 +363,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    // [ / P1-24] redacted summary to var,
+                    // redacted summary to var,
                     // full exception (chain + stack) to GlobalLogger.Error.
                     string redacted = RedactSecretsForLog(ex);
                     await _engine.SetScriptVarAsync("result.ai_image_error", redacted);
@@ -373,7 +373,7 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            //  — ai.with_tools(systemPrompt, userPrompt, toolsJson, model?).
+            // ai.with_tools(systemPrompt, userPrompt, toolsJson, model?).
             // Single-shot OpenAI chat-completions with the `tools` field
             // populated. The model decides whether to answer in plain text
             // or to emit one or more tool_call entries on the assistant
@@ -396,7 +396,7 @@ namespace Phoenix.Controls.Hub.Core
             //
             // First slice is single-shot only. The multi-turn loop where
             // the script returns a tool result and the model continues
-            // is a follow-up sprint — once the script has decided what
+            // is a follow-up — once the script has decided what
             // to do with the calls, it would issue a second ai.with_tools
             // passing the prior assistant turn + tool results in a future
             // ToolHistoryVar arg. Authoring that multi-turn shape needs
@@ -413,7 +413,7 @@ namespace Phoenix.Controls.Hub.Core
                 string userPrompt      = bound?.GetOrDefault<string>("UserPrompt", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
                 string toolsJson       = bound?.GetOrDefault<string>("Tools", ArgOrEmpty(args, 2)) ?? ArgOrEmpty(args, 2);
                 string modelArg        = bound?.GetOrDefault<string>("Model", ArgOrEmpty(args, 3)) ?? ArgOrEmpty(args, 3);
-                // QC37-05 — tool_choice / parallel_tool_calls. Optional,
+                // tool_choice / parallel_tool_calls. Optional,
                 // both default to "omit" so the API's own defaults stand.
                 // tool_choice accepts "auto" | "none" | "any" (Anthropic
                 // spelling, normalised to "required" for OpenAI) | a JSON
@@ -452,7 +452,7 @@ namespace Phoenix.Controls.Hub.Core
                             toolsDoc.Dispose();
                             return null;
                         }
-                        // QC37-08 — also validate each tool entry's
+                        // Also validate each tool entry's
                         // function.parameters payload. The parameters
                         // field is itself a JSON SCHEMA object (not a
                         // string), so the test is "is it an object" —
@@ -481,7 +481,7 @@ namespace Phoenix.Controls.Hub.Core
                         return null;
                     }
                 }
-                // QC37-05 — validate tool_choice up front. Accept:
+                // Validate tool_choice up front. Accept:
                 //   ""               → omit (API default)
                 //   "auto" | "any" | "none" | "required"
                 //                    → OpenAI accepts these as bare strings;
@@ -549,7 +549,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                 }
 
-                // QC37-05 — parallel_tool_calls is a boolean. Empty → omit.
+                // parallel_tool_calls is a boolean. Empty → omit.
                 bool? parallelToolCalls = null;
                 if (!string.IsNullOrWhiteSpace(parallelToolArg))
                 {
@@ -583,7 +583,7 @@ namespace Phoenix.Controls.Hub.Core
                         sb.Append(",\"tools\":");
                         sb.Append(toolsDoc.RootElement.GetRawText());
                     }
-                    // QC37-05 — splice tool_choice / parallel_tool_calls when
+                    // Splice tool_choice / parallel_tool_calls when
                     // the script set them; otherwise omit so the API default
                     // applies (OpenAI defaults: tool_choice=auto when tools
                     // present, parallel_tool_calls=true).
@@ -611,8 +611,8 @@ namespace Phoenix.Controls.Hub.Core
                     string body = await ReadCappedAsync(resp, _engine.ExecutionToken).ConfigureAwait(false);
                     if (!resp.IsSuccessStatusCode)
                     {
-                        // QC37-06 / QC37-07 — rich error kind + Retry-After contract.
-                        // QC07-04 — body may carry key fingerprints; redact before composing detail.
+                        // Rich error kind + Retry-After contract.
+                        // Body may carry key fingerprints; redact before composing detail.
                         string redactedBody = RedactSecretsForLog(body);
                         string errKind = ClassifyAiErrorKind("OpenAI", (int)resp.StatusCode, redactedBody);
                         string detail  = ComposeAiErrorMessage("OpenAI", (int)resp.StatusCode, redactedBody, errKind);
@@ -646,7 +646,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    // [ / P1-24] redacted to var, full ex (chain + stack) to GlobalLogger.Error.
+                    // redacted to var, full ex (chain + stack) to GlobalLogger.Error.
                     string redacted = RedactSecretsForLog(ex);
                     await _engine.SetScriptVarAsync("result.ai_error", redacted);
                     await _engine.SetScriptVarAsync("result.ai_done",  "true");
@@ -660,7 +660,7 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            //  — ai.vision_describe(prompt, imageUrl, model?). Calls
+            // ai.vision_describe(prompt, imageUrl, model?). Calls
             // OpenAI's chat completions with a multi-modal user message
             // (text + image_url content parts). Single-shot — the result
             // is small enough that streaming buys nothing here. Result
@@ -688,7 +688,7 @@ namespace Phoenix.Controls.Hub.Core
                         string.IsNullOrEmpty(prompt) ? "prompt is empty" : "imageUrl is empty");
                     return null;
                 }
-                // QC37-09 — reject local-file references. OpenAI's vision API
+                // Reject local-file references. OpenAI's vision API
                 // happily accepts `file://` URLs but the server can't read
                 // them, so it would silently 400. Worse, with a future
                 // self-hosted gateway, a `file://` path could be exfiltrated
@@ -732,8 +732,8 @@ namespace Phoenix.Controls.Hub.Core
                     string body = await ReadCappedAsync(resp, _engine.ExecutionToken).ConfigureAwait(false);
                     if (!resp.IsSuccessStatusCode)
                     {
-                        // QC37-06 / QC37-07 — same kind + Retry-After contract.
-                        // QC07-04 — redact body before composing detail to keep key fingerprints out of the persisted error.
+                        // Same kind + Retry-After contract.
+                        // Redact body before composing detail to keep key fingerprints out of the persisted error.
                         string redactedBody = RedactSecretsForLog(body);
                         string errKind = ClassifyAiErrorKind("OpenAI", (int)resp.StatusCode, redactedBody);
                         string detail  = ComposeAiErrorMessage("OpenAI", (int)resp.StatusCode, redactedBody, errKind);
@@ -758,7 +758,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    // [ / P1-24] redacted to var, full ex (chain + stack) to GlobalLogger.Error.
+                    // redacted to var, full ex (chain + stack) to GlobalLogger.Error.
                     string redacted = RedactSecretsForLog(ex);
                     await _engine.SetScriptVarAsync("result.ai_error", redacted);
                     GlobalLogger.Error("Script", $"ai.vision_describe failed (model={model}): {redacted}", ex);
@@ -780,11 +780,11 @@ namespace Phoenix.Controls.Hub.Core
                     req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                     using var resp = await SendWithManualRedirectAsync(req, _engine.ExecutionToken).ConfigureAwait(false);
                     string body = await ReadCappedAsync(resp, _engine.ExecutionToken).ConfigureAwait(false);
-                    // QC37 — HTTP-status check before parsing, mirroring
+                    // HTTP-status check before parsing, mirroring
                     // ai.prompt / ai.generate_image. A 4xx/5xx body is not the
                     // moderation JSON shape, so JsonDocument.Parse would throw
                     // (or worse, parse a confusingly-shaped error object); fail
-                    // explicitly with a redacted detail instead. QC07-04 — the
+                    // explicitly with a redacted detail instead. The
                     // body may carry key fingerprints, so redact before it
                     // crosses the persist boundary into result.ai_error.
                     if (!resp.IsSuccessStatusCode)
@@ -797,7 +797,7 @@ namespace Phoenix.Controls.Hub.Core
                         return null;
                     }
                     using var doc = JsonDocument.Parse(body);
-                    // [P1 swarm-audit 2026-05-29] Guard against a missing/empty "results"
+                    // Guard against a missing/empty "results"
                     // array — indexing [0] on an absent or empty array throws and the
                     // (otherwise-caught) failure left no result vars set. Surface an
                     // explicit error result instead.
@@ -823,15 +823,15 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     await _engine.SetScriptVarAsync("result.ai_flagged",  flagged.ToString().ToLower());
                     await _engine.SetScriptVarAsync("result.ai_category", topCategory);
-                    // QC37 — clear result.ai_error on the success path so the
+                    // Clear result.ai_error on the success path so the
                     // node's Error output reads empty after a clean call,
                     // matching the sibling convention (ai.prompt line ~209).
                     await _engine.SetScriptVarAsync("result.ai_error",    "");
                 }
                 catch (Exception ex)
                 {
-                    // [ / P1-24] redacted summary in label, full ex (chain + stack) to GlobalLogger.Error.
-                    // QC37 — also persist the redacted summary to result.ai_error
+                    // redacted summary in label, full ex (chain + stack) to GlobalLogger.Error.
+                    // Also persist the redacted summary to result.ai_error
                     // so the node's Error output surfaces the failure inline
                     // (mirrors ai.prompt). The un-redacted exception still rides
                     // the GlobalLogger.Error ring buffer for diagnostics.
@@ -842,8 +842,8 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            //  — ai.stream_text(system, user, model?). OpenAI-only
-            // for the first slice (the TODO calls out "ship one provider at
+            // ai.stream_text(system, user, model?). OpenAI-only
+            // for the first slice ("ship one provider at
             // a time"). Streams Server-Sent Events from
             // /v1/chat/completions with stream=true; on each delta:
             //   * accumulates result.ai_response with the cumulative text
@@ -855,13 +855,13 @@ namespace Phoenix.Controls.Hub.Core
             // result.ai_error carries the message; result.ai_done still
             // flips so consumers know the stream is closed.
             //
-            // Decisions taken (per the AI overhaul TODO):
+            // Decisions taken:
             //   * Provider first: OpenAI (most-deployed, cleanest streaming
-            //     API); Anthropic + Ollama follow in later sprints.
+            //     API); Anthropic + Ollama follow later.
             //   * Streaming surface: hybrid — cumulative result.ai_response
             //     for scripts that just want the final, AI_CHUNK bus events
             //     for scripts / overlays that want chunk-by-chunk.
-            //   * Conversation memory: NOT in scope this sprint. The streaming
+            //   * Conversation memory: NOT in scope yet. The streaming
             //     surface lands first; memory is a follow-up that wraps this
             //     command in a Var pipe-string of prior turns.
             _engine.RegisterCommand("ai.stream_text", async (args) =>
@@ -870,7 +870,7 @@ namespace Phoenix.Controls.Hub.Core
                 string systemPrompt = bound?.GetOrDefault<string>("SystemPrompt", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 string userPrompt   = bound?.GetOrDefault<string>("UserPrompt", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
                 string modelArg     = bound?.GetOrDefault<string>("Model", ArgOrEmpty(args, 2)) ?? ArgOrEmpty(args, 2);
-                //  — MemoryVar. When non-empty, names a Var
+                // MemoryVar. When non-empty, names a Var
                 // key whose JSON-array-of-{role,content} payload becomes the
                 // chat history prepended to this request and is updated
                 // after completion. Empty = single-shot (prior behaviour).
@@ -884,12 +884,12 @@ namespace Phoenix.Controls.Hub.Core
                 string model = !string.IsNullOrWhiteSpace(modelArg)
                     ? modelArg
                     : (string.IsNullOrWhiteSpace(ConfigManager.Current.DefaultAIModel) ? "gpt-4o-mini" : ConfigManager.Current.DefaultAIModel);
-                //  Provider routing routes through AIProviderRouter
+                // Provider routing routes through AIProviderRouter
                 // so prefix rules (claude- with hyphen, ollama/, cerebras/)
                 // come from one source of truth. The earlier inline
                 // .StartsWith("claude", ...) check would mis-route a
                 // crafted "claudeai" model name onto the Anthropic key.
-                //  — provider routing: claude- prefix → Anthropic,
+                // Provider routing: claude- prefix → Anthropic,
                 // ollama/ prefix → local daemon, cerebras/ prefix →
                 // Cerebras OpenAI-wire-compatible API, anything else →
                 // OpenAI. All four produce the same downstream surface
@@ -905,7 +905,7 @@ namespace Phoenix.Controls.Hub.Core
                 await _engine.SetScriptVarAsync("result.ai_done",     "false");
                 await _engine.SetScriptVarAsync("result.ai_error",    "");
 
-                //  — load prior conversation history if MemoryVar is
+                // Load prior conversation history if MemoryVar is
                 // set. Read straight from DB so the lookup works
                 // even when the script never wrote {var.<memoryVar>} as a
                 // template reference (which would have triggered the engine's
@@ -934,7 +934,7 @@ namespace Phoenix.Controls.Hub.Core
                         // message_delta / message_stop). Text deltas ride
                         // on content_block_delta with delta.type ==
                         // "text_delta" and delta.text carrying the chunk.
-                        //  — system prompt rides the dedicated
+                        // System prompt rides the dedicated
                         // `system` field; prior turns go into `messages`
                         // before the new user turn.
                         string apiKey = ConfigManager.Current.AnthropicKey;
@@ -944,7 +944,7 @@ namespace Phoenix.Controls.Hub.Core
                             anthropicMessages.Add(new { role = t.Role, content = t.Content });
                         }
                         anthropicMessages.Add(new { role = "user", content = userPrompt });
-                        // QC37-02 — max_tokens from AppConfig.AiMaxTokens
+                        // max_tokens from AppConfig.AiMaxTokens
                         // (default 2048) instead of the previous hardcoded
                         // 4096; same cap as ai.prompt so the single-shot
                         // and streaming paths agree.
@@ -977,11 +977,11 @@ namespace Phoenix.Controls.Hub.Core
                         // loopback port". The "ollama/" prefix on the
                         // model is stripped before forwarding so
                         // authored Model strings stay readable.
-                        //  — Ollama messages array gets the system
+                        // Ollama messages array gets the system
                         // prompt first, then prior turns, then the new user
                         // turn. Same shape as OpenAI / Cerebras so swapping
                         // providers doesn't reshape the prompt.
-                        //  Prefix already stripped by AIProviderRouter.
+                        // Prefix already stripped by AIProviderRouter.
                         string ollamaModel = providerOutboundModel;
                         string baseUrl = (ConfigManager.Current.OllamaUrl ?? "http://localhost:11434").TrimEnd('/');
                         // Ollama merges system prompt by including it as
@@ -1013,7 +1013,7 @@ namespace Phoenix.Controls.Hub.Core
                     {
                         // OpenAI Chat Completions streaming — line-by-line
                         // SSE with `data: {choices:[{delta:{content:"..."}}]}`
-                        // and a sentinel `data: [DONE]`.  —
+                        // and a sentinel `data: [DONE]`.
                         // Cerebras rides this same parser since its API
                         // is OpenAI-wire-compatible; only the host and
                         // bearer key differ. The "cerebras/" prefix is
@@ -1026,7 +1026,7 @@ namespace Phoenix.Controls.Hub.Core
                         {
                             apiKey        = ConfigManager.Current.CerebrasApiKey;
                             url           = "https://api.cerebras.ai/v1/chat/completions";
-                            //  Prefix already stripped by AIProviderRouter.
+                            // Prefix already stripped by AIProviderRouter.
                             outboundModel = providerOutboundModel;
                             label         = "Cerebras";
                         }
@@ -1037,7 +1037,7 @@ namespace Phoenix.Controls.Hub.Core
                             outboundModel = providerOutboundModel;
                             label         = "OpenAI";
                         }
-                        //  — same OpenAI / Cerebras message shape;
+                        // Same OpenAI / Cerebras message shape;
                         // memory turns ride between the system prompt and
                         // the new user turn.
                         var openAIMessages = new List<object>(priorTurns.Count + 2)
@@ -1049,7 +1049,7 @@ namespace Phoenix.Controls.Hub.Core
                             openAIMessages.Add(new { role = t.Role, content = t.Content });
                         }
                         openAIMessages.Add(new { role = "user", content = userPrompt });
-                        // QC37-02 — same AiMaxTokens cap applied to the
+                        // Same AiMaxTokens cap applied to the
                         // OpenAI / Cerebras streaming body so all providers
                         // honour the same per-install ceiling.
                         int openAiMaxTokens = ConfigManager.Current.AiMaxTokens > 0
@@ -1068,7 +1068,7 @@ namespace Phoenix.Controls.Hub.Core
                         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
                     }
 
-                    //  Stream via the shared _http instance (AllowAutoRedirect=false)
+                    // Stream via the shared _http instance (AllowAutoRedirect=false)
                     // and follow redirects manually, stripping Authorization / x-api-key /
                     // anthropic-version on cross-host hops so a malicious 3xx can't exfiltrate
                     // the bearer token. The shared client also fixes the per-call socket leak
@@ -1078,15 +1078,15 @@ namespace Phoenix.Controls.Hub.Core
                     if (!resp.IsSuccessStatusCode)
                     {
                         string err = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        // QC37-06 — Ollama 404 with body matching `model "X"
+                        // Ollama 404 with body matching `model "X"
                         // not found` is the "model not installed" signal,
                         // distinct from "daemon down" (which surfaces as a
                         // transport-layer HttpRequestException, caught below).
                         // Classify so scripts can branch on result.ai_error_kind.
-                        // QC37-07 — same status block parses Retry-After when
+                        // Same status block parses Retry-After when
                         // the API returned 429 so the script can surface an
                         // accurate cool-down hint via result.ai_retry_after.
-                        // QC07-04 — redact err body before composing so key fingerprints don't reach SystemHistory.
+                        // Redact err body before composing so key fingerprints don't reach SystemHistory.
                         string redactedErr = RedactSecretsForLog(err);
                         string errorKind = ClassifyAiErrorKind(label, (int)resp.StatusCode, redactedErr);
                         string detail = ComposeAiErrorMessage(label, (int)resp.StatusCode, redactedErr, errorKind);
@@ -1104,11 +1104,11 @@ namespace Phoenix.Controls.Hub.Core
 
                     using var stream = await resp.Content.ReadAsStreamAsync(_engine.ExecutionToken).ConfigureAwait(false);
 
-                    // QC37-02 — collect the terminal stop / finish reason
+                    // Collect the terminal stop / finish reason
                     // as the stream completes so scripts can branch on
                     // length-capped vs clean completion.
                     string stopReason = "";
-                    // QC37-01 — error payload surfaced by Anthropic's
+                    // Error payload surfaced by Anthropic's
                     // `event: error` SSE frame. Non-empty means the stream
                     // ended abnormally; we set result.ai_error AND log
                     // through GlobalLogger.Error (no modal dialog per the
@@ -1156,7 +1156,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     else
                     {
-                        // QC37-01 — SSE path runs through the byte-level
+                        // SSE path runs through the byte-level
                         // event reader. Handles CRLF / LF line endings,
                         // multi-byte UTF-8 glyphs straddling socket reads,
                         // and surfaces the SSE event name so Anthropic
@@ -1172,7 +1172,7 @@ namespace Phoenix.Controls.Hub.Core
                             if (body == "[DONE]") break;
                             if (string.IsNullOrEmpty(body)) continue;
 
-                            // QC37-01 — Anthropic surfaces typed errors as
+                            // Anthropic surfaces typed errors as
                             // an `event: error` with the payload on `data:`.
                             // OpenAI / Cerebras don't use `event: error` —
                             // they fail at the HTTP layer (caught above) or
@@ -1203,7 +1203,7 @@ namespace Phoenix.Controls.Hub.Core
                                     }
                                     else if (evType == "message_delta")
                                     {
-                                        // QC37-02 — terminal `message_delta`
+                                        // Terminal `message_delta`
                                         // carries the final stop_reason
                                         // (end_turn / max_tokens /
                                         // stop_sequence / tool_use).
@@ -1235,7 +1235,7 @@ namespace Phoenix.Controls.Hub.Core
                                 }
                                 else
                                 {
-                                    // R5 (audit 2026-06-03): a malformed/unexpected chunk lacking
+                                    // A malformed/unexpected chunk lacking
                                     // "choices"/"delta" previously threw KeyNotFoundException — which
                                     // the inner `catch (JsonException)` does NOT catch — aborting the
                                     // ENTIRE stream (and losing all later valid chunks) on one bad
@@ -1245,7 +1245,7 @@ namespace Phoenix.Controls.Hub.Core
                                         || choices.ValueKind != JsonValueKind.Array
                                         || choices.GetArrayLength() == 0) continue;
                                     var firstChoice = choices[0];
-                                    // QC37-02 — capture finish_reason if
+                                    // Capture finish_reason if
                                     // present on this chunk (OpenAI puts it
                                     // on the last delta-chunk; null on
                                     // intermediate chunks).
@@ -1275,7 +1275,7 @@ namespace Phoenix.Controls.Hub.Core
                         }
                     }
 
-                    // QC37-01 — funnel any provider-emitted error payload to
+                    // Funnel any provider-emitted error payload to
                     // the same script-result + logger path as transport
                     // failures. No modal dialog (feedback rule:
                     // repeatable-rejection guardrails log, never pop).
@@ -1292,12 +1292,12 @@ namespace Phoenix.Controls.Hub.Core
 
                     await _engine.SetScriptVarAsync("result.ai_response", sb.ToString());
                     await _engine.SetScriptVarAsync("result.ai_done",     "true");
-                    // QC37-02 — surface terminal stop / finish reason.
+                    // Surface terminal stop / finish reason.
                     // Local-only (SetLocalResultVar) so it lives on the
                     // script's vars dict without persisting to the Vars
                     // table — same scope as the other AI result.* sentinels.
                     _engine.SetLocalResultVar("result.stop_reason", stopReason);
-                    //  — append the (user, assistant) pair to the
+                    // Append the (user, assistant) pair to the
                     // memory var if one was named. Trimmed to the default
                     // turn cap to bound token cost on long-running streams.
                     if (useMemory)
@@ -1309,7 +1309,7 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) { throw; }
                 catch (HttpRequestException hex)
                 {
-                    // QC37-06 — transport-layer failure (connection refused,
+                    // Transport-layer failure (connection refused,
                     // DNS, timeout). For Ollama specifically this is the
                     // "daemon not running" signal: the loopback connect
                     // refuses before any HTTP exchange. Surface a kind so
@@ -1331,7 +1331,7 @@ namespace Phoenix.Controls.Hub.Core
                     await _engine.SetScriptVarAsync("result.ai_error",      msg);
                     await _engine.SetScriptVarAsync("result.ai_error_kind", errorKind);
                     await _engine.SetScriptVarAsync("result.ai_done",  "true");
-                    // [ / P1-24] HttpRequestException stacks are
+                    // HttpRequestException stacks are
                     // load-bearing for diagnosing transport faults (DNS / TLS /
                     // refused-connect frames live in InnerException). Carry the
                     // full chain on the log entry; the user-visible label still
@@ -1340,8 +1340,8 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
-                    // QC37-06 + QC07-04 — surface exception kind for scripts and redact ex.Message for persistence.
-                    // [ / P1-24] redacted summary still lands in the
+                    // Surface exception kind for scripts and redact ex.Message for persistence.
+                    // The redacted summary still lands in the
                     // script var; the un-redacted exception chain rides on the
                     // GlobalLogger.Error path so SystemHistory's stack trace
                     // stays diagnostic.
@@ -1360,7 +1360,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC37-09 — vetting for ai.vision_describe imageUrl. Allow only:
+        /// Vetting for ai.vision_describe imageUrl. Allow only:
         /// <list type="bullet">
         ///   <item><description><c>https://…</c> (any host)</description></item>
         ///   <item><description><c>http://localhost</c> / <c>http://127.0.0.1</c> (Hub-local proxies)</description></item>
@@ -1388,7 +1388,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC37-04 — derives the on-disk destination + sandbox-relative path
+        /// Derives the on-disk destination + sandbox-relative path
         /// for a generated DALL-E image. Routes under
         /// <c>{Paths.HubData}/files/ai/&lt;scriptId&gt;/&lt;timestamp&gt;.png</c>.
         /// The "files/" prefix matches the file.* command sandbox so authored
@@ -1420,7 +1420,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC37-06 — classifies a non-success AI response body into a stable
+        /// Classifies a non-success AI response body into a stable
         /// kind string. Lets scripts branch on `result.ai_error_kind`
         /// instead of regex-matching the human-readable message.
         /// </summary>
@@ -1442,7 +1442,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC37-06 — composes a script-facing error message that prepends a
+        /// Composes a script-facing error message that prepends a
         /// hint when the kind is well-known (Ollama model not installed,
         /// rate limit) and otherwise falls through to the raw HTTP body.
         /// </summary>
@@ -1461,7 +1461,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC37-07 — parses a Retry-After response header. Accepts either an
+        /// Parses a Retry-After response header. Accepts either an
         /// integer seconds value (per RFC 7231) or an HTTP-date. Returns the
         /// computed delay in seconds (clamped to a sane upper bound so a
         /// hostile server can't ask the script to sleep for days). Returns
@@ -1488,7 +1488,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  Streaming-aware counterpart to <see cref="SendWithManualRedirectAsync"/>.
+        /// Streaming-aware counterpart to <see cref="SendWithManualRedirectAsync"/>.
         /// Uses <see cref="HttpCompletionOption.ResponseHeadersRead"/> so the returned
         /// <see cref="HttpResponseMessage"/> can be consumed as a live SSE / NDJSON stream,
         /// but still routes through the shared <c>_http</c> client (AllowAutoRedirect=false)
@@ -1499,7 +1499,7 @@ namespace Phoenix.Controls.Hub.Core
         private static async Task<HttpResponseMessage> SendStreamingWithManualRedirectAsync(
             HttpRequestMessage initial, CancellationToken ct, bool allowLoopback = false)
         {
-            //  SSRF gate — same pre-check pattern as the
+            // SSRF gate — same pre-check pattern as the
             // non-streaming sibling. ai.stream_text resolves the provider's
             // URL from authored Model strings, so a future provider-routing
             // path could just as easily reach 127.0.0.1 / 169.254.169.254
@@ -1513,7 +1513,7 @@ namespace Phoenix.Controls.Hub.Core
             if (!preOk)
                 throw new HttpRequestException($"SSRF gate rejected {initialUrl}: {preReason}");
 
-            //  Streaming sibling acquires the same outbound-HTTP gate
+            // Streaming sibling acquires the same outbound-HTTP gate
             // as SendWithManualRedirectAsync. NOTE: a long-running SSE/NDJSON
             // stream holds its semaphore slot for the entire lifetime of the
             // stream (the response body is consumed by the caller AFTER this
@@ -1538,7 +1538,7 @@ namespace Phoenix.Controls.Hub.Core
                         ? resp.Headers.Location
                         : new Uri(originalHost, resp.Headers.Location);
 
-                    //  Re-validate every redirect target. allowLoopback
+                    // Re-validate every redirect target. allowLoopback
                     // propagates: Ollama-arm streams may legitimately 30x to a
                     // sibling localhost endpoint.
                     var (hopOk, hopReason) = await UrlImageCache.ValidateUrlForOutboundAsync(target.AbsoluteUri, ct, allowLoopback).ConfigureAwait(false);
@@ -1592,7 +1592,7 @@ namespace Phoenix.Controls.Hub.Core
             catch
             {
                 resp?.Dispose();
-                // [P1 swarm-audit 2026-05-29] Release can throw ObjectDisposedException
+                // Release can throw ObjectDisposedException
                 // if the semaphore was disposed during shutdown; swallow that race.
                 try { _outboundHttpSem.Release(); } catch (ObjectDisposedException) { }
                 throw;
@@ -1600,7 +1600,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        ///  HttpResponseMessage subclass that releases an external
+        /// HttpResponseMessage subclass that releases an external
         /// SemaphoreSlim once disposed. Used by SendStreamingWithManualRedirectAsync
         /// so the outbound-HTTP concurrency slot is held for the full lifetime
         /// of a streaming response (header read → caller consumes body → caller

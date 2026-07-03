@@ -15,7 +15,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ScriptPanel;
 
 public sealed partial class ScriptStatusDot : UserControl
 {
-    // Perf-review H8 (2026-05-14): UpdatePulse() fires on every Status setter
+    // UpdatePulse() fires on every Status setter
     // raise (i.e. every script metric tick). Begin() restarts from frame 0
     // each call, producing a visible "jump" in the dot per tick. Track which
     // pulse is active so we can skip re-Start on unchanged state.
@@ -24,16 +24,16 @@ public sealed partial class ScriptStatusDot : UserControl
     private enum ActivePulse { None, Amber, Red }
     private ActivePulse _activePulse;
 
-    // M17 (2026-05-14): activation gate. When the host Window (Hub MainWindow
+    // Activation gate. When the host Window (Hub MainWindow
     // or the pop-out Window via PopOutWindowFactory) goes Deactivated we
     // Pause() the active animation and Resume() on re-activation.
     private IDisposable? _activationSubscription;
     private bool _windowActive = true;
 
-    // M36 (2026-05-14): Composition-API pulse. Replaces the two XAML
+    // Composition-API pulse. Replaces the two XAML
     // Storyboards (amber + red) with Compositor.CreateScalarKeyFrameAnimation
     // so both pulses run on the DComp render thread. AnimationController
-    // (TryGetAnimationController) drives M17 Pause/Resume without restarting
+    // (TryGetAnimationController) drives the Pause/Resume gate without restarting
     // the Composition clock.
     private Visual? _dotVisual;
     private static readonly TimeSpan AmberCycleDuration = TimeSpan.FromMilliseconds(2400); // 1.2 s rise + 1.2 s fall
@@ -162,7 +162,7 @@ public sealed partial class ScriptStatusDot : UserControl
         DotBrush = ResolveStateBrush(State);
     }
 
-    // ── Shared traffic-light resolver (QC12-02) ──────────────────────────
+    // ── Shared traffic-light resolver ────────────────────────────────────
     // Single source of truth for ScriptState → brush so the dot and the row
     // text in ScriptRowVm cannot drift apart. Keys come from PhoenixDark.xaml's
     // Status* tokens (Design_Orders §2 Accents + §4.6 traffic lights).
@@ -192,7 +192,7 @@ public sealed partial class ScriptStatusDot : UserControl
 
     private void UpdatePulse()
     {
-        // Traffic-light spec (project_script_window_redesign.md): amber
+        // Traffic-light spec: amber
         // pulses for Queued and Running (script is in flight), red pulses
         // for Errored (last run faulted), green stays solid for Idle.
         // Solid-green Idle is unchanged.
@@ -203,7 +203,7 @@ public sealed partial class ScriptStatusDot : UserControl
             _                                         => ActivePulse.None,
         };
 
-        // M17 — if the host window is deactivated, hold the current pulse
+        // If the host window is deactivated, hold the current pulse
         // paused regardless of target. The Resume path re-enters UpdatePulse
         // on re-activation and the dot picks up its current state.
         if (!_windowActive)
@@ -249,7 +249,7 @@ public sealed partial class ScriptStatusDot : UserControl
         var compositor = _dotVisual.Compositor;
         var sineEase = compositor.CreateCubicBezierEasingFunction(
             new Vector2(0.42f, 0f), new Vector2(0.58f, 1f));
-        // M36 — ScalarKeyFrameAnimation per the spec call-out. Scale.X and
+        // ScalarKeyFrameAnimation per the spec call-out. Scale.X and
         // Scale.Y get the same animation; both run as independent scalars
         // off the Composition clock.
         var scaleAnim = compositor.CreateScalarKeyFrameAnimation();

@@ -21,7 +21,7 @@ namespace Phoenix.Controls.Shared.Services
             WriteIndented = true
         };
 
-        // [P1 swarm-audit 2026-05-29] Guards the mint+Save sequences in
+        // Guards the mint+Save sequences in
         // EnsureWebSocketServerToken / RegenerateWebSocketServerToken so two
         // threads can't mint divergent tokens (TOCTOU on Current.WebSocketServerToken).
         // A dedicated synchronous lock — not _deferredWriteGate, which is an async
@@ -36,7 +36,7 @@ namespace Phoenix.Controls.Shared.Services
         /// Loads configuration from the given JSON file.
         /// If the file does not exist, writes defaults and returns.
         /// <para>
-        ///  On first load against the unified <see cref="Paths.AppConfigJson"/>,
+        /// On first load against the unified <see cref="Paths.AppConfigJson"/>,
         /// if no file exists yet but a legacy per-pillar <c>{AppBase}/data/config.json</c>
         /// (or any of its sibling-pillar variants) has content, the first non-empty
         /// candidate is seeded into the new location before deserialization. A
@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Shared.Services
         /// audit which pillar's config was canonicalised.
         /// </para>
         /// <para>
-        ///  After deserialization, if any of the seven DPAPI-protected
+        /// After deserialization, if any of the seven DPAPI-protected
         /// secret fields landed as legacy plaintext (no <c>dpapi:v1:</c> prefix
         /// in the JSON), the next Save will re-wrap them automatically because
         /// the serializer always Protects on write. A System-tier log entry
@@ -55,7 +55,7 @@ namespace Phoenix.Controls.Shared.Services
         {
             try
             {
-                //  One-shot migration from per-pillar legacy paths.
+                // One-shot migration from per-pillar legacy paths.
                 // Runs only when the unified path doesn't yet exist; we copy
                 // the FIRST non-empty legacy candidate (Hub's wins because
                 // Hub.WinUI is listed first in LegacyAppConfigJsonCandidates,
@@ -65,7 +65,7 @@ namespace Phoenix.Controls.Shared.Services
 
                 if (!File.Exists(path))
                 {
-                    // [S38] Mint the WebSocket relay token before persisting
+                    // Mint the WebSocket relay token before persisting
                     // defaults so the first config.json the user ever has on
                     // disk already carries a valid token. Without this, the
                     // first Hub boot writes a token-less config; ViewerServer
@@ -78,7 +78,7 @@ namespace Phoenix.Controls.Shared.Services
 
                 string json = File.ReadAllText(path);
 
-                //  Count plaintext secrets BEFORE deserialization so
+                // Count plaintext secrets BEFORE deserialization so
                 // we can emit a single accurate migration log line. After the
                 // converter has run, every in-memory secret string is
                 // plaintext regardless of how it arrived on disk.
@@ -97,7 +97,7 @@ namespace Phoenix.Controls.Shared.Services
                     Save(path);
                 }
 
-                // BH-009 — JSON containing explicit `null` for a collection-typed field
+                // JSON containing explicit `null` for a collection-typed field
                 // overrides the property initializer with null, NRE-trapping every
                 // downstream `Webhooks.TryGetValue` / `LiveCaptionsAllowedLayers.Contains`
                 // / `Schedules.ForEach` site. Re-hydrate after deserialize so the API
@@ -108,7 +108,7 @@ namespace Phoenix.Controls.Shared.Services
                 Current.LiveCaptionsAllowedLayers ??= new();
                 Current.Schedules                 ??= new();
 
-                // [S38] Lazy-init the WebSocket relay token at Load time so
+                // Lazy-init the WebSocket relay token at Load time so
                 // ViewerServer / WS upgrades never fail with close 1008
                 // because the operator hadn't opened Settings yet. Mints +
                 // persists same-turn when the persisted value is empty or
@@ -120,7 +120,7 @@ namespace Phoenix.Controls.Shared.Services
             }
             catch (Exception ex)
             {
-                // BH-010 — rotate the corrupted file aside before resetting Current to
+                // Rotate the corrupted file aside before resetting Current to
                 // defaults. Without rotation, the next Save(path) call writes default
                 // contents to the same path and silently destroys credentials, webhook
                 // secrets, AI keys, etc. CriticalError matches the sister Save failure
@@ -222,7 +222,7 @@ namespace Phoenix.Controls.Shared.Services
         /// tmp-cleanup contract. A crash mid-write can never truncate the
         /// destination — the temp file is left on disk on failure so the user
         /// can recover credentials / webhook secrets manually rather than
-        /// silently losing them. /
+        /// silently losing them.
         /// </summary>
         private static void WriteJsonAtomic(string path, string json)
         {
@@ -260,7 +260,7 @@ namespace Phoenix.Controls.Shared.Services
             }
             finally
             {
-                //  Mirror LayerSerializer's tmp-cleanup contract:
+                // Mirror LayerSerializer's tmp-cleanup contract:
                 // if the swap never happened, the orphaned .tmp would sit
                 // next to the live config carrying stale DPAPI-wrapped
                 // secrets the user may have already rotated. Best-effort
@@ -274,20 +274,20 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// [QC09-06/07] Async wrapper around <see cref="Save"/> so UI callers
+        /// Async wrapper around <see cref="Save"/> so UI callers
         /// (WelcomeDialog.OnDialogClosing, SettingsDialog.OnPrimaryClick) can
         /// await the disk write without pegging the UI thread for the round
         /// trip — important when AppData is OneDrive-backed and a write can
         /// stall on cloud sync. The underlying Save uses
         /// File.Replace which is synchronous at the OS level, so this
         /// thread-pools the call rather than re-implementing the write loop;
-        /// the temp-then-replace atomicity contract and the 
+        /// the temp-then-replace atomicity contract and the
         /// tmp-cleanup posture are preserved verbatim.
         /// </summary>
         public static Task SaveAsync(string path) => Task.Run(() => Save(path));
 
         // ────────────────────────────────────────────────────────────────────
-        //  /  migration helpers
+        // migration helpers
         // ────────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -307,7 +307,7 @@ namespace Phoenix.Controls.Shared.Services
         };
 
         /// <summary>
-        ///  Seeds the unified <paramref name="targetPath"/> from the
+        /// Seeds the unified <paramref name="targetPath"/> from the
         /// first non-empty legacy per-pillar candidate. No-op when the target
         /// already exists or when no legacy candidate has content.
         /// </summary>
@@ -356,11 +356,11 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         // ────────────────────────────────────────────────────────────────────
-        // [S38] WebSocket relay token lazy-init
+        // WebSocket relay token lazy-init
         // ────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// [S38] Minimum entropy required of <see cref="AppConfig.WebSocketServerToken"/>.
+        /// Minimum entropy required of <see cref="AppConfig.WebSocketServerToken"/>.
         /// 32 bytes → base64-url-encoded ~43 chars. Anything shorter on disk is
         /// treated as operator-typed gibberish (e.g. "abc" in config.json) and
         /// regenerated. Mirrors the WebSocketServerService constant so the two
@@ -369,7 +369,7 @@ namespace Phoenix.Controls.Shared.Services
         private const int WebSocketServerTokenByteLength = 32;
 
         /// <summary>
-        /// [S38] Ensures <see cref="AppConfig.WebSocketServerToken"/> on
+        /// Ensures <see cref="AppConfig.WebSocketServerToken"/> on
         /// <see cref="Current"/> carries a credible base64-url-encoded shared
         /// secret. Returns <c>true</c> when a fresh token was minted (caller
         /// is expected to persist), <c>false</c> when the existing value was
@@ -379,7 +379,7 @@ namespace Phoenix.Controls.Shared.Services
         /// </summary>
         public static bool EnsureWebSocketServerToken()
         {
-            // [P1 swarm-audit 2026-05-29] Re-check inside the lock so a racing
+            // Re-check inside the lock so a racing
             // thread that already minted a token wins; without this two threads
             // can both pass the pre-check and mint divergent tokens.
             lock (_webSocketTokenGate)
@@ -398,7 +398,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// [S38] Operator-facing "panic button" — regenerate the WebSocket
+        /// Operator-facing "panic button" — regenerate the WebSocket
         /// relay token unconditionally and persist same-turn. Invalidates
         /// every connected client (existing sockets stay up until the next
         /// upgrade re-checks <c>?token=</c>; restart the WebSocketServer to
@@ -407,7 +407,7 @@ namespace Phoenix.Controls.Shared.Services
         /// </summary>
         public static void RegenerateWebSocketServerToken()
         {
-            // [P1 swarm-audit 2026-05-29] Mint+Save under the same gate as
+            // Mint+Save under the same gate as
             // EnsureWebSocketServerToken so an operator rotation can't interleave
             // with a lazy-init mint and leave a divergent token persisted.
             lock (_webSocketTokenGate)
@@ -431,7 +431,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// [S38] Mint a 32-byte cryptographically-random token, base64-url
+        /// Mint a 32-byte cryptographically-random token, base64-url
         /// encoded (so it slots cleanly into a <c>?token=</c> query string
         /// without %-encoding round-trips that an operator might botch).
         /// </summary>
@@ -445,7 +445,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        ///  Counts how many of the seven DPAPI-protected secret
+        /// Counts how many of the seven DPAPI-protected secret
         /// fields are present in the raw JSON with a non-empty value that does
         /// NOT carry the <see cref="DpapiSecretStore.Prefix"/>. Run before
         /// deserialization because the converter normalises everything to

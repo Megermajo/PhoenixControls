@@ -46,7 +46,7 @@ public sealed partial class LogicCanvasView
     // still cleaned up by the next PropertyChanged tick.
     private readonly Dictionary<LinkViewModel, object> _chevronGeoms = new();
 
-    //  Geometry-signature cache for the dangling marker. Reusing
+    // Geometry-signature cache for the dangling marker. Reusing
     // the marker Grid/Canvas across PropertyChanged ticks saves a Grid +
     // Canvas + Rectangle*N + SolidColorBrush*2N allocation per tick.
     // The signature combines IsDangling + last-known From/To anchors so a
@@ -56,7 +56,7 @@ public sealed partial class LogicCanvasView
     private readonly Dictionary<LinkViewModel, DanglingSig> _danglingSignatures = new();
 
     /// <summary>
-    /// [P3] Value-type dangling-marker signature. Pre-fix the signature was a
+    /// Value-type dangling-marker signature. Pre-fix the signature was a
     /// string built (allocated) on every RefreshDanglingMarker call — including
     /// cache hits where the marker never rebuilds. Holding the rounded anchor
     /// coordinates + presence flags in a readonly struct lets the cache compare
@@ -236,11 +236,11 @@ public sealed partial class LogicCanvasView
             return;
         }
 
-        //  Geometry-signature cache. Compose the signature from the
+        // Geometry-signature cache. Compose the signature from the
         // pair of last-known anchors (rounded to whole pixels — sub-pixel
         // change wouldn't shift the 6px marker visibly anyway). On a
         // cache hit, leave the existing marker in place; on a miss, rebuild.
-        // [P3] The signature is a value-type struct — no heap allocation on the
+        // The signature is a value-type struct — no heap allocation on the
         // (common) cache-hit path where the marker never rebuilds.
         var sig = new DanglingSig(from, to);
         if (_danglingSignatures.TryGetValue(lvm, out var prevSig) && prevSig.Equals(sig))
@@ -269,7 +269,7 @@ public sealed partial class LogicCanvasView
         DanglingMarkerLayer.Children.Add(grp);
     }
 
-    //  Shared stroke + half-alpha-fill brushes for the dangling
+    // Shared stroke + half-alpha-fill brushes for the dangling
     // marker — pre-fix every Rectangle build allocated its own SolidColorBrush
     // pair off the same ARGB literals (0xFF/0x80 alpha on rust-red 0xCB/4D/3F).
     // Brushes are sharable across multiple Shape consumers (the canvas
@@ -318,7 +318,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    ///  Clear every link VM's IsHovered flag. WinUI doesn't always
+    /// Clear every link VM's IsHovered flag. WinUI doesn't always
     /// fire PointerExited on a wire's hit-zone when a node drag (or other
     /// gesture) starts on top of it — the "ghost hover" stays painted after
     /// the gesture completes, producing a brighter wire that the user isn't

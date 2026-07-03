@@ -18,14 +18,14 @@ namespace Phoenix.Controls.Shared.Models
     /// also bump <see cref="InvalidateSortCache"/> explicitly when they've
     /// done something exotic. The cache filters NaN/Infinity TimeMs via
     /// <see cref="NumericGuards.FilterFiniteKeyframes"/> so the sort+filter
-    /// behaviour  introduced in KeyframeInterpolation is preserved.
+    /// behaviour introduced in KeyframeInterpolation is preserved.
     /// </summary>
     public sealed class WidgetTimeline
     {
         [JsonPropertyName("duration")]  public double         DurationMs { get; set; }
         [JsonPropertyName("keyframes")] public List<Keyframe> Keyframes  { get; set; } = new();
 
-        // ── Sort cache (Sweep 24 / P1-D2) ────────────────────────────────
+        // ── Sort cache ───────────────────────────────────────────────────
         // The cache is keyed on a (reference, count, time-fingerprint)
         // signature so direct mutations of the underlying list (Add /
         // Insert / Remove / Clear / property reassignment / in-place
@@ -71,8 +71,8 @@ namespace Phoenix.Controls.Shared.Models
                     return _sortedCache;
                 }
 
-                // Filter NaN/Infinity TimeMs ( behaviour, moved here
-                // so KeyframeInterpolation.SampleScalar no longer carries
+                // Filter NaN/Infinity TimeMs (moved here so
+                // KeyframeInterpolation.SampleScalar no longer carries
                 // both the filter and the sort), then sort. List<>.Sort is
                 // in-place on a freshly allocated copy so the caller's
                 // authoring list keeps its insertion order.

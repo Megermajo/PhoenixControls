@@ -10,13 +10,12 @@ using System.Threading.Tasks;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 
-// Minimal internal visibility increase for the engine perf test project
-// (BugFixSweep3_EnginePerf_Tests). The hot helpers SubstituteVars,
-// IsBlockHeader, and SplitArgs are marked `internal` rather than `public`
-// to avoid widening the engine's external API; this attribute scopes that
-// visibility to the test assembly only. Lives in this source file (rather
-// than a separate AssemblyInfo.cs) to keep the perf-batch diff inside one
-// engine source file as the task constraints require.
+// Minimal internal visibility increase for the engine perf test project.
+// The hot helpers SubstituteVars, IsBlockHeader, and SplitArgs are marked
+// `internal` rather than `public` to avoid widening the engine's external
+// API; this attribute scopes that visibility to the test assembly only.
+// Lives in this source file (rather than a separate AssemblyInfo.cs) to keep
+// the change inside one engine source file.
 [assembly: InternalsVisibleTo("Phoenix.Controls.Tests")]
 
 namespace Phoenix.Controls.Shared.Core
@@ -28,7 +27,7 @@ namespace Phoenix.Controls.Shared.Core
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  (P1-A24) — AsyncLocal re-entry contract
+    // AsyncLocal re-entry contract
     // ═══════════════════════════════════════════════════════════════════════
     //
     // ScriptEngine carries five pieces of per-execution state under the
@@ -87,16 +86,16 @@ namespace Phoenix.Controls.Shared.Core
     public partial class ScriptEngine
     {
         // ─────────────────────────────────────────────────────────────────
-        // R23 — compiled regexes promoted to static readonly. These were
+        // Compiled regexes promoted to static readonly. These were
         // previously instantiated per script-line/per command/per arg in
         // hot paths. With Compiled+CultureInvariant they parse once at
         // type init and then run as JITted DFAs for every hit.
-        // L68 — VarRefRegex is the single-pass substitution pattern used
+        // VarRefRegex is the single-pass substitution pattern used
         // by SubstituteVars (the per-key foreach was quadratic).
         // ─────────────────────────────────────────────────────────────────
         private const RegexOptions HotRegex = RegexOptions.Compiled | RegexOptions.CultureInvariant;
         private static readonly Regex VarRefRegex          = new(@"\{([\$\w\.]+)\}", HotRegex);
-        //  DbPreloadRegex previously used `[^}]+` for the suffix which
+        // DbPreloadRegex previously used `[^}]+` for the suffix which
         // greedily swallowed nested braces — `{global.list{0}}` would parse as
         // a single key `global.list{0` (capturing through the inner `{`), an
         // un-cacheable name that always missed the DB. Tightening to
@@ -106,7 +105,7 @@ namespace Phoenix.Controls.Shared.Core
         // Supported character set: `[A-Za-z0-9_.-]`. Document anywhere a
         // script author would consult.
         private static readonly Regex DbPreloadRegex       = new(@"\{((?:global|user|state|var)\.[\w\.\-]+)\}", HotRegex);
-        //  Companion: a "stray opening brace" regex used to log a
+        // Companion: a "stray opening brace" regex used to log a
         // Communication-tier parse-error for unmatched braces. Matches any
         // `{...}` segment containing characters that neither VarRefRegex nor
         // DbPreloadRegex can resolve (e.g. `{global.score:default}` — the
@@ -125,7 +124,7 @@ namespace Phoenix.Controls.Shared.Core
         // cached so the per-call foreach doesn't rebuild + JIT a new pattern every
         // time a busy chat command resolves the same var.
         //
-        // QC01-08 — Bounded MRU so a long-lived Hub process that has seen many
+        // Bounded MRU so a long-lived Hub process that has seen many
         // ad-hoc var names (chat commands writing user.<random>, script DRY-runs
         // exploring throwaway keys, etc.) doesn't grow this cache unboundedly
         // across the process lifetime. Cap is set generously above any real
@@ -134,7 +133,7 @@ namespace Phoenix.Controls.Shared.Core
         private static readonly BoundedMruRegexCache BareNameRegexCache = new(capacity: 256);
 
         // ─────────────────────────────────────────────────────────────────
-        // R12 — Block-header prefixes lifted to a single source of truth.
+        // Block-header prefixes lifted to a single source of truth.
         // The engine identifies block-header lines (if, for_loop, on_*…)
         // by these prefixes; centralizing them makes future additions a
         // one-line change instead of hunting through the switch in
@@ -148,10 +147,10 @@ namespace Phoenix.Controls.Shared.Core
             "on_startup",
             "on_bus(",
             "on_webhook(",
-            "on_websocket(",  //  — external WebSocket server message handler
-            "on_hotkey(",     //  — system-wide keystroke (Win32 RegisterHotKey)
-            "on_clipboard",   //  — clipboard update (WM_CLIPBOARDUPDATE)
-            "on_obs(",        // B38 — OBS WebSocket v5 event subscription
+            "on_websocket(",  // external WebSocket server message handler
+            "on_hotkey(",     // system-wide keystroke (Win32 RegisterHotKey)
+            "on_clipboard",   // clipboard update (WM_CLIPBOARDUPDATE)
+            "on_obs(",        // OBS WebSocket v5 event subscription
             "on_schedule(",
             "on_schedule_once(",
             "on_interval(",
@@ -168,11 +167,11 @@ namespace Phoenix.Controls.Shared.Core
             "elif ",
         };
 
-        // M14 / L8 / L9 — block-headers introduced by sweep #7. These open
-        // engine-native control structures that own their own per-block state
-        // (CTS / visited-snapshot / counter) rather than being recognized via
-        // the generic IsBlockHeader path. ProcessLine routes them BEFORE the
-        // generic block-header dispatch so the recognition is exact-prefix.
+        // Block-headers that open engine-native control structures that own
+        // their own per-block state (CTS / visited-snapshot / counter) rather
+        // than being recognized via the generic IsBlockHeader path. ProcessLine
+        // routes them BEFORE the generic block-header dispatch so the
+        // recognition is exact-prefix.
         private static readonly string[] Sweep7BlockPrefixes = new[]
         {
             "async_timeout(",
@@ -188,7 +187,7 @@ namespace Phoenix.Controls.Shared.Core
         };
 
         // ─────────────────────────────────────────────────────────────────
-        // R22 — Stable system-var dict, computed once at type init. Empty
+        // Stable system-var dict, computed once at type init. Empty
         // today (every {system.*} the engine exposes is time-sensitive),
         // but the indirection is intentional so future paths/version vars
         // drop in without re-introducing the per-call allocation. The
@@ -198,14 +197,14 @@ namespace Phoenix.Controls.Shared.Core
         private static readonly Dictionary<string, string> StaticSystemVars =
             new(StringComparer.OrdinalIgnoreCase);
 
-        // QC01-12 — ConcurrentDictionary so RegisterCommand (Hub startup, sometimes
+        // ConcurrentDictionary so RegisterCommand (Hub startup, sometimes
         // off-main-thread for late-bound integrations) can race with the engine's
         // hot _commands.TryGetValue lookups in ExecuteCommandWithResult without
         // tearing the bucket arrays. RegisterCommand is the only writer path; the
         // hot path is read-only.
         private readonly ConcurrentDictionary<string, Func<string[], Task<string?>>> _commands = new(StringComparer.OrdinalIgnoreCase);
 
-        // R19 (sweep 14a) — typed args for the currently-dispatching handler.
+        // Typed args for the currently-dispatching handler.
         // The dispatch site (ExecuteCommandWithResult) populates this from
         // CommandBinder.BindArgs whenever the command's CommandSpec carries a
         // typed schema (registered via CommandManifest.AddTyped). Handlers
@@ -216,12 +215,12 @@ namespace Phoenix.Controls.Shared.Core
         //
         // AsyncLocal so concurrent ExecuteScriptAsync calls from different
         // async contexts don't see each other's bindings — same isolation
-        // model as the rest of C15's per-execution state. Save+restore at the
+        // model as the rest of the per-execution state. Save+restore at the
         // dispatch site preserves the binding across nested event.trigger.
         private static readonly AsyncLocal<BoundArgs?> _currentBoundArgs = new();
         public BoundArgs? CurrentBoundArgs => _currentBoundArgs.Value;
 
-        // R9 — Persistence dependency injected at construction. DB is
+        // Persistence dependency injected at construction. DB is
         // the production implementation; tests can inject an in-memory IScriptDb
         // to exercise engine paths without touching SQLite. The parameterless
         // ctor preserves the singleton wiring for the ~30 existing call sites
@@ -236,7 +235,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // C15 — Per-execution mutable state backed by AsyncLocal so that
+        // Per-execution mutable state backed by AsyncLocal so that
         // concurrent ExecuteScriptAsync calls from different async contexts
         // (chat handler, webhook handler, bus event handler, etc.) never
         // interleave on shared instance state.
@@ -249,7 +248,7 @@ namespace Phoenix.Controls.Shared.Core
         //     in the SAME async context): the nested call saves the parent's
         //     slot value, writes its own, then restores on exit — exactly as
         //     before, now correctly scoped to the ambient async context.
-        //   • _executionVarsLock (B4 parallel_begin safety) stays an instance
+        //   • _executionVarsLock (parallel_begin safety) stays an instance
         //     semaphore because parallel branches within one execution share the
         //     same vars dict reference and must still serialize mutations.
         // ─────────────────────────────────────────────────────────────────
@@ -257,18 +256,18 @@ namespace Phoenix.Controls.Shared.Core
         private static readonly AsyncLocal<CancellationToken>           _execCtLocal      = new();
         private static readonly AsyncLocal<int>                         _execDepthLocal   = new();
         // _execItersLocal carries a StrongBox<int> (not a bare int) so loop bodies
-        // can drive Interlocked.Increment(ref box.Value) — restoring the B4 atomic
-        // counter that sweep 10's AsyncLocal<int> conversion accidentally broke.
+        // can drive Interlocked.Increment(ref box.Value) — keeping the atomic
+        // counter that an earlier AsyncLocal<int> conversion accidentally broke.
         // The box reference flows through child tasks (parallel_begin branches),
         // so the cap remains shared within one ExecuteScriptAsync.
         private static readonly AsyncLocal<System.Runtime.CompilerServices.StrongBox<int>?> _execItersLocal = new();
         private static readonly AsyncLocal<int>                         _execStateDpLocal = new();
         private static readonly AsyncLocal<HashSet<string>?>            _execVisitedLocal = new();
-        // BH-003 — keys touched by SetLocalResultVar / SetScriptVarAsync inside a
+        // Keys touched by SetLocalResultVar / SetScriptVarAsync inside a
         // parallel_begin branch. parallel_begin's merge-back step only propagates keys
         // recorded here, so bare-assignment writes (which go through HandleAssignment's
         // explicit vars path, not through the result-writer methods) stay branch-local
-        // — pinning the D1 isolation guarantee while still surfacing result-bearing
+        // — pinning the isolation guarantee while still surfacing result-bearing
         // command outputs (db.find_row, math.add, etc.) to the outer scope. Null in the
         // parent's flow (no tracking outside parallel branches).
         private static readonly AsyncLocal<HashSet<string>?>            _branchResultKeysLocal = new();
@@ -279,12 +278,12 @@ namespace Phoenix.Controls.Shared.Core
             set => _execVarsLocal.Value = value;
         }
 
-        // B4 — parallel_begin branches share the parent vars dict and mutate it
+        // parallel_begin branches share the parent vars dict and mutate it
         // concurrently; the semaphore serializes those mutations. Still an instance
         // field — it guards within-execution concurrency, not cross-execution state.
         private readonly SemaphoreSlim _executionVarsLock = new SemaphoreSlim(1, 1);
 
-        // #13 — depth counter for active parallel_begin blocks. The semaphore is only
+        // Depth counter for active parallel_begin blocks. The semaphore is only
         // load-bearing when ≥1 parallel branch is in flight; outside parallel_begin
         // the engine runs single-threaded per script flow, so locking is pure overhead.
         // Incremented before Task.Run-ing branches, decremented after Task.WhenAll.
@@ -350,14 +349,14 @@ namespace Phoenix.Controls.Shared.Core
         }
         private const int MaxStateRecursionDepth = 32;
 
-        // L8 — Per-execution visited-node set (saves+restores per Logic.Sequence arm).
+        // Per-execution visited-node set (saves+restores per Logic.Sequence arm).
         private HashSet<string>? _visitedNodes
         {
             get => _execVisitedLocal.Value;
             set => _execVisitedLocal.Value = value;
         }
 
-        // L9 — Engine-scoped Flow.DoN counters keyed by the call-site id (line
+        // Engine-scoped Flow.DoN counters keyed by the call-site id (line
         // index in hex when the exporter doesn't emit a stable token). Stored
         // in the engine rather than as a global var so the saturate-at-MaxValue
         // path is enforced uniformly even if a script tampers with the global.
@@ -368,7 +367,7 @@ namespace Phoenix.Controls.Shared.Core
             new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly object _doNCountersLock = new object();
 
-        // C15 — EventType / BusEventType / ScriptFile are set by ScriptManager immediately
+        // EventType / BusEventType / ScriptFile are set by ScriptManager immediately
         // before each ExecuteScriptAsync call. Using AsyncLocal ensures concurrent executions
         // each see the value their own caller set rather than the last writer's value.
         private static readonly AsyncLocal<string?> _execEventTypeLocal    = new();
@@ -399,7 +398,7 @@ namespace Phoenix.Controls.Shared.Core
         /// Fired when a local-scope variable is written during script execution
         /// (Var.Set's bare assignment path or Public.Set's command path).
         /// Args: (varName, value, scriptFile). Used by Architect's local-vars
-        /// panel (P1 #1 phase 2) to surface live debug-time values.
+        /// panel to surface live debug-time values.
         /// Excludes global.* / user.* writes — those are DB-backed and visible
         /// via the existing Hub Variables panel.
         /// </summary>
@@ -456,13 +455,13 @@ namespace Phoenix.Controls.Shared.Core
         public bool HasCommand(string name) => _commands.ContainsKey(name);
 
         /// <summary>
-        /// [ enabler for ] Snapshot of every command currently
+        /// Snapshot of every command currently
         /// registered on this engine instance. Returns a fresh array on each
         /// call (ConcurrentDictionary.Keys enumerates lazily; ToArray pins a
         /// point-in-time snapshot so callers can iterate without racing
         /// concurrent RegisterCommand writers).
         ///
-        /// Consumers ( — script-window introspection, future
+        /// Consumers (script-window introspection, future
         /// validation passes) read this to cross-check the manifest against
         /// what's actually wired up at Hub startup, surfacing the difference
         /// as a startup diagnostic instead of failing silently at first call.
@@ -477,14 +476,14 @@ namespace Phoenix.Controls.Shared.Core
         /// </summary>
         public string GetExecutionVar(string key)
         {
-            // B4 — also synchronize reads. Dictionary is not safe for concurrent
+            // Also synchronize reads. Dictionary is not safe for concurrent
             // read-while-write either; a parallel branch reading mid-resize can throw
             // or return torn results. Lock scope is the .TryGetValue call only.
-            // #13 — only take the lock when ≥1 parallel_begin block is active. Outside
+            // Only take the lock when ≥1 parallel_begin block is active. Outside
             // parallel_begin the engine runs single-threaded per script flow and the
             // dict mutation cannot race with itself.
             if (_executionVars == null) return string.Empty;
-            // [P0 swarm-audit 2026-05-30] Acquire UNCONDITIONALLY. The prior
+            // Acquire UNCONDITIONALLY. The prior
             // `taken = Volatile.Read(_parallelBranchDepth) > 0` gate was a TOCTOU
             // with the write paths (SetScriptVarAsync / SetLocalResultVar): a
             // nested event.trigger resets depth to 0 mid-flight, so this reader
@@ -504,7 +503,7 @@ namespace Phoenix.Controls.Shared.Core
         /// </summary>
         public async Task SetScriptVarAsync(string key, string value)
         {
-            //  DB write FIRST. The previous ordering wrote to
+            // DB write FIRST. The previous ordering wrote to
             // _executionVars BEFORE the DB await — on a DB-write failure the
             // in-memory dict carried the new value while the durable store
             // kept the old, and the {global.foo} / {user.foo} reference next
@@ -518,12 +517,12 @@ namespace Phoenix.Controls.Shared.Core
 
             // In-memory write happens only AFTER the DB write succeeds, so a
             // DB failure can never leave _executionVars and the Vars table
-            // disagreeing. B4 lock still serializes parallel_begin branch
-            // contention. The branch-result tagging stays post-DB-write per
-            //  — only successfully durable values get merged back.
+            // disagreeing. The lock still serializes parallel_begin branch
+            // contention. The branch-result tagging stays post-DB-write so
+            // only successfully durable values get merged back.
             if (_executionVars != null)
             {
-                // [P0 swarm-audit 2026-05-30] Acquire the lock UNCONDITIONALLY.
+                // Acquire the lock UNCONDITIONALLY.
                 // The previous `taken = Volatile.Read(_parallelBranchDepth) > 0`
                 // gate was a TOCTOU: the depth read is not atomic with the
                 // _executionVars[key]=value write, and a nested event.trigger
@@ -539,7 +538,7 @@ namespace Phoenix.Controls.Shared.Core
                     _executionVars[key] = value;
                 }
                 finally { _executionVarsLock.Release(); }
-                // BH-003 — record this as a result-style write so parallel_begin's
+                // Record this as a result-style write so parallel_begin's
                 // merge-back propagates it to the outer scope. Reaches here only
                 // if _db.SetVariableAsync did not throw, so DB and in-memory agree.
                 _branchResultKeysLocal.Value?.Add(key);
@@ -555,10 +554,10 @@ namespace Phoenix.Controls.Shared.Core
         {
             if (_executionVars != null)
             {
-                // B4 — same hazard as SetScriptVarAsync: parallel branches can
+                // Same hazard as SetScriptVarAsync: parallel branches can
                 // mutate _executionVars concurrently, so guard the mutation. Use
                 // sync Wait() because this method is sync; contention is short.
-                // [P0 swarm-audit 2026-05-30] Acquire UNCONDITIONALLY. The prior
+                // Acquire UNCONDITIONALLY. The prior
                 // `taken = Volatile.Read(_parallelBranchDepth) > 0` gate was a
                 // TOCTOU (see SetScriptVarAsync): a nested event.trigger resetting
                 // depth to 0 mid-write let one writer skip the lock while another
@@ -568,13 +567,13 @@ namespace Phoenix.Controls.Shared.Core
                 try
                 {
                     _executionVars[key] = value;
-                    // BH-003 — record this as a result-style write so parallel_begin's
+                    // Record this as a result-style write so parallel_begin's
                     // merge-back propagates it to the outer scope.
                     _branchResultKeysLocal.Value?.Add(key);
                 }
                 finally { _executionVarsLock.Release(); }
 
-                // P1 #1 phase 2 — debug feed for the Architect local-vars panel. Public.Set
+                // Debug feed for the Architect local-vars panel. Public.Set
                 // routes through here (and is intentionally NOT in IsReservedLocalKey's skip
                 // list for SetLocalResultVar's public.* keys), so the panel sees both Var.Set's
                 // bare-assignment writes and Public.Set's command-call writes.
@@ -588,12 +587,12 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// BH-005 — guarded Add for the per-execution visited-node set.
-        /// QC01-07 — Per-branch HashSet snapshot in RunParallelBranch makes the
+        /// Guarded Add for the per-execution visited-node set.
+        /// Per-branch HashSet snapshot in RunParallelBranch makes the
         /// visited-set private to each parallel_begin branch (and to each
         /// HandleSequenceBlock arm). With no cross-branch sharing, the previous
         /// _executionVarsLock acquisition here is no longer load-bearing — and
-        /// dropping it  removes a cross-branch serialization point
+        /// dropping it removes a cross-branch serialization point
         /// that was funneling every NODE_EXEC marker through a single
         /// semaphore. The visited-set is now single-writer per branch.
         /// Returns true when there was no set (de-dup disabled) or the id was newly added.
@@ -659,7 +658,7 @@ namespace Phoenix.Controls.Shared.Core
             // Save outer execution context so nested ExecuteScriptAsync calls (via event.trigger)
             // don't null out the parent's _executionVars, which would silently drop all
             // SetLocalResultVar writes (db.find_row out-vars, db.insert_row, etc.) in the outer script.
-            // BH-008: include the event-context AsyncLocals (EventType / BusEventType / ScriptFile);
+            // Include the event-context AsyncLocals (EventType / BusEventType / ScriptFile);
             // their writers (ScriptManager.ExecuteEventScriptAsync, etc.) set them before the inner
             // call, and without restore the outer's sibling on_event headers see the inner trigger's
             // event type after the nested call returns.
@@ -672,7 +671,7 @@ namespace Phoenix.Controls.Shared.Core
             var savedEventType        = _execEventTypeLocal.Value;
             var savedBusEventType     = _execBusEventTypeLocal.Value;
             var savedScriptFile       = _execScriptFileLocal.Value;
-            //  _branchResultKeysLocal was previously absent from the
+            // _branchResultKeysLocal was previously absent from the
             // save/restore set. A nested ExecuteScriptAsync (event.trigger
             // inside a parallel_begin branch) would have its
             // SetLocalResultVar / SetScriptVarAsync writes tagged into the
@@ -683,7 +682,7 @@ namespace Phoenix.Controls.Shared.Core
             // in finally so the outer branch's tagging resumes intact.
             var savedBranchResultKeys = _branchResultKeysLocal.Value;
             _branchResultKeysLocal.Value = null;
-            //  _parallelBranchDepth was not in the save/restore set.
+            // _parallelBranchDepth was not in the save/restore set.
             // A nested ExecuteScriptAsync (via event.trigger) inherited the
             // outer's depth — if the inner threw out of a parallel_begin
             // body that had incremented but not yet decremented, the engine
@@ -749,11 +748,11 @@ namespace Phoenix.Controls.Shared.Core
                 _execEventTypeLocal.Value    = savedEventType;
                 _execBusEventTypeLocal.Value = savedBusEventType;
                 _execScriptFileLocal.Value   = savedScriptFile;
-                //  Restore outer's branch-result tagging slot so a
+                // Restore outer's branch-result tagging slot so a
                 // surrounding parallel_begin (around the nested call) keeps
                 // recording its own result-style writes after we return.
                 _branchResultKeysLocal.Value = savedBranchResultKeys;
-                //  Restore parent's parallel-branch depth even if the
+                // Restore parent's parallel-branch depth even if the
                 // inner script threw out of a parallel_begin body — pins the
                 // invariant that the depth reflects the outer's state when
                 // this call returns.
@@ -798,7 +797,7 @@ namespace Phoenix.Controls.Shared.Core
                     i++; continue;
                 }
                 // Node execution markers — fire event, then skip like a normal comment.
-                // L8 — re-visits of the same node id within the current visit-window
+                // Re-visits of the same node id within the current visit-window
                 // are suppressed (no second OnNodeExecuted fire). Logic.Sequence
                 // (sequence_begin) snapshots+restores _visitedNodes per arm so
                 // independent paths through the graph each see a fresh history.
@@ -840,7 +839,7 @@ namespace Phoenix.Controls.Shared.Core
 
         private async Task<int> ProcessLine(string[] lines, int i, int end, int indent, string line, Dictionary<string, string> vars)
         {
-            // ── Sweep #7 engine-native blocks (M14 / L8 / L9) ────────────
+            // ── Engine-native blocks ─────────────────────────────────────
             // Recognized BEFORE the generic IsBlockHeader path because they
             // own per-block state (CTS for async_timeout, visit-snapshot for
             // sequence_begin, saturating counter for do_n) that the generic
@@ -902,7 +901,7 @@ namespace Phoenix.Controls.Shared.Core
             }
 
             // ── for_loop(first, last): ──────────────────────────────────
-            // E1 — accept the Pythonic colon-terminated form `for_loop(...):` in
+            // Accept the Pythonic colon-terminated form `for_loop(...):` in
             // addition to the canonical bare-paren form the exporter emits.
             // on_event(...): / if ...: already accept the colon via IsBlockHeader,
             // so Pythonic for_loop / while_loop / for_each are normalized here for
@@ -924,7 +923,7 @@ namespace Phoenix.Controls.Shared.Core
                     // {loop.index}. Suffix is the loop's source-line index in hex —
                     // unique per loop within a single execution. The legacy
                     // {loop.index} write is preserved below for compatibility with
-                    // existing exports until B3 swaps the exporter to per-loop ids.
+                    // existing exports until the exporter swaps to per-loop ids.
                     // If the exporter embedded a node-id token (3rd arg), use it so the key
                     // matches what ScriptExporter emits for the Index data-output socket.
                     // Fall back to line-index hex for hand-authored scripts without the tag.
@@ -932,7 +931,7 @@ namespace Phoenix.Controls.Shared.Core
                         ? $"loop.index_{p[2].Trim()}"
                         : $"loop.index_{i:x}";
 
-                    // H14 — Flow.ForLoop ignores reverse direction. If first > last we
+                    // Flow.ForLoop ignores reverse direction. If first > last we
                     // count down, allowing scripts like for_loop(10, 1) to iterate
                     // in descending order. Optional 4th arg is Step (defaults to 1);
                     // negative steps further override direction.
@@ -950,7 +949,7 @@ namespace Phoenix.Controls.Shared.Core
                         // Honor cancellation between iterations and aggregate-cap so a
                         // for_loop can't multiply per-instance safety in nested loops.
                         _executionCt.ThrowIfCancellationRequested();
-                        // B4 — Interlocked so the cap is honored when for_loop runs
+                        // Interlocked so the cap is honored when for_loop runs
                         // inside a parallel_begin branch (and across branches that
                         // share the per-execution counter).
                         if (Interlocked.Increment(ref AggregateIterationsRef) > MaxAggregateLoopIterations)
@@ -978,7 +977,7 @@ namespace Phoenix.Controls.Shared.Core
                 int wlInnerLen  = line.Length - wlPrefixLen - 1; // subtract closing ")"
                 string condRaw  = wlInnerLen > 0 ? line.Substring(wlPrefixLen, wlInnerLen) : string.Empty;
                 int blockEnd = FindBlockEnd(lines, i, indent);
-                // L11 — the previous local 1000-iteration safety counter was dead code
+                // The previous local 1000-iteration safety counter was dead code
                 // because the aggregate cap (MaxAggregateLoopIterations = 500) trips first.
                 // The aggregate cap is the canonical guard; rely on it, plus cancellation.
                 // cond-not-injection: pass the RAW template to EvaluateCondition,
@@ -987,7 +986,7 @@ namespace Phoenix.Controls.Shared.Core
                 while (EvaluateCondition("if " + condRaw + ":", vars))
                 {
                     _executionCt.ThrowIfCancellationRequested();
-                    // B4 — Interlocked so concurrent parallel_begin branches running
+                    // Interlocked so concurrent parallel_begin branches running
                     // while_loop bodies don't race the aggregate cap counter.
                     if (Interlocked.Increment(ref AggregateIterationsRef) > MaxAggregateLoopIterations)
                     {
@@ -1004,11 +1003,11 @@ namespace Phoenix.Controls.Shared.Core
             {
                 int fePrefixLen = "for_each(".Length;
                 int feInnerLen  = line.Length - fePrefixLen - 1; // subtract closing ")"
-                //  StripQuotesAndUnescape so a literal CSV passed via
+                // StripQuotesAndUnescape so a literal CSV passed via
                 // for_each("a,b,c\n") honors embedded escapes; identifier-style
                 // / call-shape args are returned unchanged by the helper.
                 string listExpr = feInnerLen > 0 ? StripQuotesAndUnescape(line.Substring(fePrefixLen, feInnerLen).Trim()) : string.Empty;
-                // BH-007 + BH-001: decide call-vs-data on the PRE-substitution form. The
+                // Decide call-vs-data on the PRE-substitution form. The
                 // exporter emits literal call shapes (db.get_column(...)) directly into
                 // for_each; those must execute. Anything else — variable references, CSV
                 // literals, or chat-derived content — is data and must NOT be re-parsed
@@ -1023,7 +1022,7 @@ namespace Phoenix.Controls.Shared.Core
                 {
                     listVal = SubstituteVars(listExpr, vars);
                 }
-                // L10 — Items separated by commas may themselves contain `\,` to escape an
+                // Items separated by commas may themselves contain `\,` to escape an
                 // intended literal comma. Without this every CSV with embedded commas (a
                 // perfectly common case in Twitch chat) would corrupt iteration.
                 var items = SplitListWithEscape(listVal);
@@ -1031,7 +1030,7 @@ namespace Phoenix.Controls.Shared.Core
                 foreach (var item in items)
                 {
                     _executionCt.ThrowIfCancellationRequested();
-                    // B4 — Interlocked so for_each iterating inside parallel branches
+                    // Interlocked so for_each iterating inside parallel branches
                     // can't double-count or skip the aggregate cap under contention.
                     if (Interlocked.Increment(ref AggregateIterationsRef) > MaxAggregateLoopIterations)
                     {
@@ -1051,14 +1050,14 @@ namespace Phoenix.Controls.Shared.Core
                 var tasks = new List<Task>();
                 var branchVarsList = new List<(Dictionary<string, string> Vars, HashSet<string> ResultKeys)>();
 
-                // BH-004: link a per-block CTS so a faulted/timed-out branch cancels its
+                // Link a per-block CTS so a faulted/timed-out branch cancels its
                 // siblings instead of letting them keep doing real work (DB writes, bus
                 // sends, HTTP calls) after the script has effectively failed.
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_executionCt);
                 var savedCt = _executionCt;
                 _executionCt = linkedCts.Token;
 
-                // #13 — flip lock-required state ON for the duration of this block so
+                // Flip lock-required state ON for the duration of this block so
                 // SetLocalResultVar / SetScriptVarAsync / GetExecutionVar / TryAddVisited
                 // serialize cross-branch access. Decremented in the finally below.
                 Interlocked.Increment(ref _parallelBranchDepth);
@@ -1088,7 +1087,7 @@ namespace Phoenix.Controls.Shared.Core
                     var branchVars    = new Dictionary<string, string>(vars, StringComparer.OrdinalIgnoreCase);
                     var resultKeys    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     branchVarsList.Add((branchVars, resultKeys));
-                    // BH-003 + BH-004: Task.Run gives each branch an isolated ExecutionContext
+                    // Task.Run gives each branch an isolated ExecutionContext
                     // so the branch's _executionVars assignment (in RunParallelBranch) doesn't
                     // bleed into siblings; the linkedCts ensures a faulting branch signals the
                     // others to stop. resultKeys is populated by SetLocalResultVar /
@@ -1110,14 +1109,13 @@ namespace Phoenix.Controls.Shared.Core
                     _executionCt = savedCt;
                     Interlocked.Decrement(ref _parallelBranchDepth);
 
-                    // BH-003 — fold branch RESULT writes back into the parent's vars dict
+                    // Fold branch RESULT writes back into the parent's vars dict
                     // so SetLocalResultVar / SetScriptVarAsync values produced inside
                     // parallel branches are observable after parallel_end. Bare-assignment
                     // writes (HandleAssignment's `vars[key] = val;` path) are NOT
-                    // recorded in resultKeys, so they stay branch-local — pinning the D1
+                    // recorded in resultKeys, so they stay branch-local — pinning the
                     // isolation guarantee. Last-writer-wins for keys touched by multiple
-                    // branches; this matches the H13 contract that any one of the writers
-                    // is acceptable on hot-key contention.
+                    // branches; any one of the writers is acceptable on hot-key contention.
                     foreach (var (bv, keys) in branchVarsList)
                     {
                         foreach (var key in keys)
@@ -1141,13 +1139,13 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // RunParallelBranch, HandleAsyncTimeoutBlock, HandleSequenceBlock, HandleDoNBlock
-        // moved to ScriptEngine.ParallelExecution.cs ().
+        // moved to ScriptEngine.ParallelExecution.cs.
 
         // _spawnedProcesses, OnProcessSpawned, OnProcessTerminated,
         // TerminateSpawnedProcess, HandleProcessSpawnBlock, StripQuotesAndSubstitute
-        // moved to ScriptEngine.ProcessManagement.cs ().
+        // moved to ScriptEngine.ProcessManagement.cs.
 
-        // IsBlockHeader, ShouldEnterBlock moved to ScriptEngine.Utilities.cs ().
+        // IsBlockHeader, ShouldEnterBlock moved to ScriptEngine.Utilities.cs.
 
         // ─────────────────────────────────────────────────────────────────
         // CONDITION EVALUATION
@@ -1158,7 +1156,7 @@ namespace Phoenix.Controls.Shared.Core
             // Strip "if " / "elif " prefix and trailing ":"
             string expr = IfElifPrefixRegex.Replace(line, "").TrimEnd(':').Trim();
 
-            // PARSE-FIRST (cond-not-injection P0): do NOT SubstituteVars on the
+            // PARSE-FIRST (cond-not-injection): do NOT SubstituteVars on the
             // whole expression before parsing structure. Doing so let a chat-derived
             // value masquerade as operator syntax — e.g. a message starting with
             // "not" makes {user.command}="not", so `if {user.command} == "x":`
@@ -1169,7 +1167,7 @@ namespace Phoenix.Controls.Shared.Core
             // (un-substituted) template, then push SubstituteVars down to the leaf
             // operands inside EvalSingle so a value can never become structure.
             //
-            // QC01-05 — Quote-aware split so " and "/" or " inside a string
+            // Quote-aware split so " and "/" or " inside a string
             // literal (e.g. if {msg} == "salt and pepper":) doesn't split
             // the condition mid-literal. The split runs on the template; an
             // operator hiding inside a {var} value isn't present yet, so it
@@ -1212,7 +1210,7 @@ namespace Phoenix.Controls.Shared.Core
             // for an arithmetic comparand.
             if (expr.StartsWith("convert.to_bool(", StringComparison.OrdinalIgnoreCase) && expr.EndsWith(")"))
             {
-                //  StripQuotesAndUnescape rather than bare Trim('"') so
+                // StripQuotesAndUnescape rather than bare Trim('"') so
                 // a literal like convert.to_bool("yes\n") decodes the embedded
                 // escapes before ParseTruthy sees the value.
                 string inner = StripQuotesAndUnescape(SubstituteVars(expr["convert.to_bool(".Length..^1].Trim(), vars));
@@ -1234,8 +1232,8 @@ namespace Phoenix.Controls.Shared.Core
                 return !string.IsNullOrEmpty(inner);
             }
 
-            // L22 — Recognize Pythonic `<expr>.startswith(<arg>)` /
-            // `<expr>.endswith(<arg>)` calls so the L22 ExporterRegistry
+            // Recognize Pythonic `<expr>.startswith(<arg>)` /
+            // `<expr>.endswith(<arg>)` calls so the ExporterRegistry
             // emission `if msg.startswith("!alias "):` actually evaluates
             // (pre-fix only the exact-equality arm matched). The receiver/arg
             // are matched on the TEMPLATE; TryEvalStringMethod substitutes them
@@ -1250,9 +1248,9 @@ namespace Phoenix.Controls.Shared.Core
             // Checking all candidates and picking the lowest index prevents a longer operator
             // (e.g. ">=") being skipped because a shorter one (e.g. ">") matched first when
             // iterating in array order.
-            // QC01-13 — Quote-aware search so an operator inside a string literal
+            // Quote-aware search so an operator inside a string literal
             // (e.g. "a==b" == "a==b") isn't picked as the split point. Mirrors
-            // QC01-05's helper.
+            // the membership-check helper.
             string? bestOp  = null;
             int     bestIdx = int.MaxValue;
             foreach (var op in new[] { "!=", ">=", "<=", "==", ">", "<" })
@@ -1267,7 +1265,7 @@ namespace Phoenix.Controls.Shared.Core
 
             if (bestOp != null)
             {
-                //  StripQuotesAndUnescape on each side so a comparison
+                // StripQuotesAndUnescape on each side so a comparison
                 // like `{name} == "Line A\nLine B"` matches the variable's
                 // literal newline-bearing value instead of the raw `\n` text.
                 string L  = StripQuotesAndUnescape(SubstituteVars(expr.Substring(0, bestIdx).Trim(), vars));
@@ -1295,19 +1293,19 @@ namespace Phoenix.Controls.Shared.Core
             }
 
             // Membership check: "X in comma,separated,list".
-            // M13 — share the engine's SplitListWithEscape helper so `\,` decodes
-            // to a literal comma both here and in for_each (L10). Without the
+            // Share the engine's SplitListWithEscape helper so `\,` decodes
+            // to a literal comma both here and in for_each. Without the
             // shared escape, Logic.EnumMatch and the engine's `in` operator
             // would corrupt every list whose entries contain commas (chat
             // messages, JSON-ish payloads). Dropping individual surrounding
             // quotes after the split mirrors prior behavior.
-            // QC01-13 — Quote-aware " in " search so a literal " in " inside
+            // Quote-aware " in " search so a literal " in " inside
             // a quoted operand (e.g. "stand in line" in foo,bar) doesn't get
             // picked as the membership operator.
             int inIdxQA = IndexOfOutsideQuotes(expr, " in ");
             if (inIdxQA >= 0)
             {
-                //  StripQuotesAndUnescape on both sides; also decode
+                // StripQuotesAndUnescape on both sides; also decode
                 // each list entry so commas (\,) and embedded newlines
                 // (\n) inside quoted entries are honored intentfully.
                 string lhs   = StripQuotesAndUnescape(SubstituteVars(expr.Substring(0, inIdxQA).Trim(), vars));
@@ -1317,14 +1315,14 @@ namespace Phoenix.Controls.Shared.Core
             }
 
             // Boolean literal check — invariant culture so a tr-TR host doesn't
-            // map 'true' through the dotless-i transform. QC01-04 sweep.
-            //  StripQuotesAndUnescape so `"true\n"` (whitespace-padded by
+            // map 'true' through the dotless-i transform.
+            // StripQuotesAndUnescape so `"true\n"` (whitespace-padded by
             // an emit quirk) still classifies as a boolean.
             return StripQuotesAndUnescape(SubstituteVars(expr, vars)).Trim().ToLowerInvariant() is "true" or "1" or "yes";
         }
 
         /// <summary>
-        /// L22 — Recognize the Pythonic string-method shape `<receiver>.startswith(<arg>)`
+        /// Recognize the Pythonic string-method shape `<receiver>.startswith(<arg>)`
         /// and `<receiver>.endswith(<arg>)` inside a single condition expression and
         /// evaluate it against the resolved (already SubstituteVars'd) operands.
         /// Returns true and writes the result via <paramref name="result"/> when the
@@ -1347,7 +1345,7 @@ namespace Phoenix.Controls.Shared.Core
             var m = StringMethodCallRegex.Match(expr);
             if (!m.Success) return false;
 
-            //  StripQuotesAndUnescape on receiver/arg so .startswith /
+            // StripQuotesAndUnescape on receiver/arg so .startswith /
             // .endswith comparisons honor embedded escapes (e.g. an alias
             // like "Hello\nworld".startswith("Hello\n")). cond-not-injection:
             // the shape is matched on the template, then the receiver/arg are
@@ -1397,7 +1395,7 @@ namespace Phoenix.Controls.Shared.Core
             foreach (var p in new[] { "convert.to_int(", "convert.to_float(", "convert.to_string(", "convert.to_bool(" })
             {
                 if (s.StartsWith(p, StringComparison.OrdinalIgnoreCase) && s.EndsWith(")"))
-                    //  StripQuotesAndUnescape so a wrapped literal like
+                    // StripQuotesAndUnescape so a wrapped literal like
                     // convert.to_string("Line\nBreak") yields a value with
                     // an embedded newline rather than the raw `\n` text.
                     return StripQuotesAndUnescape(s.Substring(p.Length, s.Length - p.Length - 1).Trim());
@@ -1457,7 +1455,7 @@ namespace Phoenix.Controls.Shared.Core
             }
             else
             {
-                //  StripQuotesAndUnescape: decode `\n` / `\r` / `\\` /
+                // StripQuotesAndUnescape: decode `\n` / `\r` / `\\` /
                 // `\"` (plus `\t` / `\uXXXX` for forward-compatibility) so
                 // an assignment like `msg = "Line A\nLine B"` lands a
                 // two-line value in vars instead of the literal `\n` text.
@@ -1472,7 +1470,7 @@ namespace Phoenix.Controls.Shared.Core
                 }
                 else
                 {
-                    // BH-006: compound assignment must accept floats. Previously a float-
+                    // Compound assignment must accept floats. Previously a float-
                     // valued var (e.g. global.score = "3.5") silently no-op'd every += / -=
                     // because int.TryParse rejected it and the else-branch didn't exist.
                     // Try int first to preserve existing integer semantics, then fall back
@@ -1501,7 +1499,7 @@ namespace Phoenix.Controls.Shared.Core
             else
             {
                 vars[key] = val;
-                // P1 #1 phase 2 — fan local-scope assignment to debug subscribers
+                // Fan local-scope assignment to debug subscribers
                 // (Architect local-vars panel). Skip the engine's reserved bookkeeping
                 // keys so the panel doesn't show internal state as "user variables".
                 if (!IsReservedLocalKey(key))
@@ -1536,7 +1534,7 @@ namespace Phoenix.Controls.Shared.Core
             var m = CommandParseRegex.Match(line);
             if (!m.Success)
             {
-                //  Previously this branch silently skipped any line
+                // Previously this branch silently skipped any line
                 // that didn't match the `name(args)` shape — turning a
                 // typo'd command into a no-op with zero diagnostics. Logging
                 // at Communication tier surfaces it in the script-author's
@@ -1549,17 +1547,17 @@ namespace Phoenix.Controls.Shared.Core
                 return null;
             }
 
-            // QC01-04 — Invariant culture: command names are ASCII identifiers
+            // Invariant culture: command names are ASCII identifiers
             // (e.g. send_chat, db.find_row). On a tr-TR host the default ToLower()
             // maps 'I' → 'ı' (dotless i), which would corrupt names containing
             // 'I'/'i' and break command lookup. ToLowerInvariant is the contract.
             string func = m.Groups[1].Value.ToLowerInvariant();
-            // R24 — SplitArgs returns a trimmed string[] directly; the
+            // SplitArgs returns a trimmed string[] directly; the
             // legacy Linq Select(Trim).ToArray() pass that allocated a
             // second array per call has been folded into SplitArgs itself.
             string[] rawArgs = SplitArgs(m.Groups[2].Value);
 
-            // BH-001 — argument resolution must distinguish CODE (function calls present
+            // Argument resolution must distinguish CODE (function calls present
             // in the script's source) from DATA (substituted variable content, including
             // chat input and event payloads). Previously the engine ran CallShapeRegex on
             // the SUBSTITUTED form too, so a chat user typing `db.set_variable(global.bot_owner, attacker)`
@@ -1571,21 +1569,21 @@ namespace Phoenix.Controls.Shared.Core
             //   • Literal `key=func(args)` in the script source     → recurse on the rhs (path 2)
             //   • Anything that depends on substitution             → data, never re-parsed.
             //
-            // R23 — call/equals matchers are static readonly (CallShapeRegex,
+            // Call/equals matchers are static readonly (CallShapeRegex,
             // KeyValueArgRegex) so they're not re-instantiated per command.
             string[] args = new string[rawArgs.Length];
             for (int idx = 0; idx < rawArgs.Length; idx++)
             {
-                // QC01-11 — Do NOT strip outer quotes before call-shape
+                // Do NOT strip outer quotes before call-shape
                 // classification. A literal `"send_chat(\"hello\")"` argument
                 // is a STRING value the user wants to pass through verbatim;
                 // pre-stripping the surrounding quotes made it look like a
                 // function call and triggered a recursive execution. Keep the
                 // quote-strip on the default data path only.
                 string raw = rawArgs[idx];
-                //  Strip outer quotes AND decode escape sequences the
+                // Strip outer quotes AND decode escape sequences the
                 // exporter emitted inside the literal (\n, \r, \\, \" — plus
-                // \t / \uXXXX for forward-compatibility with 's
+                // \t / \uXXXX for forward-compatibility with future
                 // emit changes). For unquoted args the helper returns the
                 // value unchanged, preserving the legacy contract for
                 // identifier-style positional args (global.score, etc.).
@@ -1631,14 +1629,14 @@ namespace Phoenix.Controls.Shared.Core
                 // ScriptManager and remain. Re-add a debug-only trace here only
                 // if a future verbose-script-logging setting is added.
 
-                // R19 (sweep 14a) — typed-arg binding. If the command was
+                // Typed-arg binding. If the command was
                 // registered via CommandManifest.AddTyped, bind the raw args
                 // against the spec and stash the BoundArgs in AsyncLocal so
                 // the handler can pull typed values via CurrentBoundArgs.
                 // Save+restore the prior value across the await so nested
                 // event.trigger calls don't strand the outer binding.
                 //
-                // Sweep 18 — CommandSpec.Args is non-nullable; commands not in
+                // CommandSpec.Args is non-nullable; commands not in
                 // the manifest (test-fixture handlers injected directly into
                 // _commands) still hit the bound = null path via the
                 // TryGetValue gate. Zero-arg manifest entries flow through
@@ -1674,22 +1672,22 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // SubstituteVars, ResolveSystemVar, IsPositionalPlaceholder, ResolveVar
-        // moved to ScriptEngine.Variables.cs ().
+        // moved to ScriptEngine.Variables.cs.
 
         // GetIndent, StripInlineComment, FindBlockEnd, ExtractArgs, SplitArgs,
-        // ParseTruthy, SplitListWithEscape moved to ScriptEngine.Utilities.cs ().
+        // ParseTruthy, SplitListWithEscape moved to ScriptEngine.Utilities.cs.
 
         // ─────────────────────────────────────────────────────────────────
-        //  Inverse of ScriptExporter.EscapeStringLiteral. The exporter
+        // Inverse of ScriptExporter.EscapeStringLiteral. The exporter
         // backslash-escapes characters that would otherwise break a `"..."`
-        // literal in the emitted .phx (`\\`, `\"`, `\n`, `\r`, and as of
-        //  also `\t` plus arbitrary control chars via `\uXXXX`); the
+        // literal in the emitted .phx (`\\`, `\"`, `\n`, `\r`, and also
+        // `\t` plus arbitrary control chars via `\uXXXX`); the
         // engine must reverse that on every value the parser hands back to a
         // command/condition. Without this, a literal `"Hello\nWorld"` in the
         // .phx reaches the runtime as the eight-character string `Hello\nWorld`
         // instead of the seven-char one with an embedded newline.
         //
-        // Forward-compatible with 's emit additions: handles `\t`,
+        // Forward-compatible with future emit additions: handles `\t`,
         // `\b`, `\f`, and `\uXXXX` even though the current exporter doesn't
         // emit them yet. Unknown escapes (e.g. `\q`) drop the backslash and
         // keep the literal char — matches the user's mental model that the
@@ -1699,7 +1697,7 @@ namespace Phoenix.Controls.Shared.Core
         // exporter↔engine round-trip on every escape sequence.
         // ─────────────────────────────────────────────────────────────────
         /// <summary>
-        ///  Strip outer `"..."` quotes from <paramref name="s"/> and decode
+        /// Strip outer `"..."` quotes from <paramref name="s"/> and decode
         /// any backslash escapes the exporter emitted inside the literal. Used
         /// at the parser boundaries that previously called bare `Trim('"')` —
         /// the quote-strip alone left `\n` / `\r` / `\"` / `\\` literal in the
@@ -1783,7 +1781,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // QC01-08 — Bounded MRU regex cache.
+        // Bounded MRU regex cache.
         //
         // The bare-name SubstituteVars path used a ConcurrentDictionary keyed by
         // var name that grew unboundedly over the process lifetime. This wrapper
@@ -1870,7 +1868,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // QC01-08 — Hook to reset Flow.DoN counters for a single script.
+        // Hook to reset Flow.DoN counters for a single script.
         //
         // _doNCounters is keyed by "<ScriptFile>:line_<hexIndex>" so each call
         // site has its own slot. The counters intentionally survive across

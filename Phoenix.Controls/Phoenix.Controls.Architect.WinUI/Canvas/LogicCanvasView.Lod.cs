@@ -8,9 +8,9 @@ using XamlCanvas = Microsoft.UI.Xaml.Controls.Canvas;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
-// ─── [Tranche-2b] Staged Level-of-Detail (LOD) node realization ─────────────
+// ─── Staged Level-of-Detail (LOD) node realization ─────────────
 //
-// WHY THIS EXISTS — the viewport node-cull (Tranche-2, RefreshNodeCull) only
+// WHY THIS EXISTS — the viewport node-cull (RefreshNodeCull) only
 // unmounts OFF-SCREEN nodes. The dominant freeze, proven from Majo's own
 // 2026-06-12 capture, is the opposite case: loading a large graph and ZOOMING
 // OUT to see the whole thing. Then every node is on-screen, the cull mounts all
@@ -37,7 +37,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 //
 // All of this is gated behind _enableNodeVirtualization (Ctrl+Alt+F6 kill-
 // switch). OFF == the legacy "every node is a full NodeView, always mounted"
-// path, byte-identical to pre-Tranche-2 behaviour.
+// path, byte-identical to the pre-LOD behaviour.
 public sealed partial class LogicCanvasView
 {
     // Proxy element per node (lightweight Border). Lazily created, kept alive on
@@ -56,7 +56,7 @@ public sealed partial class LogicCanvasView
     // boundary from thrashing the whole graph proxy<->full every settle. Below
     // the label threshold a proxy is a bare box (no TextBlock = no text measure),
     // which is what keeps "thousands of nodes" cheap on a zoomed-out load.
-    // 2026-06-21 (Majo: "LOD enables way too early") — thresholds lowered so full,
+    // Majo: "LOD enables way too early" — thresholds lowered so full,
     // readable NodeViews persist much further into a zoom-out. Proxies now only
     // engage below 0.25 (heavy zoom-out / whole-graph-fit), where node text is
     // unreadable anyway, so the normal editing range (~0.3–1.0) always shows full
@@ -72,7 +72,7 @@ public sealed partial class LogicCanvasView
     private enum NodeReal { None, Proxy, Full }
 
     // ── Static proxy brushes (resolved once from the theme, fallback-coded).
-    // Per-pillar paint per feedback_visualist_architect_chrome_independence; these
+    // Per-pillar paint; these
     // mirror NodeView's brush keys so a proxy reads as the same node zoomed out.
     // Mutable (not readonly) so a runtime OS theme / high-contrast switch can
     // re-resolve them — RefreshProxyThemeBrushes(), wired from the canvas'
@@ -85,7 +85,7 @@ public sealed partial class LogicCanvasView
     private static SolidColorBrush s_proxyFallbackBg =
         ResolveLodBrush("CoalRaisedBrush", 0xFF, 0x2A, 0x26, 0x22);
 
-    // [theme] Re-resolve the proxy brushes after a runtime theme / high-contrast
+    // Re-resolve the proxy brushes after a runtime theme / high-contrast
     // change and repaint the mounted proxies. Called from OnCanvasActualThemeChanged
     // (LogicCanvasView.xaml.cs) alongside the per-link / per-NodeView refresh, so
     // every realized representation flips theme together. Cheap + infrequent.
@@ -294,7 +294,7 @@ public sealed partial class LogicCanvasView
     // safe even at thousands of nodes.)
     private void RefreshNodeRealization()
     {
-        // [perf/win2d-immediate-canvas] immediate mode renders nodes on the GPU
+        // Immediate mode renders nodes on the GPU
         // canvas — skip the retained cull/LOD realization entirely.
         if (_vm is null || !_enableNodeVirtualization || _useImmediateMode) return;
         UpdateCullBand();    // refresh the hysteresis band if the viewport moved
@@ -304,7 +304,7 @@ public sealed partial class LogicCanvasView
             foreach (var vm in _vm.Nodes)
                 ApplyNodeReal(vm, ComputeNodeReal(vm));
         }
-        RefreshLinkRealization();   // [wire-virt] cull off-screen wires on the same settle
+        RefreshLinkRealization();   // cull off-screen wires on the same settle
     }
 
     // Force every node to the representation correct for the current viewport +
@@ -317,10 +317,10 @@ public sealed partial class LogicCanvasView
         UpdateLodRegime();
         foreach (var vm in _vm.Nodes)
             ApplyNodeReal(vm, ComputeNodeReal(vm));
-        RefreshLinkRealization();   // [wire-virt]
+        RefreshLinkRealization();
     }
 
-    // ─── [wire-virt] Wire-layer virtualization ──────────────────────────────
+    // ─── Wire-layer virtualization ──────────────────────────────
     //
     // The LinkLayer is a non-virtualizing ItemsControl, so every wire's two Paths
     // stay realized regardless of zoom/pan — a constant tax on every layout/render

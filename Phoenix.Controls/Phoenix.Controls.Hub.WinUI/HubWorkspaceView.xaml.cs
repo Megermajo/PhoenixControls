@@ -27,10 +27,9 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     private bool _disposed;
 
     // Track each open pop-out alongside its kind so the close path can
-    // snapshot geometry for next-launch restore. Per HUB-UX-D7
-    // (2026-05-14), multiple pop-outs of the same kind are allowed —
-    // every ↗ click opens a new window, and the source-side multicast
-    // event delivers rows to every subscriber.
+    // snapshot geometry for next-launch restore. Multiple pop-outs of the
+    // same kind are allowed — every ↗ click opens a new window, and the
+    // source-side multicast event delivers rows to every subscriber.
     private sealed class PopOutEntry
     {
         public Window Window = default!;
@@ -43,8 +42,8 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     // Per-region popout count — when at least one popout of a kind is open,
     // its source region in the Hub workspace is collapsed so the user sees
     // exactly one rendering of that panel, not two identical streams. The
-    // count tracks fan-out (HUB-UX-D7 allows multiple popouts of the same
-    // kind); the region restores when the LAST popout of that kind closes.
+    // count tracks fan-out (multiple popouts of the same kind are allowed);
+    // the region restores when the LAST popout of that kind closes.
     private readonly Dictionary<PopOutStateStore.PopOutKind, int> _popOutCountByKind = new();
 
     // Per-panel handler refs so PopOutRequested can be unsubscribed on
@@ -53,15 +52,14 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     // could never be `-=`'d — if SetPanels were ever called twice
     // (parent reload, future test rig) the handlers would double-fire
     // and IPopOutSource's documented single-subscriber rule would
-    // silently break. (Perf-review M25 + Hub UI a10bfe5 — duplicate
-    // declarations from both branches collapsed on merge.)
+    // silently break.
     private readonly Dictionary<IPopOutSource, EventHandler> _popOutHandlers = new();
 
     private IHubServices? _services;
     private IPanelFactory? _factory;
 
     // Parent panel references — kept so the close path can dispose them.
-    // Pre-HUB-UX-D7 these doubled as the primary-subscriber handoff
+    // These once doubled as the primary-subscriber handoff
     // targets; that gate is gone, but the refs are still needed for the
     // workspace's own teardown (Dispose disposes each embedded panel).
     private LiveFeedView?  _liveFeed;
@@ -73,8 +71,8 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     {
         InitializeComponent();
         // workspace.hint_strip exists in the lang bundles already; the prior
-        // XAML literal carried the leading "↗" emoji glyph which the Hub UI
-        // sweep replaced with prose so the icon-pack consolidation can choose
+        // XAML literal carried the leading "↗" emoji glyph which was
+        // replaced with prose so the icon-pack consolidation can choose
         // its own visual affordance later without re-translating four bundles.
         HintStripText.Text = Localizer.T("workspace.hint_strip",
             "each panel pops into its own window  ·  scripts hot-reload on file change  ·  errors logged · execution continues");
@@ -92,8 +90,8 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         _services = services;
         _factory  = factory;
 
-        // HUB-UX P2 — factory fallback. Without these guards a single
-        // panel-construction fault (DB lookup throws, a Track 4 service
+        // Factory fallback. Without these guards a single
+        // panel-construction fault (DB lookup throws, a service
         // bootstrap fails mid-construction) wipes the entire workspace:
         // the throw bubbles out of SetPanels, Hub.MainWindow catches it
         // at the bootstrapper level, and the user is left with an empty
@@ -125,12 +123,12 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         if (_script    is not null) WirePopOut(_script,    PopOutStateStore.PopOutKind.Scripts,   "popout.title.scripts",   "Scripts");
         if (_systemLog is not null) WirePopOut(_systemLog, PopOutStateStore.PopOutKind.SystemLog, "popout.title.systemlog", "System Log");
 
-        // Sprint H — restore last session's pop-outs. Per HUB-UX-D7 every
-        // restored window is just another subscriber; no primary handoff
-        // is required, so this can run in any order.
+        // Restore last session's pop-outs. Every restored window is just
+        // another subscriber; no primary handoff is required, so this can
+        // run in any order.
         RestoreSavedPopOuts();
 
-        // hub-ux: short staggered entrance so the four headline panels slide
+        // Short staggered entrance so the four headline panels slide
         // into place when the workspace first populates, rather than snapping
         // in. Mirrors the pop-out window's existing open fade.
         PlayWorkspaceEntrance();
@@ -217,7 +215,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
 
     private void WirePopOut(IPopOutSource panel, PopOutStateStore.PopOutKind kind, string titleKey, string fallbackTitle)
     {
-        // Perf-review M25: detach any prior handler for this panel before
+        // Detach any prior handler for this panel before
         // attaching a new one. Idempotent against future re-entry into
         // SetPanels (theme reload, hot-restart) — a future second wire-up
         // would otherwise leave both delegates on PopOutRequested and fire
@@ -227,11 +225,11 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
             panel.PopOutRequested -= existingHandler;
         }
 
-        // Named local function so we can `-=` in Dispose. Per HUB-UX-D7
-        // (2026-05-14) every ↗ click opens a NEW window — the previous
-        // single-instance gate that foregrounded an existing pop-out has
-        // been removed. Fan-out is source-side: each new VM subscribes
-        // to the source's multicast event and receives every row.
+        // Named local function so we can `-=` in Dispose. Every ↗ click
+        // opens a NEW window — the previous single-instance gate that
+        // foregrounded an existing pop-out has been removed. Fan-out is
+        // source-side: each new VM subscribes to the source's multicast
+        // event and receives every row.
         void Handler(object? sender, EventArgs e)
         {
             OpenPopOut(kind, titleKey, fallbackTitle, geometry: null);
@@ -262,10 +260,10 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     {
         if (_services is null || _factory is null) return;
 
-        // HUB-UX-D7 (2026-05-14) — multiple pop-outs of the same kind are
-        // allowed. Each new child VM subscribes to the source's multicast
-        // event and renders rows independently; no primary-subscriber
-        // handoff is needed (the gate was deleted in this change).
+        // Multiple pop-outs of the same kind are allowed. Each new child VM
+        // subscribes to the source's multicast event and renders rows
+        // independently; no primary-subscriber handoff is needed (the gate
+        // was deleted in this change).
         UserControl content = kind switch
         {
             PopOutStateStore.PopOutKind.LiveFeed  => _factory.CreateLiveFeedPanel(_services),
@@ -301,7 +299,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
             if (content is IDisposable d) d.Dispose();
         };
 
-        //  Apply saved geometry BEFORE Activate so a session-restore
+        // Apply saved geometry BEFORE Activate so a session-restore
         // doesn't flash the window at WinUI's default position then snap to
         // the saved rect. AppWindow is resolvable from the WindowId via
         // Win32Interop as soon as the Window has been constructed — Activate
@@ -310,7 +308,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         if (geometry is not null)
             PopOutStateStore.ApplyToWindow(window, geometry);
 
-        //  Subscribe the auto-save plumbing BEFORE Activate so the
+        // Subscribe the auto-save plumbing BEFORE Activate so the
         // first AppWindow.Changed (from Activate's initial layout pass) is
         // a no-op against the debounce, and any user drag/resize from this
         // point forward flushes to disk 1s after the gesture ends. Final
@@ -320,32 +318,29 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         window.Activate();
     }
 
-    // B43 (audit/winui-regressions-2026-05-24) — EventLog pop-outs live
-    // alongside the PopOutKind-tracked windows but are NOT persisted by
-    // PopOutStateStore (the enum is closed; EventLog is a one-off rather
-    // than one of the four headline panels). Tracking is kept here so the
-    // workspace's Dispose can still close every EventLog pop-out at
-    // shutdown without leaking the panel's polling DispatcherTimer.
+    // EventLog pop-outs live alongside the PopOutKind-tracked windows but
+    // are NOT persisted by PopOutStateStore (the enum is closed; EventLog
+    // is a one-off rather than one of the four headline panels). Tracking
+    // is kept here so the workspace's Dispose can still close every EventLog
+    // pop-out at shutdown without leaking the panel's polling DispatcherTimer.
     private readonly List<Window> _eventLogPopOuts = new();
 
-    // C16 (audit/winui-regressions-2026-05-24) — Webhook pop-outs use the
-    // same shape as the EventLog pop-outs above (out-of-band of the
-    // PopOutKind enum + state-restore plumbing). Tracking lives here so
-    // Dispose closes every still-open pop-out and unsubscribes its VM
-    // from HUDServer.OnWebhookFired.
+    // Webhook pop-outs use the same shape as the EventLog pop-outs above
+    // (out-of-band of the PopOutKind enum + state-restore plumbing). Tracking
+    // lives here so Dispose closes every still-open pop-out and unsubscribes
+    // its VM from HUDServer.OnWebhookFired.
     private readonly List<Window> _webhookPopOuts = new();
 
     /// <summary>
-    /// B43 — spawn a fresh EventLog tail panel in its own pop-out window.
+    /// Spawn a fresh EventLog tail panel in its own pop-out window.
     /// Reachable via Hub's View → Event Log menu (no fixed slot in the
     /// 4-pane workspace grid). Each click opens a new window; multiple
     /// instances are allowed because each VM owns its own polling timer
-    /// (same fan-out semantic as HUB-UX-D7).
+    /// (same fan-out semantic as the headline pop-outs).
     /// </summary>
     /// <summary>
-    /// C16 (audit/winui-regressions-2026-05-24) — spawn the Webhook tail
-    /// panel in its own pop-out window. Reachable via Hub's View → Recent
-    /// Webhooks menu. Same shape as <see cref="OpenEventLogPopOut"/>:
+    /// Spawn the Webhook tail panel in its own pop-out window. Reachable via
+    /// Hub's View → Recent Webhooks menu. Same shape as <see cref="OpenEventLogPopOut"/>:
     /// each click opens a fresh window, the panel VM owns its own
     /// HUDServer.OnWebhookFired subscription, Dispose unhooks it.
     /// </summary>
@@ -441,7 +436,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     }
 
     /// <summary>
-    /// Sprint H — snapshot the currently-open pop-outs to disk so the next
+    /// Snapshot the currently-open pop-outs to disk so the next
     /// launch can restore them. Called from MainWindow.Closed (via Dispose).
     /// Post : PopOutStateStore.Track auto-writes on every
     /// geometry change and on each Window.Closed, so this is a final
@@ -469,7 +464,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         // GC purposes.
         UnwirePopOuts();
 
-        // Sprint H — capture pop-out geometry BEFORE closing the windows.
+        // Capture pop-out geometry BEFORE closing the windows.
         // Window.Close() invalidates AppWindow.Position/Size on some WinUI 3
         // builds, so the capture has to run while the windows are still live.
         PersistOpenPopOuts();
@@ -484,7 +479,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         }
         _popOuts.Clear();
 
-        // B43 — close out EventLog pop-outs the same way. Their VMs own a
+        // Close out EventLog pop-outs the same way. Their VMs own a
         // DispatcherTimer; failing to close them would leak both the
         // timer and a strong reference back into the panel VM until
         // process exit.
@@ -495,7 +490,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         }
         _eventLogPopOuts.Clear();
 
-        // C16 — close out Webhook pop-outs alongside the EventLog ones.
+        // Close out Webhook pop-outs alongside the EventLog ones.
         // Their VMs hold a HUDServer.OnWebhookFired subscription; closing
         // the window invokes view.Dispose(), which removes the handler.
         foreach (var window in _webhookPopOuts.ToArray())
@@ -517,7 +512,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         if (region.Content is IDisposable d) d.Dispose();
     }
 
-    // ─── hub-ux: short panel entrance animation ───────────────────────────
+    // ─── Short panel entrance animation ───────────────────────────────────
     // A panel "opens" in the Hub workspace two ways: the four headline panels
     // appear when the workspace first populates, and a panel region restores to
     // the grid when its last pop-out closes. Both get a short fade + slight
@@ -598,7 +593,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     /// Collapse the embedded source region for <paramref name="kind"/> when at
     /// least one popout of that kind is open; restore it when all popouts have
     /// closed. Eliminates the duplicate-render confusion of seeing the same
-    /// panel content in two places simultaneously while preserving HUB-UX-D7's
+    /// panel content in two places simultaneously while preserving the
     /// multi-popout contract.
     /// </summary>
     private void SetRegionVisibility(PopOutStateStore.PopOutKind kind, bool popOutOpen)
@@ -620,7 +615,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         bool wasVisible = region.Visibility == Visibility.Visible;
         bool show = count == 0;
         region.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        // hub-ux: when the last pop-out of this kind closes the panel returns to
+        // When the last pop-out of this kind closes the panel returns to
         // the grid — fade + slide it back in rather than snapping.
         if (show && !wasVisible) AnimatePanelRegionIn(region);
     }

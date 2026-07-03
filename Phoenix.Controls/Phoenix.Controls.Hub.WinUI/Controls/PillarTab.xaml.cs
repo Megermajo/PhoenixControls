@@ -105,7 +105,7 @@ public sealed partial class PillarTab : UserControl
         // IsTabStop=True; Enter/Space fire Clicked via OnRootKeyDown.
         string ariaFmt = Localizer.T("pillartab.aria.name_format", "{0} pillar tab");
         AutomationProperties.SetName(this, string.Format(ariaFmt, LabelText.Text));
-        //  Tooltip — surfaces the localized pillar label on hover for mouse/keyboard users.
+        // Tooltip — surfaces the localized pillar label on hover for mouse/keyboard users.
         ToolTipService.SetToolTip(this, LabelText.Text);
         // Snap to current state on first paint (animate=false) so the tab
         // doesn't visibly fade in from Transparent on construction.

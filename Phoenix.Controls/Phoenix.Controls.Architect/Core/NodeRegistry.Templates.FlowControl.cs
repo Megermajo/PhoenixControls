@@ -3,7 +3,7 @@ using System.Drawing;
 
 namespace Phoenix.Controls.Architect.Core
 {
-    //  — second per-band carve from NodeRegistry.Templates.cs.
+    // Second per-band carve from NodeRegistry.Templates.cs.
     // Owns the FLOW CONTROL band: Logic.Branch / Logic.Switch /
     // Logic.Sequence / Logic.If, the Flow.* family (FlipFlop / DoOnce /
     // DoN / ForLoop / WhileLoop / Cooldown / Select / IsValid / Delay /
@@ -20,7 +20,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Condition", ColBool) },
                 new[] { ("True",  ColExec), ("False", ColExec) });
 
-            // M10 — cases raised from 2 → 8 (A..H). The exporter (SwitchHandler) iterates
+            // Cases raised from 2 → 8 (A..H). The exporter (SwitchHandler) iterates
             // every non-Default output socket on the live node, so simply adding sockets +
             // matching attribute defaults expands capacity. Existing 2-arm graphs still load
             // unchanged: GraphSerializer.MigrateNodes back-fills any missing sockets from
@@ -40,7 +40,7 @@ namespace Phoenix.Controls.Architect.Core
                     { "Case E", "" }, { "Case F", "" }, { "Case G", "" }, { "Case H", "" }
                 });
 
-            // M10 — arms raised from 3 → 8. SequenceHandler orders by the leading-integer
+            // Arms raised from 3 → 8. SequenceHandler orders by the leading-integer
             // in the socket name and ignores empty arms (no downstream wire), so adding
             // arms 4..8 is purely additive and existing 3-arm graphs still emit identically.
             AddTemplate("Logic.Sequence",  "Flow Control", Color.SlateGray,

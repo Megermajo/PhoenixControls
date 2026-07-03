@@ -65,7 +65,7 @@ namespace Phoenix.Controls.Hub.Core
                 string template = bound?.GetOrDefault<string>("Template", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 if (string.IsNullOrEmpty(template) && args.Length == 0) return null;
 
-                // Sweep 16 — variadic Args is a typed list of placeholder values.
+                // Variadic Args is a typed list of placeholder values.
                 // Bound path pulls the IReadOnlyList<string>; legacy fallback skips
                 // args[0] (Template) and treats the rest as the placeholder list.
                 IReadOnlyList<string> rest = bound?.GetOrDefault<IReadOnlyList<string>>("Args", Array.Empty<string>())

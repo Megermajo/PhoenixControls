@@ -43,7 +43,7 @@ namespace Phoenix.Controls.Hub.Core
         public RemoteAuthManager() : this(DB.Instance, SystemClock.Instance) { }
         public RemoteAuthManager(DB db) : this(db, SystemClock.Instance) { }
 
-        // [QC18-S10-followup] IClock injection lets tests advance virtual time
+        // IClock injection lets tests advance virtual time
         // past TTL expiry instead of sleeping past it. Production callers use
         // the parameterless ctor and get SystemClock.Instance implicitly.
         public RemoteAuthManager(DB db, IClock clock)

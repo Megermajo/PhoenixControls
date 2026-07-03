@@ -47,7 +47,7 @@ public sealed class ViewerServer : IAsyncDisposable
     private Task? _acceptLoop;
     private IDisposable? _liveSubscription;
 
-    // [P1 fix] The IHubReadModel.Subscribe handler is invoked on whatever
+    // The IHubReadModel.Subscribe handler is invoked on whatever
     // thread the source publishes on (typically the single Hub UI/dispatcher
     // thread) and is contractually required to be "cheap and non-blocking".
     // Serialising the event + fanning out inline blocked that thread, freezing
@@ -58,7 +58,7 @@ public sealed class ViewerServer : IAsyncDisposable
     private Task? _eventPump;
 
     private readonly ConcurrentDictionary<Guid, WebSocketSession> _sessions = new();
-    // QC27-09: track every outstanding HTTP / WS handler task so
+    // Track every outstanding HTTP / WS handler task so
     // StopAsync can await drain before returning. Without this, callers
     // like Hub-shutdown would race the handlers and tear down DI / file
     // handles while requests were still serializing.
@@ -118,7 +118,7 @@ public sealed class ViewerServer : IAsyncDisposable
             $"ViewerServer listening on {_listener.Prefixes.First()} (channel='{_options.Channel}', LAN={_options.LanModeEnabled})",
             "ViewerServer", LogLevel.System);
 
-        // [P1 fix] Start the background serialise/fanout pump before
+        // Start the background serialise/fanout pump before
         // subscribing so no enqueued event is dropped on a race.
         _eventQueue = Channel.CreateUnbounded<ViewerEvent>(new UnboundedChannelOptions
         {
@@ -139,7 +139,7 @@ public sealed class ViewerServer : IAsyncDisposable
         try { _listener?.Stop(); } catch { }
         try { _liveSubscription?.Dispose(); } catch { }
 
-        // [P1 fix] Signal the event pump to finish (no more events arrive once
+        // Signal the event pump to finish (no more events arrive once
         // the subscription is disposed) and await its exit so serialisation
         // doesn't outlive shutdown.
         try { _eventQueue?.Writer.TryComplete(); } catch { }
@@ -160,7 +160,7 @@ public sealed class ViewerServer : IAsyncDisposable
             try { await _acceptLoop.ConfigureAwait(false); } catch { }
         }
 
-        // QC27-09: drain outstanding HTTP / WS handlers (bounded) so a
+        // Drain outstanding HTTP / WS handlers (bounded) so a
         // caller calling DisposeAsync immediately after StopAsync
         // doesn't tear down resources while in-flight requests are
         // still serializing. Bounded by StopDrainTimeout so a wedged
@@ -199,7 +199,7 @@ public sealed class ViewerServer : IAsyncDisposable
         bool ok = _devices.Revoke(deviceId);
         if (ok)
         {
-            // Drop any live sessions bound to that device. QC27-06: close
+            // Drop any live sessions bound to that device. Close
             // with the auth-class app-level code (4401) so the WebViewer's
             // reconnect loop recognises this as a terminal "device revoked"
             // failure and stops retrying instead of hammering the endpoint
@@ -219,7 +219,7 @@ public sealed class ViewerServer : IAsyncDisposable
         return ok;
     }
 
-    // QC27-06 — application-level WebSocket close codes the WebViewer
+    // Application-level WebSocket close codes the WebViewer
     // client treats as terminal (no reconnect):
     //   • 4401 — bearer revoked / unknown post-handshake
     //   • 4403 — forbidden (defence-in-depth, not currently emitted)
@@ -230,7 +230,7 @@ public sealed class ViewerServer : IAsyncDisposable
     private IEnumerable<string> BuildPrefixes()
     {
         // HttpListener prefixes: scheme://host:port/. Honour BindAddress
-        // (QC27-05) instead of always defaulting to loopback regardless
+        // instead of always defaulting to loopback regardless
         // of caller intent:
         //   • LAN off → loopback only (127.0.0.1 + localhost), no matter
         //     what BindAddress says. Defence-in-depth so a stale option
@@ -283,7 +283,7 @@ public sealed class ViewerServer : IAsyncDisposable
                 continue;
             }
 
-            // QC27-09: register the handler task so StopAsync can
+            // Register the handler task so StopAsync can
             // drain it. The Guid key lets the handler self-deregister
             // on completion without us needing to chase task identity.
             var handlerId = Guid.NewGuid();
@@ -581,14 +581,14 @@ public sealed class ViewerServer : IAsyncDisposable
             if (_sessions.TryRemove(session.Id, out _))
                 SafeEvent.Raise(DeviceDisconnected, this, device, "ViewerServer", "DeviceDisconnected");
             try { session.WebSocket.Dispose(); } catch { }
-            // [P1 swarm-audit 2026-05-29] dispose the session itself so its
+            // dispose the session itself so its
             // SemaphoreSlim _sendLock is released — previously leaked on every
             // session teardown.
             try { session.Dispose(); } catch { }
         }
     }
 
-    // P1-P4 hardening: cap inbound WS message size at 4 KB total
+    // Cap inbound WS message size at 4 KB total
     // (cumulative across continuation frames). An authenticated peer that
     // streamed unbounded frames could otherwise DoS-flood the pump. The
     // viewer is read-only, so legitimate clients send only tiny control
@@ -642,7 +642,7 @@ public sealed class ViewerServer : IAsyncDisposable
     }
 
     // ── live event fanout ─────────────────────────────────────────────
-    // [P1 fix] Subscribe handler: must be cheap and non-blocking (it runs on
+    // Subscribe handler: must be cheap and non-blocking (it runs on
     // the publisher's thread — typically the single Hub UI/dispatcher thread).
     // Only enqueue here; the heavier serialise + fanout work happens in
     // EventPumpAsync on a background thread.
@@ -652,7 +652,7 @@ public sealed class ViewerServer : IAsyncDisposable
         _eventQueue?.Writer.TryWrite(evt);
     }
 
-    // [P1 fix] Background pump: drains queued ViewerEvents and performs the
+    // Background pump: drains queued ViewerEvents and performs the
     // serialise + fanout off the publishing thread so a busy event stream
     // can't freeze the Hub UI thread.
     private async Task EventPumpAsync(CancellationToken ct)
@@ -739,7 +739,7 @@ public sealed class ViewerServer : IAsyncDisposable
         WriteIndented = false,
     };
 
-    // [P1 swarm-audit 2026-05-29] IDisposable so the per-session SemaphoreSlim
+    // IDisposable so the per-session SemaphoreSlim
     // is released when a session is removed (HandleWebSocketAsync finally /
     // RevokeDevice). Without it, _sendLock leaked one SemaphoreSlim per
     // accepted-then-closed WS connection for the lifetime of the server.
@@ -784,7 +784,7 @@ public sealed class ViewerServer : IAsyncDisposable
             catch { /* swallow — half-closed sockets are fine to abandon */ }
         }
 
-        // [P1 swarm-audit 2026-05-29] releases the send-serialisation
+        // releases the send-serialisation
         // SemaphoreSlim. Idempotent / safe to call after the socket is gone.
         public void Dispose()
         {

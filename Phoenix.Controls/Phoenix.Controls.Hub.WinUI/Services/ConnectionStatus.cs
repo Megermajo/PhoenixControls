@@ -11,17 +11,16 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 //   • IPC bus listener       — Bus.IsListening (no event; polled)
 //
 // Where an event exists we subscribe; the rest are sampled by a 30 s sanity
-// timer. (Pre-Sprint-15 the timer ran every 2 s — but WS is event-driven,
+// timer. (Previously the timer ran every 2 s — but WS is event-driven,
 // and HUDServer.IsStarted / Bus.IsListening are essentially boot/shutdown
 // one-shots that don't need second-by-second resampling. The 30 s interval
-// is the catch-all sanity check the TODO 2026-05-07 round 2 P2 entry asked
-// for.) One StateChanged fires per real transition, regardless of which
+// is the catch-all sanity check.) One StateChanged fires per real transition, regardless of which
 // sources changed in the same tick. The HUDServer ref is passed in by the
 // bootstrapper because it's not a singleton — HubBootstrapper.BootAsync
 // constructs it.
 //
-//  The Visualist / Architect bus-client signals tracked here
-// pre-R5 were dropped because no consumer ever bound them post-T15 (the
+// The Visualist / Architect bus-client signals tracked here were
+// dropped because no consumer ever bound them post-T15 (the
 // pillars are sibling libraries embedded in Hub.WinUI now, not separate
 // processes; the bus-handshake "Architect is up" signal has no UX
 // surface). Bus.OnClientConnectionChanged stays available for any future
@@ -65,21 +64,21 @@ public sealed class ConnectionStatus : IConnectionStatus, IDisposable
 
     private void Sample()
     {
-        // QC44-03 (2026-05-15): no more ternary-collapse to Disconnected.
+        // No more ternary-collapse to Disconnected.
         // The previous shape (`IsConnected ? Connected : Disconnected`)
         // silently overwrote any richer state (Errored, Degraded,
         // Connecting) on every resampling tick. Connected is still derived
         // from the boolean source-of-truth — but when the source reports
         // "not connected" we preserve a previously-set richer state and only
         // fall to Disconnected from an actual transition. That keeps the
-        // door open for future plumbing (TODO 2026-05-15 — wire WS / HUD /
+        // door open for future plumbing (TODO — wire WS / HUD /
         // Bus failure events into Errored / Degraded) without re-touching
         // this aggregator.
         var newSb  = Resample(_streamerBot, WS.Instance.IsConnected);
         var newHud = Resample(_hudOverlay,  HUDServer.IsStarted);
         var newBus = Resample(_ipcBus,      Bus.Instance.IsListening);
 
-        //  Snapshot the per-channel transitions BEFORE mutating the
+        // Snapshot the per-channel transitions BEFORE mutating the
         // cached state so the ConnectionStateChange payload carries the real
         // "previous" value, and so a coalesced multi-channel tick fans into
         // one event per channel instead of a single bare-EventArgs pulse.
@@ -107,8 +106,7 @@ public sealed class ConnectionStatus : IConnectionStatus, IDisposable
     /// Combine a boolean "is the underlying transport up?" signal with the
     /// previously-cached state, preserving richer states (Errored, Degraded,
     /// Connecting) when the transport is reported down. Used by
-    /// <see cref="Sample"/> to avoid the ternary-collapse documented in
-    /// QC44-03.
+    /// <see cref="Sample"/> to avoid the ternary-collapse.
     /// </summary>
     private static ConnectionState Resample(ConnectionState previous, bool transportUp)
     {

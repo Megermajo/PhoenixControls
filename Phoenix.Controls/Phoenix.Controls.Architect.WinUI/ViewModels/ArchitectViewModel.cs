@@ -13,13 +13,13 @@ using Phoenix.Controls.Shared.WinUI.Contracts;
 
 namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 
-// Top-level Architect view-model. Lives for the lifetime of the window
-// Track 5 builds; aggregates the Logic Canvas, the Databank Browser, and
+// Top-level Architect view-model. Lives for the lifetime of the window;
+// aggregates the Logic Canvas, the Databank Browser, and
 // both inspectors, and orchestrates the cross-pane wiring (selection on
 // canvas → logic inspector; selection on databank → databank inspector;
 // tab change → swap which pane is active).
 //
-// Track 5's MainWindow code-behind is expected to:
+// The MainWindow code-behind is expected to:
 //   1. Construct one ArchitectViewModel per window.
 //   2. Bind the canvas pane to ArchitectViewModel.LogicCanvas.
 //   3. Bind the databank pane to ArchitectViewModel.DatabankBrowser.
@@ -39,7 +39,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     private bool _liveDebugEnabled;
     private bool _busLiveDebugDropVisible;
 
-    // ── MACRO_SYNC canonical-state cascade (S8 P0) ──────────────────────
+    // ── MACRO_SYNC canonical-state cascade ──────────────────────────────
     // Canonical Hub-broadcast macro library, id-keyed. Maintained by
     // OnBusMacroSync through MacroOps.ApplyCanonicalGlobalMacros so the open
     // canvas's Macro.Call nodes can be re-synced to the canonical signature
@@ -55,7 +55,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     private readonly Dictionary<string, ulong> _lastSyncHashByMacroId =
         new(StringComparer.Ordinal);
 
-    // [P1 swarm-audit 2026-05-29] Single guard for the three macro-sync
+    // Single guard for the three macro-sync
     // collections above (_globalMacros / _hubAckedMacroIds /
     // _lastSyncHashByMacroId). They are mutated on the bus receive thread
     // (OnBusMacroSync → MacroOps.ApplyCanonicalGlobalMacros /
@@ -70,7 +70,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     private readonly object _macroSyncLock = new();
 
     // Dispatcher that owns LogicCanvas (captured at construction — the AVM is
-    // built on the window's UI thread per the Track-5 contract). MACRO_SYNC is
+    // built on the window's UI thread). MACRO_SYNC is
     // already marshalled to a UI SynchronizationContext inside ArchitectBusClient,
     // but the singleton captures only ONE context; in a multi-window session a
     // sibling could have started the bus on a different thread, so re-marshal
@@ -99,7 +99,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         // serialises Macros / Processes inline) — sub-graph windows
         // re-resolve their macro/process by Id from GraphReplaced below.
         //
-        //  (P1-A7) — the same controller is now also handed to
+        // The same controller is now also handed to
         // DatabankBrowserViewModel below so cell edits enter the same
         // Ctrl+Z timeline as graph edits. Construct History BEFORE the
         // browser so the latter can take a non-null reference.
@@ -107,7 +107,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
             capture: () => LogicCanvas.Graph,
             apply:   g =>
             {
-                //  Undo / Redo replay LoadGraph to restore a
+                // Undo / Redo replay LoadGraph to restore a
                 // previously captured snapshot — that fires GraphLoaded
                 // (which the AVM listens to to clear IsDirty on a real
                 // file open). An undo/redo, however, should NOT mark
@@ -128,7 +128,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                 GraphReplaced?.Invoke(this, EventArgs.Empty);
             });
 
-        //  (P1-A7) — hand the shared History to the databank
+        // Hand the shared History to the databank
         // browser so cell edits enter the same undo stack as graph edits.
         // Must follow History construction; the field declarations are
         // before this method so the assignment lands in declared order.
@@ -166,7 +166,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     /// the AVM doesn't pin LogicCanvas / DatabankBrowser via its handler
     /// references after a pillar-tab teardown.
     ///
-    /// PERF (perf/architect-blockers, HIGH): pre-cache, ArchitectViewModel
+    /// PERF: previously ArchitectViewModel
     /// had no Dispose path, so the four `+=` from the constructor stayed
     /// live for the AVM's lifetime + the canvas/browser's lifetime, whichever
     /// was longer. In practice the AVM is constructed once per pillar tab
@@ -196,7 +196,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
             if (_busClient is not null)
             {
                 _busClient.OnNodeExecuted -= OnBusNodeExecuted;
-                // S8 P0  — OnMacroSync was subscribed alongside
+                // OnMacroSync was subscribed alongside
                 // OnNodeExecuted in SetLiveDebugEnabled but NOT torn down here,
                 // leaving a stale handler on the singleton ArchitectBusClient's
                 // multicast list after the AVM was disposed (pillar-tab teardown).
@@ -208,12 +208,12 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         }
         catch { /* best-effort */ }
 
-        // QC20-04: null the publisher-side delegates. Sibling windows and the
+        // Null the publisher-side delegates. Sibling windows and the
         // embedded MainView subscribe to these via inline lambdas that capture
         // their `this`; if the AVM doesn't release the invocation list, the
         // delegate refs keep those windows rooted even after their Closed
-        // handlers null their own references. QC20-01 fixes the lambda
-        // unhooking on the subscriber side; this pairs the publisher side so
+        // handlers null their own references. The subscriber side handles the
+        // lambda unhooking; this pairs the publisher side so
         // the cycle can't survive on either half.
         try
         {
@@ -229,12 +229,12 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         }
         catch { /* best-effort teardown */ }
 
-        // S8 — drop the canonical-macro caches so a long-lived singleton bus
+        // Drop the canonical-macro caches so a long-lived singleton bus
         // client doesn't keep deserialised Macro graphs rooted through the
         // disposed AVM's fields.
         try
         {
-            // [P1 swarm-audit 2026-05-29] Clear the macro-sync collections under
+            // Clear the macro-sync collections under
             // _macroSyncLock so a late bus message racing disposal can't observe
             // a half-cleared state (same lock OnBusMacroSync / RefreshMacroCallSockets
             // take when reading/writing these three collections).
@@ -375,7 +375,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
             _busClient ??= ArchitectBusClient.Instance;
             _busClient.OnNodeExecuted -= OnBusNodeExecuted;
             _busClient.OnNodeExecuted += OnBusNodeExecuted;
-            // B10 (audit 2026-05-24) — also subscribe to MACRO_SYNC so the
+            // Also subscribe to MACRO_SYNC so the
             // rail's [G] global-macro prefix lights up when Hub broadcasts
             // its canonical library. Pre-fix the AVM never subscribed, so
             // the LeftRail's _globalMacroIds set stayed empty regardless
@@ -388,7 +388,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         {
             _busClient.OnNodeExecuted -= OnBusNodeExecuted;
             _busClient.OnMacroSync -= OnBusMacroSync;
-            // [bus-persist 2026-06-10] Do NOT Stop() the connection here. The
+            // Do NOT Stop() the connection here. The
             // bus link is started at Hub launch and runs for the whole session
             // (Majo: "the BUS MUST run", "fix both"). The live-debug toggle now
             // gates only the node-flash / macro-sync SUBSCRIPTIONS above — it no
@@ -400,7 +400,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     }
 
     /// <summary>
-    /// B10 — raised after a Hub MACRO_SYNC broadcast has been deserialised.
+    /// Raised after a Hub MACRO_SYNC broadcast has been deserialised.
     /// Payload is the set of macro ids that Hub considers globally available.
     /// MainView / ArchitectSiblingWindow subscribe and forward to
     /// <c>LeftRail.SetGlobalMacroIds</c> so the rail's `[G]` prefix lights up.
@@ -409,7 +409,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
 
     private void OnBusMacroSync(string payload)
     {
-        // S8 P0  — payload is a JSON array of full Macro objects
+        // Payload is a JSON array of full Macro objects
         // (see PublishMacroGlobally below). Pre-fix this handler only scraped the
         // Id field to light up the rail's [G] prefix; the open canvas's
         // Macro.Call nodes never re-synced to a renamed / re-socketed macro until
@@ -452,7 +452,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
 
         try
         {
-            // [P1 swarm-audit 2026-05-29] Hold _macroSyncLock across the whole
+            // Hold _macroSyncLock across the whole
             // canonical-merge cascade: every mutation of _globalMacros /
             // _hubAckedMacroIds / _lastSyncHashByMacroId (ApplyCanonicalGlobalMacros,
             // the removed-id sweep, MacroSyncHashGate.Apply) runs under the same
@@ -505,7 +505,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     }
 
     /// <summary>
-    /// S8 P0 — gated refresh callback fired by <see cref="MacroSyncHashGate"/>
+    /// Gated refresh callback fired by <see cref="MacroSyncHashGate"/>
     /// once per macro whose canonical signature changed. Re-syncs every open
     /// Macro.Call node referencing this macro to the canonical Entry/Exit
     /// signature (socket count / names / types) and the canonical display name.
@@ -547,14 +547,13 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         });
     }
 
-    // ── Macro.Call / Process.Spawn call-site socket sync (S8) ───────────
+    // ── Macro.Call / Process.Spawn call-site socket sync ────────────────
     //
     // Self-contained WinUI port of the baseline WinForms Canvas.Macros.cs
     // RefreshMacroCallSockets / RefreshProcessSpawnSockets pair. Lives here
-    // (not on LogicCanvasViewModel) because S8 owns ArchitectViewModel + the
-    // SubGraphWindow that calls into it; LogicCanvasViewModel is owned by other
-    // sprints, so per the collision rule the helper is implemented self-
-    // contained in an owned file. Both the SubGraphWindow.OnClosed path (the
+    // (on ArchitectViewModel + the SubGraphWindow that calls into it, not on
+    // LogicCanvasViewModel) so the helper stays self-contained in one file.
+    // Both the SubGraphWindow.OnClosed path (the
     // just-edited inner graph) and the MACRO_SYNC cascade (canonical payload)
     // funnel through these so the parent canvas's call-site nodes always match
     // the macro/process Entry/Exit signature.
@@ -579,7 +578,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     public void RefreshMacroCallSockets(string macroId)
     {
         if (string.IsNullOrEmpty(macroId)) return;
-        // [P1 swarm-audit 2026-05-29] Read _globalMacros under _macroSyncLock —
+        // Read _globalMacros under _macroSyncLock —
         // the bus-receive thread mutates this list in OnBusMacroSync. The graph-
         // local Macros list is UI-thread-owned, so only the _globalMacros
         // fallback needs the guard; snapshot the resolved macro under the lock
@@ -936,7 +935,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
 
     private void OnBusNodeExecuted(string nodeId, string scriptFile)
     {
-        // B17 (audit/winui-regressions-2026-05-24) — per-script filter so
+        // Per-script filter so
         // siblings don't flash node ids from scripts they didn't open.
         //
         // Hub emits DEBUG_NODE_EXEC with `scriptFile` set to the .phx
@@ -1002,7 +1001,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         }
     }
 
-    /// <summary>Suffix Track 5's chrome appends to the window title (e.g. "— hello.phxg").</summary>
+    /// <summary>Suffix the chrome appends to the window title (e.g. "— hello.phxg").</summary>
     public string WindowTitleSuffix =>
         string.IsNullOrEmpty(_loadedFilePath) ? string.Empty : $"— {Path.GetFileName(_loadedFilePath)}";
 
@@ -1019,7 +1018,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         set => SetField(ref _isDirty, value);
     }
 
-    //  Latch flipped true around UndoRedoController.Apply's
+    // Latch flipped true around UndoRedoController.Apply's
     // LoadGraph call so the resulting GraphLoaded notification does NOT
     // reset IsDirty (undo/redo replays differ from the on-disk snapshot
     // and should keep the dirty marker on).
@@ -1044,12 +1043,12 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     /// Routes through the canonical GraphSerializer so the WinUI Architect
     /// reads exactly the same wire format the WinForms Architect writes.
     ///
-    /// Offloads GraphSerializer.LoadGraph onto the ThreadPool (BlockerF) and
+    /// Offloads GraphSerializer.LoadGraph onto the ThreadPool and
     /// resumes on the captured context to mutate the canvas. Cancels nothing;
     /// load is short enough that adding a CT surface area before there's a UI
     /// to wire it to would be premature.
     ///
-    ///  Previously paired with a synchronous Open(phxgPath) shim that
+    /// Previously paired with a synchronous Open(phxgPath) shim that
     /// called .GetAwaiter().GetResult() on this task; that shim was eliminated
     /// because subscribers to GraphSerializer.OnLoadFailed that dispatch back
     /// to the UI thread broke the "no SyncContext to wait for" guarantee the
@@ -1062,7 +1061,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         if (string.IsNullOrEmpty(phxgPath)) return false;
         if (!File.Exists(phxgPath)) return false;
 
-        // Hub UI sweep 2026-05-22 — detect a parse failure surfaced through
+        // Detect a parse failure surfaced through
         // GraphSerializer.OnLoadFailed. GraphSerializer.LoadGraph swallows
         // every parse / IO error internally and returns `new Graph()` (so
         // the catch (Exception) above is unreachable), then fires
@@ -1122,21 +1121,21 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
             return false;
         }
 
-        //  Wildcard cascade is now invoked once inside
+        // Wildcard cascade is now invoked once inside
         // GraphSerializer.LoadGraph after MigrateNodes, covering every freshly
         // loaded graph (including nested macros / processes via the recursive
         // migration walk). The pre-fix call here was a duplicate of that
         // post-load cascade and ran on the UI thread after the off-thread
         // load returned — removed to keep one source of truth.
 
-        // 0.10.0 (arch-ux-state #2) — explicit canvas reset before LoadGraph so
+        // 0.10.0 — explicit canvas reset before LoadGraph so
         // pan/zoom/selection/inspector all clear before the incoming graph's
         // saved ViewOffset / Zoom paint on top. LoadGraph itself sets pan/zoom
         // from Graph.View* fields; Reset() guarantees a clean slate even when
         // the incoming graph has no saved viewport (e.g. legacy .phxg files).
         LogicCanvas.Reset();
         LogicInspector.SetNode(null);
-        // [ARCH-P2-DUP-CASCADE / ARCH-P0-LOADGRAPH-UITHREAD] GraphSerializer.LoadGraph
+        // GraphSerializer.LoadGraph
         // already ran ResolveWildcardCascade off-thread (after MigrateNodes) inside
         // the awaited LoadGraphAsync above, so tell LoadGraph to skip the redundant
         // UI-thread cascade pass — it was the largest avoidable dispatcher cost on
@@ -1240,7 +1239,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     /// matches the LogicWatcher contract (Hub picks up `.phx` siblings of `.phxg`
     /// files automatically — see the pipeline docs on the pipeline).
     ///
-    /// 0.11.x freeze sweep follow-up — both the exporter walk
+    /// 0.11.x — both the exporter walk
     /// (<see cref="ScriptExporter.Export"/>, hundreds of ms on a complex
     /// graph) and the disk write run on the thread pool. Pre-fix this
     /// method ran ScriptExporter + <c>File.WriteAllText</c> synchronously
@@ -1303,12 +1302,11 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     /// <summary>
     /// Raised when <see cref="ExportPhxBeside"/> fails. MainView subscribes
     /// and updates the status bar so the user knows the engine-facing .phx
-    /// is stale even though the .phxg saved successfully. Architect UX
-    /// review P1-32.
+    /// is stale even though the .phxg saved successfully.
     /// </summary>
     public event EventHandler<string>? PhxExportFailed;
 
-    /// <summary>Track 5's TopTabBar forwards click events here.</summary>
+    /// <summary>The TopTabBar forwards click events here.</summary>
     public void OnTabChanged(string tab)
     {
         if (tab != TabLogic && tab != TabDatabank) return;
@@ -1360,7 +1358,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
 
     private void OnDatabankSelectionChanged(object? sender, EventArgs e)
     {
-        // QC19-02 — pass UpdateCellAsync as the persistence delegate so
+        // Pass UpdateCellAsync as the persistence delegate so
         // inspector field edits commit through the same IRelationalSource
         // path the row grid uses. Pre-fix this overload didn't exist and
         // the inspector silently dropped every user edit.

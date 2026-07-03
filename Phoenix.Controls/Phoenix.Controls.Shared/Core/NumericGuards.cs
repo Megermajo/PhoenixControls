@@ -6,7 +6,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Shared.Core
 {
     /// <summary>
-    /// NumericGuards —  (P0-7). Centralised NaN / Infinity defence
+    /// NumericGuards — centralised NaN / Infinity defence
     /// for the three places non-finite doubles cause silent corruption:
     ///
     ///  1. Math.* script commands — a NaN result becomes a string "NaN" that
@@ -26,8 +26,7 @@ namespace Phoenix.Controls.Shared.Core
     ///     mid-save crash and loses the user's work. We pre-validate the
     ///     Layer via <see cref="ValidateLayerForSave"/> and refuse the save
     ///     with a user-visible GlobalLogger entry pointing at the offending
-    ///     widget+keyframe (no modal — see
-    ///     feedback_no_modal_dialogs_for_repeatable_rejections.md).
+    ///     widget+keyframe (no modal).
     ///
     /// All three call sites share the same root cause but want different
     /// shapes of answer, so this file exposes three small helpers rather

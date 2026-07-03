@@ -11,7 +11,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.LiveFeedPanel;
 // (DataTemplates in WinUI 3 ItemsRepeater don't support DataTemplate fallbacks
 // off complex value-converter chains as cleanly as WPF — flatten upfront).
 //
-//  IconBrush goes through INotifyPropertyChanged so a runtime theme
+// IconBrush goes through INotifyPropertyChanged so a runtime theme
 // swap reaches the row via the panel VM's RefreshBrushes() hook. x:Bind on
 // IconBrush uses Mode=OneWay in LiveFeedView.xaml so the change actually
 // flows.
@@ -24,9 +24,9 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
         Who = entry.Who;
         Detail = entry.Detail;
         IsError = isError;
-        // B3 (audit 2026-05-24) — Errors render with a distinct glyph + a
-        // suite "error" brush. We don't add a new LiveFeedKind enum value
-        // (Records.cs is out of this sprint's scope); instead the IsError
+        // Errors render with a distinct glyph + a
+        // suite "error" brush. We don't add a new LiveFeedKind enum value;
+        // instead the IsError
         // flag rides alongside the existing Kind so the renderer can pick
         // a different icon/colour combo without touching the enum.
         Icon = isError ? "!" : IconFor(entry.Kind);
@@ -38,7 +38,7 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
     public string Who { get; }
     public string Detail { get; }
     public string Icon { get; }
-    // B3 (audit 2026-05-24) — true when this row was sourced from a
+    // True when this row was sourced from a
     // GlobalLogger CriticalError entry rather than a stream event /
     // visual trigger. Powers the panel's "Errors" filter chip + the
     // ErrBrush icon tint above.
@@ -59,7 +59,7 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
-    ///  Re-resolve IconBrush against the current Application.Resources
+    /// Re-resolve IconBrush against the current Application.Resources
     /// so a runtime theme swap reaches the row without recreating it. Caller
     /// is the panel VM, which fires this on every materialised row when
     /// ActualThemeChanged signals a swap.
@@ -80,16 +80,16 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
         _                   => "·",
     };
 
-    //  Per-kind brush cache. RefreshBrushes() iterates the entire
+    // Per-kind brush cache. RefreshBrushes() iterates the entire
     // buffered ring on theme swap and each row used to walk Application.Resources
     // once per call. With the cache the swap path costs one TryGetValue per
     // *kind* (7 keys total). InvalidateBrushCache() drops the cache so the
     // next BrushFor / ResolveBrush call re-walks the freshly merged dictionary.
     private static readonly Dictionary<LiveFeedKind, Brush> s_kindBrushCache = new();
 
-    // Perf-review H9 sibling: static fallback brush singleton — the previous
+    // Static fallback brush singleton — the previous
     // `new SolidColorBrush(Colors.Gray)` allocated per row on theme-lookup
-    // miss, defeating WinUI's brush-sharing fast path. HUB-UX P2 — resolved
+    // miss, defeating WinUI's brush-sharing fast path. Resolved
     // lazily from the CoalFallbackBrush token so a theme-key miss surfaces
     // in suite chrome instead of foreign OS grey.
     private static Brush? s_cachedFallback;
@@ -135,7 +135,7 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
     }
 
     /// <summary>
-    ///  Drop the per-kind / fallback caches so the next BrushFor /
+    /// Drop the per-kind / fallback caches so the next BrushFor /
     /// ResolveBrush call re-walks Application.Resources against the freshly-
     /// merged theme dictionary. Pair with <see cref="RefreshBrushes"/> on
     /// each row when a theme swap lands (the panel VM does both in order).

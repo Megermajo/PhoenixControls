@@ -10,7 +10,7 @@ namespace Phoenix.Controls.Updater;
 /// Three coexisting modes — the parser picks one based on which args were
 /// supplied, the runner picks the matching flow:
 ///
-///  • <b>Update mode (Track 8 / spec)</b>:
+///  • <b>Update mode (spec)</b>:
 ///    <c>Updater.exe --update &lt;archivePath&gt; [--target &lt;suiteRoot&gt;]
 ///                    [--archive-sha256 &lt;hex&gt;] [--release-tag &lt;tag&gt;]
 ///                    [--no-relaunch]</c>
@@ -77,12 +77,24 @@ public sealed class UpdaterArgs
     /// <summary>Informational tag (e.g. "0.6.0") recorded in updater.log.</summary>
     public string? ReleaseTag  { get; init; }
 
-    // ── Update mode (Track 8) ──────────────────────────────────────────
+    // ── Update mode ─────────────────────────────────────────────────────
 
     /// <summary>Absolute path to the <c>.phxupdate</c> archive to apply. Update mode only.</summary>
     public string? UpdateArchive { get; init; }
     /// <summary>Optional SHA-256 hex of the archive on disk. Re-verified before unpack; if absent, only the per-file manifest hashes are checked.</summary>
     public string? ArchiveSha256 { get; init; }
+
+    /// <summary>
+    /// Test-only override for the runner's state directory (updater.log,
+    /// last-update-result.json, updating.lock, …). Never parsed from argv —
+    /// the real spawn path always uses the roaming default. Without this seam
+    /// the unit tests wrote their fixture outcomes into the LIVE
+    /// <c>%AppData%/PhoenixControls/Hub/last-update-result.json</c>, and the
+    /// next real Hub launch on the same machine surfaced a phantom
+    /// "Last update: Failed — SHA-256 mismatch" from a test's placeholder
+    /// hash in its System Log.
+    /// </summary>
+    public string? StateDirOverride { get; init; }
 
     // ── Mode discriminators ────────────────────────────────────────────
 
@@ -198,7 +210,7 @@ public sealed class UpdaterArgs
 
         // Default relaunch target for legacy / Releases mode: Hub.WinUI.exe
         // under the installer-style layout ({installRoot}\Hub\Phoenix.Controls.Hub.WinUI.exe).
-        // MINE-12: LAUNCH_SUITE.bat + WinForms Hub.exe fallbacks were retired
+        // LAUNCH_SUITE.bat + WinForms Hub.exe fallbacks were retired
         // in T15 and are no longer staged in either the Releases zip or the
         // Inno installer payload. Caller passes --launch-script explicitly
         // when it knows better.

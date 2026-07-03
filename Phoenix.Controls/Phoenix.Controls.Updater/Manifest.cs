@@ -97,7 +97,7 @@ public sealed class UpdateManifest
     public List<string> VerifyInstall(string installRoot)
     {
         var problems = new List<string>(0);
-        // QC08-02: anchor + normalise installRoot once so every manifest entry
+        // Anchor + normalise installRoot once so every manifest entry
         // can be checked against it for traversal. The read-only verify path
         // doesn't write files, but a future selective-extract refactor would
         // inherit any laxity here.
@@ -114,7 +114,7 @@ public sealed class UpdateManifest
                 continue;
             }
 
-            // QC08-02: reject absolute paths / drive specifiers / traversal up-front.
+            // Reject absolute paths / drive specifiers / traversal up-front.
             string relative = mf.Path.Replace('/', Path.DirectorySeparatorChar);
             if (Path.IsPathRooted(relative)
                 || relative.Contains("..", StringComparison.Ordinal))
@@ -152,7 +152,7 @@ public sealed class UpdateManifest
                 continue;
             }
 
-            // QC08-05: constant-time hex compare. Mismatched-length hashes are
+            // Constant-time hex compare. Mismatched-length hashes are
             // an immediate fail anyway, but FixedTimeEquals removes the timing
             // signal entirely.
             byte[] actualBytes = HexToBytes(actual);

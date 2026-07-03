@@ -20,7 +20,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 // invalidates back through the VisualistViewModel's PushUndo/MarkDirty
 // surface on commit.
 //
-// Sprint A (live previews): the third grid row hosts a ThumbnailHost
+// Live previews: the third grid row hosts a ThumbnailHost
 // UserControl (Controls/ThumbnailHost.xaml). The canvas-side hook
 // (WidgetGraphCanvas.RefreshPreviews) computes per-node snapshots via
 // NodeEvaluator.EvaluatePreviews and pushes them in via SetPreview here.
@@ -98,7 +98,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
                 OutputPinStack.Children.Add(BuildPinRow(socket, isInput: false));
         }
 
-        // Track A (NODE-BODY PILLS) — attribute-only params get an inline TEXT
+        // Attribute-only params get an inline TEXT
         // pill even when no input socket matches them. Constant nodes
         // (Scalar/Color/Vector*.Constant, Vector.Rect4) author their values as
         // attributes with NO input sockets, so the input-pin path above never
@@ -111,7 +111,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         ApplySelectionVisual();
     }
 
-    // ─── Track A — attribute-only inline value pills ──────────────────────
+    // ─── Attribute-only inline value pills ──────────────────────
     //
     // Companion-meta suffixes per the NodeTemplates convention: "<Key>__Range"
     // (slider band hint) and "<Key>__KnownValues" (enum CSV). These are meta,
@@ -172,7 +172,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
     /// exists only so the pill builder can resolve the key, tooltip, and value.
     /// Its <c>Type</c> is Output so the R26 arm/seek cluster (input-scalar only)
     /// never attaches: attribute-only constant pills stay pure text entry, with
-    /// keyframing owned by the Inspector (Track A).
+    /// keyframing owned by the Inspector.
     /// </summary>
     private FrameworkElement BuildAttributePillRow(string attrKey, string rawValue)
     {
@@ -227,7 +227,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
     {
         if (_isSelected)
         {
-            // R40 — selection is §2 gold (SelectionBrush #FFD700), not the brass
+            // Selection is §2 gold (SelectionBrush #FFD700), not the brass
             // Ember accent. The pre-fix code painted EmberPrimaryBrush and
             // mislabelled it "canonical"; gold is the canonical selection colour
             // per Design_Orders §2 (yellow=editable, gold=selection).
@@ -241,7 +241,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         }
     }
 
-    // R41 — per-node header colour. The pre-WinUI baseline coloured node header
+    // Per-node header colour. The pre-WinUI baseline coloured node header
     // strips by category/role (the Display + Audio sinks ship green / purple
     // HeaderColor); the WinUI rework flattened every header to one brass
     // EmberShadow band, erasing the distinction. Bind TitleBar.Background to
@@ -270,7 +270,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         return new SolidColorBrush(fallback);
     }
 
-    // A2 (audit 2026-05-24) — Pin glyph dispatched per SocketDataType via
+    // Pin glyph dispatched per SocketDataType via
     // WidgetSocketPalette + WidgetPinPathGeometry, mirroring Architect's
     // pin renderer per Majo's published legend. The pin is built as a
     // Microsoft.UI.Xaml.Shapes.Path inside a 14×14 hit-target Grid so
@@ -305,8 +305,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         {
             row.Children.Add(pin);
             row.Children.Add(label);
-            // R2 — inline value pill. UE-Blueprints style per
-            // feedback_node_ui_inline_sockets: an input socket whose name matches
+            // Inline value pill. UE-Blueprints style: an input socket whose name matches
             // a Node.Attributes key gets an editable value pill on the node body
             // (NOT a detail-panel field). This is the only way to type caption
             // strings / numeric Scale·Opacity / font sizes — the WinUI rework
@@ -325,13 +324,12 @@ public sealed partial class WidgetGraphNodeView : UserControl
         return row;
     }
 
-    // ─── R2 — inline value-pill editor ───────────────────────────────────
+    // ─── Inline value-pill editor ───────────────────────────────────
     //
-    // Ported from the pre-WinUI WidgetGraphCanvas.Pills.cs (commit 22741490^).
+    // Ported from the pre-WinUI WidgetGraphCanvas.Pills.cs.
     // The canvas wires SetAttributeCommit so a committed edit routes through
     // PushUndo + MarkDirty + Rebuild on the host (matching every other
-    // attribute-mutating gesture). Visualist-local per
-    // feedback_visualist_architect_chrome_independence — the swap/commit shape
+    // attribute-mutating gesture). Visualist-local — the swap/commit shape
     // mirrors WidgetView's geometry pills, copied not lifted.
 
     private Action<Node, string, string>? _onAttrCommit;
@@ -341,7 +339,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
     /// writes the attribute, marks dirty, and rebuilds.</summary>
     public void SetAttributeCommit(Action<Node, string, string> onCommit) => _onAttrCommit = onCommit;
 
-    // ─── R26 — DaVinci keyframe arm + record-on-change ───────────────────
+    // ─── DaVinci keyframe arm + record-on-change ───────────────────
     //
     // Restores the pre-WinUI inline ◇ arm + ◀▶ seek cluster on animatable
     // value pills. The canvas owns the armed-parameter set + the record /
@@ -553,7 +551,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         };
         edit.LostFocus += (_, _) => Commit(true);
 
-        // R26 — animatable scalar pills carry the inline ◀ ◇ ▶ arm/seek cluster.
+        // Animatable scalar pills carry the inline ◀ ◇ ▶ arm/seek cluster.
         // The canvas decides eligibility (animatable input socket whose attribute
         // key matches the socket) via the injected predicate.
         if (_pillAnimShow?.Invoke(socket, attrKey) == true)
@@ -572,13 +570,12 @@ public sealed partial class WidgetGraphNodeView : UserControl
     }
 
     // Map SocketDataType → fill brush. Mirrors the WinForms WidgetGraphCanvas
-    // colour key without lifting any helpers across pillars (per
-    // feedback_visualist_architect_chrome_independence — Visualist owns its
+    // colour key without lifting any helpers across pillars (Visualist owns its
     // own palette). Keys land back to the engine's NodeRegistry.AreCompatible
     // type table when wire-drop comes in for sprint B.
     private static SolidColorBrush SocketFillFor(Socket socket)
     {
-        // R42 — back-fill the fill colour from the DataType when the socket
+        // Back-fill the fill colour from the DataType when the socket
         // carries the default white (regular widget sockets are created with
         // only Name/Type/DataType, so Socket.Color stays white and every pin
         // rendered the same neutral). WidgetSocketPalette.EffectiveColor keeps
@@ -586,7 +583,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         return new SolidColorBrush(WidgetSocketPalette.EffectiveColor(socket));
     }
 
-    // A2 — builds the per-socket pin glyph as a 14×14 Grid hosting a Path
+    // Builds the per-socket pin glyph as a 14×14 Grid hosting a Path
     // (the actual shape) plus optional arity badge for Vector* types. The
     // surrounding Grid keeps the hit-target stable at 14×14 regardless of
     // shape, so wire-drop hit-tests behave identically across types.
@@ -622,13 +619,13 @@ public sealed partial class WidgetGraphNodeView : UserControl
             // null-Background gotcha.)
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Tag = socket,
-            // [#7] Scale the pin from its centre on hover (14→18 ≈ 1.286×). The
+            // Scale the pin from its centre on hover (14→18 ≈ 1.286×). The
             // transform is the identity at rest so the resting footprint stays 14×14.
             RenderTransformOrigin = new Point(0.5, 0.5),
             RenderTransform       = new ScaleTransform { ScaleX = 1.0, ScaleY = 1.0 },
         };
 
-        // [#7] Subtle hover glow — a soft type-coloured ring behind the glyph,
+        // Subtle hover glow — a soft type-coloured ring behind the glyph,
         // collapsed at rest. Cheaper + more controllable than a DropShadow (and
         // sidesteps the drop-shadow perf red-herring flagged in the perf audit);
         // it just fades in on PointerEntered. Tinted with the socket's effective
@@ -647,9 +644,9 @@ public sealed partial class WidgetGraphNodeView : UserControl
         host.Children.Add(glow);   // behind the glyph
         host.Children.Add(path);
 
-        // ─── #7 — pin hover affordance + deterministic press hand-off ─────────
+        // ─── Pin hover affordance + deterministic press hand-off ─────────
         //
-        // [#7-WIREDRAG] Deterministic pin-press hand-off (ported from Architect's
+        // Deterministic pin-press hand-off (ported from Architect's
         // NodeView.Pins.cs OnPinHitTargetPointerPressedForDrag → NotePinPress).
         // The pin stamps itself on the owning WidgetGraphCanvas BEFORE the press
         // bubbles up to the canvas-level OnNodePointerPressed, so a press routed to
@@ -659,7 +656,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         // element) must still fire to begin the drag + capture the pointer; the
         // stamp is harmlessly consumed-and-cleared by the canvas in the same pass.
         host.PointerPressed += OnPinHostPointerPressedForHandoff;
-        // [#7] Hover affordance — scale the pin 14→18 with a subtle glow + a
+        // Hover affordance — scale the pin 14→18 with a subtle glow + a
         // "Name (DataType)" tooltip so pins are discoverable wire endpoints
         // (Architect surfaces a hover tooltip on every pin; Visualist had none).
         host.PointerEntered += (_, _) =>
@@ -696,7 +693,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         return host;
     }
 
-    // ─── #7 — deterministic pin-press hand-off to the owning canvas ──────────
+    // ─── Deterministic pin-press hand-off to the owning canvas ──────────
     //
     // Ported from Architect's NodeView.Pins.cs (GetCanvasCached +
     // OnPinHitTargetPointerPressedForDrag). Walks up the visual tree to the
@@ -735,7 +732,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
     private NodeEvaluator.PreviewSnapshot? _lastSnapshot;
 
     /// <summary>
-    /// Sprint A — push a per-node preview snapshot into the body's
+    /// Push a per-node preview snapshot into the body's
     /// preview strip. Called by <c>WidgetGraphCanvas.RefreshPreviews()</c>
     /// after every graph mutation (load / wire add-remove / attribute
     /// commit).

@@ -21,7 +21,7 @@ namespace Phoenix.Controls.Shared.Models
         [JsonPropertyName("rect")]      public WidgetRect            Rect      { get; set; } = new();
         [JsonPropertyName("zIndex")]    public int                   ZIndex    { get; set; }
         [JsonPropertyName("preset")]    public WidgetPreset?         Preset    { get; set; }
-        // B37 (audit/winui-regressions-2026-05-24) — base64 PNG payload
+        // Base64 PNG payload
         // (typically "data:image/png;base64,…"); populated on save via
         // Visualist's WidgetThumbnailCapture.CaptureBase64Async. Round-trips
         // unchanged through LayerSerializer; rendered back as the per-widget

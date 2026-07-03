@@ -10,7 +10,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    ///  — system-wide keystroke listener that fires
+    /// System-wide keystroke listener that fires
     /// <c>on_hotkey("Ctrl+Shift+P")</c> blocks via Win32 RegisterHotKey.
     /// Bindings are sourced from every enabled .phx script's
     /// <see cref="ScriptInfo.HotkeyBindings"/> set; the service walks the
@@ -33,7 +33,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly ScriptManager _scriptManager;
         private readonly HotkeyWindow _wnd = new();
 
-        // QC36-09 — Keyed by combo string (canonicalised). Tracks the Win32 hotkey id
+        // Keyed by combo string (canonicalised). Tracks the Win32 hotkey id
         // currently held for the registration so Unregister can target it precisely.
         // _registered.Value is the id; _usedIds is the reverse set for O(1) collision
         // detection when AllocateId hashes a new combo into the 0xC000..0xFFFF ATOM
@@ -43,7 +43,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly Dictionary<string, int> _registered = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<int> _usedIds = new();
 
-        // [P1 swarm-audit 2026-05-29] Serializes ALL access to _registered / _usedIds.
+        // Serializes ALL access to _registered / _usedIds.
         // ResyncBindings (ScriptRegistry.OnChanged thread) and OnHotkeyId (UI/WndProc
         // thread) otherwise mutate + read these collections concurrently — a torn
         // Dictionary read can throw or return a stale id. Held only around the
@@ -123,7 +123,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
             }
 
-            // [P1 swarm-audit 2026-05-29] Serialize the diff-and-apply against
+            // Serialize the diff-and-apply against
             // _registered / _usedIds. Register / Unregister / AllocateId reacquire
             // the same (re-entrant) lock, so the whole resync is atomic w.r.t. an
             // OnHotkeyId read on the WndProc thread. No await runs under the lock.
@@ -157,7 +157,7 @@ namespace Phoenix.Controls.Hub.Core
                     "HotkeyService", LogLevel.System);
                 return;
             }
-            // QC36-10 — MOD_NOREPEAT (0x4000) prevents Win32 from re-firing
+            // MOD_NOREPEAT (0x4000) prevents Win32 from re-firing
             // WM_HOTKEY at the keyboard auto-repeat rate (~30Hz) while the
             // chord is held. Without it, a held Ctrl+Shift+P dispatches the
             // bound script dozens of times a second.
@@ -165,7 +165,7 @@ namespace Phoenix.Controls.Hub.Core
             if (!RegisterHotKey(_wnd.Handle, id, flags, vk))
             {
                 int err = Marshal.GetLastWin32Error();
-                // QC36-09 — on ERROR_HOTKEY_ALREADY_REGISTERED (1409) the Win32
+                // On ERROR_HOTKEY_ALREADY_REGISTERED (1409) the Win32
                 // table has a binding for (mods, vk) on this thread that we don't
                 // know about — typically left over from a crashed prior Hub instance,
                 // or a stale id we orphaned earlier. Attempt to unregister against
@@ -206,7 +206,7 @@ namespace Phoenix.Controls.Hub.Core
             GlobalLogger.Log($"HotkeyService: bound '{combo}' (id={id})", "HotkeyService", LogLevel.System);
         }
 
-        // QC36-09 — single Unregister call wrapper that surfaces Win32 failures
+        // Single Unregister call wrapper that surfaces Win32 failures
         // via GlobalLogger rather than swallowing them. The previous shape
         // (`try { UnregisterHotKey(...) } catch { }`) hid the case where the
         // OS still held the binding after we removed it from `_registered`,
@@ -237,7 +237,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC36-09 — deterministic id derived from a SHA-1 hash of the combo, mapped into
+        /// Deterministic id derived from a SHA-1 hash of the combo, mapped into
         /// the ATOM range (0xC000..0xFFFF). On collision we linear-probe to the next free
         /// slot within the same dictionary. Returns 0 if the entire range is exhausted —
         /// in practice this requires >16K simultaneously registered hotkeys.
@@ -249,7 +249,7 @@ namespace Phoenix.Controls.Hub.Core
             int seed = ((hash[0] << 8) | hash[1]) & 0x3FFF;
             int start = HotkeyIdMin + seed;
 
-            // [P1 swarm-audit 2026-05-29] Guard the _usedIds linear-probe. The lock
+            // Guard the _usedIds linear-probe. The lock
             // is re-entrant — callers (Register, via ResyncBindings) already hold it.
             int range = HotkeyIdMax - HotkeyIdMin + 1;
             lock (_bindingsLock)
@@ -266,7 +266,7 @@ namespace Phoenix.Controls.Hub.Core
         private void Unregister(string combo)
         {
             if (!_registered.TryGetValue(combo, out int id)) return;
-            // QC36-09 — don't swallow Win32 failures here. If the OS thinks the
+            // Don't swallow Win32 failures here. If the OS thinks the
             // binding is still held (e.g. focus was on a process owning the same
             // chord, or the message-pump window handle was already destroyed) we
             // need to know so a recycled id isn't reused on top of a still-bound
@@ -278,7 +278,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private void UnregisterAll()
         {
-            // [P1 swarm-audit 2026-05-29] Snapshot + drop under _bindingsLock so a
+            // Snapshot + drop under _bindingsLock so a
             // shutdown-thread UnregisterAll can't race an OnHotkeyId read / a resync.
             // Re-entrant: Unregister's own _registered / _usedIds access nests safely.
             lock (_bindingsLock)
@@ -290,7 +290,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private void OnHotkeyId(int id)
         {
-            // [P1 swarm-audit 2026-05-29] Read _registered under _bindingsLock so a
+            // Read _registered under _bindingsLock so a
             // concurrent ResyncBindings mutation on the OnChanged thread can't tear
             // the lookup. The lock is released BEFORE the fire-and-forget dispatch
             // below — we never hold it across the ExecuteOnHotkeyScriptsAsync await.
@@ -421,7 +421,7 @@ namespace Phoenix.Controls.Hub.Core
         private const uint MOD_WIN     = 0x0008;
         private const uint MOD_NOREPEAT= 0x4000;
 
-        // QC36-09 — Win32 error code returned by RegisterHotKey when the
+        // Win32 error code returned by RegisterHotKey when the
         // (hWnd, id, mods, vk) tuple collides with a binding the OS already
         // tracks for the current thread. Used by the 1409 recovery path.
         private const int ERROR_HOTKEY_ALREADY_REGISTERED = 1409;

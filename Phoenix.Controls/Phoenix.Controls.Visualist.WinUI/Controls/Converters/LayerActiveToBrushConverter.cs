@@ -9,11 +9,10 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls.Converters;
 /// Maps <see cref="Phoenix.Controls.Visualist.WinUI.Models.LayerListItem.Active"/>
 /// to the LayerRail's per-row dot brush — OkBrush (green) when at least one
 /// OBS browser source is currently connected for the layer, otherwise the
-/// neutral CoalDividerBrush. Sprint K replaced the hardcoded green.
+/// neutral CoalDividerBrush.
 ///
 /// Per-pillar paint independence — this converter lives in Visualist.WinUI
-/// (not Shared.WinUI) per
-/// feedback_visualist_architect_chrome_independence: Architect has no
+/// (not Shared.WinUI): Architect has no
 /// analogous per-row presence concept and shouldn't pull a converter that
 /// only Visualist needs.
 /// </summary>

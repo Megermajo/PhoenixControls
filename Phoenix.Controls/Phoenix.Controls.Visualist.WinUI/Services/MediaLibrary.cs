@@ -13,14 +13,14 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Visualist.WinUI.Services;
 
 /// <summary>
-/// Sprint C — pillar-local helper that enumerates the Hub media library
+/// Pillar-local helper that enumerates the Hub media library
 /// (<c>data/media/</c>) and resolves references to media files across all
 /// <c>.phxlayer</c> files on disk plus an optional in-memory layer (the
 /// currently-loaded document, which may carry unsaved edits).
 ///
 /// <para>
 /// Pre-0.9.0 Visualist shipped a media-library panel with delete affordance
-/// (CHANGELOG 0.6.4). The 0.9.0 WinUI redesign dropped the surface. Sprint C
+/// (CHANGELOG 0.6.4). The 0.9.0 WinUI redesign dropped the surface. This
 /// reintroduces the delete flow via <see cref="Dialogs.MediaLibraryDialog"/>
 /// — this service is the data-side plumbing.
 /// </para>
@@ -36,8 +36,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Services;
 /// </para>
 ///
 /// <para>
-/// Per <c>feedback_visualist_architect_chrome_independence.md</c> this
-/// service lives in <c>Phoenix.Controls.Visualist.WinUI</c> rather than
+/// This service lives in <c>Phoenix.Controls.Visualist.WinUI</c> rather than
 /// Shared — the media library is owned by Visualist's design-time concerns
 /// even though the files happen to live under Hub's <c>data/</c> tree.
 /// </para>
@@ -237,7 +236,7 @@ public static class MediaLibrary
         if (!File.Exists(item.FullPath)) return false;
 
         // Capture the cache key BEFORE deleting — it's derived from mtime, which
-        // is gone once the file is unlinked. (P2 thumbnail-cache cleanup gotcha:
+        // is gone once the file is unlinked. (Thumbnail-cache cleanup gotcha:
         // skipping this orphans the .png under thumbcache/ forever.)
         string? cachePath = TryGetCachePath(item.FullPath);
 
@@ -251,7 +250,7 @@ public static class MediaLibrary
         return true;
     }
 
-    // ─── P2 — disk-backed thumbnail cache ────────────────────────────────
+    // ─── Disk-backed thumbnail cache ────────────────────────────────
     //
     // Pre-0.9.0 Visualist cached decoded thumbnails on disk so reopening the
     // media picker / docked panel didn't re-decode every image. The WinUI port
@@ -356,7 +355,7 @@ public static class MediaLibrary
         catch { /* best-effort cache write */ }
     }
 
-    // ─── R33 — unified import + kind classification ──────────────────────
+    // ─── Unified import + kind classification ──────────────────────
     //
     // Pre-fix there were TWO divergent import paths: MediaPickerDialog flat-copied
     // into the media root (no subfolder, no sanitize), while MainView.ImportMedia

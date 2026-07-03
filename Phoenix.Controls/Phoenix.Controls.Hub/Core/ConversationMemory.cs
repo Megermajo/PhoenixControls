@@ -5,7 +5,7 @@ namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
     /// Stores AI chat history as a JSON-array-of-<c>{role,content}</c> string
-    /// inside a Var.  — the conversation memory wrapper for
+    /// inside a Var. The conversation memory wrapper for
     /// <c>ai.stream_text</c>. Authors point a stream call at a memory var
     /// (any Var key) and the streaming kernel transparently
     /// prepends prior turns to the request and appends the new exchange
@@ -73,7 +73,7 @@ namespace Phoenix.Controls.Hub.Core
         /// list is not mutated.
         /// </summary>
         /// <remarks>
-        /// QC37-03 — eviction happens in turn-PAIR units, not entry units.
+        /// Eviction happens in turn-PAIR units, not entry units.
         /// The previous implementation trimmed at the raw entry index, so
         /// once the history exceeded the cap an assistant message could be
         /// left as the first turn (with the matching user message dropped).
@@ -89,7 +89,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </remarks>
         public static List<Turn> Append(List<Turn> existing, string userPrompt, string assistantResponse, int maxTurns)
         {
-            // QC37-10 — null-guard. Callers that forget to seed `existing`
+            // Null-guard. Callers that forget to seed `existing`
             // from Parse() (which always returns a non-null list) used to
             // NRE on `.Count` / `.AddRange`. Treat null the same as an
             // empty history; the first call simply seeds the inaugural

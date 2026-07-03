@@ -29,7 +29,7 @@ namespace Phoenix.Controls.Architect.Core
 
         public void Emit(string line) => _e.CtxEmit(line);
         public void AppendRawLine(string line) => _e.CtxAppendRawLine(line);
-        // M11 — handlers route ValidationWarnings through the same surface the
+        // Handlers route ValidationWarnings through the same surface the
         // GraphValidator pre-pass uses, so the user sees them in the script header.
         public void AddRuntimeWarning(string message, string? nodeId = null)
             => _e.CtxAddRuntimeWarning(message, nodeId);
@@ -165,7 +165,7 @@ namespace Phoenix.Controls.Architect.Core
         /// </summary>
         public bool AllowPlaceholderFallback { get; set; } = false;
 
-        // B9 — defensive against future plugin APIs registering a handler whose
+        // Defensive against future plugin APIs registering a handler whose
         // NodeTitle collides with a built-in: throw unless the caller explicitly
         // asks for replacement. Catches authoring mistakes early instead of
         // silently shadowing a built-in handler.

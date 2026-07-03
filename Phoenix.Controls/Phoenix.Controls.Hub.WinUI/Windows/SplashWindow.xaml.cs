@@ -65,7 +65,7 @@ public sealed partial class SplashWindow : Window
         CenterOnSavedDisplayOrPrimary();
         VersionText.Text = ResolveVersionString();
         // IGNITING… eyebrow — redesign R4 "splash.boot" localization key.
-        //  DO NOT call Localizer.T here: the splash is constructed
+        // DO NOT call Localizer.T here: the splash is constructed
         // BEFORE PillarBootstrap.RunHeavyPreUiAsync step 5 (Localizer.Init)
         // runs, so a lookup here always returns the English fallback even
         // for DE/FR/ES users whose bundle ships splash.boot. The XAML's
@@ -88,7 +88,7 @@ public sealed partial class SplashWindow : Window
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
-        // [P1 swarm-audit] AppWindow.GetFromWindowId can return null (no AppWindow
+        // AppWindow.GetFromWindowId can return null (no AppWindow
         // backing the HWND yet on some startup paths — see MainWindow.ConfigureAppWindow).
         // Bail before dereferencing rather than NRE-ing on launch.
         if (appWindow is null)
@@ -122,7 +122,7 @@ public sealed partial class SplashWindow : Window
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
-        // [P1 swarm-audit] AppWindow.GetFromWindowId can return null on some startup
+        // AppWindow.GetFromWindowId can return null on some startup
         // paths; without an AppWindow there is nothing to centre, so bail before the
         // .Move() dereference below rather than crashing the splash on launch.
         if (appWindow is null) return;
@@ -160,7 +160,7 @@ public sealed partial class SplashWindow : Window
     }
 
     /// <summary>
-    ///  Re-resolve the splash's localized strings after
+    /// Re-resolve the splash's localized strings after
     /// <c>Localizer.Init</c> has finished loading bundles. Constructor
     /// runs before Init (the splash needs to be visible while the heavy
     /// pre-UI bootstrap — including Localizer.Init — runs on a worker),

@@ -6,8 +6,8 @@ using System.Runtime.CompilerServices;
 namespace Phoenix.Controls.Hub.WinUI.Panels.Common;
 
 // Hand-rolled INotifyPropertyChanged base — sized for the panel ViewModels here.
-// We avoid CommunityToolkit.Mvvm because Track 3 may not own the csproj edit
-// needed to add the package; this keeps the Panels folder self-sufficient.
+// We avoid CommunityToolkit.Mvvm because adding the package would require a
+// csproj edit; this keeps the Panels folder self-sufficient.
 public abstract class ObservableObject : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;

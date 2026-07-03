@@ -30,16 +30,16 @@ public sealed partial class LogicCanvasView
     // click-without-drag from polluting the undo history with a no-op step.
     private const double DragDeadZonePx = 2.0;
 
-    //  P2-A7 — node-drag deferred undo. We defer the undo push from
+    // Node-drag deferred undo. We defer the undo push from
     // "first cross-deadzone move" to "PointerReleased AND positions actually
     // changed", so this flag tracks "this drag has crossed the deadzone"
     // without coupling it to the undo-stack write. Reset on every PointerPressed.
-    //  The frame paths now follow the same discipline
+    // The frame paths now follow the same discipline
     // via _frameMutated below; the old _dragHasPushedUndo first-motion-push flag
     // is fully retired.
     private bool _dragMutated;
 
-    //  Frame-drag parity with the node path. Set true
+    // Frame-drag parity with the node path. Set true
     // once a FrameMove / FrameResize crosses the deadzone. The undo snapshot is
     // now deferred to PointerReleased (CommitFrameDragUndo) instead of pushed at
     // first motion, so an Esc-cancel mid-frame-drag reverts to the captured
@@ -66,13 +66,13 @@ public sealed partial class LogicCanvasView
     private Point _frameDragStartCanvas;
     private double _frameStartX, _frameStartY, _frameStartW, _frameStartH;
 
-    //  P2-A6 — which edge / corner the in-flight FrameResize gesture
+    // Which edge / corner the in-flight FrameResize gesture
     // is anchored on. Captured at PointerPressed, drives ResizeByEdge on every
     // subsequent PointerMoved. Reset to None at gesture end so a stale value
     // can't bleed into the next press.
     private FrameResizeEdge _frameResizeEdge = FrameResizeEdge.None;
 
-    //  P2-A6 — multi-frame drag bookkeeping. When the user starts a
+    // Multi-frame drag bookkeeping. When the user starts a
     // FrameMove on a frame that's part of a multi-selection, capture each
     // selected frame's start (X, Y) and translate them all together as the
     // pointer moves. Mirrors the node-side `_groupDragStarts` pattern in
@@ -80,7 +80,7 @@ public sealed partial class LogicCanvasView
     private System.Collections.Generic.List<(FrameViewModel Frame, double X, double Y)>
         _frameGroupDragStarts = new();
 
-    //  P2-A26 — parent-child drag linkage. When a FrameMove gesture
+    // Parent-child drag linkage. When a FrameMove gesture
     // starts, snapshot every node whose bounds intersect the dragged frame's
     // bounds (innermost-frame-wins for cross-frame containment) so the frame
     // carries its contents like a UE-Blueprints comment box. Containment is
@@ -94,7 +94,7 @@ public sealed partial class LogicCanvasView
     private System.Collections.Generic.Dictionary<NodeViewModel, Point>
         _frameContentDragStarts = new();
 
-    // arch-perf-polish — frame-content drag coalesce. PointerMoved on a
+    // Frame-content drag coalesce. PointerMoved on a
     // FrameMove with N captured nodes pre-fix called TranslateNode N times
     // per event (120 Hz on touchpads → 120·N TranslateNode dispatches /
     // second, each firing PropertyChanged X+Y, each marking every wire
@@ -107,7 +107,7 @@ public sealed partial class LogicCanvasView
     private double _frameContentDragLastDx;
     private double _frameContentDragLastDy;
 
-    // arch-perf P0-4 — group-drag coalesce. The multi-node group drag was the
+    // Group-drag coalesce. The multi-node group drag was the
     // one gesture still applied inline per pointer-move: TryUpdateGroupDrag
     // loops every selected node calling TranslateNode (X+Y PropertyChanged
     // each), so a 250-node selection at 120 Hz fired ~60k position dispatches
@@ -119,7 +119,7 @@ public sealed partial class LogicCanvasView
     private bool _groupDragDirty;
     private Point _groupDragLatestCanvas;
 
-    //  P2-A7 — `_nodeStartX/Y` (declared above) doubles as the
+    // `_nodeStartX/Y` (declared above) doubles as the
     // pre-drag offset for the single-node Esc-cancel path: restoring to
     // those values reverts the drag without having to push undo. The
     // multi-node group path reuses the existing `_groupDragStarts` dictionary
@@ -137,6 +137,19 @@ public sealed partial class LogicCanvasView
     private SocketViewModel? _wireFromSocket;
     private NodeViewModel? _wireFromNode;
 
+    // Host-space press point of the in-flight wire drag. A press on a managed
+    // "+" slot that RELEASES within PlaceholderClickDriftPx of this point is a
+    // CLICK on the slot, no matter what the drop resolution says — without the
+    // tolerance, a few pixels of mouse drift resolved the release into the
+    // ADJACENT slot row's full-width drop band (or the node body / nothing)
+    // and the click silently did nothing.
+    private Point _wireDragPressHost;
+
+    // Click-vs-drag tolerance for slot presses, host-space pixels. Twice the
+    // 4px Windows drag threshold — a slot click is an aimed, deliberate
+    // gesture, but pen/touch and fast mouse clicks drift a few pixels.
+    private const double PlaceholderClickDriftPx = 8.0;
+
     private uint _capturedPointerId;
     private bool _hasCapture;
 
@@ -145,7 +158,7 @@ public sealed partial class LogicCanvasView
     // captured HostRoot rather than the element under the cursor.
     private Point _lastHostPoint;
 
-    //  Deterministic pin-press hand-off. The socket pin's own
+    // Deterministic pin-press hand-off. The socket pin's own
     // 24×24 hit-target raises PointerPressed (NodeView.Pins.cs) and stamps the
     // pressed socket here via NotePinPress. Because PointerPressed BUBBLES, the
     // pin's handler (a descendant) runs BEFORE OnHostPointerPressed on HostRoot
@@ -162,7 +175,7 @@ public sealed partial class LogicCanvasView
     private SocketViewModel? _pendingPinPress;
 
     /// <summary>
-    ///  Called from a socket pin's hit-target PointerPressed
+    /// Called from a socket pin's hit-target PointerPressed
     /// (NodeView.Pins.cs) to stamp the pressed socket for the imminent
     /// OnHostPointerPressed. See <see cref="_pendingPinPress"/>.
     /// </summary>
@@ -182,7 +195,7 @@ public sealed partial class LogicCanvasView
 
     private void OnHostPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        // [freeze-diagnostics] Breadcrumb the click entry point. Majo reports the
+        // Breadcrumb the click entry point. Majo reports the
         // canvas "always freezes while panning around or clicking around"; the
         // existing watchdog breadcrumb only ever showed the per-frame render
         // tick's tail (misleading). If a click synchronously wedges the UI
@@ -198,7 +211,7 @@ public sealed partial class LogicCanvasView
         var point = pp.Position;
         _lastHostPoint = point;
 
-        //  Any press dismisses an open hover tip so it
+        // Any press dismisses an open hover tip so it
         // can't float over a drag / pan / wire-drop gesture. Dwell-only arming
         // (NodeView.Pins.StartTooltipTimer) already keeps tips from appearing while
         // the cursor is moving; this clears one that was already up when the press
@@ -209,7 +222,7 @@ public sealed partial class LogicCanvasView
         bool right  = pp.Properties.IsRightButtonPressed;
         bool middle = pp.Properties.IsMiddleButtonPressed;
 
-        // [perf/win2d-immediate-canvas] In immediate mode there are no per-node
+        // In immediate mode there are no per-node
         // visual elements, so resolve "what's under the cursor" from the model.
         // e.OriginalSource is the bare CanvasControl, which makes the visual-tree
         // affordance/interactive/button checks below all return false — so the
@@ -219,7 +232,7 @@ public sealed partial class LogicCanvasView
             ? ResolveModelHit(HostToCanvas(point))
             : HitTagFrom(e.OriginalSource);
 
-        //  Resolve the pressed socket pin. PRIMARY source is the
+        // Resolve the pressed socket pin. PRIMARY source is the
         // deterministic note the pin's own hit-target stamped via NotePinPress
         // (routed PointerPressed reaches the pin descendant before this ancestor
         // handler). FALLBACK is the geometry probe — kept for the rare case the
@@ -228,13 +241,18 @@ public sealed partial class LogicCanvasView
         // visible" report. ConsumePendingPinPress always clears the stamp so a
         // non-pin press can't inherit a stale value.
         var notedPin = ConsumePendingPinPress();  // always clear any stale stamp
+        // PRESS-time placeholder resolution is narrowed to the drawn slot
+        // chrome (fullPlaceholderRowBand:false). The generous full-row band is
+        // a DROP affordance; at press time it hijacked every body press in a
+        // slot row's horizontal stripe into a placeholder wire-drag.
         var pinSock = left
             ? (_useImmediateMode
-                ? ResolveSocketAtCanvasPoint(HostToCanvas(point), WireDropModelHitRadius)
+                ? ResolveSocketAtCanvasPoint(HostToCanvas(point), WireDropModelHitRadius,
+                    fullPlaceholderRowBand: false)
                 : (notedPin ?? ResolvePinUnderCursor(e)))
             : null;
 
-        // [perf/win2d-immediate-canvas M3] A press that ISN'T on the edited node's
+        // A press that ISN'T on the edited node's
         // inline affordance leaves edit mode (the affordance press returns early
         // below via IsPressOnEditAffordance, keeping the editor live). OriginalSource
         // is a real element only for the one materialized NodeView, so this never
@@ -267,7 +285,7 @@ public sealed partial class LogicCanvasView
         // OnHostRightTapped — let it fall through to the context-menu path.
         if (right && !left && !middle) return;
 
-        // [ARCH node-body interactions] A left-press that lands on an inline
+        // A left-press that lands on an inline
         // edit affordance (value pill, socket-label rename, middle-attr pill /
         // bool toggle, DB-picker chevron, or an active inline TextBox / ComboBox)
         // must fall through to that element's own Tapped / DoubleTapped / Click
@@ -279,7 +297,7 @@ public sealed partial class LogicCanvasView
         // gesture recogniser complete. The socket PIN hit-targets (Ellipses) and
         // the node header / title are not affordances, so wire-drag + node-drag
         // still start on a press there.
-        //  A genuine pin press (pinSock) is never an edit
+        // A genuine pin press (pinSock) is never an edit
         // affordance — skip the veto so the wire-drag below always starts.
         if (left && pinSock is null && IsPressOnEditAffordance(e.OriginalSource, e))
             return;
@@ -304,7 +322,7 @@ public sealed partial class LogicCanvasView
             return;
         }
 
-        // [perf/win2d-immediate-canvas] Direct inline-pill editing. A left-press
+        // Direct inline-pill editing. A left-press
         // squarely on an editable value pill of a GPU-drawn node enters edit mode
         // in ONE click — TryBeginInlineEditAtCanvasPoint materializes the node's real
         // NodeView over the GPU canvas and opens that pill's TextBox. Pre-fix the only
@@ -356,8 +374,9 @@ public sealed partial class LogicCanvasView
                 SetTransientHotkeyContext(HotkeyContext.DraggingWire);
                 _wireFromSocket = wireSock;
                 _wireFromNode   = parentNode;
+                _wireDragPressHost = point;
                 StartWirePreview(parentNode, wireSock, HostToCanvas(point));
-                //  Light the green/red drop-target
+                // Light the green/red drop-target
                 // halos on every socket for the duration of the wire drag.
                 // Pre-fix BeginDropHinting/EndDropHinting had zero callers, so
                 // the XAML halo bindings + NodeView pin listeners were dead —
@@ -411,13 +430,13 @@ public sealed partial class LogicCanvasView
             // intact so the user can drag the whole group.
             if (!_vm.SelectedNodes.Contains(n)) _vm.Selection = n;
 
-            //  Drag starts on top of a wire hit-zone don't reliably
+            // Drag starts on top of a wire hit-zone don't reliably
             // fire PointerExited on the wire — clear any sticky hover up
             // front so the bright hover-brushed wire doesn't survive the
             // drag's lifetime as a ghost halo.
             ClearAllLinkHoverFlags();
 
-            //  P2-A7 — defer the undo snapshot until PointerReleased
+            // Defer the undo snapshot until PointerReleased
             // (not first cross-deadzone move) so Esc can restore positions
             // from the captured _nodeStartX / _nodeStartY (single node) or
             // _groupDragStarts (multi node) without ever pushing undo. The
@@ -449,9 +468,9 @@ public sealed partial class LogicCanvasView
         }
 
         // Frame: drag body to move; drag corner / edge handle to resize.
-        //  P2-A5 — also honour Ctrl/Shift modifiers on plain body
+        // Also honour Ctrl/Shift modifiers on plain body
         // hits so frames participate in the same multi-select idiom as nodes.
-        //  P2-A6 — IsFrameResizeHandle returns a FrameResizeEdge
+        // IsFrameResizeHandle returns a FrameResizeEdge
         // enum (None / Left / Right / Top / Bottom / corners) so the per-
         // edge transform in OnHostPointerMoved can branch precisely.
         if (left && hit is FrameViewModel fr && _vm is not null)
@@ -470,8 +489,8 @@ public sealed partial class LogicCanvasView
 
             // Ctrl/Shift on a frame body (not a resize handle) → modifier-
             // aware selection without starting a drag. Resize-handle hits
-            // always proceed to the resize branch — pre-Sprint-32 the only
-            // way to size a frame was through the handle so Ctrl/Shift on
+            // always proceed to the resize branch — previously the only
+            // way to size a frame was through the handle, so Ctrl/Shift on
             // a handle never had a coherent meaning, and forcing the resize
             // path through is the safer / less-surprising choice.
             if (edge == FrameResizeEdge.None && (ctrl || shift))
@@ -494,7 +513,7 @@ public sealed partial class LogicCanvasView
                 return;
             }
 
-            // 2026-05-22 (arch-ux #frame-header-grab) — frames only move
+            // Frames only move
             // when the press lands on the header strip (Tag="header") or the
             // label TextBlock (Tag="label"). Resize-handle hits (edge != None)
             // proceed into the resize branch unchanged.
@@ -503,7 +522,7 @@ public sealed partial class LogicCanvasView
                                    ? IsFrameHeaderHitWin2D(fr, framePt.X, framePt.Y)
                                    : IsFrameHeaderHit(e.OriginalSource));
 
-            // arch-ux-polish — body bare-click (no modifier, no header, no
+            // Body bare-click (no modifier, no header, no
             // resize-handle) behaves as a click on bare canvas: drag past the
             // dead-zone grows a marquee starting at the press point, and a
             // zero-distance release clears the current selection. Frame
@@ -537,7 +556,7 @@ public sealed partial class LogicCanvasView
             }
 
             // Defer undo snapshot until release — same dead-zone + deferred-
-            // undo discipline as the node-drag branch above (P2-A7 parity).
+            // undo discipline as the node-drag branch above.
             _frameMutated = false;
             _dragFrame = fr;
             _frameDragStartCanvas = HostToCanvas(point);
@@ -546,13 +565,13 @@ public sealed partial class LogicCanvasView
             _frameResizeEdge = edge;
             _drag = edge != FrameResizeEdge.None ? DragState.FrameResize : DragState.FrameMove;
 
-            //  P2-A6 — capture every selected frame's start position
+            // Capture every selected frame's start position
             // so a body-drag on a multi-selected frame moves the whole group.
             // Resize gestures don't make sense as group-resize so they only
             // size the directly-clicked frame.
             BeginFrameGroupDragIfMulti(fr);
 
-            //  P2-A26 — capture contained nodes so a frame move
+            // Capture contained nodes so a frame move
             // carries its contents (UE-Blueprints comment-box semantics).
             // Only fires on FrameMove (not FrameResize) — resizing a comment
             // box shouldn't drag its members. Containment is snapshotted
@@ -594,7 +613,7 @@ public sealed partial class LogicCanvasView
         var point = pp.Position;
         _lastHostPoint = point;
 
-        // C8 (audit/winui-regressions-2026-05-24) — frame edge-resize
+        // Frame edge-resize
         // discoverability. While no drag is in flight, mirror the visual-tree
         // hit-test under the cursor onto the host's ProtectedCursor so the
         // eight (otherwise-invisible) resize zones around every frame surface
@@ -605,7 +624,7 @@ public sealed partial class LogicCanvasView
         {
             if (_useImmediateMode) UpdateFrameEdgeHoverCursorWin2D(HostToCanvas(point));
             else UpdateFrameEdgeHoverCursor(e.OriginalSource);
-            // [perf/win2d-immediate-canvas M4] model-driven hover highlight (the
+            // Model-driven hover highlight (the
             // retained path's per-element pointer events don't exist on the GPU canvas).
             if (_useImmediateMode) UpdateImmediateHover(HostToCanvas(point));
         }
@@ -615,7 +634,7 @@ public sealed partial class LogicCanvasView
             case DragState.Pan:
                 if (_vm is not null)
                 {
-                    // 0.10.0 (arch-perf P1) — queue the target pan for the
+                    // Queue the target pan for the
                     // next CompositionTarget.Rendering tick instead of
                     // poking _vm.PanX/Y + ApplyViewTransform on every
                     // pointer-move. A 120 Hz pan burst collapses to one
@@ -637,7 +656,7 @@ public sealed partial class LogicCanvasView
                         && !_dragMutated)
                     {
                         // Inside the dead zone — keep the press alive but don't
-                        // move the node yet.  P2-A7 — also defer the
+                        // move the node yet. Also defer the
                         // undo push (now happens on release, not on first
                         // cross-deadzone move) so Esc can roll back without
                         // requiring a second Ctrl+Z.
@@ -646,7 +665,7 @@ public sealed partial class LogicCanvasView
                     }
                     _dragMutated = true;
 
-                    // arch-perf P0-4 — a multi-node group applied inline per
+                    // A multi-node group applied inline per
                     // pointer-move fires ~2 PropertyChanged dispatches per node
                     // per event; coalesce the group translate to the render tick
                     // (same idiom as frame-content drag). A single-node drag has
@@ -662,7 +681,7 @@ public sealed partial class LogicCanvasView
                         _vm.TranslateNode(_dragNode, targetX - _dragNode.X, targetY - _dragNode.Y);
                     }
 
-                    //  P1-A10 — recompute alignment guides + collision
+                    // Recompute alignment guides + collision
                     // overlay against every visible non-selection node and
                     // repaint the transient overlay layer. Cleared on
                     // PointerReleased / AbortInFlightGesture so the hints
@@ -690,7 +709,7 @@ public sealed partial class LogicCanvasView
                     var p = HostToCanvas(point);
                     double dx = p.X - _frameDragStartCanvas.X;
                     double dy = p.Y - _frameDragStartCanvas.Y;
-                    //  Deadzone + deferred-undo parity
+                    // Deadzone + deferred-undo parity
                     // with the node path: no PushUndo at first motion (the
                     // snapshot is committed on release via CommitFrameDragUndo),
                     // so a sub-deadzone twitch never lands a spurious undo step
@@ -703,7 +722,7 @@ public sealed partial class LogicCanvasView
                     }
                     _frameMutated = true;
 
-                    //  P2-A6 — drag every frame in the multi-set
+                    // Drag every frame in the multi-set
                     // together when a group drag is in flight; fall back to
                     // single-pivot translate otherwise.
                     if (!TryUpdateFrameGroupDrag(dx, dy))
@@ -713,9 +732,9 @@ public sealed partial class LogicCanvasView
                         _dragFrame.Translate(targetX - _dragFrame.X, targetY - _dragFrame.Y);
                     }
 
-                    //  P2-A26 — ripple the same delta into every
+                    // Ripple the same delta into every
                     // node captured at drag-start (contents follow the frame).
-                    // arch-perf-polish: stash the latest delta + dirty flag;
+                    // Stash the latest delta + dirty flag;
                     // the OnRenderingTick drain runs FlushFrameContentDrag at
                     // displayed-frame cadence so a 120 Hz pointer burst
                     // collapses to one N-node translate pass per displayed
@@ -731,7 +750,7 @@ public sealed partial class LogicCanvasView
                     var p = HostToCanvas(point);
                     double rdx = p.X - _frameDragStartCanvas.X;
                     double rdy = p.Y - _frameDragStartCanvas.Y;
-                    //  Deferred-undo parity (see FrameMove).
+                    // Deferred-undo parity (see FrameMove).
                     if (!_frameMutated
                         && Math.Abs(rdx) + Math.Abs(rdy) < DragDeadZonePx)
                     {
@@ -740,7 +759,7 @@ public sealed partial class LogicCanvasView
                     }
                     _frameMutated = true;
 
-                    //  P2-A6 — apply the per-edge transform from the
+                    // Apply the per-edge transform from the
                     // captured pre-drag bounds. ResizeByEdge handles minimum-
                     // size clamping (40×40) including the origin-shifting
                     // top / left edges.
@@ -830,7 +849,7 @@ public sealed partial class LogicCanvasView
             var salvaged = ResolveHitFromEvent(e);
             if (salvaged is SocketViewModel target)
             {
-                //  TryCreateLink owns the undo snapshot for the wire
+                // TryCreateLink owns the undo snapshot for the wire
                 // creation (see LogicCanvasView.xaml.cs PushUndo() before
                 // AddLink). Do NOT add a PushUndo() here — that would push a
                 // duplicate snapshot for the same user action. If a future
@@ -839,7 +858,7 @@ public sealed partial class LogicCanvasView
                 // capture-loss-salvaged wire remains undoable.
                 TryCreateLink(_wireFromSocket, target);
                 EndWirePreview();
-                _vm?.EndDropHinting(); //  clear halos
+                _vm?.EndDropHinting(); // clear halos
                 _wireFromSocket = null;
                 _wireFromNode   = null;
                 _drag = DragState.Idle;
@@ -857,7 +876,7 @@ public sealed partial class LogicCanvasView
     {
         var hit = cancelled ? null : ResolveHitFromEvent(e);
 
-        // [Tranche-2] Off-screen wire-drop: when virtualization has culled the target
+        // Off-screen wire-drop: when virtualization has culled the target
         // node out of the visual tree (it scrolled into view via edge-pan mid-drag),
         // the visual hit-test above misses. Resolve the target socket model-side so
         // the wire still connects to the intended (unmounted) socket.
@@ -866,7 +885,7 @@ public sealed partial class LogicCanvasView
         {
             var dropCanvas = HostToCanvas(ResolveLastCursorHostPoint(e));
             hit = ResolveSocketAtCanvasPoint(dropCanvas, WireDropModelHitRadius);
-            // [perf/win2d-immediate-canvas] node-body drop parity — when the drop
+            // Node-body drop parity — when the drop
             // isn't on a specific pin, fall back to the node under the cursor so the
             // "auto-connect to first compatible input" branch below still fires.
             if (hit is null && _useImmediateMode)
@@ -880,6 +899,31 @@ public sealed partial class LogicCanvasView
                     (hit is SocketViewModel ht
                         ? $"socket \"{ht.Label}\"{(ht.IsPlaceholder ? " [PLACEHOLDER]" : "")} on \"{ht.ParentNode?.Title}\""
                         : hit is NodeViewModel bn ? $"body \"{bn.Title}\"" : "nothing"));
+                // Click-drift tolerance: a press on a managed "+" slot that
+                // travelled only a few host pixels is a CLICK on that slot,
+                // regardless of what the release resolved to — the adjacent
+                // slot row's full-width drop band, the node body, or nothing
+                // (each of which used to eat the click silently). Activate the
+                // PRESSED slot and skip the drop interpretation entirely.
+                if (!cancelled && _wireFromNode is not null
+                    && PlaceholderActivator.IsManagedPlaceholder(_wireFromNode.Model, _wireFromSocket.Model))
+                {
+                    var endHost = ResolveLastCursorHostPoint(e);
+                    double cdx = endHost.X - _wireDragPressHost.X;
+                    double cdy = endHost.Y - _wireDragPressHost.Y;
+                    if ((cdx * cdx) + (cdy * cdy)
+                        <= PlaceholderClickDriftPx * PlaceholderClickDriftPx)
+                    {
+                        BubbleDiag($"click-drift: release within {PlaceholderClickDriftPx}px of the " +
+                            $"\"{_wireFromSocket.Label}\" press → activate the slot");
+                        TryActivatePlaceholderOnClick(_wireFromSocket);
+                        EndWirePreview();
+                        _vm?.EndDropHinting(); // clear halos
+                        _wireFromSocket = null;
+                        _wireFromNode   = null;
+                        break;
+                    }
+                }
                 if (hit is SocketViewModel target)
                 {
                     TryCreateLink(_wireFromSocket, target);
@@ -892,7 +936,7 @@ public sealed partial class LogicCanvasView
                     var compat = FindFirstCompatibleInput(_wireFromSocket, bodyNode);
                     if (compat is not null) TryCreateLink(_wireFromSocket, compat);
                     else
-                        //  Surface the no-op so a
+                        // Surface the no-op so a
                         // body-drop onto a node with no compatible socket isn't
                         // silent — consistent with TryCreateLink's own rejection
                         // logging (no modal, per the repeatable-rejection rule).
@@ -911,19 +955,19 @@ public sealed partial class LogicCanvasView
                     ShowFilteredSpawnPaletteForWireDrop(_wireFromSocket, dropPoint);
                 }
                 EndWirePreview();
-                _vm?.EndDropHinting(); //  clear halos
+                _vm?.EndDropHinting(); // clear halos
                 _wireFromSocket = null;
                 _wireFromNode   = null;
                 break;
 
             case DragState.NodeDrag:
-                // arch-perf P0-4 — apply any group-drag delta still pending from
+                // Apply any group-drag delta still pending from
                 // the last PointerMoved BEFORE committing undo / clearing the
                 // group, so the nodes land exactly under the cursor (zero offset)
                 // and the undo snapshot captures the final positions, not a
                 // frame-stale pose. No-op for a single-node drag (nothing stashed).
                 FlushGroupDragIfDirty();
-                //  P2-A7 — push undo on release (not on first move),
+                // Push undo on release (not on first move),
                 // and only when the drag actually mutated positions. The undo
                 // controller snapshots the CURRENT graph state at PushUndo
                 // time, so we briefly restore the pre-drag positions,
@@ -946,7 +990,7 @@ public sealed partial class LogicCanvasView
 
             case DragState.FrameMove:
             case DragState.FrameResize:
-                //  Push undo on release (not on first
+                // Push undo on release (not on first
                 // motion), and only when the gesture actually mutated the
                 // frame. CommitFrameDragUndo briefly reverts to the captured
                 // pre-drag bounds, snapshots, then re-applies the end-state —
@@ -961,7 +1005,7 @@ public sealed partial class LogicCanvasView
                 _frameMutated = false;
                 _frameResizeEdge = FrameResizeEdge.None;
                 EndFrameGroupDrag();
-                //  P2-A26 — release the captured contained-node set.
+                // Release the captured contained-node set.
                 EndFrameContentDrag();
                 break;
 
@@ -969,7 +1013,7 @@ public sealed partial class LogicCanvasView
                 break;
         }
 
-        //  P1-A10 — clear any in-flight snap-guide / collision
+        // Clear any in-flight snap-guide / collision
         // overlay so the hints never outlive the drag they were drawn for.
         ClearSnapGuideOverlay();
 
@@ -990,7 +1034,7 @@ public sealed partial class LogicCanvasView
         bool ctrl  = ModifierDown(Windows.System.VirtualKey.Control);
         bool shift = ModifierDown(Windows.System.VirtualKey.Shift);
 
-        //  Wheel zoom + wheel pan used to write PanX/Y/Zoom +
+        // Wheel zoom + wheel pan used to write PanX/Y/Zoom +
         // ApplyViewTransform synchronously on every detent — bypassing the
         // CompositionTarget.Rendering coalescer the drag-pan path uses.
         // Touchpad inertia / smooth-scroll wheels fire up to ~120 events/s
@@ -1095,8 +1139,8 @@ public sealed partial class LogicCanvasView
         // doesn't appear "stuck" while the canvas slides under it. We do
         // this by re-running the Move handler logic with the same anchor
         // point — pan changes the canvas-space coords under the same host
-        // pixel, so the drag's delta naturally widens.  P2-A7 —
-        // the node-drag path now gates on _dragMutated (the "we've crossed
+        // pixel, so the drag's delta naturally widens.
+        // The node-drag path now gates on _dragMutated (the "we've crossed
         // the deadzone" flag) instead of _dragHasPushedUndo, since undo is
         // deferred to release on this path.
         if (_drag == DragState.NodeDrag && _dragNode is not null && _vm is not null)
@@ -1106,7 +1150,7 @@ public sealed partial class LogicCanvasView
             double mdy = canvasPoint.Y - _nodeDragStartCanvas.Y;
             if (_dragMutated)
             {
-                // arch-perf P0-4 — route the edge-pan ripple through the SAME
+                // Route the edge-pan ripple through the SAME
                 // coalescer as the pointer-move path. Applying it inline here
                 // while the move path coalesces would double-move the group on
                 // any frame where both fire; both now just stash the latest
@@ -1128,7 +1172,7 @@ public sealed partial class LogicCanvasView
             var p = HostToCanvas(_lastHostPoint);
             double dx = p.X - _frameDragStartCanvas.X;
             double dy = p.Y - _frameDragStartCanvas.Y;
-            //  Gate the edge-pan ripple on _frameMutated
+            // Gate the edge-pan ripple on _frameMutated
             // (the "crossed deadzone" flag) instead of _dragHasPushedUndo, since
             // the frame undo push is now deferred to release.
             if (_frameMutated)
@@ -1139,10 +1183,10 @@ public sealed partial class LogicCanvasView
                     double targetY = _frameStartY + dy;
                     _dragFrame.Translate(targetX - _dragFrame.X, targetY - _dragFrame.Y);
                 }
-                //  P2-A26 — edge-pan ripple needs to carry the
+                // Edge-pan ripple needs to carry the
                 // frame's contents too, otherwise the auto-pan would visually
                 // strand contained nodes behind the moving frame.
-                // arch-perf-polish — route through the dirty-flag drain so
+                // Route through the dirty-flag drain so
                 // the edge-pan tick + the pointer-move tick collapse into a
                 // single TranslateNode pass per displayed frame.
                 RequestFrameContentDragUpdate(dx, dy);
@@ -1164,16 +1208,16 @@ public sealed partial class LogicCanvasView
         {
             case DragState.WireDrop:
                 EndWirePreview();
-                _vm?.EndDropHinting(); //  clear halos
+                _vm?.EndDropHinting(); // clear halos
                 _wireFromSocket = null;
                 _wireFromNode   = null;
                 break;
 
             case DragState.NodeDrag:
-                //  P2-A7 — restore pre-drag positions on Esc-cancel
+                // Restore pre-drag positions on Esc-cancel
                 // without ever pushing undo. The captured _nodeStartX/Y holds
                 // the single-node start; _groupDragStarts holds every member
-                // of a multi-node group drag. Pre-Sprint-32 the undo push
+                // of a multi-node group drag. Previously the undo push
                 // happened at first-motion, so larger drags required a
                 // second Ctrl+Z after Esc to fully unwind — now Esc is the
                 // single source of truth for cancellation.
@@ -1192,7 +1236,7 @@ public sealed partial class LogicCanvasView
 
             case DragState.FrameMove:
             case DragState.FrameResize:
-                //  Esc-cancel now reverts the frame
+                // Esc-cancel now reverts the frame
                 // (and, for a move, its group + carried contents) to the
                 // captured pre-drag pose WITHOUT pushing undo — parity with the
                 // node-drag Esc path. Pre-fix the frame stayed where the gesture
@@ -1210,12 +1254,12 @@ public sealed partial class LogicCanvasView
                 break;
         }
 
-        //  Esc-cancel + capture-loss tear-down: scrub any sticky
+        // Esc-cancel + capture-loss tear-down: scrub any sticky
         // wire-hover halo so an aborted gesture doesn't leave a wire
         // highlighted as if the cursor were still on its hit-zone.
         ClearAllLinkHoverFlags();
 
-        //  P1-A10 — clear any in-flight snap-guide / collision
+        // Clear any in-flight snap-guide / collision
         // overlay on cancel so the guides don't outlive the gesture.
         ClearSnapGuideOverlay();
 
@@ -1297,7 +1341,7 @@ public sealed partial class LogicCanvasView
 
     // ─── Wire preview ────────────────────────────────────────────────────
     //
-    // PERF (perf/architect-blockers, BlockerD): pre-cache, UpdateWirePreview
+    // PERF: previously UpdateWirePreview
     // allocated a fresh PathGeometry + PathFigure + BezierSegment on every
     // PointerMoved during a wire drag (60+ Hz). Now we allocate the geometry
     // once and mutate StartPoint / Point1-3 in place — PathGeometry & friends
@@ -1420,7 +1464,7 @@ public sealed partial class LogicCanvasView
             };
         graph.Links.Add(newLink);
 
-        //  Incremental insert (one node + one link) instead of
+        // Incremental insert (one node + one link) instead of
         // LoadGraph rebuilding every VM + OnGraphMutated walking every socket
         // twice — the "big lag when placing reroute via hotkey" on large graphs.
         // Returns the freshly-built reroute VM; the drag continues from its
@@ -1439,7 +1483,7 @@ public sealed partial class LogicCanvasView
 
         _wireFromNode   = rerouteVm;
         _wireFromSocket = nextSource;
-        //  The drag now sources from the reroute's
+        // The drag now sources from the reroute's
         // free pin (a different type/direction than the original source), so
         // re-evaluate the drop-target halos against the new source socket.
         _vm?.BeginDropHinting(nextSource);
@@ -1453,7 +1497,7 @@ public sealed partial class LogicCanvasView
         return true;
     }
 
-    //  Cached theme + palette brushes — pre-fix ResolveWirePreviewColor
+    // Cached theme + palette brushes — pre-fix ResolveWirePreviewColor
     // ran Application.Current.Resources["Ember200Brush"] on every pointer-move
     // and fell through to `new SolidColorBrush(Microsoft.UI.Colors.Gold)` /
     // palette equivalents on every move where the theme key was missing. Both
@@ -1574,8 +1618,9 @@ public sealed partial class LogicCanvasView
         SetTransientHotkeyContext(HotkeyContext.DraggingWire);
         _wireFromSocket = sourceSide;
         _wireFromNode   = sourceNode;
+        _wireDragPressHost = hostPoint;
         StartWirePreview(sourceNode, sourceSide, HostToCanvas(hostPoint));
-        //  Ctrl-rewire re-aims an existing wire from
+        // Ctrl-rewire re-aims an existing wire from
         // the opposite end — hint valid drop targets for that re-drag too.
         _vm?.BeginDropHinting(sourceSide);
         return true;
@@ -1586,7 +1631,7 @@ public sealed partial class LogicCanvasView
     /// compatible with <paramref name="src"/>. Used by the drop-on-body
     /// fallback in <see cref="HandlePointerEnd"/>.
     /// </summary>
-    //  Direction-aware target-socket selector
+    // Direction-aware target-socket selector
     // for body-drops / post-spawn auto-wire. Wires connect Output → Input, so
     // the only valid target on a node body is the OPPOSITE direction to the
     // drag source: an Output source picks the first compatible Input, an Input
@@ -1606,12 +1651,12 @@ public sealed partial class LogicCanvasView
             if (NodeRegistry.AreCompatible(src.DataType, s.DataType))
                 return s;
         }
-        //  No real socket matched — fall back to a managed dynamic
+        // No real socket matched — fall back to a managed dynamic
         // placeholder ("+ variable" / "+ input" / "+ output" / "+ return") so a body-drop
         // on a node whose only viable target is its add-slot (e.g. a fresh Macro.Entry /
         // Process.Entry / Event.Trigger carrying only Flow + the placeholder) GROWS the
         // bubble instead of no-op'ing. Managed placeholders are always DATA slots and
-        // ADOPT the wire's type on activation (TryCreateLink's 
+        // ADOPT the wire's type on activation (TryCreateLink's
         // owns the type check), so the only thing to exclude is a flow source — a flow
         // wire wants the node's real Flow input, already handled by the loop above.
         if (src.DataType != SocketDataType.Flow)
@@ -1640,11 +1685,10 @@ public sealed partial class LogicCanvasView
         _pendingWireDropCanvas = HostToCanvas(hostPoint);
         // Hand the source type AND direction to the palette so the COMPATIBLE
         // section pre-filters templates to those whose first compatible socket
-        // accepts this socket.  Pre-fix the direction was omitted, so
+        // accepts this socket. Pre-fix the direction was omitted, so
         // a wire dropped from an Input socket walked the wrong pin pool (Inputs
         // instead of Outputs) and the post-spawn auto-wire failed silently
-        // unless the user happened to pick a type-matching template (Architect
-        // UX review P0-6).
+        // unless the user happened to pick a type-matching template.
         ShowSpawnPalette(hostPoint, compatibilityFilter: src.DataType, sourceDirection: src.Direction);
     }
 
@@ -1657,7 +1701,7 @@ public sealed partial class LogicCanvasView
         catch { return _lastHostPoint; }
     }
 
-    // ───  P2-A6 — multi-frame group drag ────────────────────────
+    // ─── Multi-frame group drag ────────────────────────
 
     private void BeginFrameGroupDragIfMulti(FrameViewModel pivot)
     {
@@ -1684,7 +1728,7 @@ public sealed partial class LogicCanvasView
 
     private void EndFrameGroupDrag() => _frameGroupDragStarts.Clear();
 
-    // ───  P2-A26 — frame parent-child drag linkage ──────────────
+    // ─── Frame parent-child drag linkage ──────────────
     //
     // When a FrameMove gesture begins, snapshot every node whose canvas-space
     // bounds intersect the drag frame's bounds so the frame carries those
@@ -1702,7 +1746,7 @@ public sealed partial class LogicCanvasView
     // (dx, dy), so the relative geometry inside each frame is preserved.
     //
     // Undo: the existing `PushUndo()` at first-motion (the frame path's
-    // pre-Sprint-32 discipline) snapshots the pre-drag graph state which
+    // prior discipline) snapshots the pre-drag graph state which
     // covers BOTH the frame's pre-drag bounds AND every contained node's
     // pre-drag location. A single Ctrl+Z rolls back the whole gesture as one
     // undo entry.
@@ -1719,7 +1763,7 @@ public sealed partial class LogicCanvasView
     /// pivot OR a member of the in-flight multi-frame drag group.
     /// </summary>
     // ────────────────────────────────────────────────────────────────────
-    // C19 (audit/winui-regressions-2026-05-24) — Frame nesting visual
+    // Frame nesting visual
     // semantics: INTENTIONAL FLAT-FRAME BEHAVIOUR, NOT A REGRESSION.
     // ────────────────────────────────────────────────────────────────────
     //
@@ -1839,7 +1883,7 @@ public sealed partial class LogicCanvasView
     }
 
     /// <summary>
-    /// arch-perf-polish — stash the latest cumulative (dx, dy) for the
+    /// Stash the latest cumulative (dx, dy) for the
     /// in-flight FrameMove and flip the dirty flag so the next
     /// CompositionTarget.Rendering tick drains it via
     /// <see cref="FlushFrameContentDragIfDirty"/>. Caller-side (the
@@ -1879,7 +1923,7 @@ public sealed partial class LogicCanvasView
         _frameContentDragLastDy = 0;
     }
 
-    // ───  P2-A7 — deferred undo + Esc-cancel for node drag ──────
+    // ─── Deferred undo + Esc-cancel for node drag ──────
 
     /// <summary>
     /// Push undo for a node drag that just completed. The undo controller
@@ -2036,7 +2080,7 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    // ───  P1-A10 — snap guides + collision overlay ──────────────
+    // ─── Snap guides + collision overlay ──────────────
     //
     // Drawn into OverlayLayer (host-space Canvas above the panned ViewSurface)
     // so the lines / collision tints sit above every node + wire and don't
@@ -2047,8 +2091,7 @@ public sealed partial class LogicCanvasView
     // Strokes use SelectionBrush so the gold-ember selection palette flows
     // through (Design_Orders.md §2). Collision tint uses ErrBrush — same
     // brush the wire-preview uses for incompatible drops so the canvas
-    // chrome stays consistent. Paint code lives in Architect (NOT Shared)
-    // per feedback_visualist_architect_chrome_independence.md.
+    // chrome stays consistent. Paint code lives in Architect (NOT Shared).
 
     private const double SnapEdgeThresholdPx = 4.0;
 
@@ -2096,7 +2139,7 @@ public sealed partial class LogicCanvasView
         }
         catch { /* hit-test best-effort */ }
 
-        // [Tranche-2] Model-side fallback: a culled (off-screen) hover target won't be
+        // Model-side fallback: a culled (off-screen) hover target won't be
         // in the visual tree; resolve it model-side so the compatibility preview
         // (wire colour) still reflects the unmounted socket under the cursor.
         if (hover is null && _enableNodeVirtualization)

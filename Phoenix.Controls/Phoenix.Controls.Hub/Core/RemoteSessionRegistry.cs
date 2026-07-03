@@ -29,7 +29,7 @@ namespace Phoenix.Controls.Hub.Core
     public sealed class RemoteSessionRegistry
     {
         /// <summary>
-        /// QC41-04 — per-socket SendAsync timeout. Mirrors the constant in
+        /// Per-socket SendAsync timeout. Mirrors the constant in
         /// <c>RemoteBridgeServer</c>; bumping one without the other is a bug
         /// magnet so consider extracting if a third caller appears.
         /// </summary>
@@ -124,7 +124,7 @@ namespace Phoenix.Controls.Hub.Core
                         dead.Add((deviceId, session));
                         continue;
                     }
-                    // QC41-04 — bound each per-socket send so one stalled
+                    // Bound each per-socket send so one stalled
                     // Viewer can't pin BroadcastAsync forever; on timeout we
                     // abort the socket and mark it dead so the next broadcast
                     // skips it cleanly.

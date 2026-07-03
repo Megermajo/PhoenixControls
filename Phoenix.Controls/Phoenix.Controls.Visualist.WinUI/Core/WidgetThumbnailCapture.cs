@@ -11,18 +11,17 @@ using Windows.Graphics.Imaging;
 namespace Phoenix.Controls.Visualist.WinUI.Core;
 
 /// <summary>
-/// B37 (audit/winui-regressions-2026-05-24) — WinUI render-to-bitmap utility
+/// WinUI render-to-bitmap utility
 /// for capturing a per-widget thumbnail at save time. Renders the supplied
 /// <see cref="UIElement"/> via <see cref="RenderTargetBitmap"/>, downscales to
 /// fit inside <c>maxDim</c>, re-encodes as PNG, and returns the base64-encoded
 /// payload to embed into <c>LayerWidget.Thumbnail</c> (round-trips through
 /// LayerSerializer unchanged — see LayerWidget.cs:27).
 ///
-/// Per feedback_visualist_architect_chrome_independence.md this utility is
+/// This utility is
 /// Visualist-only and lives under <c>Visualist.WinUI/Core/</c>; Architect has
 /// no analogue (the logic canvas has nothing to thumbnail). Failures degrade
-/// silently — null return, GlobalLogger.Error breadcrumb, no modals (per
-/// feedback_no_modal_dialogs_for_repeatable_rejections.md).
+/// silently — null return, GlobalLogger.Error breadcrumb, no modals.
 ///
 /// All entry points must be called on the UI thread that owns
 /// <paramref name="target"/> — <see cref="RenderTargetBitmap.RenderAsync"/> is
@@ -58,7 +57,7 @@ public static class WidgetThumbnailCapture
             // nothing — and so callers know to skip writing the field.
             if (target is FrameworkElement fe)
             {
-                // K-P1 (audit live-preview lane): a widget added programmatically
+                // A widget added programmatically
                 // immediately before a save may not have been through a layout
                 // pass yet, so ActualWidth/Height are still 0 and the capture
                 // would be skipped — the new widget then persists with a null

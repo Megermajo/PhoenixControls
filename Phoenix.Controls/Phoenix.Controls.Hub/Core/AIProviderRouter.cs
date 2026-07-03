@@ -28,7 +28,7 @@ namespace Phoenix.Controls.Hub.Core
             if (string.IsNullOrEmpty(model))
                 return (AIProvider.OpenAI, "");
 
-            // QC37-12 — tighten the Anthropic prefix. Every shipped Claude
+            // Tighten the Anthropic prefix. Every shipped Claude
             // model name is "claude-…"; requiring the hyphen rejects fuzzy
             // matches like "claudeai" or "claude_attacker" that would
             // otherwise burn the Anthropic key on a misrouted call. Bare

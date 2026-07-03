@@ -19,7 +19,7 @@ namespace Phoenix.Controls.Shared.Services
             // so the result is strictly < 1.0 — dividing by uint.MaxValue would let
             // the maximum sampled value normalise to exactly 1.0 and produce `max`,
             // breaking the documented [min, max) contract (off-by-one at the
-            // uint.MaxValue draw). 
+            // uint.MaxValue draw).
             double normalized = value / 4294967296.0; // 2^32
             return (int)(min + (normalized * (max - min)));
         }
@@ -45,7 +45,7 @@ namespace Phoenix.Controls.Shared.Services
             _rng.GetBytes(data);
             uint value = BitConverter.ToUInt32(data, 0);
             // Divide by 2^32 (one past uint.MaxValue) so the upper bound is
-            // strictly < 1.0 — see  note on Next() for rationale.
+            // strictly < 1.0 — see note on Next() for rationale.
             double normalized = value / 4294967296.0; // [0, 1)
             return normalized * 100.0 < percentage;
         }

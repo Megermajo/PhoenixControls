@@ -13,9 +13,8 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ChatPanel;
 
 // Role-keyed brush + glyph resolver for the Hub Chat panel.
 //
-// The Phoenix ChatPanel is a functional surface — see
-// feedback_chat_role_coloring.md. Username coloring is categorical
-// (Broadcaster / Mod / VIP / Sub / Regular) so the streamer reads
+// The Phoenix ChatPanel is a functional surface. Username coloring is
+// categorical (Broadcaster / Mod / VIP / Sub / Regular) so the streamer reads
 // role at a glance; the role-prefix glyph stays alongside as the
 // unambiguous identification (color is a-glance, glyph is exact).
 //
@@ -34,7 +33,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ChatPanel;
 // — see s_pathDataCache.
 internal static class RoleColorBrush
 {
-    // QC10-04..06 — the canonical role palette lives in PhoenixDark.xaml as
+    // The canonical role palette lives in PhoenixDark.xaml as
     // ChatRole{Broadcaster,Mod,Vip,Sub,Regular}Brush. We previously kept a
     // per-role fallback palette inline here, which forked the source of
     // truth: any future palette tweak in PhoenixDark would silently drift
@@ -152,7 +151,7 @@ internal static class RoleColorBrush
             // tries to take ownership, the framework rejects the assignment
             // with ArgumentException "Value does not fall within the expected
             // range." (SystemHistory ids 1276672 / 1276722 / 1276835 on
-            // 2026-05-22 — the per-row fix in 75cae0a6 stopped Geometry
+            // 2026-05-22 — the per-row fix stopped Geometry
             // *sharing* across rows but didn't address the lingering parent
             // from the parsing wrapper, so the crash kept reproducing on the
             // first ItemsRepeater materialisation pass after each chat message.)

@@ -23,7 +23,7 @@ namespace Phoenix.Controls.Visualist.Core
                 return graph;
             }
 
-            // H63 — Text preset wires a Text.Render directly into Display so the user
+            // Text preset wires a Text.Render directly into Display so the user
             // can author copy without first dragging Text.Render onto the canvas.
             if (preset == WidgetPreset.Text)
             {
@@ -31,7 +31,7 @@ namespace Phoenix.Controls.Visualist.Core
                 return graph;
             }
 
-            // P4 — Audio preset: Audio.Load → Audio.Play with Loop=true. Display sink is
+            // Audio preset: Audio.Load → Audio.Play with Loop=true. Display sink is
             // auto-injected but stays unwired (Audio is a sibling sink, not an Image source).
             if (preset == WidgetPreset.Audio)
             {
@@ -39,7 +39,7 @@ namespace Phoenix.Controls.Visualist.Core
                 return graph;
             }
 
-            // P4 — Chat preset: Visual.OnTrigger.Message → Text.Render.Text → Display.
+            // Chat preset: Visual.OnTrigger.Message → Text.Render.Text → Display.
             // The Visualist registry has no chat-fetching node by design (Twitch is Hub-only,
             // banned from WidgetNodeRegistry). The Chat widget is therefore a *renderer*: Hub
             // pushes a VISUAL_TRIGGER carrying the chat line and Visual.OnTrigger surfaces it.
@@ -52,8 +52,8 @@ namespace Phoenix.Controls.Visualist.Core
             }
 
             // Seed preset-specific source nodes wired into the Display sink.
-            //  — WebSource gains its starting graph (the runtime kernel
-            // landed in compositor.js the same sprint).  — Particles
+            // WebSource gains its starting graph (the runtime kernel
+            // landed in compositor.js). Particles
             // gains its starting graph likewise (per-widget rAF emitter loop).
             Node? source = preset switch
             {
@@ -85,7 +85,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         /// <summary>
-        /// H63 — Text preset chain: Text.Render → Display.
+        /// Text preset chain: Text.Render → Display.
         /// </summary>
         private static void BuildTextChain(Graph graph, Node sink)
         {
@@ -141,7 +141,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         /// <summary>
-        /// P4 — Audio preset chain: <c>Audio.Load → Audio.Play</c> with looping enabled.
+        /// Audio preset chain: <c>Audio.Load → Audio.Play</c> with looping enabled.
         /// The graph keeps the auto-injected <c>Display</c> sink so visual chains can be
         /// added later without restructuring (e.g. an authored Image.Load wired into
         /// Display alongside the audio loop). Audio.Play's <c>Loop</c> attribute is
@@ -155,7 +155,7 @@ namespace Phoenix.Controls.Visualist.Core
             var load = WidgetNodeRegistry.Instantiate("Audio.Load", new System.Drawing.Point(120, 240));
             var play = AudioSinkNode.Build();
             play.Location = new System.Drawing.Point(420, 240);
-            // P4 — Default the preset to looping ambient playback. Authors flip back for one-shots.
+            // Default the preset to looping ambient playback. Authors flip back for one-shots.
             play.Attributes["Loop"] = "true";
             graph.Nodes.Add(load);
             graph.Nodes.Add(play);
@@ -171,7 +171,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         /// <summary>
-        /// P4 — Chat preset chain: <c>Visual.OnTrigger.Message → Text.Render.Text → Display</c>.
+        /// Chat preset chain: <c>Visual.OnTrigger.Message → Text.Render.Text → Display</c>.
         /// The Hub pushes a chat line via <c>VISUAL_TRIGGER</c>; <c>Visual.OnTrigger</c> exposes
         /// the payload to the visual graph. Visualist cannot fetch chat directly (Twitch /
         /// Streamer.bot integration is Architect/Hub-only — see WidgetNodeRegistry.ForbiddenCategories),

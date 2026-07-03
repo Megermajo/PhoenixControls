@@ -8,7 +8,7 @@ namespace Phoenix.Controls.Visualist.WinUI.Models;
 /// {x:Bind Mode=OneWay} on Active reacts to live presence updates from
 /// Hub's LayerRegistry without rebuilding the row.
 ///
-/// NAMED ITEM #3 (audit fix): a row can now also represent an UNSAVED /
+/// A row can now also represent an UNSAVED /
 /// virtual layer — the auto-created default and any new/unsaved document
 /// that has no .phxlayer on disk yet. Such a row carries
 /// <see cref="IsUnsaved"/> == true and an empty <see cref="Path"/>; the

@@ -233,7 +233,7 @@ namespace Phoenix.Controls.Architect.Core
         /// to graph.FindNodeById / graph.FindSocketById (both O(1) with
         /// self-healing dictionary caches) so total cost is now O(L) lookups.
         ///
-        ///  Fixed-point iteration — the original single-pass walk was link-order
+        /// Fixed-point iteration — the original single-pass walk was link-order
         /// dependent: `Reroute → Reroute → Logic.If` only fully propagated if `graph.Links`
         /// iterated head-first. With more than one hop in a wildcard chain the type wouldn't
         /// carry across the chain on the first pass if the downstream link was visited before
@@ -262,7 +262,7 @@ namespace Phoenix.Controls.Architect.Core
                     if (fromNode == null || toNode == null || fromSock == null || toSock == null)
                         continue;
 
-                    //  Only propagate across a link whose
+                    // Only propagate across a link whose
                     // endpoints are type-compatible. A hand-edited / legacy .phxg
                     // can carry a syntactically-valid but type-incompatible link
                     // (e.g. an Int output wired into a String wildcard input); the
@@ -326,7 +326,7 @@ namespace Phoenix.Controls.Architect.Core
 
         public static bool AreCompatible(SocketDataType a, SocketDataType b)
         {
-            //  Flow-vs-data guard MUST run before the Any short-circuit.
+            // Flow-vs-data guard MUST run before the Any short-circuit.
             // Flow is structurally distinct from every data type — it carries no
             // payload, only exec sequencing. If either side is Flow, both sides
             // must be Flow; otherwise the canvas wire-highlighter (which calls
@@ -828,7 +828,7 @@ namespace Phoenix.Controls.Architect.Core
         // ─────────────────────────────────────────────────────────────────
 
         /// <summary>
-        ///  — Ensures a <c>DB.FetchRow</c> node carries one output
+        /// Ensures a <c>DB.FetchRow</c> node carries one output
         /// socket per entry in its <c>KnownColumns</c> attribute (),
         /// in addition to the fixed Found / NotFound / Row sockets. Existing
         /// column sockets are preserved (their Id stays stable so attached
@@ -878,7 +878,7 @@ namespace Phoenix.Controls.Architect.Core
             }
 
             // Append missing column sockets in the user-declared order.
-            //  Snapshot existing output-socket names once so the per-column
+            // Snapshot existing output-socket names once so the per-column
             // existence check is O(1) instead of an O(M) List.Exists scan per wanted
             // column (the loop runs on the UI thread during graph deserialization).
             var existingOutputNames = new HashSet<string>(System.StringComparer.Ordinal);
@@ -952,7 +952,7 @@ namespace Phoenix.Controls.Architect.Core
         /// and deserialized nodes — does nothing if placeholders already exist.
         /// </summary>
         /// <remarks>
-        ///  When a recovery socket is added we restripe Y offsets via
+        /// When a recovery socket is added we restripe Y offsets via
         /// <see cref="PlaceholderActivator.RecalculateSocketOffsets"/> + also stamp
         /// the matching X offset on the new socket (the helper only touches Y).
         /// Without this, the recovery socket renders at (0,0) for a single frame

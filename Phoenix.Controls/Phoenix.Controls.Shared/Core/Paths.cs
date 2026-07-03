@@ -41,7 +41,7 @@ namespace Phoenix.Controls.Shared.Core
         public static string AppMedia => Path.Combine(AppData, "media");
 
         /// <summary>
-        ///  The single, suite-wide AppConfig location:
+        /// The single, suite-wide AppConfig location:
         /// <c>%AppData%/PhoenixControls/config.json</c>.
         /// <para>
         /// Pre-fix this resolved to <c>{AppBase}/data/config.json</c>, which is
@@ -55,7 +55,7 @@ namespace Phoenix.Controls.Shared.Core
         public static string AppConfigJson => RoamingAppData("config.json");
 
         /// <summary>
-        ///  Legacy per-pillar candidate paths the migration in
+        /// Legacy per-pillar candidate paths the migration in
         /// <see cref="Phoenix.Controls.Shared.Services.ConfigManager.Load"/>
         /// scans on first run, in priority order (Hub first since Hub is the
         /// runtime that holds the canonical credential set; Architect and
@@ -114,7 +114,7 @@ namespace Phoenix.Controls.Shared.Core
         /// or <c>null</c> when not found within <see cref="MaxWalkDepth"/> levels.
         ///
         /// <para>
-        ///  The <c>.sln</c> sibling check is what protects an end-user
+        /// The <c>.sln</c> sibling check is what protects an end-user
         /// install from being treated as a dev tree: a user who extracts the
         /// release zip into a folder they happen to have named
         /// <c>Phoenix.Controls\</c> will satisfy the folder-name match but their
@@ -145,7 +145,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        ///  Sibling-of-folder <c>.sln</c> probe used by
+        /// Sibling-of-folder <c>.sln</c> probe used by
         /// <see cref="FindSolutionRoot"/>. Best-effort — IO failures (access
         /// denied, vanished mid-walk) are treated as "no sln found" rather
         /// than propagated, so a permission glitch can't crash the path

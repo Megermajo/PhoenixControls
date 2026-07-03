@@ -7,18 +7,18 @@ namespace Phoenix.Controls.Shared.Core
     /// <summary>
     /// Metadata for one registered Script command.
     ///
-    /// Sweep 13 (R19) — <see cref="Args"/> is the typed schema. When a manifest entry
+    /// <see cref="Args"/> is the typed schema. When a manifest entry
     /// is registered via <see cref="CommandManifest.AddTyped"/>, both <see cref="ArgNames"/>
     /// and <see cref="Args"/> are populated; <see cref="ArgNames"/> stays the simple
     /// `string[]` projection so existing call sites that only need the names (e.g.
     /// <c>VerifyAllHubCommandsRegistered</c>) keep working unchanged.
     ///
-    /// Sweep 18 (R19 polish) — <see cref="Args"/> is now non-nullable. Zero-arg commands
+    /// <see cref="Args"/> is now non-nullable. Zero-arg commands
     /// still produce a valid spec via <see cref="System.Array.Empty{T}"/>. Callers using
     /// the public <see cref="CommandManifest.Register"/> API must pass a typed
     /// <see cref="ArgSpec"/> list (or an empty array). The previous nullable contract
     /// existed only for the legacy untyped <c>Add</c> path inside <c>BuildManifest</c>,
-    /// which sweep 17 removed; keeping the parameter nullable was dead optionality.
+    /// which was removed; keeping the parameter nullable was dead optionality.
     /// </summary>
     public sealed record CommandSpec(
         string Name,
@@ -38,10 +38,10 @@ namespace Phoenix.Controls.Shared.Core
         // CommandManifestTests in Phoenix.Controls.Tests cross-checks both
         // directions; ScriptManager validates the Hub side at startup.
         //
-        // P1-14 (sweep 0.10.0 ) — promoted to ConcurrentDictionary.
+        // Promoted to ConcurrentDictionary.
         // Register / TryRemove / AddTyped all mutate this map at runtime
         // (test fixtures inject + tear down entries via AddTyped/TryRemove;
-        // BugFixSweep13's CommandBinder tests do this concurrently with the
+        // the CommandBinder tests do this concurrently with the
         // Hub-side VerifyCommandManifest reading All.Keys). The previous
         // Dictionary<,> was an unsynchronized read/write seam; switching to
         // ConcurrentDictionary makes the writes atomic without forcing every
@@ -58,19 +58,19 @@ namespace Phoenix.Controls.Shared.Core
         public static void Register(CommandSpec spec) => _all[spec.Name] = spec;
 
         /// <summary>
-        /// T1 — Removes a manifest entry. Used by tests that inject fixture
+        /// Removes a manifest entry. Used by tests that inject fixture
         /// entries (e.g. via <see cref="AddTyped"/>) and need to tear them down
         /// so a later <c>ScriptManager.Instance</c> initialization doesn't trip
         /// <c>VerifyCommandManifest()</c> on the leaked entry. Returns true if
         /// the entry existed and was removed.
         ///
-        /// P1-14 — ConcurrentDictionary's TryRemove takes (key, out value); we
+        /// ConcurrentDictionary's TryRemove takes (key, out value); we
         /// discard the removed spec because callers only care about presence.
         /// </summary>
         public static bool TryRemove(string name) => _all.TryRemove(name, out _);
 
         /// <summary>
-        /// R19 (sweep 13) — typed registration. Use this for new commands so the
+        /// Typed registration. Use this for new commands so the
         /// schema travels with the manifest entry and <see cref="CommandBinder.BindArgs"/>
         /// can produce a typed dict for the handler. Existing entries registered via
         /// <see cref="BuildManifest"/>'s untyped <c>Add</c> overload keep working —
@@ -86,7 +86,7 @@ namespace Phoenix.Controls.Shared.Core
             _all[name] = new CommandSpec(name, min, max, argNames, args);
         }
 
-        // M44 / L23 — Script command names are case-sensitive (`db.SetVariable`
+        // Script command names are case-sensitive (`db.SetVariable`
         // and `DB.SetVariable` would be distinct commands by the script grammar).
         // The previous comparer here was OrdinalIgnoreCase, which silently collapsed
         // any pair colliding only on case (last-wins). Switching to Ordinal makes the
@@ -94,23 +94,23 @@ namespace Phoenix.Controls.Shared.Core
         // exact-case duplicate so the registration table can't quietly overwrite a
         // descriptor at startup. Duplicates are a manifest authoring bug, not a
         // runtime hot-swap path — failing loudly is the correct posture.
-        // P1-14 — return type widened to ConcurrentDictionary alongside the
+        // Return type widened to ConcurrentDictionary alongside the
         // field promotion. We still BUILD in a plain Dictionary because the
         // local AddT helper relies on ContainsKey + assignment for the
         // duplicate-throw contract (and a single-threaded constructor doesn't
         // need the concurrent overhead). The final dict is copied into a
         // ConcurrentDictionary with the same Ordinal comparer so case-sensitivity
-        // (M44/L23) is preserved post-promotion.
+        // is preserved post-promotion.
         private static ConcurrentDictionary<string, CommandSpec> BuildManifest()
         {
             var dict = new Dictionary<string, CommandSpec>(System.StringComparer.Ordinal);
 
-            // Sweep 14 — local typed-spec helper. Writes typed ArgSpecs into
+            // Local typed-spec helper. Writes typed ArgSpecs into
             // the local `dict` (we can't call the public static AddTyped here
             // because it writes to `_all`, which is being initialized by this
             // very method's return — `_all` is null until BuildManifest
-            // returns). Sweep 17: the bare-`Add` overload was removed once
-            // sweep 15's migration ensured every entry uses `AddT`. New
+            // returns). The bare-`Add` overload was removed once
+            // the migration ensured every entry uses `AddT`. New
             // registrations must declare their typed schema via ArgSpec[].
             void AddT(string name, params ArgSpec[] specs)
             {
@@ -125,7 +125,7 @@ namespace Phoenix.Controls.Shared.Core
                 dict[name] = new CommandSpec(name, min, max, argNames, specs);
             }
 
-            // Bus  — sweep 14 (R19) typed
+            // Bus  — typed
             AddT("bus.send",      new ArgSpec("Target", ArgType.String), new ArgSpec("Type", ArgType.String), new ArgSpec("Payload", ArgType.String));
             AddT("bus.broadcast", new ArgSpec("Type",   ArgType.String), new ArgSpec("Payload", ArgType.String));
 
@@ -145,7 +145,7 @@ namespace Phoenix.Controls.Shared.Core
             AddT("twitch.reject_redemption",    new ArgSpec("RedemptionId", ArgType.String));
             AddT("twitch.create_clip",          new ArgSpec("Duration", ArgType.Int, Optional: true, Default: "30"), new ArgSpec("Title", ArgType.String, Optional: true, Default: ""));
 
-            // P3 (TODO Priority 3) — moderation / channel-control proxies. All currently
+            // Moderation / channel-control proxies. All currently
             // route through Streamer.bot DoAction (action name = the command's PascalCase
             // form, e.g. `TwitchUnban`); they'll get direct Helix calls once Hub gains
             // first-class Twitch API access.
@@ -192,10 +192,10 @@ namespace Phoenix.Controls.Shared.Core
             // key for parallel_begin's merge step.
             AddT("public.set", new ArgSpec("Key", ArgType.String), new ArgSpec("Value", ArgType.String));
 
-            // Platforms remainder — sweep 14 (R19) typed
+            // Platforms remainder — typed
             AddT("discord.webhook",        new ArgSpec("URL", ArgType.String), new ArgSpec("Msg", ArgType.String));
 
-            // P4 (TODO Priority 4) — Discord bot REST path (alongside the legacy
+            // Discord bot REST path (alongside the legacy
             // webhook command, which stays). Bot token sourced from
             // AppConfig.DiscordBotToken; result.* contract mirrors http.* (empty
             // result.discord_error on success, message on failure;
@@ -213,7 +213,7 @@ namespace Phoenix.Controls.Shared.Core
                 new ArgSpec("Color",       ArgType.String, Optional: true, Default: ""),
                 new ArgSpec("Url",         ArgType.String, Optional: true, Default: ""));
 
-            // P4 slice 2 — role + reaction + user-lookup. Same bot-token path,
+            // Role + reaction + user-lookup. Same bot-token path,
             // same result.discord_error contract. discord.get_user surfaces the
             // user object as result.discord_user_id / _name / _global_name /
             // _avatar; AddRole/RemoveRole/React only touch result.discord_error.
@@ -232,18 +232,18 @@ namespace Phoenix.Controls.Shared.Core
             AddT("discord.get_user",
                 new ArgSpec("UserId", ArgType.String));
             AddT("http.get",               new ArgSpec("Url", ArgType.String), new ArgSpec("Headers", ArgType.String, Optional: true, Default: ""));
-            // P3 — File I/O. Append uses ArgType.Bool so the binder coerces "true"/"1"/etc.
+            // File I/O. Append uses ArgType.Bool so the binder coerces "true"/"1"/etc.
             // (matches flow.do_once.Reset's contract).
             AddT("file.read_text",         new ArgSpec("Path", ArgType.String));
             AddT("file.write_text",        new ArgSpec("Path", ArgType.String), new ArgSpec("Content", ArgType.String), new ArgSpec("Append", ArgType.Bool, Optional: true, Default: "false"));
-            //  — file.{read,write}_json. Mirror file.{read,write}_text but
+            // file.{read,write}_json. Mirror file.{read,write}_text but
             // gate on JSON-validity. read_json: parses to surface a parse error in
             // result.file_error; write_json: rejects malformed payloads BEFORE the
             // disk write so a partial / corrupt JSON file can't be left behind.
             AddT("file.read_json",         new ArgSpec("Path", ArgType.String));
             AddT("file.write_json",        new ArgSpec("Path", ArgType.String), new ArgSpec("Content", ArgType.String), new ArgSpec("Append", ArgType.Bool, Optional: true, Default: "false"));
 
-            // P3 — Audio. Fire-and-forget local playback; result.audio_error mirrors
+            // Audio. Fire-and-forget local playback; result.audio_error mirrors
             // the file.* contract (empty on success, message on failure). audio.set_volume
             // updates an in-process global multiplier — no DB write.
             AddT("audio.play",       new ArgSpec("Path", ArgType.String), new ArgSpec("Volume", ArgType.Float, Optional: true, Default: "1.0"));
@@ -260,36 +260,36 @@ namespace Phoenix.Controls.Shared.Core
             // AI
             AddT("ai.prompt",   new ArgSpec("SystemPrompt", ArgType.String), new ArgSpec("UserPrompt", ArgType.String), new ArgSpec("Model", ArgType.String, Optional: true, Default: ""));
             AddT("ai.moderate", new ArgSpec("Text", ArgType.String));
-            //  — ai.generate_image. Calls OpenAI's
+            // ai.generate_image. Calls OpenAI's
             // /v1/images/generations endpoint. Single-shot (no streaming
             // surface — the API returns the URL once generation completes).
             // Result vars: result.ai_image_url / result.ai_image_error /
             // result.ai_image_done. Defaults: model=dall-e-3, size=1024x1024.
             AddT("ai.generate_image", new ArgSpec("Prompt", ArgType.String), new ArgSpec("Model", ArgType.String, Optional: true, Default: "dall-e-3"), new ArgSpec("Size", ArgType.String, Optional: true, Default: "1024x1024"));
-            //  — ai.vision_describe. Calls OpenAI's chat completions
+            // ai.vision_describe. Calls OpenAI's chat completions
             // with a multi-modal user message (text + image_url content
             // parts). Single-shot. Result vars: result.ai_response /
             // result.ai_error. Default model gpt-4o-mini (cheapest vision-
             // capable model); pass gpt-4o for stronger visual reasoning.
             AddT("ai.vision_describe", new ArgSpec("Prompt", ArgType.String), new ArgSpec("ImageUrl", ArgType.String), new ArgSpec("Model", ArgType.String, Optional: true, Default: "gpt-4o-mini"));
-            //  — ai.with_tools. Single-shot OpenAI chat completions
+            // ai.with_tools. Single-shot OpenAI chat completions
             // with the `tools` field populated. Tools is a JSON-array string
             // of OpenAI tool definitions. Result vars are mutually exclusive:
             //   * result.ai_response   — plain text (model answered directly)
             //   * result.ai_tool_calls — JSON array of {id, name, arguments}
             //                            (model decided to call a tool)
             // Plus result.ai_error / result.ai_done. Default model gpt-4o-mini.
-            // QC37-05 — ToolChoice / ParallelToolCalls are optional; empty =
+            // ToolChoice / ParallelToolCalls are optional; empty =
             // omit so the API default applies. ToolChoice accepts
             // "auto" | "none" | "any" | "required" | a JSON object that names a
             // tool; ParallelToolCalls accepts "true" / "false" / "" (omit).
             // Arg order must match the handler (args[4]=ToolChoice, args[5]=ParallelToolCalls).
             AddT("ai.with_tools", new ArgSpec("SystemPrompt", ArgType.String), new ArgSpec("UserPrompt", ArgType.String), new ArgSpec("Tools", ArgType.String), new ArgSpec("Model", ArgType.String, Optional: true, Default: "gpt-4o-mini"), new ArgSpec("ToolChoice", ArgType.String, Optional: true, Default: ""), new ArgSpec("ParallelToolCalls", ArgType.String, Optional: true, Default: ""));
-            //  — ai.stream_text. Hub streams SSE from the
+            // ai.stream_text. Hub streams SSE from the
             // selected provider, accumulates result.ai_response cumulatively,
             // broadcasts AI_CHUNK on Bus per delta, and flips
             // result.ai_done on close.
-            //  — MemoryVar opt-in: when non-empty, names a
+            // MemoryVar opt-in: when non-empty, names a
             // Var key whose JSON-array-of-{role,content} payload
             // is prepended to the request as prior turns and updated with
             // the new exchange after completion. Empty / missing memory
@@ -312,7 +312,7 @@ namespace Phoenix.Controls.Shared.Core
             // Visual (Hub LayerRuntime → /hud/<id> WS → compositor.js)
             // visual.trigger_queued: fire-and-forget; appends key=val pairs after the fixed args.
             // wait_for_visual: blocks the script until VISUAL_COMPLETE arrives (or hard timeout).
-            // Sweep 16: EventData is ArgType.KvPairs + Variadic = the binder collects each
+            // EventData is ArgType.KvPairs + Variadic = the binder collects each
             // remaining raw arg as one "k=v" entry into IReadOnlyDictionary<string,string>.
             // Replaces the legacy in-handler split loop. For wait_for_visual the variadic
             // comes AFTER TimeoutMS:Int.
@@ -350,14 +350,14 @@ namespace Phoenix.Controls.Shared.Core
             AddT("cooldown.check", new ArgSpec("User", ArgType.String), new ArgSpec("GlobalCooldownMs", ArgType.Int), new ArgSpec("UserCooldownMs", ArgType.Int));
             AddT("db.check",       new ArgSpec("Key", ArgType.String));
 
-            // M23 — DB-family commands that the exporter emits and the engine handles
+            // DB-family commands that the exporter emits and the engine handles
             // but were never declared. Lookups still worked (the engine doesn't require
             // a manifest entry to dispatch), but VerifyCommandManifest's reverse-direction
             // audit is one-way; missing entries here mean no schema documentation either.
-            // Sweep 14: RowId is ArgType.Int — handlers historically used long.TryParse
+            // RowId is ArgType.Int — handlers historically used long.TryParse
             // for SQLite ROWIDs but practical row counts stay well under 2^31. Promote
             // to long once a real overflow case arrives.
-            // Sweep 16 — db.insert_row was previously the only DB handler missing a
+            // db.insert_row was previously the only DB handler missing a
             // manifest entry. Schema: Table:String + variadic positional list of
             // col,val,col,val,...,resultVar. The variadic stays String (raw pass-
             // through) — KvPairs doesn't fit because the script grammar pairs by
@@ -389,8 +389,8 @@ namespace Phoenix.Controls.Shared.Core
             // Giveaway.Id node; resolved inline by ScriptExporter, no descriptor.
             AddT("giveaway.default_id");
 
-            // M6 — text.* command family (was bypassing the three-way contract).
-            // Sweep 15: text.format gains ArgSpec.Variadic on the placeholder list — the
+            // text.* command family (was bypassing the three-way contract).
+            // text.format gains ArgSpec.Variadic on the placeholder list — the
             // legacy 3-arg shape (Template, A, B) only ever covered the first two
             // placeholders; variadic lets {0}..{N} all bind into the typed dict.
             AddT("text.format",   new ArgSpec("Template", ArgType.String), new ArgSpec("Args", ArgType.String, Variadic: true));
@@ -402,16 +402,16 @@ namespace Phoenix.Controls.Shared.Core
             AddT("text.to_lower", new ArgSpec("Source", ArgType.String));
             AddT("text.join_list",new ArgSpec("List", ArgType.String), new ArgSpec("Separator", ArgType.String));
 
-            // M7 — Convert.* family.
+            // Convert.* family.
             AddT("convert.to_int",    new ArgSpec("Value", ArgType.String));
             AddT("convert.to_string", new ArgSpec("Value", ArgType.String));
             AddT("convert.to_bool",   new ArgSpec("Value", ArgType.String));
             AddT("convert.to_float",  new ArgSpec("Value", ArgType.String));
 
-            // L25 — http.parse_json (exporter emits, engine handles, manifest missed).
+            // http.parse_json (exporter emits, engine handles, manifest missed).
             AddT("http.parse_json", new ArgSpec("Json", ArgType.String), new ArgSpec("Path", ArgType.String));
 
-            // B38 — on_obs(EventType) trigger registration. The manifest entry exists
+            // on_obs(EventType) trigger registration. The manifest entry exists
             // purely to satisfy the three-way contract (CommandManifest ↔ exporter ↔
             // Hub-side handler) and the audit test in CommandManifestTests; the
             // string is never actually invoked from a .phx body (it's a header
@@ -422,10 +422,10 @@ namespace Phoenix.Controls.Shared.Core
             // dispatcher (DispatchObsEvent) runs the script file directly.
             AddT("on_obs", new ArgSpec("EventType", ArgType.String));
 
-            // M42 — event.trigger / event.executor pair. event.trigger is emitted by
+            // event.trigger / event.executor pair. event.trigger is emitted by
             // ScriptExporter for the Event.Trigger node and executes nested
             // on_event(<name>): handlers via ExecuteInternalEventAsync.
-            // Sweep 16: EventArgs is variadic KvPairs (each remaining raw arg is one
+            // EventArgs is variadic KvPairs (each remaining raw arg is one
             // "k=v") so the handler can pull a typed dict via CurrentBoundArgs.
             AddT("event.trigger",
                 new ArgSpec("Name",      ArgType.String),
@@ -435,9 +435,9 @@ namespace Phoenix.Controls.Shared.Core
             AddT("math.chance",        new ArgSpec("Percent", ArgType.Float), new ArgSpec("ResultVar", ArgType.String));
             AddT("math.random",        new ArgSpec("Min", ArgType.Int), new ArgSpec("Max", ArgType.Int));
 
-            // Sweep 16 — math.* arithmetic family. These handlers were registered in
-            // ScriptManager but missing manifest entries (Hub_CodeReview noted M23-style
-            // coverage gaps). They use double-precision arithmetic; ArgType.Double
+            // math.* arithmetic family. These handlers were registered in
+            // ScriptManager but missing manifest entries (coverage gaps).
+            // They use double-precision arithmetic; ArgType.Double
             // preserves the legacy 64-bit semantics through the binder.
             AddT("math.add",      new ArgSpec("A", ArgType.Double), new ArgSpec("B", ArgType.Double));
             AddT("math.subtract", new ArgSpec("A", ArgType.Double), new ArgSpec("B", ArgType.Double));
@@ -451,13 +451,13 @@ namespace Phoenix.Controls.Shared.Core
             AddT("math.floor",    new ArgSpec("Value", ArgType.Double));
             AddT("math.ceil",     new ArgSpec("Value", ArgType.Double));
 
-            // Sweep 16 — flow.* handlers (M12). Reset is Optional Bool (truthy via
+            // flow.* handlers. Reset is Optional Bool (truthy via
             // the engine's ParseTruthy in the legacy fallback path; the typed binder
             // honors true/false/1/0/yes/no/on/off identically).
             AddT("flow.do_once", new ArgSpec("NodeId", ArgType.String), new ArgSpec("Reset", ArgType.Bool, Optional: true, Default: "false"));
             AddT("flow.do_n",    new ArgSpec("NodeId", ArgType.String), new ArgSpec("N", ArgType.Int), new ArgSpec("Reset", ArgType.Bool, Optional: true, Default: "false"));
 
-            // Sweep 16 — array.* family (was missing from manifest; engine had handlers).
+            // array.* family (was missing from manifest; engine had handlers).
             // array.make is variadic positional (each arg is an element) — Variadic String.
             // array.contains / array.filter take an Optional ignore-case flag (3rd arg).
             AddT("array.make",     new ArgSpec("Items", ArgType.String, Variadic: true));
@@ -471,14 +471,14 @@ namespace Phoenix.Controls.Shared.Core
             AddT("array.reverse",  new ArgSpec("List", ArgType.String));
             AddT("array.unique",   new ArgSpec("List", ArgType.String));
 
-            // Sweep 16 — text.parse_command (was missing from manifest).
-            // D6 — second arg named "Segments" to match the Text.ParseCommand node
+            // text.parse_command (was missing from manifest).
+            // Second arg named "Segments" to match the Text.ParseCommand node
             // template socket (NodeRegistry.Templates.DataUtilities.cs) and the handler's
             // bound.Get key (ScriptManager.Text.cs); previously "N", which never bound the
             // wired/inline Segments value through the typed binder.
             AddT("text.parse_command", new ArgSpec("Message", ArgType.String), new ArgSpec("Segments", ArgType.Int));
 
-            // Sweep 16 — wait_for_event (was missing from manifest).
+            // wait_for_event (was missing from manifest).
             AddT("wait_for_event", new ArgSpec("EventName", ArgType.String), new ArgSpec("TimeoutMS", ArgType.Int, Optional: true, Default: "10000"));
 
             // Chat.WaitForNext / Chat.PeekRecent — non-event chat input. Both are
@@ -497,14 +497,14 @@ namespace Phoenix.Controls.Shared.Core
                 new ArgSpec("UsersVar", ArgType.String, Optional: true, Default: ""),
                 new ArgSpec("MsgsVar",  ArgType.String, Optional: true, Default: ""));
 
-            // Sweep 16 — twitch.get_viewers (was missing from manifest).
+            // twitch.get_viewers (was missing from manifest).
             AddT("twitch.get_viewers", new ArgSpec("ResultVar", ArgType.String));
 
-            // Sweep 16 — log (legacy single-arg log; distinct from system.log which has Level).
+            // Log (legacy single-arg log; distinct from system.log which has Level).
             AddT("log", new ArgSpec("Message", ArgType.String));
             AddT("delay_seconds",      new ArgSpec("Seconds", ArgType.Float));
             AddT("timeout_check",      new ArgSpec("MS", ArgType.Int));
-            // P2 — Time.SecondsSinceLastFire(key) is a side-effecting pure-data
+            // Time.SecondsSinceLastFire(key) is a side-effecting pure-data
             // probe: returns elapsed seconds since the last call against `key`,
             // then updates the per-key timestamp. Engine handler in ScriptManager.
             AddT("time.seconds_since_last_fire", new ArgSpec("Key", ArgType.String));
@@ -516,7 +516,7 @@ namespace Phoenix.Controls.Shared.Core
             AddT("queue.length",       new ArgSpec("ResultVar", ArgType.String));
             AddT("chat.overlay.push",  new ArgSpec("WidgetID", ArgType.String), new ArgSpec("Username", ArgType.String), new ArgSpec("Message", ArgType.String), new ArgSpec("Color", ArgType.String));
             AddT("chat.overlay.clear", new ArgSpec("WidgetID", ArgType.String));
-            // Sweep 16: visual.trigger is the manifest's hand-authored alias for
+            // visual.trigger is the manifest's hand-authored alias for
             // visual.trigger_queued; it accepts the same trailing key=val pairs so
             // a script (and the in-handler dict-build loop, prior to migration)
             // could surface event data on the addressed pipeline. Variadic KvPairs
@@ -531,12 +531,12 @@ namespace Phoenix.Controls.Shared.Core
             AddT("visual.set_property",new ArgSpec("Widget", ArgType.String), new ArgSpec("Key", ArgType.String), new ArgSpec("Value", ArgType.String));
             AddT("twitch.last_active", new ArgSpec("User", ArgType.String), new ArgSpec("ThresholdMins", ArgType.Int), new ArgSpec("InactiveVar", ArgType.String), new ArgSpec("MinutesAgoVar", ArgType.String));
 
-            // P1-14 — copy into a ConcurrentDictionary preserving the Ordinal comparer.
+            // Copy into a ConcurrentDictionary preserving the Ordinal comparer.
             return new ConcurrentDictionary<string, CommandSpec>(dict, System.StringComparer.Ordinal);
         }
 
         /// <summary>
-        /// L35 — bidirectional manifest audit (Hub → Manifest direction).
+        /// Bidirectional manifest audit (Hub → Manifest direction).
         ///
         /// The Hub-side <c>VerifyCommandManifest</c> in <c>ScriptManager</c> only
         /// asks "is every manifest entry implemented by the engine?". The reverse
@@ -562,7 +562,7 @@ namespace Phoenix.Controls.Shared.Core
             {
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 // Exact-case match — mirrors the case-sensitive comparer the
-                // dictionary itself uses (M44/L23). Case-only differences are
+                // dictionary itself uses. Case-only differences are
                 // distinct commands per the script grammar, so a Hub-registered
                 // name that differs only in casing is still a missing entry.
                 if (!_all.ContainsKey(name))
@@ -572,7 +572,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// L36 — produce a near-match suggestion for a command name miss. Used by
+        /// Produce a near-match suggestion for a command name miss. Used by
         /// VerifyCommandManifest's error message and at the script-engine fallback
         /// to help users recognise typos like `streamerbot.do_action` vs the legacy
         /// `streamer_bot.do_action`.

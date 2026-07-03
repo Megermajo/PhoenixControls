@@ -42,7 +42,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     private bool _autoScrollPaused;
     private bool _scrollRequestPending;
     private double _prevVerticalOffset;
-    // QC11-08 guard — _prevVerticalOffset is meaningless until the first
+    // Guard — _prevVerticalOffset is meaningless until the first
     // ViewChanged we've actually observed; before that the field's default
     // 0.0 doesn't represent "the prior offset," it represents "we don't
     // know yet." Without this flag the first non-zero settled frame after
@@ -61,14 +61,14 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     private DispatcherTimer? _searchDebounce;
     private string _pendingSearchText = string.Empty;
 
-    // 0.10.8 — full selection ownership.
+    // Full selection ownership.
     //
-    // The per-cell TextBlocks dropped IsTextSelectionEnabled in the same
-    // sweep that landed this code (see SystemLogView.xaml comment block on
+    // The per-cell TextBlocks dropped IsTextSelectionEnabled (see
+    // SystemLogView.xaml comment block on
     // the row template). With text-selection out of the way the ListView's
     // own pointer pipeline could in principle handle Shift/Ctrl modifiers,
     // but WinUI 3 ListView Extended selection does NOT include drag-marquee
-    // multi-row select — and Majo's #2 report is specifically about
+    // multi-row select — and the requirement is specifically about
     // drag-across-rows extending the selection live. So we own all four
     // pointer phases:
     //   Pressed   — plain → single-select + start drag anchor
@@ -89,15 +89,15 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     private PointerEventHandler? _logPointerCanceledHandler;
     private PointerEventHandler? _logPointerCaptureLostHandler;
 
-    // 0.10.8 — the previous root-level wheel workaround was deleted in this
-    // sweep. It existed only because IsTextSelectionEnabled=True on the
+    // The previous root-level wheel workaround was deleted.
+    // It existed only because IsTextSelectionEnabled=True on the
     // per-cell TextBlocks was claiming PointerWheelChanged and starving the
     // inner ScrollViewer of wheel input. With that attribute now stripped
     // from every cell in SystemLogView.xaml, the ScrollViewer receives wheel
     // events natively (and marks them Handled). Re-introducing a root
     // handler with handledEventsToo:true on top of that would scroll twice
-    // per wheel notch — the bug Majo's 0.10.7 "scrolling does not work"
-    // report was actually triggered by once the text-block claimant
+    // per wheel notch — the "scrolling does not work"
+    // report was actually triggered by it once the text-block claimant
     // disappeared. Native handling is sufficient now.
 
     public event EventHandler? PopOutRequested;
@@ -106,10 +106,10 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     {
         ViewModel = viewModel;
         InitializeComponent();
-        // C1 (2026-05-14): VM owns its dispatcher via ctor injection — no
+        // VM owns its dispatcher via ctor injection — no
         // shared static slot to capture from the View side anymore.
         ApplyLocalizedStrings();
-        // C7 (audit 2026-05-24) — sync chip IsChecked state to the VM's
+        // Sync chip IsChecked state to the VM's
         // initial filter mask. The VM may have restored persisted chip
         // state from AppConfig.SystemLogActiveLevels before the panel was
         // visible; without this the chips would render in their XAML
@@ -125,8 +125,8 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         Loaded += OnViewLoaded;
         Unloaded += OnViewUnloaded;
 
-        // QC11-09/10 — observability hook for runtime theme swaps. Round 4
-        // added the capability (RefreshBrushes + InvalidateBrushCache); the
+        // Observability hook for runtime theme swaps. The capability
+        // (RefreshBrushes + InvalidateBrushCache) exists; the
         // missing piece was the trigger. Hub doesn't ship a live light/dark
         // switcher today, but ActualThemeChanged also fires when Windows
         // forces high-contrast at the OS level or when a parent advertises a
@@ -197,7 +197,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// QC11-09/10 — runtime theme-swap handler. ActualThemeChanged is the
+    /// Runtime theme-swap handler. ActualThemeChanged is the
     /// WinUI 3 surface that fires whenever the resolved theme for this
     /// element changes (parent RequestedTheme switch, OS high-contrast
     /// engaged, or a future in-app settings toggle). Marshal the VM
@@ -263,7 +263,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
             LogList.AddHandler(UIElement.PointerCanceledEvent,    _logPointerCanceledHandler,    handledEventsToo: true);
             LogList.AddHandler(UIElement.PointerCaptureLostEvent, _logPointerCaptureLostHandler, handledEventsToo: true);
         }
-        // QC11-08 — sync the "previous offset" snapshot to whatever the
+        // Sync the "previous offset" snapshot to whatever the
         // scroller actually shows on first layout. Without this, the diff
         // in OnLogScrollViewChanged compares the first non-zero settled
         // frame against a default 0.0 and falsely concludes the user just
@@ -314,7 +314,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         _dragSelecting = false;
         _dragAnchorIndex = -1;
         _dragPointer = null;
-        // QC11-08 — reset the offset-seed guard so the next Loaded re-
+        // Reset the offset-seed guard so the next Loaded re-
         // captures a truthful prior offset for the (potentially newly
         // hosted) scroller. Without this, re-load reuses the stale offset
         // captured before unload.
@@ -324,14 +324,13 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     private void OnPopOutClick(object sender, RoutedEventArgs e)
         => PopOutRequested?.Invoke(this, EventArgs.Empty);
 
-    // Hub UI sweep P2 — pop-out child dead-↗ fix. See LiveFeedView.MarkAsPopOutChild.
+    // Pop-out child dead-↗ fix. See LiveFeedView.MarkAsPopOutChild.
     public void MarkAsPopOutChild() => PopOutButton.Visibility = Visibility.Collapsed;
 
     /// <summary>
     /// Resolves search placeholder, filter labels, pop-out / log-folder
     /// button captions, tooltips, and automation strings through
-    /// <see cref="Localizer.T"/>. Called once in the ctor (Hub UI sweep —
-    /// localization batch).
+    /// <see cref="Localizer.T"/>. Called once in the ctor.
     /// </summary>
     private void ApplyLocalizedStrings()
     {
@@ -350,7 +349,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         AutomationProperties.SetName(OpenLogFolderButton,
             Localizer.T("panel.systemlog.button.log_folder.aria", "Open Hub log folder"));
 
-        // B1/B2 (audit 2026-05-24) — Export-to-file + Clear buffer labels
+        // Export-to-file + Clear buffer labels
         // + tooltips + ARIA names. Strings flow through Localizer with
         // verbose English fallbacks so screen readers still annotate
         // correctly on a fresh (un-localized) build.
@@ -376,7 +375,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
 
         AutomationProperties.SetName(this,
             Localizer.T("panel.systemlog.aria.name", "System Log panel"));
-        // QC11-02 — the ARIA help text previously hard-coded "2000-entry
+        // The ARIA help text previously hard-coded "2000-entry
         // buffer," which was wrong twice over: the cap is configurable
         // through AppConfig.SystemLogMaxRows (default 10000), and the
         // upstream GlobalLogger ring (2000) is a different number from the
@@ -391,7 +390,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         AutomationProperties.SetHelpText(this,
             string.Format(System.Globalization.CultureInfo.CurrentCulture, helpTemplate, capText));
 
-        // QC11-01 — scroll-to-latest button label / tooltip / ARIA.
+        // Scroll-to-latest button label / tooltip / ARIA.
         ScrollToLatestLabel.Text = Localizer.T("panel.systemlog.jump_to_latest", "latest");
         ToolTipService.SetToolTip(ScrollToLatestButton,
             Localizer.T("panel.systemlog.jump_to_latest.tooltip",
@@ -484,7 +483,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         double scrollable         = sv.ScrollableHeight;
         double distanceFromBottom = scrollable - offset;
 
-        // QC11-08 — skip the pause heuristic on the very first settled
+        // Skip the pause heuristic on the very first settled
         // frame after Load. _prevVerticalOffset can be the seed value from
         // OnViewLoaded, but if Loaded fired before the scroller's first
         // measure pass the seed itself is 0.0; either way we use the first
@@ -512,8 +511,8 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// Owns the full pointer cycle for row selection (Majo's 0.10.7 → 0.10.8
-    /// regression sweep): WinUI 3's ListView Extended SelectionMode does NOT
+    /// Owns the full pointer cycle for row selection: WinUI 3's ListView
+    /// Extended SelectionMode does NOT
     /// include drag-across-rows multi-select, so we drive it from here.
     /// Plain  → single-select + arm drag rubber-band.
     /// Shift  → range [anchor..clicked]; replaces selection unless Ctrl is also held.
@@ -791,7 +790,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
 
     /// <summary>
     /// Right-click → Copy / Copy all visible / Select all + filter actions.
-    /// B6 (audit 2026-05-24) added the "Filter to source: &lt;Source&gt;" /
+    /// The "Filter to source: &lt;Source&gt;" /
     /// "Clear source filter" entries — the source filter narrows the
     /// VisibleRows predicate at the VM and persists to AppConfig.
     /// </summary>
@@ -800,7 +799,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         var flyout = new MenuFlyout();
         int selectedCount = LogList.SelectedItems?.Count ?? 0;
 
-        // B6 — the row the user clicked. May be null if the user right-
+        // The row the user clicked. May be null if the user right-
         // clicked the panel's empty area below the rows; we still surface
         // the copy / select-all items in that case but skip the source
         // filter entries.
@@ -826,7 +825,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        // B6 — Filter to source: <Source>. Only meaningful when the user
+        // Filter to source: <Source>. Only meaningful when the user
         // right-clicked a row that has a non-empty Source. Setting persists
         // to AppConfig.SystemLogSourceFilter via the VM setter.
         if (clickedRow is not null && !string.IsNullOrEmpty(clickedRow.Source))
@@ -842,7 +841,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
             flyout.Items.Add(filterToSource);
         }
 
-        // B6 — Clear source filter is only enabled when one is active. We
+        // Clear source filter is only enabled when one is active. We
         // include it even when no row was clicked so the user can always
         // recover from an over-narrow filter via right-click.
         if (ViewModel.HasSourceFilter)
@@ -874,7 +873,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// C6 (audit 2026-05-24) — chevron tap toggles the row's expanded
+    /// Chevron tap toggles the row's expanded
     /// exception view. Routed via Tapped (not Click) so the row's
     /// pointer-capture pipeline doesn't swallow the event during the
     /// custom selection drag handling.
@@ -889,7 +888,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// C6 (audit 2026-05-24, finished sweep) — double-click anywhere on the
+    /// Double-click anywhere on the
     /// row toggles the exception expander. Rows without an exception ignore
     /// the gesture (HasException is false) so a stray double-click on a
     /// regular Info/Warn row doesn't pop an empty expander. Mirrors the
@@ -906,7 +905,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// B1 (audit 2026-05-24) — Export visible rows to a .txt file. Uses
+    /// Export visible rows to a .txt file. Uses
     /// CustomFilePicker (the suite's IFileSaveDialog COM wrapper) rather
     /// than the WinUI 3 FileSavePicker because the latter only seeds
     /// folders via PickerLocationId — we want the picker to land in the
@@ -961,7 +960,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// B1 row formatter — the export format the audit asks for:
+    /// Row formatter — the export format:
     /// <c>[YYYY-MM-DD HH:mm:ss] [LEVEL] [SOURCE] Message</c>. The
     /// exception block (if present) goes on its own indented line
     /// underneath so a single-line-per-entry tail still works for grep
@@ -984,8 +983,8 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
     }
 
     /// <summary>
-    /// B2 (audit 2026-05-24) — Clear panel buffer with a confirm
-    /// ContentDialog. Confirm is the audit-blessed exception to the
+    /// Clear panel buffer with a confirm
+    /// ContentDialog. Confirm is an accepted exception to the
     /// modal-rule (single user-initiated destructive op, not a
     /// repeatable validation rejection). On confirm we delegate to
     /// SystemLogViewModel.ClearBuffer; new entries flowing in via the
@@ -1057,7 +1056,7 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
         }
         if (rows.Count == 0) return false;
 
-        // QC11-05 — building a row→index dictionary in one pass before the
+        // Building a row→index dictionary in one pass before the
         // sort makes the comparator an O(1) dict lookup. The previous code
         // called ObservableCollection<>.IndexOf inside the comparator,
         // which is O(n) per call; with k = LogList.SelectedItems.Count and

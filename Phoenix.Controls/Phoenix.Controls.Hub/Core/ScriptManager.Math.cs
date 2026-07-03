@@ -16,15 +16,15 @@ namespace Phoenix.Controls.Hub.Core
     // registration order has no runtime effect.
     //
     // Behaviour-preserving carry-overs:
-    //   * H1/H2 — math.chance routes through RNG.Chance(double)
+    //   * math.chance routes through RNG.Chance(double)
     //     so fractional rates and the full 0..100 inclusive range work.
-    //   * R19 sweep-14/16 typed pulls (float for chance, double for the
+    //   * Typed pulls (float for chance, double for the
     //     binary ops, int for modulo) with String fallback for direct
     //     InvokeCommandAsync test paths.
     //   * Returning null on parse-fail / divide-by-zero preserves the
     //     "graph branch goes nowhere on bad input" semantic.
     //
-    //  (P0-7): every double-returning math handler now funnels
+    // Every double-returning math handler now funnels
     // through NumericGuards.Sanitize before stringifying. Previously
     // math.divide(0,0), math.add(double.MaxValue, double.MaxValue), etc.
     // returned the literal "NaN" / "Infinity" — which poisons every
@@ -62,7 +62,7 @@ namespace Phoenix.Controls.Hub.Core
                 // the upper bound). Route through RNG.Chance(double) so
                 // both fractional rates and the full 0..100 range work.
                 //
-                // R19 (sweep 14) — typed Float reference. Empty/missing percent
+                // Typed Float reference. Empty/missing percent
                 // coerces to 0.0 (binder default), which means RNG.Chance
                 // returns false — matches the legacy "no roll" outcome for missing
                 // arg (the old code skipped the whole branch on TryParse failure;
@@ -82,7 +82,7 @@ namespace Phoenix.Controls.Hub.Core
             });
 
             // math.add/subtract/multiply/clamp — pure computation, return result.
-            // R19 (sweep 16) — typed Double pulls; legacy `double.TryParse` retained as
+            // Typed Double pulls; legacy `double.TryParse` retained as
             // the bound-is-null fallback for direct InvokeCommandAsync test paths.
             // Returning null when either arg fails to parse preserves the original
             // "graph branch goes nowhere on bad input" semantic.
@@ -134,7 +134,7 @@ namespace Phoenix.Controls.Hub.Core
                     ? bound.Get<double>("Max")
                     : (double.TryParse(ArgOrEmpty(args, 2), NumberStyles.Float, CultureInfo.InvariantCulture, out var mx) ? mx : (double?)null);
                 if (v is null || min is null || max is null) return null;
-                //  — Math.Clamp itself propagates NaN cleanly (NaN
+                // Math.Clamp itself propagates NaN cleanly (NaN
                 // clamps to NaN), so sanitize after the call. A NaN Min/Max
                 // makes the comparison undefined; the sanitize layer rejects
                 // either way.
@@ -151,7 +151,7 @@ namespace Phoenix.Controls.Hub.Core
                     ? bound.Get<double>("B")
                     : (double.TryParse(ArgOrEmpty(args, 1), NumberStyles.Float, CultureInfo.InvariantCulture, out var bx) ? bx : (double?)null);
                 if (a is null || b is null || b.Value == 0d) return null;
-                //  — divide-by-zero is already caught above, but
+                // Divide-by-zero is already caught above, but
                 // 0.0 / -0.0, MaxValue / MinValue * sign-flip, and divides
                 // that overflow to Infinity still slip through. Sanitize
                 // catches all of those.

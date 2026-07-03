@@ -1,9 +1,9 @@
-// ParallelExecution band carved from ScriptEngine.cs ().
+// ParallelExecution band carved from ScriptEngine.cs.
 // Owns: parallel and structured-concurrency block handlers —
-//   RunParallelBranch (BH-003/BH-004 — isolated ExecutionContext per branch),
-//   HandleAsyncTimeoutBlock (M14 — async_timeout with on_late: branch),
-//   HandleSequenceBlock (L8 — sequence_begin, per-arm _visitedNodes snapshot),
-//   HandleDoNBlock (L9 — do_n with overflow guard and completed: branch).
+//   RunParallelBranch (isolated ExecutionContext per branch),
+//   HandleAsyncTimeoutBlock (async_timeout with on_late: branch),
+//   HandleSequenceBlock (sequence_begin, per-arm _visitedNodes snapshot),
+//   HandleDoNBlock (do_n with overflow guard and completed: branch).
 
 using System;
 using System.Collections.Generic;
@@ -15,7 +15,7 @@ namespace Phoenix.Controls.Shared.Core
     public partial class ScriptEngine
     {
         /// <summary>
-        /// BH-003 + BH-004 — single parallel_begin branch entry. Started via Task.Run so
+        /// Single parallel_begin branch entry. Started via Task.Run so
         /// the AsyncLocal write below lands in this branch's isolated ExecutionContext
         /// rather than the parent's flow (preventing _executionVars bleed across siblings).
         /// On fault, signals the linked CTS so sibling branches abort at their next
@@ -27,13 +27,13 @@ namespace Phoenix.Controls.Shared.Core
             HashSet<string> resultKeys,
             CancellationTokenSource linkedCts)
         {
-            // BH-003: scope _executionVars to this branch's dict. SetLocalResultVar /
+            // Scope _executionVars to this branch's dict. SetLocalResultVar /
             // SetScriptVarAsync writes from commands that run inside this branch will
             // now land in branchVars — matching the explicit `vars` argument that the
             // script-level loop variables (loop.index, loop.item) already use.
             // _branchResultKeysLocal carries the per-branch HashSet so result-writes
             // get tagged for parallel_begin's merge-back propagation.
-            //  Snapshot the prior tagging slot (if a nested parallel_begin
+            // Snapshot the prior tagging slot (if a nested parallel_begin
             // sits inside another branch, the outer branch's HashSet must be
             // restored on exit). AsyncLocal copy-on-write already isolates the
             // slot across Task.Run boundaries, but the explicit save/restore
@@ -43,7 +43,7 @@ namespace Phoenix.Controls.Shared.Core
             var savedBranchResultKeys = _branchResultKeysLocal.Value;
             _executionVars = branchVars;
             _branchResultKeysLocal.Value = resultKeys;
-            // QC01-07 — Snapshot _visitedNodes per branch. AsyncLocal copy-on-write
+            // Snapshot _visitedNodes per branch. AsyncLocal copy-on-write
             // copies the slot reference, not the underlying HashSet, so without
             // this snapshot all sibling branches mutated the same HashSet
             // concurrently. That stochastically dropped Architect debug-flash
@@ -64,21 +64,21 @@ namespace Phoenix.Controls.Shared.Core
             }
             catch
             {
-                // BH-004: signal sibling branches to stop. Swallow the CTS Cancel itself
+                // Signal sibling branches to stop. Swallow the CTS Cancel itself
                 // so the original exception still propagates up to Task.WhenAll.
                 try { linkedCts.Cancel(); } catch (ObjectDisposedException) { }
                 throw;
             }
             finally
             {
-                //  Restore the prior slot values so a nested branch
+                // Restore the prior slot values so a nested branch
                 // (parallel_begin inside another branch) doesn't strand the
                 // outer branch's _executionVars / _branchResultKeysLocal /
                 // _visitedNodes pointing at the inner branch's dict / HashSet.
                 _executionVars = savedBranchVars;
                 _branchResultKeysLocal.Value = savedBranchResultKeys;
-                // R3 (audit 2026-06-03): _visitedNodes was snapshotted + replaced
-                // above (line ~57) but, unlike the other two, was never restored
+                // _visitedNodes was snapshotted + replaced
+                // above but, unlike the other two, was never restored
                 // here — leaking the branch's visited-set into the parent flow and
                 // corrupting debug-flash dedup after parallel_begin. Restore it
                 // symmetrically (matches ExecuteScriptAsync's save/restore).
@@ -87,11 +87,11 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // SWEEP #7 BLOCK HANDLERS (M14 / L8 / L9)
+        // BLOCK HANDLERS
         // ─────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// M14 — async_timeout(ms): block. Runs the body with a per-block CTS
+        /// async_timeout(ms): block. Runs the body with a per-block CTS
         /// linked to the parent execution token, racing a delay-task against
         /// the body-task via Task.WhenAny. If the timeout wins, the optional
         /// on_late: branch is invoked BEFORE the parent CTS gets a chance to
@@ -175,7 +175,7 @@ namespace Phoenix.Controls.Shared.Core
             try { await bodyTask.ConfigureAwait(false); }
             finally
             {
-                // QC01-09 — Cancel the delay so the Task.Delay completes promptly
+                // Cancel the delay so the Task.Delay completes promptly
                 // and observe its OperationCanceledException so the dangling task
                 // doesn't show up as UnobservedTaskException at finalize-time.
                 // localCts.Cancel() is safe to call on a token that's already
@@ -191,7 +191,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// L8 — sequence_begin block. Each top-level entry inside the block
+        /// sequence_begin block. Each top-level entry inside the block
         /// (at indent+1) is one "arm" — a discrete path through the graph.
         /// Snapshot+restore <see cref="_visitedNodes"/> around each arm so
         /// arm-2 doesn't see arm-1's NODE_EXEC fingerprints and skip nodes
@@ -243,7 +243,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         /// <summary>
-        /// L9 — do_n(n): block. Runs the body up to N times across the
+        /// do_n(n): block. Runs the body up to N times across the
         /// execution. Counter is keyed by the line index so each call site
         /// has its own count. Saturates at int.MaxValue rather than
         /// overflowing into negative territory (which would silently freeze
@@ -286,7 +286,7 @@ namespace Phoenix.Controls.Shared.Core
 
                 // Saturate-at-MaxValue overflow guard: if we're one tick from
                 // overflowing, refuse to increment further and short-circuit
-                // straight to the completed: branch. This is the heart of L9 —
+                // straight to the completed: branch. This is the heart of the guard —
                 // the legacy `counter += 1` path silently rolled to int.MinValue
                 // and the comparison `counter <= N` then stayed permanently
                 // false-on-the-inner-arm, freezing the Completed path forever.

@@ -6,9 +6,9 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 
 // Minimal INotifyPropertyChanged base. Plenty of MVVM toolkits would do —
 // CommunityToolkit.Mvvm in particular — but pulling a NuGet package only
-// to get one class in this turn would expand Track 1's PackageReference
-// surface unnecessarily. Track 5 may swap this for ObservableObject from
-// Microsoft.Toolkit.Mvvm once the project becomes a real WinUI exe.
+// to get one class in this turn would expand the PackageReference
+// surface unnecessarily. This may later be swapped for ObservableObject
+// from Microsoft.Toolkit.Mvvm once the project becomes a real WinUI exe.
 public abstract class ObservableObject : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -7,7 +7,7 @@ using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Hub.Core
 {
-    // P0-3 (sweep 0.10.0 ) — reverse-audit caller.
+    // Reverse-audit caller.
     //
     // CommandManifest.VerifyAllHubCommandsRegistered (Shared/Core/CommandManifest.cs)
     // answers the reverse-direction question that the existing
@@ -36,8 +36,8 @@ namespace Phoenix.Controls.Hub.Core
     public partial class ScriptManager
     {
         /// <summary>
-        /// P0-3 — reverse-direction manifest audit. Pulls the snapshot of
-        /// currently-registered command names off the engine ('s
+        /// Reverse-direction manifest audit. Pulls the snapshot of
+        /// currently-registered command names off the engine (via
         /// <see cref="ScriptEngine.RegisteredCommandNames"/>) and asks the
         /// manifest to flag any name that has no schema entry. Throws on a
         /// non-empty result so a registration drift fails startup loudly.

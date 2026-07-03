@@ -39,7 +39,7 @@ namespace Phoenix.Controls.Shared.Core
         {
             if (string.IsNullOrEmpty(text)) return text ?? string.Empty;
 
-            //  Surface unmatched-brace shapes before substitution. A
+            // Surface unmatched-brace shapes before substitution. A
             // brace segment that contains characters VarRefRegex can't
             // accept (`[\$\w\.]`) — e.g. `{global.score:default}`,
             // `{global.list{0}}` — silently passed through with no warning,
@@ -70,7 +70,7 @@ namespace Phoenix.Controls.Shared.Core
                 }
             }
 
-            // M16 — Cache BOTH UTC and local "now" once per call so all
+            // Cache BOTH UTC and local "now" once per call so all
             // {system.time}/{system.unix} substitutions inside the SAME call
             // see consistent values. Default {system.*} now uses UTC so
             // {system.unix} and {system.hours} report the same clock; the
@@ -94,7 +94,7 @@ namespace Phoenix.Controls.Shared.Core
                     var resolved = ResolveSystemVar(key, utcNowCache.Value, localNowCache.Value);
                     if (resolved != null) return resolved;
                 }
-                //  — {stream.*} family, anchored at HubProcessStartedAtUtc
+                // {stream.*} family, anchored at HubProcessStartedAtUtc
                 // by default. The "stream start" signal is configurable via
                 // SetStreamStartedAt; the default of "Hub uptime" matches
                 // system.* and is changeable later (e.g. to first-chat) without
@@ -125,7 +125,7 @@ namespace Phoenix.Controls.Shared.Core
             {
                 if (string.IsNullOrEmpty(kv.Key)) continue;
                 if (text.IndexOf(kv.Key, StringComparison.Ordinal) < 0) continue;
-                // QC01-03 — Look-around MUST exclude '.' on both sides too.
+                // Look-around MUST exclude '.' on both sides too.
                 // Previously the pattern only excluded ["'\w], so a local var
                 // named `foo` would rewrite the trailing `foo` in dotted
                 // references like `user.foo` / `global.foo` / `event.foo` /
@@ -143,11 +143,11 @@ namespace Phoenix.Controls.Shared.Core
         // family. Returns null for unknown keys so the caller can log + leave
         // the raw token intact.
         //
-        // M16: every "system.*" key without a `local_` prefix now reports UTC
+        // Every "system.*" key without a `local_` prefix now reports UTC
         //      so {system.unix} and {system.hours} can no longer disagree
         //      across the daylight-savings boundary. The legacy local-time
         //      readings live on as `system.local_*` mirrors.
-        // M17: every culture-sensitive `ToString` formatter is pinned to
+        // Every culture-sensitive `ToString` formatter is pinned to
         //      CultureInfo.InvariantCulture so a non-EN host (de-DE, fr-FR…)
         //      reports the same MonthName / Date strings the script authors
         //      wrote against on their EN dev box. Numeric .ToString() calls
@@ -190,7 +190,7 @@ namespace Phoenix.Controls.Shared.Core
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  — {stream.*} family.
+        // {stream.*} family.
         //
         // Anchor: the moment the ScriptEngine module first loads
         // in the Hub process. That's "Hub uptime" — the simplest of the

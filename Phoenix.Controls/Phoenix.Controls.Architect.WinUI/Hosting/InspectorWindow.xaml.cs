@@ -18,7 +18,7 @@ using WinRT.Interop;
 namespace Phoenix.Controls.Architect.WinUI.Hosting;
 
 /// <summary>
-///  #10 — floating top-level Inspector window. Hosts a
+/// Floating top-level Inspector window. Hosts a
 /// <see cref="LogicInspector"/> bound to an <see cref="ArchitectViewModel"/>'s
 /// LogicInspector VM; replaces the right-column docked card MainView /
 /// ArchitectSiblingWindow used to host.
@@ -39,7 +39,7 @@ public sealed partial class InspectorWindow : Window
     private LogicInspector? _inspectorView;
     private AppWindow? _appWindow;
     private static InspectorWindow? s_instance;
-    //  Guards the check-then-act on s_instance so a
+    // Guards the check-then-act on s_instance so a
     // concurrent OpenFor (multi-window Architect) can't construct two windows.
     private static readonly object s_instanceGate = new();
 
@@ -74,7 +74,7 @@ public sealed partial class InspectorWindow : Window
     {
         if (viewModel is null) throw new ArgumentNullException(nameof(viewModel));
 
-        //  Lock the check-then-construct so two
+        // Lock the check-then-construct so two
         // concurrent opens can't each see s_instance == null and spawn a
         // duplicate window. (Window construction must run on the UI thread, so
         // contention is rare, but the guard makes the singleton contract sound.)
@@ -223,7 +223,7 @@ public sealed partial class InspectorWindow : Window
         try { Chrome.Unbind(); } catch { /* best-effort */ }
 
         // Drop the singleton so a subsequent OpenFor spawns a fresh window
-        // rather than poking a torn-down one. 
+        // rather than poking a torn-down one.
         // Under the same gate as OpenFor's check-then-construct.
         lock (s_instanceGate)
         {

@@ -37,7 +37,7 @@ namespace Phoenix.Controls.Shared.Services
         private static string? _lastActivity;
         private static long _lastActivityStartedAtUtcTicks;
 
-        //  Process-wide count of currently-open Begin scopes.
+        // Process-wide count of currently-open Begin scopes.
         // Incremented on Begin, decremented on Dispose. The watchdog reads this
         // at stall time to discriminate the two cases the latched LastActivity
         // alone can't: depth > 0 means a traced scope is STILL OPEN (the named
@@ -71,7 +71,7 @@ namespace Phoenix.Controls.Shared.Services
         public static string? CurrentActivity => _currentActivity;
 
         /// <summary>
-        ///  Number of Begin scopes currently open across all
+        /// Number of Begin scopes currently open across all
         /// threads. The watchdog logs this alongside <see cref="LastActivity"/>:
         /// a value &gt; 0 at stall time means the named scope is still executing
         /// (real culprit); 0 means it already returned and the stall is in

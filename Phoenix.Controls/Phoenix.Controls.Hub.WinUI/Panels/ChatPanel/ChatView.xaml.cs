@@ -21,21 +21,20 @@ public sealed partial class ChatView : UserControl, IDisposable,
     // Within this many DIPs of the bottom we treat the user as "at bottom"
     // and re-arm autoscroll. Mirrors the SystemLog pattern so all three
     // scrolling panels share one mental model. See SystemLogView.cs for
-    // the longer rationale. Hub UI/UX sweeps converged on the v5 direction-
-    // aware pause + coalesced ChangeView shape originally proven in
-    // SystemLogView.
+    // the longer rationale — the direction-aware pause + coalesced
+    // ChangeView shape was originally proven in SystemLogView.
     private const double BottomThresholdDips = 4.0;
 
     private bool _autoScrollPaused;
     private bool _scrollRequestPending;
     private double _prevVerticalOffset;
-    // [P2 fix] _prevVerticalOffset starts at 0.0; without this guard the first
+    // _prevVerticalOffset starts at 0.0; without this guard the first
     // non-intermediate ViewChanged compares the live offset against that stale
     // seed and can falsely pause autoscroll on initial load. Mirrors the
-    // SystemLogView QC11-08 pattern.
+    // SystemLogView pattern.
     private bool _prevOffsetInitialized;
 
-    // QC10-02/03 — the ScrollViewer.ViewChanged subscription is declared in
+    // The ScrollViewer.ViewChanged subscription is declared in
     // ChatView.xaml ("ViewChanged=\"OnChatScrollViewChanged\"") and is the
     // single source of truth. The Loaded hook below ONLY arms the first
     // autoscroll once the ScrollViewer's ScrollableHeight is realised; it
@@ -47,7 +46,7 @@ public sealed partial class ChatView : UserControl, IDisposable,
     private bool _loadedHandlerRan;
 
     // Hold the root-level wheel handler so Dispose can pair AddHandler with
-    // RemoveHandler — perf-review M23 parity with SystemLogView.
+    // RemoveHandler — parity with SystemLogView.
     private readonly PointerEventHandler _onRootWheelHandler;
 
     public event EventHandler? PopOutRequested;
@@ -56,12 +55,12 @@ public sealed partial class ChatView : UserControl, IDisposable,
     {
         ViewModel = viewModel;
         InitializeComponent();
-        // C1 (2026-05-14): VM owns its dispatcher via ctor injection — no
-        // shared static slot to capture from the View side anymore.
+        // VM owns its dispatcher via ctor injection — no shared static slot
+        // to capture from the View side anymore.
         ApplyLocalizedStrings();
         ViewModel.Rows.CollectionChanged += OnRowsChanged;
         Loaded += OnViewLoaded;
-        //  Mirror the SystemLogView pattern: ActualThemeChanged fires
+        // Mirror the SystemLogView pattern: ActualThemeChanged fires
         // on OS high-contrast engage, parent RequestedTheme override, or a
         // future in-app settings toggle. Without this subscription buffered
         // rows stay coloured by the *old* merged theme until they scroll out.
@@ -78,7 +77,7 @@ public sealed partial class ChatView : UserControl, IDisposable,
     }
 
     /// <summary>
-    ///  Runtime theme-swap handler — marshal RefreshBrushes onto the
+    /// Runtime theme-swap handler — marshal RefreshBrushes onto the
     /// UI thread (ActualThemeChanged usually fires there but stay defensive).
     /// </summary>
     private void OnActualThemeChanged(FrameworkElement sender, object args)
@@ -91,8 +90,8 @@ public sealed partial class ChatView : UserControl, IDisposable,
         }
         else
         {
-            // [Hub panel audit 2026-05-31, Lane D P3] Surface a dropped brush refresh
-            // if the enqueue fails, rather than a silent no-repaint on theme change.
+            // Surface a dropped brush refresh if the enqueue fails, rather
+            // than a silent no-repaint on theme change.
             if (!dq.TryEnqueue(() =>
             {
                 if (_disposed) return;
@@ -111,9 +110,9 @@ public sealed partial class ChatView : UserControl, IDisposable,
         // the only reason this handler exists is the initial autoscroll arm.
         if (_loadedHandlerRan) return;
         _loadedHandlerRan = true;
-        // [P2 fix] Seed the previous-offset baseline from the realised
+        // Seed the previous-offset baseline from the realised
         // ScrollViewer so the first ViewChanged compares against a real value,
-        // not the 0.0 field default. Matches SystemLogView's QC11-08 guard.
+        // not the 0.0 field default. Matches SystemLogView's guard.
         if (ChatScrollViewer is not null)
         {
             _prevVerticalOffset = ChatScrollViewer.VerticalOffset;
@@ -129,11 +128,11 @@ public sealed partial class ChatView : UserControl, IDisposable,
         ViewModel.Rows.CollectionChanged -= OnRowsChanged;
         Loaded -= OnViewLoaded;
         ActualThemeChanged -= OnActualThemeChanged;
-        // QC10-02/03 — XAML ViewChanged="OnChatScrollViewChanged" tears down
-        // with the visual tree, so no explicit -= needed here. Leaving it
-        // would only matter if we kept the second (code-behind) subscription.
-        // [Hub panel audit 2026-05-31, Lane D P2] Log instead of silently swallowing —
-        // a RemoveHandler throw here would otherwise hide a shutdown-path defect.
+        // XAML ViewChanged="OnChatScrollViewChanged" tears down with the
+        // visual tree, so no explicit -= needed here. Leaving it would only
+        // matter if we kept the second (code-behind) subscription.
+        // Log instead of silently swallowing — a RemoveHandler throw here
+        // would otherwise hide a shutdown-path defect.
         try { this.RemoveHandler(UIElement.PointerWheelChangedEvent, _onRootWheelHandler); }
         catch (Exception ex) { GlobalLogger.Log($"ChatView RemoveHandler failed during Dispose: {ex.Message}", "ChatView", Phoenix.Controls.Shared.Models.LogLevel.Debug); }
         ViewModel.Dispose();
@@ -172,7 +171,7 @@ public sealed partial class ChatView : UserControl, IDisposable,
         double scrollable         = sv.ScrollableHeight;
         double distanceFromBottom = scrollable - offset;
 
-        // [P2 fix] Only run the direction-aware pause test once we have a real
+        // Only run the direction-aware pause test once we have a real
         // previous offset to compare against — otherwise the first ViewChanged
         // measures against the 0.0 default and can falsely pause autoscroll.
         if (distanceFromBottom <= BottomThresholdDips)
@@ -193,8 +192,8 @@ public sealed partial class ChatView : UserControl, IDisposable,
     {
         if (_autoScrollPaused) return;
         if (_scrollRequestPending) return;
-        // [Hub panel audit 2026-05-31, Lane D P1] Guard the dispatcher (null on a
-        // pop-out / test host) and reset _scrollRequestPending if the enqueue fails.
+        // Guard the dispatcher (null on a pop-out / test host) and reset
+        // _scrollRequestPending if the enqueue fails.
         // The flag is otherwise only cleared inside the queued callback, so a failed
         // TryEnqueue would leave it stuck true and permanently gate every future
         // autoscroll. Mirrors the defensive pattern in OnActualThemeChanged.
@@ -205,7 +204,7 @@ public sealed partial class ChatView : UserControl, IDisposable,
         {
             _scrollRequestPending = false;
             if (_autoScrollPaused) return;
-            // [P2 fix] The control tree can detach during WinUI 3 reparenting
+            // The control tree can detach during WinUI 3 reparenting
             // (tab/pop-out swap), nulling ChatScrollViewer between the enqueue and
             // this callback. Make that explicit instead of relying on the bare
             // catch to swallow the resulting NullReferenceException.
@@ -246,20 +245,20 @@ public sealed partial class ChatView : UserControl, IDisposable,
     private void OnPopOutClick(object sender, RoutedEventArgs e)
         => PopOutRequested?.Invoke(this, EventArgs.Empty);
 
-    // Hub UI sweep P2 — pop-out child dead-↗ fix. See LiveFeedView.MarkAsPopOutChild.
+    // Pop-out child dead-↗ fix. See LiveFeedView.MarkAsPopOutChild.
     public void MarkAsPopOutChild() => PopOutButton.Visibility = Visibility.Collapsed;
 
     /// <summary>
     /// Resolves composer placeholder, Send button label, pop-out chrome, and
     /// automation strings through <see cref="Localizer.T"/>. Called once in
-    /// the ctor (Hub UI sweep — localization batch).
+    /// the ctor.
     /// </summary>
     private void ApplyLocalizedStrings()
     {
         DraftBox.PlaceholderText = Localizer.T("panel.chat.composer.placeholder", "Send as bot…");
         SendButton.Content       = Localizer.T("panel.chat.button.send",          "SEND");
 
-        // Hub UI sweep 2026-05-22 — visible "pop-out" label next to the icon.
+        // Visible "pop-out" label next to the icon.
         PopOutLabel.Text = Localizer.T("panel.common.button.popout", "pop-out");
         ToolTipService.SetToolTip(PopOutButton,
             Localizer.T("panel.common.popout.tooltip", "Pop-out"));

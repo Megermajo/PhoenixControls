@@ -19,12 +19,12 @@ public enum DropState { None, Valid, Invalid }
 // with the node-relative row index and the inline-pill value (which lives
 // on the parent Node.Attributes dictionary keyed by socket name).
 //
-// Inline value pill: per feedback_node_ui_inline_sockets.md, hardcoded
+// Inline value pill: hardcoded
 // socket values render directly inside the node body — UE Blueprints
 // style — not in a side panel. The view binds to ValuePill / IsEditing,
 // shows a TextBox when IsEditing flips true, and commits via
 // CommitValuePillEdit which writes back to Node.Attributes and persists
-// on the next .phxg save (Track 5 wires the persistence side).
+// on the next .phxg save.
 public sealed class SocketViewModel : ObservableObject
 {
     private readonly Socket _socket;
@@ -32,7 +32,7 @@ public sealed class SocketViewModel : ObservableObject
     private string? _valuePill;
     private bool _isEditing;
 
-    // PERF (perf/architect-blockers, HIGH): pre-cache, Kind/ColorHex/PinPathData/
+    // PERF: previously Kind/ColorHex/PinPathData/
     // PinFilled/FillColorHex were all property getters that re-evaluated the
     // SocketPalette / PinPathGeometry switch tables on every binding read. With
     // M input + N output sockets per node × K nodes × ~3 bindings per pin per
@@ -115,9 +115,9 @@ public sealed class SocketViewModel : ObservableObject
     /// <summary>
     /// Socket display name. TwoWay-bindable: writing back updates Socket.Name
     /// so inline rename on the node body persists into the .phxg on next save
-    /// (per feedback_node_ui_inline_sockets — UE-Blueprints rename-on-node idiom).
+    /// (UE-Blueprints rename-on-node idiom).
     /// <para>
-    ///  This setter performs the model-side rename + Attributes
+    /// This setter performs the model-side rename + Attributes
     /// key migration but does NOT push an undo snapshot. The undo push is
     /// the CALLER's responsibility — specifically the canvas-side rename
     /// commit path (NodeView's EndLabelEdit handler) wraps a Label setter
@@ -141,8 +141,7 @@ public sealed class SocketViewModel : ObservableObject
             // Migrate the inline-pill attribute key — pre-fix renaming a
             // socket silently orphaned its value because Node.Attributes
             // still keyed on the old name, and ResolveInitialValuePill
-            // returned null on the next view rebuild. Architect UX review
-            // P1-14.
+            // returned null on the next view rebuild.
             if (!string.IsNullOrEmpty(oldName)
                 && _parentNode.Attributes != null
                 && _parentNode.Attributes.TryGetValue(oldName, out var carried))
@@ -166,7 +165,7 @@ public sealed class SocketViewModel : ObservableObject
             // nudge — cheap, and the binding short-circuits when the value
             // hasn't actually changed.
             OnPropertyChanged(nameof(IsDynamicPlaceholder));
-            // B15 (audit 2026-05-24) — Tooltip composes Label + DataType +
+            // Tooltip composes Label + DataType +
             // Description; renaming the socket changes the head line, so the
             // computed property needs an explicit nudge or the hover popup
             // stays stuck on the pre-rename string. Same shape as the
@@ -205,7 +204,7 @@ public sealed class SocketViewModel : ObservableObject
     /// header followed by the socket description when present. Mirrors pre-T15
     /// canvas tooltip resolver output for sockets.
     /// <para>
-    /// B15 (audit 2026-05-24) — the property reads <see cref="Label"/>,
+    /// The property reads <see cref="Label"/>,
     /// <see cref="DataType"/>, and <see cref="Description"/> directly off the
     /// underlying <see cref="Socket"/> POCO, so any code path that mutates
     /// those fields must explicitly fire <see cref="OnPropertyChanged"/>
@@ -227,7 +226,7 @@ public sealed class SocketViewModel : ObservableObject
     }
 
     /// <summary>
-    /// B15 (audit 2026-05-24) — explicit re-raise hook for <see cref="Tooltip"/>.
+    /// Explicit re-raise hook for <see cref="Tooltip"/>.
     /// The computed property reads <see cref="Socket.Name"/>,
     /// <see cref="Socket.DataType"/>, and <see cref="Socket.Description"/>
     /// directly, so any mutation path that bypasses the <see cref="Label"/>
@@ -241,7 +240,7 @@ public sealed class SocketViewModel : ObservableObject
     /// Screen-reader label for the pin: "Input · String · username" /
     /// "Output · Flow". Surfaced via the NodeView pin's
     /// AutomationProperties.Name so a Narrator user knows direction +
-    /// type + name without parsing the visual chrome. 0.10.0 a11y P2.
+    /// type + name without parsing the visual chrome.
     /// </summary>
     public string AccessibleName
     {
@@ -256,7 +255,7 @@ public sealed class SocketViewModel : ObservableObject
     /// Wildcard socket — type still unresolved (<c>SocketDataType.Any</c>).
     /// NodeView paints these as a hollow dashed outline so the unresolved
     /// state is visually distinct from a connected typed pin even before the
-    /// wildcard cascade runs (Architect UX P1 "Socket palette collisions").
+    /// wildcard cascade runs.
     /// </summary>
     public bool IsWildcard => _socket.DataType == SocketDataType.Any;
 
@@ -320,7 +319,7 @@ public sealed class SocketViewModel : ObservableObject
     //
     //   1. IsRequired + IsConnected — static, derived from the NodeTemplate.
     //      A required input with no link gets a yellow halo so authoring
-    //      gaps are visible at a glance (Architect UX P1).
+    //      gaps are visible at a glance.
     //   2. DropState — transient, set during a wire-drag by the canvas.
     //      Green halo on Valid drop targets, red on Invalid.
     //   3. IsPlaceholder + IsWildcard — static, derived from the Socket.
@@ -338,7 +337,7 @@ public sealed class SocketViewModel : ObservableObject
     /// pins. Cached on construct (template lookup is by node title, which
     /// doesn't change for the lifetime of the socket VM).
     /// <para>
-    ///  The cache assumes NodeTemplate.RequiredInputs is immutable
+    /// The cache assumes NodeTemplate.RequiredInputs is immutable
     /// at runtime, which holds today — templates are seeded once in
     /// NodeRegistry's static initialiser and never mutated. If a future
     /// template-hot-edit feature lands (think: per-node "Mark Required"
@@ -364,7 +363,7 @@ public sealed class SocketViewModel : ObservableObject
             if (SetField(ref _isConnected, value))
             {
                 OnPropertyChanged(nameof(IsRequiredEmpty));
-                // B21 (audit 2026-05-24) — IsEditablePill is gated on
+                // IsEditablePill is gated on
                 // !_isConnected so the pill stops accepting taps the moment
                 // a wire attaches; IsPillVisible stays true so the ghost-pill
                 // renders for the wired-source intrinsic value. Both bindings
@@ -377,7 +376,7 @@ public sealed class SocketViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsPillVisible));
                 OnPropertyChanged(nameof(PillOpacity));
                 OnPropertyChanged(nameof(PillDisplayText));
-                // B21 — fallback pill (Math operators etc.) keeps IsEditablePill
+                // Fallback pill (Math operators etc.) keeps IsEditablePill
                 // true even while wired; the IsPillFallback flag drives the
                 // dimmed-border visual indicator that distinguishes a fallback
                 // pill from a normal editable pill.
@@ -410,7 +409,7 @@ public sealed class SocketViewModel : ObservableObject
     /// converters so the green / red halo appears around the pin without
     /// touching the pin's intrinsic stroke / fill.
     /// <para>
-    ///  Per-pin halo state lives on the Socket VM; the related
+    /// Per-pin halo state lives on the Socket VM; the related
     /// per-NODE highlight flags (<see cref="NodeViewModel.IsVarChainWriter"/>,
     /// <see cref="NodeViewModel.IsVarChainReader"/>,
     /// <see cref="NodeViewModel.IsDimmedByPicker"/>) live on the parent
@@ -432,7 +431,7 @@ public sealed class SocketViewModel : ObservableObject
     /// has changed but property getters are stateless, so the view-side
     /// bindings need an explicit nudge.
     ///
-    ///  IsDynamicPlaceholder is folded in defensively because the
+    /// IsDynamicPlaceholder is folded in defensively because the
     /// wildcard cascade and the placeholder-activation paths frequently
     /// fire in lockstep — the Label-setter notification handles the rename
     /// case, but a DataType-only flip (e.g. cascade resolving Any → String
@@ -455,7 +454,7 @@ public sealed class SocketViewModel : ObservableObject
         OnPropertyChanged(nameof(HasVectorArity));
         OnPropertyChanged(nameof(IsPlaceholder));
         OnPropertyChanged(nameof(IsDynamicPlaceholder));
-        // B15 (audit 2026-05-24) — Tooltip embeds DataType; cascade-driven
+        // Tooltip embeds DataType; cascade-driven
         // type flips would otherwise leave the hover popup stale until the
         // next Label rename forced a Tooltip re-raise.
         OnPropertyChanged(nameof(Tooltip));
@@ -495,13 +494,13 @@ public sealed class SocketViewModel : ObservableObject
     /// <summary>
     /// True when the inline pill should accept user clicks + edits — i.e. it
     /// renders as the normal yellow-on-coal editable Border, not the dimmed
-    /// ghost-pill. Pre-B21 this was also the visibility gate; B21 split the
-    /// two concerns so wired sockets keep showing a pill (as a ghost) without
+    /// ghost-pill. This used to be the visibility gate too; the two concerns
+    /// were split so wired sockets keep showing a pill (as a ghost) without
     /// allowing edits that would silently disagree with the wired source.
     ///
     /// Editable iff: input direction, has a name, not a placeholder, not a
     /// flow pin, AND no wire is attached. The connectivity gate is the
-    /// addition over the pre-B21 semantics — wired pills route through
+    /// addition — wired pills route through
     /// <see cref="IsPillVisible"/> for the ghost render but reject taps via
     /// the IsHitTestVisible XAML binding so a user clicking a ghost-pill
     /// gets no edit-mode flip (which would be confusing — the value the
@@ -509,8 +508,7 @@ public sealed class SocketViewModel : ObservableObject
     /// export time).
     ///
     /// Excludes outputs (computed values), placeholders, and flow pins
-    /// (execution wires don't carry literal values) — same as pre-B21.
-    /// Architect UX review P1-16 / feedback_node_ui_inline_sockets.md.
+    /// (execution wires don't carry literal values).
     /// </summary>
     public bool IsEditablePill
     {
@@ -520,8 +518,8 @@ public sealed class SocketViewModel : ObservableObject
             if (string.IsNullOrEmpty(_socket.Name)) return false;
             if (_socket.IsPlaceholder) return false;
             if (SocketTypeHelper.IsFlowPin(_socket)) return false;
-            // B21 (audit/winui-regressions-2026-05-24) — Math operators (and
-            // other fallback-pill nodes from B22 / B23 / B24) keep their
+            // Math operators (and
+            // other fallback-pill nodes) keep their
             // inline default editable even when wired, so the pill acts as
             // a runtime fallback: the wired upstream value wins at export
             // time, but the literal in the pill is what the runtime falls
@@ -545,8 +543,7 @@ public sealed class SocketViewModel : ObservableObject
     /// get a dropdown affordance so the user can pick a live value from
     /// the SQLite databank without typing (and without typos). Restoring
     /// pre-WinUI parity with MainForm's column-header drag-to-canvas
-    /// menu, but inline on the node body per
-    /// feedback_node_ui_inline_sockets.md.
+    /// menu, but inline on the node body.
     /// </summary>
     public enum DatabankPickerKindValue
     {
@@ -597,7 +594,7 @@ public sealed class SocketViewModel : ObservableObject
         => _parentNode.Attributes is { } a && a.TryGetValue("TableName", out var v) ? v : null;
 
     /// <summary>
-    /// B21 / B22 / B23 / B24 (audit/winui-regressions-2026-05-24) — the set
+    /// The set
     /// of node templates whose input pills behave as "default-if-upstream-
     /// is-null" fallbacks. When a socket on one of these nodes is wired AND
     /// carries a literal, the literal stays editable (the pill renders with
@@ -611,25 +608,25 @@ public sealed class SocketViewModel : ObservableObject
         var title = _parentNode?.Title ?? string.Empty;
         return title switch
         {
-            // B21 — Math operators + reducers + clampers.
+            // Math operators + reducers + clampers.
             "Math.Add" or "Math.Subtract" or "Math.Multiply" or "Math.Divide"
                 or "Math.Modulo" or "Math.Clamp" or "Math.Min" or "Math.Max"
                 or "Math.Floor" or "Math.Ceil" or "Math.Abs" => true,
-            // B24 — Math.Random / Math.Chance min/max bounds.
+            // Math.Random / Math.Chance min/max bounds.
             "Math.Random" or "Math.Chance" => true,
-            // B22 — Twitch lookup + sender nodes (Username / Message fallbacks).
+            // Twitch lookup + sender nodes (Username / Message fallbacks).
             "Twitch.SendChat" or "Twitch.GetUser" or "Twitch.GetStream"
                 or "Twitch.CheckRole" or "Twitch.GetFollowAge"
                 or "Twitch.LastActive" or "Twitch.GetViewers" => true,
-            // B22 — Discord channel / guild / user / message fallbacks.
+            // Discord channel / guild / user / message fallbacks.
             "Discord.SendMessage" or "Discord.SendEmbed" or "Discord.AddRole"
                 or "Discord.RemoveRole" or "Discord.React"
                 or "Discord.GetUser" => true,
-            // B22 — API.Call URL fallback.
+            // API.Call URL fallback.
             "API.Call" => true,
-            // B22 — File.* Path fallback.
+            // File.* Path fallback.
             "File.ReadText" or "File.ReadJSON" => true,
-            // B23 — Text.Builder Template surfaces inline (still fallback-
+            // Text.Builder Template surfaces inline (still fallback-
             // editable when wired so authors can sketch the template before
             // hooking up the data sources).
             "Text.Builder" => true,
@@ -638,9 +635,9 @@ public sealed class SocketViewModel : ObservableObject
     }
 
     /// <summary>
-    /// B21 (audit/winui-regressions-2026-05-24) — true iff the pill is
+    /// True iff the pill is
     /// currently rendering as a "fallback" (the socket is wired but the
-    /// literal stays editable per the B21/B22/B23/B24 widening). NodeView
+    /// literal stays editable per the fallback-pill widening). NodeView
     /// XAML binds the pill's BorderBrush opacity to this so the author
     /// sees a dimmer outline on the fallback-mode pill, distinguishing it
     /// from the normal "no wire, this is the only value" editable state.
@@ -648,7 +645,7 @@ public sealed class SocketViewModel : ObservableObject
     public bool IsPillFallback => _isConnected && IsFallbackPillNode();
 
     /// <summary>
-    /// B21 (audit 2026-05-24) — visibility gate for the inline pill. True for
+    /// Visibility gate for the inline pill. True for
     /// every input socket that could carry a literal value (input, named,
     /// non-placeholder, non-flow) whether or not a wire is currently
     /// attached. When the socket is unwired this overlaps exactly with
@@ -658,7 +655,7 @@ public sealed class SocketViewModel : ObservableObject
     /// <see cref="PillOpacity"/>, IsHitTestVisible bound to IsEditablePill so
     /// it rejects taps).
     /// <para>
-    /// Rationale: pre-B21 the pill disappeared the instant a wire attached,
+    /// Rationale: the pill used to disappear the instant a wire attached,
     /// which hid the design-time literal the user had typed and made the
     /// node look like it had no inline state at all. Math.Add A=5 with a
     /// wire on A would render as just "[A]" with no "5" anywhere — even
@@ -680,7 +677,7 @@ public sealed class SocketViewModel : ObservableObject
     }
 
     /// <summary>
-    /// B21 (audit 2026-05-24) — opacity for the inline pill Border. Full
+    /// Opacity for the inline pill Border. Full
     /// opacity (1.0) when the pill is editable (no wire attached); dimmed
     /// to 0.45 when the pill is rendering as a ghost (wire attached, the
     /// wired source's value wins at export time so the literal is
@@ -692,7 +689,7 @@ public sealed class SocketViewModel : ObservableObject
     {
         get
         {
-            // B21 — fallback pills (Math.* / Twitch.* / Discord.* / API.Call /
+            // Fallback pills (Math.* / Twitch.* / Discord.* / API.Call /
             // File.* / Text.Builder per IsFallbackPillNode) stay at full
             // opacity even while wired so the literal default reads as the
             // active edit surface. The dimmed BorderBrush from IsPillFallback
@@ -708,7 +705,7 @@ public sealed class SocketViewModel : ObservableObject
     /// otherwise a faint "—" placeholder so the empty pill still reads as
     /// "click to type" rather than blank space.
     /// <para>
-    /// B21 (audit 2026-05-24) — when the socket is wired and the user has
+    /// When the socket is wired and the user has
     /// no literal stored (the wire is the only source of the value), the
     /// pill shows "(wired)" so the ghost-pill reads as intentional rather
     /// than a stale empty "—". A wired socket WITH a literal still shows the
@@ -721,7 +718,7 @@ public sealed class SocketViewModel : ObservableObject
     {
         get
         {
-            // B21 — for fallback-pill nodes (Math operators / Twitch / Discord
+            // For fallback-pill nodes (Math operators / Twitch / Discord
             // / API.Call / File.* / Text.Builder), the wire is the active
             // value at runtime but the literal is the fallback if upstream
             // resolves to null. Show the literal so authors can keep editing
@@ -767,7 +764,7 @@ public sealed class SocketViewModel : ObservableObject
     /// Re-raised from the <see cref="ValuePill"/> setter because the
     /// multi-line/plain split moves with the value (a newline flips the cap).
     /// <para>
-    ///  This is the node's ACTUAL available width on the row
+    /// This is the node's ACTUAL available width on the row
     /// (<see cref="NodeGeometry.PillWrapWidth"/> with
     /// <see cref="NodeGeometry.SocketPillLead"/>), not a standalone fixed cap. Bound
     /// by NodeView.xaml as the pill's MaxWidth, it is the finite MEASURE-time
@@ -779,7 +776,7 @@ public sealed class SocketViewModel : ObservableObject
     public double PillMaxWidth
         => NodeGeometry.PillWrapWidth(_parentNode, NodeGeometry.SocketPillLead(_socket.Name), IsMultilineAttr, HasDatabankPicker);
 
-    /// <summary> Re-raise <see cref="PillMaxWidth"/> — called by
+    /// <summary>Re-raise <see cref="PillMaxWidth"/> — called by
     /// NodeViewModel when the node body width changes (a sibling row's pill edit)
     /// so this pill re-evaluates the width it may wrap within.</summary>
     internal void RaisePillConstraint() => OnPropertyChanged(nameof(PillMaxWidth));
@@ -852,7 +849,7 @@ public sealed class SocketViewModel : ObservableObject
     /// Snapshot the current pill value as the rollback baseline and flip into
     /// edit mode.
     /// <para>
-    /// [REFRAMED] Focus + select-all are NOT done here (do not re-add them).
+    /// Focus + select-all are NOT done here (do not re-add them).
     /// The inline TextBox stays in the visual tree and only toggles
     /// Visibility on <see cref="IsEditing"/>, so a one-shot focus call from
     /// the VM would only land on the very first edit. Auto-focus + SelectAll
@@ -917,7 +914,7 @@ public sealed class SocketViewModel : ObservableObject
     /// key the rename normally moves). Returns whether the committed name
     /// differs from baseline so the view can gate the undo push.
     /// <para>
-    /// B13 (audit 2026-05-24) — commit-side validation. The TwoWay binding
+    /// Commit-side validation. The TwoWay binding
     /// has already pushed every keystroke into <c>Socket.Name</c> via the
     /// <see cref="Label"/> setter, so by the time this runs we have to
     /// inspect the post-edit name and roll back if it's invalid. Three
@@ -931,9 +928,8 @@ public sealed class SocketViewModel : ObservableObject
     ///      socket names as Python identifiers; spaces / hyphens / dots
     ///      would produce a syntactically invalid .phx.
     /// On rejection we log via <c>GlobalLogger</c> at
-    /// <see cref="LogLevel.Communication"/> (per
-    /// <c>feedback_no_modal_dialogs_for_repeatable_rejections.md</c> —
-    /// rename attempts can fire often, never pop a ContentDialog) and
+    /// <see cref="LogLevel.Communication"/> (rename attempts can fire often,
+    /// never pop a ContentDialog) and
     /// roll back through the <see cref="Label"/> setter so
     /// <c>Node.Attributes</c> migrates back in step.
     /// </para>
@@ -953,7 +949,7 @@ public sealed class SocketViewModel : ObservableObject
         }
         else if (commit && changed)
         {
-            // B13 — post-commit validation. Reject + roll back the rename
+            // Post-commit validation. Reject + roll back the rename
             // if the new name is empty, a duplicate on the same side of
             // the same node, or carries non-identifier characters.
             var candidate = _socket.Name ?? string.Empty;
@@ -977,7 +973,7 @@ public sealed class SocketViewModel : ObservableObject
     }
 
     /// <summary>
-    /// B13 (audit 2026-05-24) — validate a candidate socket name against the
+    /// Validate a candidate socket name against the
     /// three rename guards: non-empty, identifier-safe characters, and
     /// uniqueness within the parent node's same-direction socket list.
     /// Returns <c>null</c> when the name is acceptable, or a short
@@ -1029,7 +1025,7 @@ public sealed class SocketViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 0.11.5 canvas-polish r3 — measured row-centre Y (in NodeRoot outer-top
+    /// 0.11.5 — measured row-centre Y (in NodeRoot outer-top
     /// coords) pushed back from NodeView's per-row Loaded / SizeChanged
     /// handler. Lets wire anchors track the actual painted centre on rows
     /// whose intrinsic height grows past the static SocketRowHeight=24

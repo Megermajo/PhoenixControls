@@ -7,9 +7,9 @@ namespace Phoenix.Controls.Hub.Core
 {
     // Partial split: state.* + public.set command registrations.
     // Lifts the 6 handlers (state.set/get/exists/delete/list_keys + public.set)
-    // out of RegisterHubCommands. H17 idempotent-write contract in state.set,
+    // out of RegisterHubCommands. The idempotent-write contract in state.set,
     // sentinel-pattern existence check in state.exists (mirrors db.check),
-    // and the BH-003 _branchResultKeysLocal tag on public.set are all carried
+    // and the _branchResultKeysLocal tag on public.set are all carried
     // over verbatim.
 #pragma warning disable CS1998
     public partial class ScriptManager
@@ -24,14 +24,14 @@ namespace Phoenix.Controls.Hub.Core
                 string value = bound?.GetOrDefault<string>("Value", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
                 if (string.IsNullOrEmpty(name)) return null;
                 string key = $"state.{name}";
-                // [P1 swarm-audit 2026-05-29] Both the DB read and the persisting write
+                // Both the DB read and the persisting write
                 // touch SQLite; a DB outage (locked file, disk-full, disposed connection)
                 // propagated and tore down the whole script. Catch, log, and surface a
                 // fallback error result so the script can branch on failure.
                 try
                 {
                     string oldVal = await DB.Instance.GetVariableAsync(key, "");
-                    // H17 — always persist the write, even when oldVal == newVal. Skipping
+                    // Always persist the write, even when oldVal == newVal. Skipping
                     // the write meant idempotent state.set calls left the DB out-of-sync
                     // with what callers had assumed was committed. We still gate the
                     // on_state_change listener fire on a real change so downstream
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 string name = _engine.CurrentBoundArgs?.GetOrDefault<string>("Name", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 if (string.IsNullOrEmpty(name)) return null;
-                // [P1 swarm-audit 2026-05-29] DB read + result-var write both touch
+                // DB read + result-var write both touch
                 // SQLite; a DB outage propagated and crashed the script. Catch, log,
                 // and fall back to an empty value so the script keeps running.
                 try
@@ -104,7 +104,7 @@ namespace Phoenix.Controls.Hub.Core
 
             // public.set(key, value) — script-run-wide variable tier. SetLocalResultVar
             // tags the key in _branchResultKeysLocal so writes inside a parallel_begin
-            // branch propagate back to the parent on join (BH-003 contract). No DB
+            // branch propagate back to the parent on join. No DB
             // round-trip — the value lives only in _executionVars and vanishes when the
             // script run ends. Reads happen via {public.<key>} substitution against the
             // execution dict (Public.Get's pure-data path emits that reference directly).

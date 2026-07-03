@@ -30,17 +30,17 @@ public sealed partial class LeftRail : UserControl
     private string? _selectedMacroId;
     private string? _selectedProcessId;
 
-    //  [P0 OWNER-OVERRIDE] — active Variables-section scope, driven
+    // Active Variables-section scope, driven
     // by RailSection's scope dropdown (0 = Local / 1 = Global / 2 = Graph).
     // Mirrors the combo's SelectedIndex=0 default so the initial rail render
     // matches the visible dropdown selection. The DB capability that the old
     // left-rail "DB: Vars" mode offered was re-architected into the Databank
-    // tab (see  [REFRAMED] item), so the three live scopes here are
+    // tab, so the three live scopes here are
     // Local / Global / Graph; live DB-debug values still surface as the
     // value tag via the OnVariableSet cache below.
     private int _variableScope;
 
-    //  [P1] — live variable values cached from the Hub's
+    // Live variable values cached from the Hub's
     // DEBUG_VAR_SET bus messages (ArchitectBusClient.OnVariableSet). Keyed by
     // the canonical variable token (e.g. "score", "public.kills",
     // "global.theme"); surfaced as the right-hand value tag on discovered
@@ -58,7 +58,7 @@ public sealed partial class LeftRail : UserControl
     // title that turn (next save cycle picks it up).
     private ArchitectViewModel? _architectVm;
 
-    //  P1-A2: Hub's canonical global-macro library, surfaced into
+    // Hub's canonical global-macro library, surfaced into
     // the rail so macros that exist in the global set get the "GLOBAL" tag +
     // [G] prefix in the section item template (pre-T15 parity — MainForm
     // prefixed [G] on global macros so the user could pull them into the
@@ -71,7 +71,7 @@ public sealed partial class LeftRail : UserControl
     private HashSet<string> _globalMacroIds =
         new(StringComparer.OrdinalIgnoreCase);
 
-    //  #10 — rail-collapse + inspector-toggle hooks. The host
+    // Rail-collapse + inspector-toggle hooks. The host
     // MainView / ArchitectSiblingWindow subscribes to these events and
     // drives RailColumn.Width / InspectorWindow.OpenFor(...) on receipt;
     // the rail itself only owns the user-input dispatch and the glyph
@@ -79,7 +79,7 @@ public sealed partial class LeftRail : UserControl
     // the host via ConfigManager.
 
     /// <summary>
-    ///  #10 — raised when the user clicks the rail-collapse
+    /// Raised when the user clicks the rail-collapse
     /// chevron. The bool arg is the new desired collapsed state (true =
     /// collapsed). The host responds by resizing RailColumn.Width
     /// (220 ↔ 32) and persisting ArchitectRailCollapsed.
@@ -87,7 +87,7 @@ public sealed partial class LeftRail : UserControl
     public event EventHandler<bool>? RailCollapseToggled;
 
     /// <summary>
-    ///  #10 — raised when the user clicks the "Inspector"
+    /// Raised when the user clicks the "Inspector"
     /// toggle in the rail header. The bool arg is the new desired
     /// visibility (true = show / focus the floating inspector window).
     /// The host responds by spawning / closing the InspectorWindow
@@ -120,7 +120,7 @@ public sealed partial class LeftRail : UserControl
         MacrosSection.ItemSelected    += (_, item) => _selectedMacroId  = item?.Id;
         ProcessesSection.ItemSelected += (_, item) => _selectedProcessId = item?.Id;
 
-        //  P1-A3: DoubleTapped → open editor. Dispatch by Kind so
+        // DoubleTapped → open editor. Dispatch by Kind so
         // a macro/process row opens its SubGraphWindow editor and a
         // variable row opens the rename dialog (variables don't have a
         // sub-graph editor — rename is the closest parity with pre-T15
@@ -137,9 +137,9 @@ public sealed partial class LeftRail : UserControl
         HookF2(MacrosSection,    ResolveSelectedMacroId,    RenameMacroAsync);
         HookF2(ProcessesSection, ResolveSelectedProcessId,  RenameProcessAsync);
 
-        //  [P0 OWNER-OVERRIDE] — wire the scope dropdown so a scope
+        // Wire the scope dropdown so a scope
         // change rebuilds the Variables list against the chosen scope. Before
-        // this sprint the combo was visible + interactive with no handler, so
+        // this, the combo was visible + interactive with no handler, so
         // changing it had zero effect.
         VariablesSection.ScopeChanged += OnVariableScopeChanged;
         // Default the visible selection to Graph (index 2) so the dropdown
@@ -152,7 +152,7 @@ public sealed partial class LeftRail : UserControl
         _variableScope = 2;
         VariablesSection.SetScopeIndex(2);
 
-        //  [P1] — subscribe to the Hub's live DEBUG_VAR_SET feed so
+        // Subscribe to the Hub's live DEBUG_VAR_SET feed so
         // discovered Local / Global rows can show their last runtime value.
         // ArchitectBusClient is a process-wide singleton; the handler caches
         // the value and refreshes the Variables list (only when the live
@@ -176,7 +176,7 @@ public sealed partial class LeftRail : UserControl
         }
     }
 
-    //  [P1] — cache the live value and refresh if we're showing a
+    // Cache the live value and refresh if we're showing a
     // discovered scope. The bus fires on a background thread, so marshal the
     // refresh onto the rail's dispatcher.
     private void OnBusVariableSet(string varName, string value, string scriptFile)
@@ -230,7 +230,7 @@ public sealed partial class LeftRail : UserControl
     }
 
     /// <summary>
-    ///  P1-A2: flow Hub's canonical global-macro id set into the
+    /// Flow Hub's canonical global-macro id set into the
     /// rail. Macros in this set are tagged <c>Type="GLOBAL"</c> and render
     /// with a <c>[G]</c> prefix in the section item template (pre-T15
     /// MainForm parity). Set is replaced wholesale on each call — pass
@@ -251,7 +251,7 @@ public sealed partial class LeftRail : UserControl
         Refresh();
     }
 
-    //  The originating canvas view — supplied by MainView /
+    // The originating canvas view — supplied by MainView /
     // ArchitectSiblingWindow at construction so the rail's Open*Editor
     // calls can hand the SubGraphWindow a back-reference. SubGraphWindow's
     // Closed handler then re-focuses this canvas (mirror of the
@@ -263,10 +263,10 @@ public sealed partial class LeftRail : UserControl
         _canvasView = canvasView;
     }
 
-    // ───  #10 — rail collapse + inspector toggle ────────────────
+    // ─── Rail collapse + inspector toggle ────────────────
 
     /// <summary>
-    ///  #10 — push the rail-collapsed state into the rail's chrome
+    /// Push the rail-collapsed state into the rail's chrome
     /// (swaps the chevron glyph between left-pointing E76B and right-pointing
     /// E76C, hides the centre title + inspector button when collapsed so
     /// the 32 px strip reads as chrome rather than truncated chrome).
@@ -320,7 +320,7 @@ public sealed partial class LeftRail : UserControl
     }
 
     /// <summary>
-    ///  #10 — push the inspector-visible state into the rail's
+    /// Push the inspector-visible state into the rail's
     /// chrome (swaps the trailing chevron in the Inspector button between
     /// E76C ▸ and E76A ▾ so a user glance at the rail header tells them
     /// whether the floating window is currently up). Idempotent.
@@ -361,7 +361,7 @@ public sealed partial class LeftRail : UserControl
     }
 
     /// <summary>
-    ///  P0-A1: one-shot undo push used by the three rail-driven
+    /// One-shot undo push used by the three rail-driven
     /// rename paths (variable / macro / process). The host AVM owns the
     /// shared <see cref="UndoRedoController"/>; calling
     /// <see cref="LogicCanvasView.PushUndoForInlineEdit"/> via the back-
@@ -435,7 +435,7 @@ public sealed partial class LeftRail : UserControl
             var macros = new ObservableCollection<RailItemViewModel>();
             foreach (var m in _vm.Graph.Macros)
             {
-                //  P1-A2: tag matching items GLOBAL when Hub's
+                // Tag matching items GLOBAL when Hub's
                 // canonical library contains the MacroId. The [G] prefix
                 // on Name (rendered by RailSection's item template) keeps
                 // the rail glanceable for users who maintain a shared
@@ -488,7 +488,7 @@ public sealed partial class LeftRail : UserControl
         {
             sb.Append(m.MacroId); sb.Append('|');
             sb.Append(m.Name); sb.Append('|');
-            //  P1-A2: flip on a global-state change so the
+            // Flip on a global-state change so the
             // signature gate (Refresh's _macrosSig comparison) doesn't
             // skip the rebuild when only the GLOBAL tag changed.
             sb.Append(globalIds.Contains(m.MacroId) ? 'G' : 'L');
@@ -497,10 +497,10 @@ public sealed partial class LeftRail : UserControl
         return sb.ToString();
     }
 
-    // ──  [P0/P1] scope-aware Variables rebuild ──────────────────
+    // ── Scope-aware Variables rebuild ──────────────────
 
     /// <summary>
-    ///  [P0 OWNER-OVERRIDE] — rebuild the Variables section against
+    /// Rebuild the Variables section against
     /// the active scope picked in RailSection's dropdown:
     ///   0 = Local  — every local-scope variable *referenced* by the active
     ///                graph (Var.Get/Set/Inc/Toggle VariableName, the bare
@@ -509,7 +509,7 @@ public sealed partial class LeftRail : UserControl
     ///   1 = Global — cross-file persistent refs ({global.*} / {user.*}) plus
     ///                run-wide shared refs ({public.*} / Public.Get/Set
     ///                KeyName), deduped, with live values when known.
-    ///   2 = Graph  — the explicit Graph.Variables (the pre-S6 behaviour).
+    ///   2 = Graph  — the explicit Graph.Variables (the prior behaviour).
     /// Each scope hashes its own source so the signature gate still skips
     /// no-op rebuilds.
     /// </summary>
@@ -524,7 +524,7 @@ public sealed partial class LeftRail : UserControl
         }
     }
 
-    /// <summary>Scope 2 — explicit graph variables (pre-S6 behaviour).</summary>
+    /// <summary>Scope 2 — explicit graph variables (prior behaviour).</summary>
     private void RefreshGraphVarsList()
     {
         if (_vm is null) return;
@@ -546,7 +546,7 @@ public sealed partial class LeftRail : UserControl
     }
 
     /// <summary>
-    ///  [P1] — scope 0. Walk every node in the active
+    /// Scope 0. Walk every node in the active
     /// graph discovering local-scope variable references: Var.Get/Set/Inc/
     /// Toggle's VariableName attribute and every bare {token} interpolation
     /// pill that is NOT namespaced (no leading <c>global.</c> / <c>user.</c>
@@ -568,7 +568,7 @@ public sealed partial class LeftRail : UserControl
     }
 
     /// <summary>
-    ///  — scope 1. Discover cross-file / run-wide shared references:
+    /// Scope 1. Discover cross-file / run-wide shared references:
     /// namespaced {global.*} / {user.*} interpolation pills (DB-persisted
     /// cross-file vars) and {public.*} / Public.Get/Set KeyName (run-wide,
     /// branch-crossing). Deduped, with live values when known.
@@ -702,7 +702,7 @@ public sealed partial class LeftRail : UserControl
         _                              => ResolveHex("EmberPrimaryBrush", "#E5A24E"),
     };
 
-    //  [P2] — memoize resolved hex strings per brush key. ResolveHex
+    // Memoize resolved hex strings per brush key. ResolveHex
     // is hit once per variable/process/macro row on every Refresh(); a rebuild
     // with 50+ rows triggered O(N) redundant resource-dictionary lookups +
     // SolidColorBrush→hex conversions per cycle. Theme tokens are effectively
@@ -716,7 +716,7 @@ public sealed partial class LeftRail : UserControl
     private static readonly object _hexCacheGate = new();
 
     /// <summary>
-    ///  [P2] — drop every cached theme-color hex so the next
+    /// Drop every cached theme-color hex so the next
     /// <see cref="ResolveHex"/> re-reads the live dictionary. Call this from
     /// the host when the app theme changes (rare) so a token retune flows
     /// through to the rail swatches without a restart.
@@ -763,14 +763,14 @@ public sealed partial class LeftRail : UserControl
         AddButton(VariablesSection, "Aa", null,                 "Rename variable",  "rename", requiresSelection: true,  () => RenameSelectedVariableAsync());
 
         AddButton(ProcessesSection, "+",  Resource("OkBrush"),  "New process",      "add",    requiresSelection: false, () => AddProcessAsync());
-        //  [P2] — "↗" (navigate / open editor) not "✎" (edit-in-place):
+        // "↗" (navigate / open editor) not "✎" (edit-in-place):
         // the rail opens a SubGraphWindow, it does not inline-edit the process.
         AddButton(ProcessesSection, "↗",  null,                 "Edit process",     "edit",   requiresSelection: true,  () => { OpenSelectedProcess(); return System.Threading.Tasks.Task.CompletedTask; });
         AddButton(ProcessesSection, "Aa", null,                 "Rename process",   "rename", requiresSelection: true,  () => RenameSelectedProcessAsync());
         AddButton(ProcessesSection, "×",  Resource("ErrBrush"), "Delete process",   "delete", requiresSelection: true,  () => DeleteSelectedProcessAsync());
 
         AddButton(MacrosSection, "+",  Resource("OkBrush"),           "New macro",       "add",     requiresSelection: false, () => AddMacroAsync());
-        //  [P2] — "↗" navigate glyph (opens the macro's SubGraphWindow),
+        // "↗" navigate glyph (opens the macro's SubGraphWindow),
         // matching the baseline editMacroBtn affordance; "✎" wrongly implied
         // inline editing.
         AddButton(MacrosSection, "↗",  null,                          "Edit macro",      "edit",    requiresSelection: true,  () => { OpenSelectedMacro(); return System.Threading.Tasks.Task.CompletedTask; });
@@ -795,7 +795,7 @@ public sealed partial class LeftRail : UserControl
         var btn = new RailButton { Glyph = glyph };
         if (accent is not null) btn.AccentBrush = accent;
         ToolTipService.SetToolTip(btn, tooltip);
-        //  [P1] — the click handler is intentionally async void
+        // The click handler is intentionally async void
         // (event-handler contract), but the inner await is wrapped in
         // try-catch so a fault inside any CRUD lambda (Add/Delete/Rename
         // for variable/macro/process) is routed to GlobalLogger.Error
@@ -804,8 +804,7 @@ public sealed partial class LeftRail : UserControl
         // swallowing every async fault silently.
         btn.Clicked += async (_, _) =>
         {
-            // Guardrail — per feedback_no_modal_dialogs_for_repeatable_rejections.md
-            // and Architect UI P1 (rail.<action>.no-selection log). The button
+            // Guardrail — log (not modal) on a no-selection invoke. The button
             // shouldn't fire when disabled, but log defensively in case the gate
             // gets bypassed (keyboard shortcut, scripted invoke, etc.).
             if (requiresSelection && section.SelectedItem is null)
@@ -888,7 +887,7 @@ public sealed partial class LeftRail : UserControl
                 var newName = (box.Text ?? string.Empty).Trim();
                 if (string.IsNullOrEmpty(newName) || string.Equals(newName, picked.Name, StringComparison.Ordinal))
                     return;
-                //  [P1] — this KeyDown handler is async void
+                // This KeyDown handler is async void
                 // (fire-and-forget). Wrap the await so a fault inside
                 // CommitInlineRenameAsync or any of its per-kind callees
                 // (InlineRename{Variable,Macro,Process}Async) is logged
@@ -941,7 +940,7 @@ public sealed partial class LeftRail : UserControl
             await renameById(id);
     }
 
-    //  P1-A3 — double-tap dispatcher ────────────────────────────
+    // Double-tap dispatcher ────────────────────────────
 
     /// <summary>
     /// Route a rail row's double-tap to the matching editor. Macro/Process
@@ -956,7 +955,7 @@ public sealed partial class LeftRail : UserControl
         {
             case "macro":    OpenMacroById(item.Id); break;
             case "process":  OpenProcessById(item.Id); break;
-            // [P1 swarm-audit 2026-05-29] Was a bare `_ = RenameVariableAsync(...)`
+            // Was a bare `_ = RenameVariableAsync(...)`
             // fire-and-forget — a fault inside the async rename (dialog, DB write)
             // would surface as an unobserved-task crash. Phoenix.Controls.Hub.Core's
             // AsyncErrorBoundary isn't referenceable from Architect.WinUI (no Hub
@@ -966,7 +965,7 @@ public sealed partial class LeftRail : UserControl
         }
     }
 
-    // [P1 swarm-audit 2026-05-29] Observed wrapper for the double-tap rename so
+    // Observed wrapper for the double-tap rename so
     // any fault is logged instead of crashing the app via an unobserved task.
     private async System.Threading.Tasks.Task ObserveRenameVariableAsync(string variableId)
     {
@@ -1049,7 +1048,7 @@ public sealed partial class LeftRail : UserControl
     /// <c>XamlRoot is null</c> and returned SILENTLY, so every "+" / rename /
     /// delete button "did nothing" with no dialog and no log (the rail's unit
     /// tests call the CRUD methods directly, bypassing the dialog, so the dead
-    /// real-click path stayed green — Majo 2026-06-28: rail-wide "creating
+    /// real-click path stayed green — Majo: rail-wide "creating
     /// processes does not work / nothing happens on +"). Fall back to the
     /// canvas view the host wired via <see cref="SetCanvasView"/> — a loaded
     /// sibling in the same window that reliably carries a XamlRoot. Logs at
@@ -1075,9 +1074,8 @@ public sealed partial class LeftRail : UserControl
         if (xr is null) return;
         var dlg = NameTypeDialog.ForVariable(xr, "New variable");
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
-        //  Duplicate-name guard previously returned silently — violates
-        // feedback_no_modal_dialogs_for_repeatable_rejections.md (no modal, but
-        // also no silent rejection). Log via GlobalLogger at System tier so the
+        // Duplicate-name guard previously returned silently — the rule is
+        // no modal, but also no silent rejection. Log via GlobalLogger at System tier so the
         // user can see why the add did nothing in the SystemLog panel.
         if (_vm.Graph.Variables.Any(v => v.Name.Equals(dlg.EnteredName, StringComparison.OrdinalIgnoreCase)))
         {
@@ -1093,7 +1091,7 @@ public sealed partial class LeftRail : UserControl
             Type = dlg.EnteredType,
             DefaultValue = dlg.EnteredDefault,
         });
-        //  — a declared variable lives in the Graph scope; switch the
+        // A declared variable lives in the Graph scope; switch the
         // dropdown there so the user sees the row they just added even if they
         // were browsing the read-only Local / Global discovery views. The
         // scope switch refreshes the list, so no extra Refresh() is needed
@@ -1103,7 +1101,7 @@ public sealed partial class LeftRail : UserControl
     }
 
     /// <summary>
-    ///  — flip the Variables dropdown to the Graph scope (index 2) so
+    /// Flip the Variables dropdown to the Graph scope (index 2) so
     /// a declared-variable CRUD result is visible. Returns true when the scope
     /// actually changed (which itself triggered a rebuild via ScopeChanged),
     /// so the caller can skip its own Refresh(); returns false when already in
@@ -1175,7 +1173,7 @@ public sealed partial class LeftRail : UserControl
                 .Where(v => !v.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase))
                 .Select(v => v.Name));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
-        //  P0-A1: one undo entry per rail-driven rename. Snapshot
+        // One undo entry per rail-driven rename. Snapshot
         // the pre-rename graph BEFORE the mutation so Ctrl+Z restores the
         // old Name/Type/DefaultValue in a single step (mirrors the
         // PushUndoForInlineEdit pattern used by NodeView socket rename).
@@ -1201,7 +1199,7 @@ public sealed partial class LeftRail : UserControl
         var existing = _vm.Graph.Variables.FirstOrDefault(v =>
             v.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase));
         if (existing is null) return System.Threading.Tasks.Task.CompletedTask;
-        //  P0-A1: snapshot before the mutation so a single undo
+        // Snapshot before the mutation so a single undo
         // entry covers the rename. See PushRailUndo for the contract.
         PushRailUndo();
         existing.Name = newName;
@@ -1221,14 +1219,14 @@ public sealed partial class LeftRail : UserControl
         var name = UniquifyMacroName(dlg.EnteredName);
         var macro = new Macro { Name = name };
         // Seed Macro.Entry / Macro.Exit into the new macro body — the parity fix the
-        // "New process" path got in  but the macro path never did, so a fresh
+        // "New process" path got but the macro path never did, so a fresh
         // macro opened with no in/out node and could neither receive flow/data nor
         // return anything (the exporter walks Macro.Entry/Exit; an empty body transfers
         // nothing). Singleton-guarded + shared with the editor-open self-heal.
         NodeRegistry.EnsureSubGraphBoundaryNodes(macro.Graph, "Macro.Entry", "Macro.Exit");
         _vm.Graph.Macros.Add(macro);
         Refresh();
-        //  AVM is required for shared undo + rename sync; bail if
+        // AVM is required for shared undo + rename sync; bail if
         // the rail wasn't bound to one (only happens in degenerate
         // construction order — log so the missed binding is visible).
         if (_architectVm is null)
@@ -1257,7 +1255,7 @@ public sealed partial class LeftRail : UserControl
     private void OpenSelectedMacro()
     {
         var target = ResolveSelectedMacro();
-        //  AVM required (shared undo + rename sync).
+        // AVM required (shared undo + rename sync).
         if (target is null || _architectVm is null) return;
         SubGraphWindow.OpenMacroEditor(target, _architectVm, _canvasView);
     }
@@ -1282,7 +1280,7 @@ public sealed partial class LeftRail : UserControl
     private void OpenMacroById(string id)
     {
         var m = _vm?.Graph.Macros.FirstOrDefault(x => x.MacroId == id);
-        //  AVM required (shared undo + rename sync).
+        // AVM required (shared undo + rename sync).
         if (m is null || _architectVm is null) return;
         SubGraphWindow.OpenMacroEditor(m, _architectVm, _canvasView);
     }
@@ -1327,7 +1325,7 @@ public sealed partial class LeftRail : UserControl
     private void ApplyMacroRename(Macro m, string newName)
     {
         if (_vm is null) return;
-        //  P0-A1: snapshot the graph BEFORE the rename + dependent
+        // Snapshot the graph BEFORE the rename + dependent
         // Macro.Call.MacroName sync so the whole transaction collapses into
         // one undo entry. Without this, the user-typed rename plus N
         // dependent-attr writes entered undo history as ZERO entries
@@ -1383,7 +1381,7 @@ public sealed partial class LeftRail : UserControl
         var nodeVms = _vm.Nodes.Where(vm => refs.Any(r => r.Id == vm.Id)).ToList();
         _vm.SetMultiSelection(nodeVms);
 
-        //  [P0] — restore the baseline
+        // Restore the baseline
         // HighlightMacroCallSites behaviour the WinUI rewrite dropped:
         // (1) pan/zoom the viewport to frame the matched nodes so a user
         //     scrolled off-canvas actually sees them, and
@@ -1438,7 +1436,7 @@ public sealed partial class LeftRail : UserControl
             }
         }
         var proc = new Process { Name = name };
-        //  [P0] — seed Process.Entry / Process.Exit into the new process body.
+        // Seed Process.Entry / Process.Exit into the new process body.
         // The baseline ProcessesPanel.AddProcess() did this; the WinUI rewrite dropped
         // it, so new processes opened with an empty body and the user had to hand-add
         // Entry/Exit before the process could accept inputs/outputs (ExporterRegistry's
@@ -1448,7 +1446,7 @@ public sealed partial class LeftRail : UserControl
         NodeRegistry.EnsureSubGraphBoundaryNodes(proc.Graph, "Process.Entry", "Process.Exit");
         _vm.Graph.Processes.Add(proc);
         Refresh();
-        //  AVM is required for shared undo + rename sync; bail if
+        // AVM is required for shared undo + rename sync; bail if
         // the rail wasn't bound to one.
         if (_architectVm is null)
         {
@@ -1463,7 +1461,7 @@ public sealed partial class LeftRail : UserControl
     private void OpenSelectedProcess()
     {
         var target = ResolveSelectedProcess();
-        //  AVM required (shared undo + rename sync).
+        // AVM required (shared undo + rename sync).
         if (target is null || _architectVm is null) return;
         SubGraphWindow.OpenProcessEditor(target, _architectVm, _canvasView);
     }
@@ -1488,7 +1486,7 @@ public sealed partial class LeftRail : UserControl
     private void OpenProcessById(string id)
     {
         var p = _vm?.Graph.Processes.FirstOrDefault(x => x.ProcessId == id);
-        //  AVM required (shared undo + rename sync).
+        // AVM required (shared undo + rename sync).
         if (p is null || _architectVm is null) return;
         SubGraphWindow.OpenProcessEditor(p, _architectVm, _canvasView);
     }
@@ -1533,7 +1531,7 @@ public sealed partial class LeftRail : UserControl
     private void ApplyProcessRename(Process p, string newName)
     {
         if (_vm is null) return;
-        //  P0-A1: snapshot the graph BEFORE the rename + dependent
+        // Snapshot the graph BEFORE the rename + dependent
         // Process.Spawn.ProcessName sync. See ApplyMacroRename for the
         // shared rationale — one undo entry covers rename + N sync writes.
         PushRailUndo();

@@ -93,7 +93,7 @@ public sealed partial class DocumentationWindow : Window
 
         Title = Localizer.T("dialog.documentation.title", "Phoenix Controls — Documentation");
 
-        //  WinUI 3 custom chrome path — the documentation window
+        // WinUI 3 custom chrome path — the documentation window
         // keeps the system caption (no traffic-light overlay) but ties its
         // drag region to HeaderBar so the user can move the window from the
         // gradient strip as well as the system caption above. SetTitleBar

@@ -10,7 +10,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Architect.WinUI.Services;
 
 /// <summary>
-///  Persistent record of the previously-open sibling Architect
+/// Persistent record of the previously-open sibling Architect
 /// windows so Hub's <c>MainWindow.Loaded</c> can replay them on next
 /// boot. 0.10.0 scope listed "multi-window paradigm restored" as
 /// load-bearing; <see cref="ArchitectWindowRegistry"/> tracks live
@@ -28,7 +28,7 @@ namespace Phoenix.Controls.Architect.WinUI.Services;
 /// </para>
 ///
 /// <para>
-/// Hub-side wire-up lives in : <c>MainWindow.Loaded</c>
+/// Hub-side wire-up: <c>MainWindow.Loaded</c>
 /// reads <see cref="Load"/> and spawns each entry via
 /// <see cref="ArchitectWindowRegistry.OpenFileAsync"/>, then clears
 /// the file once the replay completes so a future crash doesn't
@@ -41,7 +41,7 @@ public static class RecentSiblingsStore
     // caller writing an unbounded list and stalling Hub boot.
     private const int MaxEntries = 32;
 
-    // [P1 swarm-audit 2026-05-29] Serialises the Load → mutate → Save sequence
+    // Serialises the Load → mutate → Save sequence
     // in Touch. Pre-fix two concurrent Touch calls (sibling windows opening /
     // focusing in parallel) could both Load the same on-disk list, mutate
     // independent copies, and the second Save would clobber the first writer's
@@ -69,7 +69,7 @@ public static class RecentSiblingsStore
         if (string.IsNullOrWhiteSpace(absolutePath)) return;
         try
         {
-            // [P1 swarm-audit 2026-05-29] Hold s_ioLock across the whole
+            // Hold s_ioLock across the whole
             // Load → mutate → Save so concurrent Touch calls can't clobber
             // each other's MRU update.
             lock (s_ioLock)
@@ -180,7 +180,7 @@ public static class RecentSiblingsStore
         {
             WriteIndented = true,
         });
-        //  Atomic temp+replace so a concurrent
+        // Atomic temp+replace so a concurrent
         // reader (boot replay) or a second Architect process never observes a
         // half-written file (File.WriteAllText truncates-then-writes in place).
         // Readers see either the old or the new complete file.

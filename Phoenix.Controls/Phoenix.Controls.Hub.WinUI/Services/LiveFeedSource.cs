@@ -23,10 +23,10 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 //     in the chat panel via IChatSource. (The design doc's "scripts named
 //     them" rule maps to ScriptLifecycle.Trigger pings, but those are
 //     decorative and excluded by IsEventTriggerNode's Twitch.ChatMessage
-//     guard inside ScriptManager.) Track 3 panels can opt into the chat
+//     guard inside ScriptManager.) Panels can opt into the chat
 //     event surface separately if needed.
 //
-// ── Ownership (H10 audit, 2026-05-14) ──────────────────────────────────
+// ── Ownership ──────────────────────────────────────────────────────────
 // Single instance per Hub lifetime. Constructed inside
 // HubBootstrapper.BootAsync and handed to the HubServices composite
 // container (which is owned by App._services for the process lifetime).
@@ -55,9 +55,9 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
     private readonly ConcurrentQueue<LiveFeedEntry> _entries = new();
     private int _disposed;
 
-    // HUB-UX-D7 (2026-05-14) — fan-out replaces the previous
-    // single-primary gate. EntryAdded's multicast delegate IS the
-    // subscriber list; every VM that subscribes receives every row.
+    // Fan-out replaces the previous single-primary gate. EntryAdded's
+    // multicast delegate IS the subscriber list; every VM that subscribes
+    // receives every row.
 
     private readonly Action<BusMessage> _onBus;
     private readonly Action<Log> _onLog;
@@ -96,7 +96,7 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
 
     public IReadOnlyList<LiveFeedEntry> Snapshot()
     {
-        //  Always return the full unfiltered set — every VM does
+        // Always return the full unfiltered set — every VM does
         // its own filtering against its local _buffer (mirrors
         // SystemLogViewModel). The pre-fix source-side _filter slot was a
         // shared trap: a SetFilter call from one pop-out narrowed the
@@ -107,7 +107,7 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
 
     public event EventHandler<LiveFeedEntry>? EntryAdded;
 
-    //  No-op for contract stability; see ILiveFeedSource.SetFilter
+    // No-op for contract stability; see ILiveFeedSource.SetFilter
     // doc-comment. Filtering happens per-VM, never on the shared source.
     [System.Obsolete("Filtering is per-VM. Use LiveFeedViewModel.SelectedFilter / Snapshot + local predicate.")]
     public void SetFilter(LiveFeedFilter filter) { /* see XML doc */ }
@@ -117,7 +117,7 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
         _entries.Enqueue(entry);
         while (_entries.Count > BufferCapacity && _entries.TryDequeue(out _)) { /* drop oldest */ }
 
-        //  Always fan out — per-VM filtering is downstream. The
+        // Always fan out — per-VM filtering is downstream. The
         // pre-fix source-side predicate would suppress rows for every
         // subscriber based on one pop-out's filter choice.
 
@@ -132,8 +132,7 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
         // "YouTube" and a Message containing the verb + actor. The existing
         // WinForms StatusStrip parses these the same way; we keep the
         // heuristic local rather than introducing a new structured channel
-        // (that would be a WS surface change which is out of
-        // Track 4's scope).
+        // (that would be a WS surface change which is out of scope).
         string m = entry.Message ?? "";
         // Take the first word as the candidate "who" when the message looks
         // like "<user> subscribed" / "<user> raided …". Falls back to source.

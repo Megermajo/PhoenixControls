@@ -17,8 +17,7 @@ name: Release
 #     always-latest URL (releases/latest/download/phoenix-controls.zip) resolves.
 # Both zips are identical bytes — only the asset name differs.
 #
-# Code signing (SignPath Foundation) is wired into this workflow in a later
-# phase; the first public release ships unsigned.
+# Code signing is planned for a later phase; releases currently ship unsigned.
 
 on:
   push:

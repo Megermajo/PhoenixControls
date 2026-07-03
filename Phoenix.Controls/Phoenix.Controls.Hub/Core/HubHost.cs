@@ -31,7 +31,7 @@ namespace Phoenix.Controls.Hub.Core
         public static RemoteBridgeServer? RemoteBridge { get; set; }
 
         /// <summary>
-        /// B44 (audit/winui-regressions-2026-05-24) — the Hub's external
+        /// The Hub's external
         /// WebSocket listener instance (the <c>on_websocket("name"):</c>
         /// surface). Null when AppConfig.WebSocketServerEnabled=false (the
         /// bootstrapper skips construction) or before HubBootstrapper finishes

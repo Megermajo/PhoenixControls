@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace Phoenix.Controls.Shared.Core
 {
     /// <summary>
-    ///  Time-source seam used by production code paths that today
+    /// Time-source seam used by production code paths that today
     /// rely on wall-clock <c>Thread.Sleep</c> / <c>Task.Delay</c> / direct
     /// <c>DateTime.UtcNow</c> reads. Lifted from the test assembly into
     /// Shared so production callers (ScriptEngine, HUDServer, ScriptManager,
@@ -21,7 +21,7 @@ namespace Phoenix.Controls.Shared.Core
     }
 
     /// <summary>
-    ///  Real-clock implementation. Default for production code;
+    /// Real-clock implementation. Default for production code;
     /// every caller that doesn't accept an <see cref="IClock"/> parameter
     /// implicitly resolves through <see cref="Instance"/>.
     /// </summary>

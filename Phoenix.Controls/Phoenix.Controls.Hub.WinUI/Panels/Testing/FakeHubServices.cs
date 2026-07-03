@@ -1,5 +1,5 @@
-// Compiled into the production binary by accident pre-TODO sweep — gated
-// behind DEBUG (TODO.md P2 #1) so Release builds don't ship the fixture
+// Was compiled into the production binary by accident — now gated
+// behind DEBUG so Release builds don't ship the fixture
 // data. Design-time previews and smoke tests run on Debug builds and
 // continue to instantiate this normally.
 #if DEBUG
@@ -20,7 +20,7 @@ using Phoenix.Controls.Shared.WinUI.Contracts;
 namespace Phoenix.Controls.Hub.WinUI.Panels.Testing;
 
 // Static fixture used in design-time / smoke tests so PanelFactory can be
-// instantiated without Track 4's real bridge. Mirrors the data shape from
+// instantiated without the real bridge. Mirrors the data shape from
 // redesign-plan/design/project/hub.jsx so the panels render the same scene
 // the design HTML shows.
 public sealed class FakeHubServices : IHubServices
@@ -44,7 +44,7 @@ public sealed class FakeHubServices : IHubServices
     public ILayerRegistrySource  Layers    { get; }
     public IGiveawaySource       Giveaway  { get; }
 
-    //  IHubServices now requires IAsyncDisposable. The fake holds
+    // IHubServices now requires IAsyncDisposable. The fake holds
     // only in-memory fixture lists — there's nothing to release — but the
     // contract has to be satisfied so design-time previews and smoke tests
     // can hand the same disposal protocol production uses.
@@ -75,7 +75,7 @@ internal sealed class FakeLiveFeed : ILiveFeedSource
     };
 
     /// <summary>
-    ///  Returns a defensive copy of the backing list. Callers may
+    /// Returns a defensive copy of the backing list. Callers may
     /// retain the result for the panel lifetime; mutating the live backing
     /// list later (during a future hot-reload of fixture data, for example)
     /// must not retroactively edit prior snapshots the VM is rendering.
@@ -85,7 +85,7 @@ internal sealed class FakeLiveFeed : ILiveFeedSource
     [System.Obsolete("Filtering is per-VM; see ILiveFeedSource.SetFilter.")]
     public void SetFilter(LiveFeedFilter filter) { /* no-op in fake */ }
 
-    // HUB-UX-D7 (2026-05-14) — primary-subscriber gate removed; the
+    // Primary-subscriber gate removed; the
     // multicast event itself is the subscriber list.
 
     private static LiveFeedEntry New(string hms, LiveFeedKind kind, string who, string detail)
@@ -119,7 +119,7 @@ internal sealed class FakeChat : IChatSource
     };
 
     /// <summary>
-    ///  Defensive copy — see <see cref="FakeLiveFeed.Snapshot"/>.
+    /// Defensive copy — see <see cref="FakeLiveFeed.Snapshot"/>.
     /// </summary>
     public IReadOnlyList<ChatMessage> Snapshot() => _messages.ToArray();
     public event EventHandler<ChatMessage>? MessageReceived;
@@ -138,7 +138,7 @@ internal sealed class FakeScripts : IScriptHostMonitor
     };
 
     /// <summary>
-    ///  Defensive copy — see <see cref="FakeLiveFeed.Snapshot"/>.
+    /// Defensive copy — see <see cref="FakeLiveFeed.Snapshot"/>.
     /// </summary>
     public IReadOnlyList<ScriptStatus> Snapshot() => _scripts.ToArray();
     public event EventHandler<ScriptStatus>? StatusChanged;
@@ -168,7 +168,7 @@ internal sealed class FakeSystemLog : ISystemLogSource
     };
 
     /// <summary>
-    ///  Defensive copy — see <see cref="FakeLiveFeed.Snapshot"/>.
+    /// Defensive copy — see <see cref="FakeLiveFeed.Snapshot"/>.
     /// </summary>
     public IReadOnlyList<SystemLogEntry> Snapshot() => _entries.ToArray();
     public event EventHandler<SystemLogEntry>? EntryAdded;
@@ -192,7 +192,7 @@ internal sealed class FakeStatus : IConnectionStatus
     public ConnectionState StreamerBot => ConnectionState.Connected;
     public ConnectionState HudOverlay  => ConnectionState.Connected;
     public ConnectionState IpcBus      => ConnectionState.Connected;
-    //  Typed-payload form to match IConnectionStatus.StateChanged.
+    // Typed-payload form to match IConnectionStatus.StateChanged.
     public event EventHandler<ConnectionStateChange>? StateChanged;
 }
 

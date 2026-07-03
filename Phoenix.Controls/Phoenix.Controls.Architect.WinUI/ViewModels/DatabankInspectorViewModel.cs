@@ -12,7 +12,7 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 //
 // Selection is pushed in by ArchitectViewModel whenever the underlying
 // DatabankBrowserViewModel raises SelectionChanged. We rebuild Fields
-// from the row's cells; Track 5's XAML inspector binds directly. The
+// from the row's cells; the XAML inspector binds directly. The
 // Schema collection mirrors the per-table column schema (PRAGMA
 // table_info) so the inspector's Schema toggle has data to render —
 // ArchitectViewModel pushes it in via SetSchema whenever the browser
@@ -49,8 +49,8 @@ public sealed class DatabankInspectorViewModel : ObservableObject
 
     /// <summary>
     /// Persistence delegate handed in by ArchitectViewModel — invoked when
-    /// the user double-tap-edits an inspector field and commits. Pre-fix
-    /// (QC19-02) the inspector's Value binding was OneTime against a
+    /// the user double-tap-edits an inspector field and commits. Previously
+    /// the inspector's Value binding was OneTime against a
     /// getter-only VM property, so edits committed visually but were
     /// silently dropped. The delegate now flows through each field's
     /// <see cref="InspectorFieldViewModel.WriteBackText"/> so the same
@@ -105,8 +105,8 @@ public sealed class DatabankInspectorViewModel : ObservableObject
                 {
                     // No persist delegate wired — accept the local edit
                     // (the cached VM value updates) but don't reach the
-                    // DB. Surfacing this as a silent log keeps with
-                    // feedback_no_modal_dialogs_for_repeatable_rejections.
+                    // DB. Surfacing this as a silent log avoids a modal for
+                    // a repeatable rejection.
                     if (_persistCell is null)
                     {
                         Phoenix.Controls.Shared.Services.GlobalLogger.Log(
@@ -120,7 +120,7 @@ public sealed class DatabankInspectorViewModel : ObservableObject
                     // the row grid stays in sync without a full snapshot
                     // reload, then hand off to the persistence delegate.
                     //
-                    // Stale-row guard (P1): the closure captured `capturedRow`
+                    // Stale-row guard: the closure captured `capturedRow`
                     // at SetRow time. If the user reselected a different row or
                     // the table reloaded before this async commit fires,
                     // `capturedRow` is a discarded VM no longer in the live
@@ -129,7 +129,7 @@ public sealed class DatabankInspectorViewModel : ObservableObject
                     // corrupts the wrong (orphaned) row while the DB persist
                     // still targets the correct rowid.
                     //
-                    // Concurrency note (P2): when a live collection IS supplied
+                    // Concurrency note: when a live collection IS supplied
                     // the `Contains` check and a subsequent ApplyLocalEdit would
                     // not be atomic — DatabankBrowserViewModel can run
                     // VisibleRows.Clear()/rebuild on another thread in between,

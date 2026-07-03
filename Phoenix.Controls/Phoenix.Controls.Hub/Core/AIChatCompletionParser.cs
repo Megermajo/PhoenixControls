@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    ///  — extracts the first assistant message content from an
+    /// Extracts the first assistant message content from an
     /// OpenAI <c>/v1/chat/completions</c> response (single-shot, non-
     /// streaming). The streaming path uses its own SSE-delta parser; this
     /// helper is for the synchronous JSON-body shape.

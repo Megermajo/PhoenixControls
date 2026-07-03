@@ -18,7 +18,7 @@ using XamlPath = Microsoft.UI.Xaml.Shapes.Path;
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 
 /// <summary>
-/// Visualist WinUI regression audit 2026-05-31 (Area 3 P0) — port of the
+/// Port of the
 /// pre-T15 WinForms <c>ShapeEditor</c> (Phoenix.Controls.Visualist/Controls/
 /// ShapeEditor.cs). Modal <see cref="ContentDialog"/> that authors the
 /// <c>Vertices</c> JSON list on a <c>Mask.Polygon</c> / <c>Mask.Bezier</c>
@@ -42,14 +42,13 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// </para>
 ///
 /// <para>
-/// Visualist-local per feedback_visualist_architect_chrome_independence.md —
-/// no Shared lift. Guardrails (min/max vertex limits) route through
-/// <see cref="GlobalLogger"/> rather than nested modals per
-/// feedback_no_modal_dialogs_for_repeatable_rejections.md.
+/// Visualist-local — no Shared lift. Guardrails (min/max vertex limits) route
+/// through <see cref="GlobalLogger"/> rather than nested modals for these
+/// repeatable rejections.
 /// </para>
 ///
 /// <para>
-/// [DIALOG-NO-XAML-FIX 2026-06-29] This dialog has NO .xaml /
+/// This dialog has NO .xaml /
 /// InitializeComponent. A code-constructed ContentDialog defined in a LIBRARY
 /// assembly (Visualist.WinUI) throws XamlParseException at
 /// Application.LoadComponent when <c>new</c>'d while detached — proven by the
@@ -132,7 +131,7 @@ public sealed class ShapeEditorDialog : ContentDialog
         // Bezier-only rows.
         BezierHandlePanel.Visibility = _isBezier ? Visibility.Visible : Visibility.Collapsed;
 
-        // R49 — route the remaining user-facing strings through the Localizer
+        // Route the remaining user-facing strings through the Localizer
         // (the WinUI port had left the toggle / buttons / section headers / hint
         // hardcoded). Fallbacks preserve the current English text.
         ApplyLocalization();
@@ -168,7 +167,7 @@ public sealed class ShapeEditorDialog : ContentDialog
         CloseButtonText = "Cancel";
         DefaultButton = ContentDialogButton.Primary;
 
-        // <ContentDialog.Resources> — R43 size overrides read by the default
+        // <ContentDialog.Resources> — size overrides read by the default
         // ContentDialog template. Keep them.
         Resources["ContentDialogMaxWidth"]  = 980.0;
         Resources["ContentDialogMaxHeight"] = 820.0;
@@ -194,7 +193,7 @@ public sealed class ShapeEditorDialog : ContentDialog
 
         // ── content row (Grid.Row 2) ──
         var contentGrid = new Grid { Margin = new Thickness(0, 10, 0, 0), ColumnSpacing = 14 };
-        // R51 — vertex canvas column stretches; right column fixed 220px.
+        // Vertex canvas column stretches; right column fixed 220px.
         contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 420 });
         contentGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         Grid.SetRow(contentGrid, 2);
@@ -217,7 +216,7 @@ public sealed class ShapeEditorDialog : ContentDialog
         toggleRow.Children.Add(VertexCountTextField);
         leftColumn.Children.Add(toggleRow);
 
-        // R51 — canvas fills this frame.
+        // Canvas fills this frame.
         ShapeSurfaceFrameField.Height = 440;
         ShapeSurfaceFrameField.HorizontalAlignment = HorizontalAlignment.Stretch;
         ShapeSurfaceFrameField.MinWidth = 420;
@@ -324,7 +323,7 @@ public sealed class ShapeEditorDialog : ContentDialog
         rootGrid.Children.Add(HairlineRuleField);
         rootGrid.Children.Add(contentGrid);
 
-        // R43 — scroll fallback so the dialog stays usable at high DPI.
+        // Scroll fallback so the dialog stays usable at high DPI.
         var scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -383,7 +382,7 @@ public sealed class ShapeEditorDialog : ContentDialog
         return row;
     }
 
-    // ── keyed-style setters applied inline (recipe §2d) ──
+    // ── keyed-style setters applied inline ──
 
     // ShapeDialogFieldLabel: FontSize 11, SemiBold, CharacterSpacing 80, Margin 0,8,0,2.
     private static void ApplyFieldLabelStyle(TextBlock t)
@@ -441,7 +440,7 @@ public sealed class ShapeEditorDialog : ContentDialog
     private Button     AnimateVertexButton => AnimateVertexButtonField;
     private TextBlock  HintText            => HintTextField;
 
-    // R49 — Localizer routing for the strings the XAML had hardcoded.
+    // Localizer routing for the strings the XAML had hardcoded.
     private string _defaultHint = "";
     private void ApplyLocalization()
     {
@@ -457,9 +456,9 @@ public sealed class ShapeEditorDialog : ContentDialog
         HintText.Text               = _defaultHint;
     }
 
-    // R50 — surface a guard rejection (vertex min/max) as an INLINE hint in the
+    // Surface a guard rejection (vertex min/max) as an INLINE hint in the
     // dialog instead of only a System log line the author can't see. Non-modal
-    // per feedback_no_modal_dialogs_for_repeatable_rejections; auto-reverts.
+    // for this repeatable rejection; auto-reverts.
     private DispatcherTimer? _hintTimer;
     private void ShowGuardHint(string message)
     {
@@ -505,7 +504,7 @@ public sealed class ShapeEditorDialog : ContentDialog
 
     private void OnSurfaceSizeChanged(object sender, SizeChangedEventArgs e) => RenderSurface();
 
-    // R51 — drive the Canvas size from its (now-stretchy) frame so the
+    // Drive the Canvas size from its (now-stretchy) frame so the
     // normalised-coord painting re-lays out when the dialog is resized. The
     // frame paints a 1px border, so the Canvas fills the interior.
     private void OnSurfaceFrameSizeChanged(object sender, SizeChangedEventArgs e)

@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace Phoenix.Controls.Hub.Core
 {
     /// <summary>
-    /// QC37-01 — byte-level Server-Sent-Events reader. Replaces the prior
+    /// Byte-level Server-Sent-Events reader. Replaces the prior
     /// <c>StreamReader.ReadLineAsync</c> path inside <c>ai.stream_text</c>
     /// so the parser:
     /// <list type="bullet">

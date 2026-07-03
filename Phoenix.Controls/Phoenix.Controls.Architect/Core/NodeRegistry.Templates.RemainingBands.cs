@@ -4,7 +4,7 @@ using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.Core
 {
-    //  — finishing sweep. Carves the remaining ~13 bands of
+    // Carves the remaining ~13 bands of
     // RegisterDefaults() into one big partial so the parent file is
     // left holding only the orchestrator + post-template helper calls
     // (SetSocketDescriptions / SetCompactSymbol / SetKeywords /
@@ -22,9 +22,9 @@ namespace Phoenix.Controls.Architect.Core
     //     DeleteMessage / SlowMode / FollowerMode / SubOnlyMode /
     //     Marker / Whisper / UpdateChannel.
     //   * OBS               — proxy-via-Streamer.bot DoAction nodes.
-    //   * Discord           — bot REST nodes (P4 slice 1 + 2).
+    //   * Discord           — bot REST nodes.
     //   * HTTP              — Get / Post / Put / Patch / Delete /
-    //     ParseJson with the L27 ContentType-as-enum convention.
+    //     ParseJson with the ContentType-as-enum convention.
     //   * File              — Read / Write / Append.
     //   * Audio             — PlaySound / TextToSpeech / etc.
     //   * Twitch Polls / Predictions — Create / End / Resolve.
@@ -44,7 +44,7 @@ namespace Phoenix.Controls.Architect.Core
             // ─────────────────────────────────────────────────────────────
             // TWITCH DATA
             // ─────────────────────────────────────────────────────────────
-            // B22 (audit/winui-regressions-2026-05-24) — Twitch lookup nodes
+            // Twitch lookup nodes
             // surface a Username fallback pill so authors can sketch a static
             // username (e.g. for a one-off mod-status check) without first
             // wiring an event payload. SocketViewModel.IsFallbackPillNode
@@ -55,7 +55,7 @@ namespace Phoenix.Controls.Architect.Core
             // 0.13.9 — Twitch.GetUser reads back the full "Get User Info for
             // Target" payload via the Phoenix data-action round-trip (DoAction →
             // poll GetGlobals; see ScriptManager.FetchActionGlobalsAsync). This
-            // reverses the D1 trim (which had cut the outputs to DisplayName /
+            // reverses the earlier trim (which had cut the outputs to DisplayName /
             // AccountCreated because the OLD fictional GetUserInfo request returned
             // nothing live): id / login / display / avatar / created + the
             // channel's last game/title + the mod/sub/vip flags now all come from
@@ -122,8 +122,8 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("LayerID", ColString), ("WidgetID", ColString), ("TriggerName", ColString), ("Args", ColList) },
                 new[] { ("Done", ColExec) });
 
-            // Sweep 25 — surface the chat-overlay broadcast (sweep 19's silent-no-op
-            // fix made this work end-to-end at runtime; this template + the matching
+            // Surface the chat-overlay broadcast (a silent-no-op fix made this
+            // work end-to-end at runtime; this template + the matching
             // SimpleEmitDescriptor in ExporterRegistry.cs make it authorable from a
             // .phxg graph instead of only from hand-written .phx.
             //
@@ -141,7 +141,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("WidgetID", ColString) },
                 new[] { ("Done", ColExec) });
 
-            // D2 — low-level HUD mutation nodes. The runtime handlers
+            // Low-level HUD mutation nodes. The runtime handlers
             // (ScriptManager.Visual.cs visual.set_text / set_visible /
             // set_property) and CommandManifest entries already exist; these
             // templates + the matching SimpleEmitDescriptors in
@@ -175,9 +175,10 @@ namespace Phoenix.Controls.Architect.Core
             // ─────────────────────────────────────────────────────────────
             // PLATFORM ACTIONS
             // ─────────────────────────────────────────────────────────────
-            // B22 — Twitch.SendChat Message fallback pill. Same fallback
-            // semantics as B21 (wired wins at export; literal is the runtime
-            // fallback for null upstream values). Seeds with "Hello chat!"
+            // Twitch.SendChat Message fallback pill. Same fallback
+            // semantics as the other fallback pills (wired wins at export;
+            // literal is the runtime fallback for null upstream values).
+            // Seeds with "Hello chat!"
             // so a fresh node reads as authorable rather than blank.
             AddTemplate("Twitch.SendChat",       "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.twitch_sendchat"),
@@ -185,12 +186,12 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) },
                 new Dictionary<string, string> { { "Message", "Hello chat!" } });
 
-            // M33 — Twitch.Timeout / Twitch.Ban / Twitch.Announcement previously had no Flow output.
+            // Twitch.Timeout / Twitch.Ban / Twitch.Announcement previously had no Flow output.
             // Sibling Twitch.* nodes (e.g. Twitch.SendChat with "Sent", Twitch.Shoutout with "Flow")
             // expose a Done flow so downstream work can chain off them. Adding the "Done" output
             // surfaces the connection point in the editor; whether the exporter follows it is a
-            // separate ExporterRegistry concern (out of scope for this NodeRegistry-only sweep).
-            // L24 — Twitch.Timeout Sec attribute gets an explicit "60" default and a tooltip note
+            // separate ExporterRegistry concern (out of scope for this NodeRegistry-only change).
+            // Twitch.Timeout Sec attribute gets an explicit "60" default and a tooltip note
             // about downstream behaviour with 0/negative values (downstream validation in the Hub
             // is a separate fix; here we just document + default).
             AddTemplate("Twitch.Timeout",        "Platforms", Color.DarkViolet,
@@ -216,7 +217,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec), ("ClipUrl", ColString), ("ClipOk", ColBool) },
                 new Dictionary<string, string> { { "Duration", "30" } });
 
-            // NOTE (audit 2026-06-01): this output socket is named "Flow" while
+            // NOTE: this output socket is named "Flow" while
             // every sibling Twitch.* action uses "Done" — a real naming
             // inconsistency. It is INTENTIONALLY left as-is: renaming it to
             // "Done" prunes the outbound link in existing graphs (MigrateNodes
@@ -224,7 +225,7 @@ namespace Phoenix.Controls.Architect.Core
             // wire — verified: it broke alerts.phxg / CommandStructure.phxg
             // golden exports into a "no flow output" warning). A safe rename
             // needs a socket-migration step (map old "Flow" → "Done" by position
-            // on load). Deferred to Majo. See audit/architect-p0-p1-issues-2026-06-01.md.
+            // on load). Deferred to Majo.
             AddTemplate("Twitch.Shoutout",       "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.twitch_shoutout"),
                 new[] { ("Flow", ColExec), ("User", ColString) },
@@ -238,7 +239,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Message", ColString) },
                 new[] { ("Done", ColExec) });
 
-            // ── Twitch moderation / channel control (P3) ──────────────────
+            // ── Twitch moderation / channel control ───────────────────────
             // All currently proxy through Streamer.bot DoAction; will move to
             // direct Helix once Hub gains first-class Twitch API access.
             AddTemplate("Twitch.Unban",          "Platforms", Color.DarkViolet,
@@ -305,7 +306,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) });
 
             // ── OBS (proxy via Streamer.bot DoAction) ─────────────────────
-            // P3 (TODO #61) — first-pass OBS control surface. Each node is a flow-bearing
+            // First-pass OBS control surface. Each node is a flow-bearing
             // exec node with a single Done continuation; the engine handler currently logs
             // a Communication-tier stub and returns. The Streamer.bot DoAction relay (and
             // eventually a direct OBS-WebSocket client in the Hub) lands in a follow-up.
@@ -386,12 +387,12 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("URL", ColString), ("Msg", ColString) },
                 null);
 
-            // P4 — Discord bot REST nodes. Color mirrors the HTTP cluster
+            // Discord bot REST nodes. Color mirrors the HTTP cluster
             // (DarkSlateBlue) so the bot-token path visually groups with the
             // generic networking nodes rather than the webhook entry above.
-            // English bubble strings inline this sprint — en.json updates are
+            // English bubble strings are inline here; en.json updates are
             // owned by a parallel agent.
-            // B22 (audit/winui-regressions-2026-05-24) — Discord.* nodes get
+            // Discord.* nodes get
             // fallback pills on every id-shaped param so authors see the
             // expected snowflake shape inline. The defaults use the
             // documented "0" placeholder so a fresh node reads as "type a
@@ -408,7 +409,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Error", ColString) },
                 new Dictionary<string, string> { { "ChannelId", "0" } });
 
-            // P4 slice 2 — role + reaction + user-lookup nodes. Same bot-token
+            // Role + reaction + user-lookup nodes. Same bot-token
             // path; surface only the Error socket for the side-effect commands,
             // GetUser additionally exposes the user's primary fields.
             AddTemplate("Discord.AddRole",      "Platforms", Color.DarkSlateBlue,
@@ -436,7 +437,7 @@ namespace Phoenix.Controls.Architect.Core
                 new Dictionary<string, string> { { "UserId", "0" } });
 
             // ── HTTP ──────────────────────────────────────────────────────
-            // L27 — ContentType is now an enum attribute on every HTTP.* template (the four
+            // ContentType is now an enum attribute on every HTTP.* template (the four
             // existing methods: Get, Post, Put, Delete). Decision: keep the existing per-method
             // node API (don't collapse to a single HTTP.Request node — too disruptive), but add
             // ContentType as a uniform enum attribute. Allowed values:
@@ -444,7 +445,7 @@ namespace Phoenix.Controls.Architect.Core
             //   text/plain, multipart/form-data
             // For Get/Delete the attribute is informational (no request body) — kept for
             // uniformity so the user always knows where the setting lives.
-            // HTTP.Patch landed in sweep 11: SimpleEmitDescriptor in ExporterRegistry,
+            // HTTP.Patch has its SimpleEmitDescriptor in ExporterRegistry,
             // CommandManifest entry, and ScriptManager handler all wired alongside the
             // template below.
             // (ContentTypeEnumNote const removed — descriptions are now sourced from
@@ -485,12 +486,12 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Json", ColString), ("Path", ColString) },
                 new[] { ("Value", ColString), ("Error", ColString) });
 
-            // P3 — File I/O. Path is taken as-is — relative paths are resolved against
+            // File I/O. Path is taken as-is — relative paths are resolved against
             // the Hub's working directory; absolute paths are honoured. Engine writes
             // result.file_content / result.file_error so downstream sockets can resolve
             // them via the existing result.* substitution pattern (mirrors http.* /
             // api.* result-var contracts).
-            // B22 — File.ReadText Path fallback pill. Seeds with a sample
+            // File.ReadText Path fallback pill. Seeds with a sample
             // relative path so the user can see the expected shape inline.
             AddTemplate("File.ReadText",  "Platforms", Color.DarkSlateBlue,
                 Localizer.T("architect.node.bubble.file_readtext"),
@@ -504,13 +505,13 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Error", ColString) },
                 new Dictionary<string, string> { { "Append", "false" } });
 
-            //  — File.ReadJSON / File.WriteJSON. Same socket shape as
+            // File.ReadJSON / File.WriteJSON. Same socket shape as
             // ReadText / WriteText so mixed graphs are visually consistent;
             // additional contract is "JSON validity is checked". On read: a
             // parse error appears in Error with Content still carrying the
             // raw bytes so the script can introspect. On write: a malformed
             // payload returns an Error and the file is NOT touched.
-            // B22 — File.ReadJSON Path fallback pill, same idiom as ReadText.
+            // File.ReadJSON Path fallback pill, same idiom as ReadText.
             AddTemplate("File.ReadJSON",  "Platforms", Color.DarkSlateBlue,
                 "Reads a UTF-8 file and validates the contents are parseable JSON. Content carries the raw text either way; on parse failure Error carries the parser message (e.g. 'invalid token at line 3') so the script can decide whether to fall back. Pair with HTTP.ParseJson when extracting individual values from the loaded JSON.",
                 new[] { ("Flow", ColExec), ("Path", ColString) },
@@ -523,7 +524,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Error", ColString) },
                 new Dictionary<string, string> { { "Append", "false" } });
 
-            // P3 — Audio.* (Platforms category, DarkSlateBlue alongside File.* / HTTP.*).
+            // Audio.* (Platforms category, DarkSlateBlue alongside File.* / HTTP.*).
             // Path/Text are required; the optional sockets carry sensible defaults so a
             // bare drop on the canvas is playable. Error mirrors the file.* contract.
             AddTemplate("Audio.Play", "Platforms", Color.DarkSlateBlue,
@@ -544,10 +545,10 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Error", ColString) },
                 new Dictionary<string, string> { { "Volume", "1.0" } });
 
-            // B22 — API.Call URL fallback pill. Sample URL seeds the pill so
+            // API.Call URL fallback pill. Sample URL seeds the pill so
             // a fresh node reads as authorable; same fallback semantics as
-            // the other B22 templates (wired wins at export, literal is the
-            // runtime fallback).
+            // the other fallback-pill templates (wired wins at export, literal
+            // is the runtime fallback).
             AddTemplate("API.Call",       "Platforms", Color.DarkSlateBlue,
                 Localizer.T("architect.node.bubble.api_call"),
                 new[] { ("Flow", ColExec), ("Url", ColString) },
@@ -663,7 +664,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Response", ColString), ("Error", ColString) },
                 new Dictionary<string, string> { { "Model", "gpt-4o-mini" } });
 
-            // QC37 — Error output is additive: the handler now sets
+            // Error output is additive: the handler now sets
             // result.ai_error="" on success and a redacted detail on failure
             // (mirroring AI.Prompt). ScriptExporter maps the "Error" socket to
             // {result.ai_error}, so wiring it surfaces moderation failures
@@ -673,7 +674,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Text", ColString) },
                 new[] { ("Flow", ColExec), ("Flagged", ColBool), ("Category", ColString), ("Error", ColString) });
 
-            //  — AI.GenerateImage. Calls OpenAI's images/generations
+            // AI.GenerateImage. Calls OpenAI's images/generations
             // endpoint and stores the resulting URL in result.ai_image_url.
             // Single-shot (no streaming) — OpenAI returns the URL once
             // generation completes. Defaults to DALL-E 3 at 1024x1024.
@@ -686,7 +687,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("ImageUrl", ColString), ("Error", ColString) },
                 new Dictionary<string, string> { { "Model", "dall-e-3" }, { "Size", "1024x1024" } });
 
-            //  — AI.VisionDescribe. Calls OpenAI's chat completions
+            // AI.VisionDescribe. Calls OpenAI's chat completions
             // with a multi-modal user message (text + image_url). Single-
             // shot — the response is small enough that streaming buys
             // nothing. Default model gpt-4o-mini (cheapest vision-capable
@@ -697,13 +698,13 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Response", ColString), ("Error", ColString) },
                 new Dictionary<string, string> { { "Model", "gpt-4o-mini" } });
 
-            //  — AI.WithTools. Single-shot chat completion with
+            // AI.WithTools. Single-shot chat completion with
             // a `tools` array. The model picks: plain answer (Response
             // socket) OR a tool call (ToolCalls socket carries a JSON
             // array of {id, name, arguments}). Tools input takes a
             // JSON-array string of OpenAI tool definitions; pass-through
             // to the API verbatim.
-            // QC37-05 — ToolChoice / ParallelToolCalls are additive optional
+            // ToolChoice / ParallelToolCalls are additive optional
             // inputs. ToolChoice accepts "auto" | "none" | "any" | "required"
             // | a JSON object that names a tool; ParallelToolCalls accepts
             // "true" / "false". Both default to "" (omit → API default).
@@ -715,7 +716,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Response", ColString), ("ToolCalls", ColString), ("Error", ColString) },
                 new Dictionary<string, string> { { "Model", "gpt-4o-mini" }, { "Tools", "[]" }, { "ToolChoice", "" }, { "ParallelToolCalls", "" } });
 
-            //  — AI.StreamText. Streaming variant of AI.Prompt.
+            // AI.StreamText. Streaming variant of AI.Prompt.
             // Hub streams provider Server-Sent Events; result.ai_response
             // is updated cumulatively per chunk and AI_CHUNK Bus
             // events fire per delta so HUD overlays can render the live
@@ -723,11 +724,11 @@ namespace Phoenix.Controls.Architect.Core
             // Sprints 81+84+85 — provider routing by Model prefix:
             // claude* → Anthropic; ollama/<name> → local Ollama daemon;
             // cerebras/<name> → Cerebras hosted; else → OpenAI.
-            //  — MemoryVar opt-in: name a Var key
+            // MemoryVar opt-in: name a Var key
             // (e.g. "MyChat") whose JSON-array-of-{role,content} payload
             // gets prepended to each call as prior turns and updated
             // with the new exchange after completion. Empty = no history.
-            // QC37 — Done / ErrorKind / RetryAfter are additive outputs that
+            // Done / ErrorKind / RetryAfter are additive outputs that
             // surface the handler's result.ai_done / result.ai_error_kind /
             // result.ai_retry_after sentinels (set on stream close / failure)
             // so scripts can branch on completion and classify failures (e.g.
@@ -764,7 +765,7 @@ namespace Phoenix.Controls.Architect.Core
             // Var.Get / Var.Set are attribute-driven: the variable name lives on the inline
             // VariableName editor on the node body, not on a wired socket. The legacy "Name"
             // socket on Var.Get was dead — neither the exporter nor the runtime read it — so
-            // it's gone (BH-052). Existing graphs with a stale Name socket continue to load;
+            // it's gone. Existing graphs with a stale Name socket continue to load;
             // GraphSerializer.MigrateNodes does not delete extra sockets, but the export path
             // ignores them, so they're harmless visual cruft until the user re-saves.
             AddTemplate("Var.Get", "Variables", Color.FromArgb(60, 110, 160),

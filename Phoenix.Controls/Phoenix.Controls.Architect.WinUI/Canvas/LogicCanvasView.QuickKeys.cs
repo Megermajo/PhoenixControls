@@ -24,9 +24,9 @@ public sealed partial class LogicCanvasView
         { VirtualKey.D, "Flow.Delay" },
         { VirtualKey.O, "Flow.DoOnce" },
         { VirtualKey.N, "Flow.DoN" },
-        // P2-A8 — Digit quick-keys spawn a Value.Int with the pressed digit
-        // pre-filled into Attributes["Value"]. Mirrors pre-T15 commit
-        // 34493c18 which mapped Keys.D0..D9 the same way. The digit value
+        // Digit quick-keys spawn a Value.Int with the pressed digit
+        // pre-filled into Attributes["Value"]. Mirrors the pre-T15
+        // mapping of Keys.D0..D9 the same way. The digit value
         // is applied in TryQuickKeySpawn after CreateNode so the seed runs
         // through NodeRegistry's attribute scaffolding (not bolted on
         // outside it). Ctrl+Number1..9 still routes to bookmarks above the
@@ -124,7 +124,7 @@ public sealed partial class LogicCanvasView
             // P2-A8 — Digit quick-keys (0..9) pre-fill Attributes["Value"]
             // with the pressed digit so the spawned Value.Int reads as e.g.
             // "5" out of the gate rather than the template default "0".
-            // Matches pre-T15 commit 34493c18's Keys.D0..D9 → Value.Int
+            // Matches the pre-T15 Keys.D0..D9 → Value.Int
             // path. Non-digit quick-keys (B/S/D/O/N) take the template
             // defaults unchanged.
             int? digit = DigitForKey(_heldQuickKey.Value);

@@ -18,7 +18,7 @@ namespace Phoenix.Controls.Visualist.Core
         /// Sample a scalar parameter at <paramref name="timeMs"/> from a <see
         /// cref="WidgetTimeline"/>. Preferred overload — uses the timeline's
         /// cached sorted+NaN-filtered view so we don't re-sort on every
-        /// sample call. The  NaN/Infinity filter still applies; it
+        /// sample call. The NaN/Infinity filter still applies; it
         /// just lives on the timeline now (see <c>WidgetTimeline.SortedKeyframes</c>).
         /// </summary>
         public static double SampleScalar(WidgetTimeline timeline, double timeMs)
@@ -38,7 +38,7 @@ namespace Phoenix.Controls.Visualist.Core
         {
             if (keyframes is null || keyframes.Count == 0) return 0;
 
-            //  (P0-7) — strip keyframes whose TimeMs is NaN/Infinity
+            // Strip keyframes whose TimeMs is NaN/Infinity
             // BEFORE OrderBy. NaN compares false against every other value,
             // so it lands at an arbitrary position and breaks the binary
             // segment scan below (the `timeMs >= a.TimeMs && timeMs <= b.TimeMs`
@@ -75,7 +75,7 @@ namespace Phoenix.Controls.Visualist.Core
                 {
                     double span = b.TimeMs - a.TimeMs;
                     double t = span <= 0 ? 0 : (timeMs - a.TimeMs) / span;
-                    // Sweep 21 — segment easing belongs to the START keyframe `a`.
+                    // Segment easing belongs to the START keyframe `a`.
                     // Use the keyframe-aware overload so custom bezier handles take
                     // effect when the user has dragged them in CurveEditor.
                     double eased = ApplyCurve(t, a);
@@ -105,7 +105,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         /// <summary>
-        /// Sweep 21 — keyframe-aware ApplyCurve overload. When <paramref name="kf"/> has
+        /// Keyframe-aware ApplyCurve overload. When <paramref name="kf"/> has
         /// custom bezier control points and Curve == Bezier, evaluates with those handles
         /// instead of the default. Other curve types ignore the handles and behave exactly
         /// like <see cref="ApplyCurve(double, KeyframeCurve)"/>.
@@ -115,7 +115,7 @@ namespace Phoenix.Controls.Visualist.Core
             if (kf.Curve == KeyframeCurve.Bezier && kf.HasCustomBezierHandles)
             {
                 t = Math.Clamp(t, 0, 1);
-                // [P1 swarm-audit 2026-05-29] guard nullable bezier handles instead of null-forgiving deref (defaults 0)
+                // guard nullable bezier handles instead of null-forgiving deref (defaults 0)
                 return CubicBezier(t, kf.BezierP1X ?? 0, kf.BezierP1Y ?? 0, kf.BezierP2X ?? 0, kf.BezierP2Y ?? 0);
             }
             return ApplyCurve(t, kf.Curve);

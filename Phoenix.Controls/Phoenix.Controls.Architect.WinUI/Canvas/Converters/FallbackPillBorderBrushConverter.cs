@@ -7,7 +7,7 @@ using Windows.UI;
 namespace Phoenix.Controls.Architect.WinUI.Canvas.Converters;
 
 /// <summary>
-/// B21 (audit/winui-regressions-2026-05-24) — pill BorderBrush switcher for
+/// Pill BorderBrush switcher for
 /// fallback-mode pills. When <see cref="SocketViewModel.IsPillFallback"/> is
 /// true (the socket is wired AND the parent node belongs to the
 /// IsFallbackPillNode set — Math operators / Twitch / Discord / API.Call /

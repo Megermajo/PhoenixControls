@@ -27,7 +27,7 @@ namespace Phoenix.Controls.Architect.WinUI.Dialogs;
 //   A code-constructed ContentDialog defined in a LIBRARY assembly
 //   (Architect.WinUI) throws XamlParseException at Application.LoadComponent when
 //   `new`'d while detached — proven by the 1.0.6 runtime stack trace, which still
-//   crashed AFTER the resource markup was stripped (425db1b5). The resource
+//   crashed AFTER the resource markup was stripped. The resource
 //   theory was wrong; the throw is in the XAML parse itself, before any resource
 //   or DialogTheme code runs. Building the content in code removes LoadComponent
 //   entirely, so the parse can't fail by construction (the default ContentDialog
@@ -104,7 +104,7 @@ public sealed class NameTypeDialog : ContentDialog
         if (DialogTheme.Brush("TextLabelBrush")  is { } tl) EyebrowText.Foreground = tl;
         if (DialogTheme.Brush("StatusRedBrush")  is { } sr) ErrorText.Foreground   = sr;
         PrimaryButtonClick += OnPrimary;
-        //  Focus + select the name field when the dialog
+        // Focus + select the name field when the dialog
         // opens so the user can type immediately (and a typed name replaces any
         // seeded default). Opened is the correct ContentDialog hook — it fires
         // after the popup is in the tree, unlike Loaded which can race the host.

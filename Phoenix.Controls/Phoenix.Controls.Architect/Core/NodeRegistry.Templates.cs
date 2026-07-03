@@ -15,37 +15,37 @@ namespace Phoenix.Controls.Architect.Core
     // wildcard cascade, public lookups, CreateNode + variants). Split keeps
     // editing surfaces small without changing any byte of emitted graph data.
     //
-    // Per-band carves ( → ): each registration band is being moved
+    // Per-band carves: each registration band is being moved
     // into its own NodeRegistry.Templates.<Band>.cs partial with a sibling
     // RegisterXTemplates() helper. RegisterDefaults() then becomes a
     // declarative orchestrator — same pattern ScriptManager uses for its
-    // RegisterXCommands() helpers (per the project conventions). : EVENTS.
+    // RegisterXCommands() helpers (per the project conventions).
     public static partial class NodeRegistry
     {
         private static void RegisterDefaults()
         {
-            RegisterEventsTemplates();        //  — NodeRegistry.Templates.Events.cs
-            RegisterFlowControlTemplates();   //  — NodeRegistry.Templates.FlowControl.cs
-            RegisterLogicAndAsyncTemplates(); //  — NodeRegistry.Templates.LogicAsync.cs
-            RegisterConnectorTemplates();     //  — NodeRegistry.Templates.Connectors.cs
-            RegisterDatabankTemplates();      //  — NodeRegistry.Templates.Databank.cs
-            RegisterDataUtilityTemplates();   //  — NodeRegistry.Templates.DataUtilities.cs
-            RegisterRemainingTemplates();     //  — NodeRegistry.Templates.RemainingBands.cs
-            RegisterGiveawayTemplates();      // giveaway band — NodeRegistry.Templates.Giveaway.cs
+            RegisterEventsTemplates();        // NodeRegistry.Templates.Events.cs
+            RegisterFlowControlTemplates();   // NodeRegistry.Templates.FlowControl.cs
+            RegisterLogicAndAsyncTemplates(); // NodeRegistry.Templates.LogicAsync.cs
+            RegisterConnectorTemplates();     // NodeRegistry.Templates.Connectors.cs
+            RegisterDatabankTemplates();      // NodeRegistry.Templates.Databank.cs
+            RegisterDataUtilityTemplates();   // NodeRegistry.Templates.DataUtilities.cs
+            RegisterRemainingTemplates();     // NodeRegistry.Templates.RemainingBands.cs
+            RegisterGiveawayTemplates();      // NodeRegistry.Templates.Giveaway.cs
 
             // Logic.Gate template removed from palette — identical to Logic.Branch.
             // The handler still lives in ExporterRegistry.GateHandler so legacy
             // .phxg files containing pre-removal Logic.Gate nodes continue to export.
 
             // (SYSTEM / MATH & RNG / TEXT & STRINGS / COLLECTIONS / VALUES / TYPE CONVERSION
-            //  bands carved to NodeRegistry.Templates.DataUtilities.cs in .)
+            //  bands carved to NodeRegistry.Templates.DataUtilities.cs.)
 
 
             // (TWITCH DATA / VISUALS / PLATFORM ACTIONS / Twitch moderation /
             //  OBS proxy / Discord / HTTP / File / Audio / Twitch Polls /
             //  Twitch Reward Mgmt / STATE MACHINE / AI / MACROS / VARIABLES
-            //  bands carved to NodeRegistry.Templates.RemainingBands.cs in
-            //  . The orchestrator now adds them in source order
+            //  bands carved to NodeRegistry.Templates.RemainingBands.cs.
+            //  The orchestrator now adds them in source order
             //  via the call list above; the parent file keeps only the
             //  post-template helper calls below — SetSocketDescriptions /
             //  SetCompactSymbol / SetKeywords / fuzzy-search aliases.)
@@ -144,7 +144,7 @@ namespace Phoenix.Controls.Architect.Core
                 { "Active",     "Fires when the user has chatted within the Minutes threshold." },
             });
 
-            // P1 #1 — Compact display glyphs for the math/logic operators (UE
+            // Compact display glyphs for the math/logic operators (UE
             // Blueprints "compact node" idiom). Toggled per-node from the canvas
             // right-click menu; the symbol is what the node draws in compact mode.
             SetCompactSymbol("Math.Add",        "+");
@@ -164,7 +164,7 @@ namespace Phoenix.Controls.Architect.Core
             SetCompactSymbol("Logic.Not",       "!");
             SetCompactSymbol("Logic.If",        "?");
 
-            // P3 — Fuzzy-search aliases. Targets the gap between what the user types
+            // Fuzzy-search aliases. Targets the gap between what the user types
             // ("if", "wait", "loop") and the canonical node title ("Logic.If",
             // "Async.Delay", "Flow.ForEach"). Tokens are matched as additional terms
             // by the spawn-search prefix matcher in Canvas.
@@ -230,7 +230,7 @@ namespace Phoenix.Controls.Architect.Core
             SetKeywords("Schedule.Recurring",  "every", "schedule", "interval");
 
             // ──────────────────────────────────────────────────────────────
-            //  IconGlyph — per-template 16x16 Segoe Fluent Icons /
+            // IconGlyph — per-template 16x16 Segoe Fluent Icons /
             // Segoe MDL2 Assets codepoints rendered left of the node header
             // title. Half-built before this sweep: NodeViewModel.IconGlyph +
             // NodeView.xaml's FontIcon read the slot, but no template ever
@@ -347,7 +347,7 @@ namespace Phoenix.Controls.Architect.Core
             SetIconGlyph("Visual.Trigger",   VisualGlyph);
 
             // ──────────────────────────────────────────────────────────────
-            //  RequiredInputs — inputs that the node won't function
+            // RequiredInputs — inputs that the node won't function
             // without. Canvas paints a yellow halo on each named input that has
             // no incoming link, so authoring slips surface before the script
             // runs. Half-built before this sweep: SocketViewModel.IsRequired
@@ -383,7 +383,7 @@ namespace Phoenix.Controls.Architect.Core
             SetRequiredInputs("DB.ClearTable", "TableName");
             SetRequiredInputs("DB.GetColumn",  "TableName");
             SetRequiredInputs("DB.FetchRow",   "TableName");
-            SetRequiredInputs("DB.Increment",  "Key"); // Key socket is the source of truth per M22
+            SetRequiredInputs("DB.Increment",  "Key"); // Key socket is the source of truth
 
             // File — Path is mandatory for every Read/Write.
             SetRequiredInputs("File.ReadText",  "Path");
@@ -391,9 +391,9 @@ namespace Phoenix.Controls.Architect.Core
             SetRequiredInputs("File.ReadJSON",  "Path");
             SetRequiredInputs("File.WriteJSON", "Path");
 
-            // B39 — extend the required-input coverage to the remaining
-            // "won't work without an identifier" surface called out by the
-            // audit's B22 hint list. Same opt-in shape: the canvas paints a
+            // Extend the required-input coverage to the remaining
+            // "won't work without an identifier" surface. Same opt-in shape:
+            // the canvas paints a
             // yellow halo when the socket is unwired and there's no inline
             // pill, and the pre-export validator (GraphValidator
             // .CheckRequiredInputs) emits a header comment.
@@ -522,8 +522,8 @@ namespace Phoenix.Controls.Architect.Core
                 HeaderColor = color,
                 Description = description,
                 DefaultProperties = properties ?? new Dictionary<string, string>(),
-                // L43 — DisplayName falls back to Title when no override is supplied,
-                // so every untouched template renders identically to before this sweep.
+                // DisplayName falls back to Title when no override is supplied,
+                // so every untouched template renders identically to before this change.
                 DisplayName   = string.IsNullOrEmpty(displayName) ? title : displayName,
                 CompactSymbol = compactSymbol ?? string.Empty,
             };
@@ -545,7 +545,7 @@ namespace Phoenix.Controls.Architect.Core
 
         /// <summary>
         /// Backfills <see cref="NodeTemplate.Keywords"/> on a registered template
-        /// (P3 — fuzzy spawn search). Aliases are case-insensitive and stored
+        /// (fuzzy spawn search). Aliases are case-insensitive and stored
         /// lower-cased so the spawn-search matcher can prefix-compare without
         /// re-folding case per query.
         /// </summary>
@@ -562,7 +562,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        ///  Backfills <see cref="NodeTemplate.IconGlyph"/> on a registered
+        /// Backfills <see cref="NodeTemplate.IconGlyph"/> on a registered
         /// template. The string is a single Segoe Fluent Icons / Segoe MDL2 Assets
         /// codepoint (e.g. "") rendered as a 16x16 FontIcon left of the node
         /// header title — see <c>NodeView.xaml</c>'s title-row FontIcon binding and
@@ -579,7 +579,7 @@ namespace Phoenix.Controls.Architect.Core
         }
 
         /// <summary>
-        ///  Backfills <see cref="NodeTemplate.RequiredInputs"/> on a
+        /// Backfills <see cref="NodeTemplate.RequiredInputs"/> on a
         /// registered template. Each entry is the canonical socket name of an
         /// input that must be wired (or have a non-empty inline value) for the
         /// node to function — the canvas paints a yellow "required-but-empty"

@@ -9,7 +9,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 // applied client-side: at 2000 entries max the cost is negligible and a
 // server-side filter would break GetRecentLogs() for other callers.
 //
-// QC11-04 — producer-side dispatcher coalescing. The previous code did
+// Producer-side dispatcher coalescing. The previous code did
 // _ui.Post() per entry, which under a 1000-logs/sec burst (script-engine
 // debug fan-out, bus log spam) queued one dispatcher work-item per row.
 // We now buffer pending entries under a lock and schedule a SINGLE Post
@@ -22,7 +22,7 @@ public sealed class SystemLogSource : ISystemLogSource, IDisposable
 {
     private readonly IUiDispatcher _ui;
     private readonly Action<Log> _onLog;
-    //  `volatile` so the GlobalLogger producer thread (which
+    // `volatile` so the GlobalLogger producer thread (which
     // reads _filter on every entry) sees writes from SetLevelFilter
     // (UI thread, driven by SystemLogViewModel chip toggles) without
     // tearing. SystemLogLevel is a [Flags] int enum — single-word read /
@@ -31,11 +31,11 @@ public sealed class SystemLogSource : ISystemLogSource, IDisposable
     // for the lifetime of the OnLogEntry handler, which under sustained
     // burst could ignore a mid-burst filter change indefinitely.
     private volatile SystemLogLevel _filter = SystemLogLevel.All;
-    // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber to EntryAdded
+    // Fan-out: every subscriber to EntryAdded
     // receives every log entry; no primary-subscriber gate.
     private int _disposed;
 
-    // QC11-04 — pending entries staged on the producer side. EntryAdded is
+    // Pending entries staged on the producer side. EntryAdded is
     // fan-out, so the batch isn't per-subscriber; we hand the whole list
     // off to the UI thread and the dispatcher walks it once. A simple
     // List + lock is faster than a Channel/BlockingCollection here because
@@ -122,7 +122,7 @@ public sealed class SystemLogSource : ISystemLogSource, IDisposable
         Level:     MapLevel(entry.Level),
         Source:    string.IsNullOrEmpty(entry.Source) ? "system" : entry.Source,
         Message:   entry.Message ?? "",
-        //  The Log entry now carries the original Exception (populated
+        // The Log entry now carries the original Exception (populated
         // by GlobalLogger.Error). Threading it through the panel contract lets
         // the row's "View Last Error" affordance render an actual stack trace
         // instead of constant placeholder text. Still null on non-Error rows.
@@ -132,7 +132,7 @@ public sealed class SystemLogSource : ISystemLogSource, IDisposable
     {
         LogLevel.Debug          => SystemLogLevel.Debug,
         LogLevel.CriticalError  => SystemLogLevel.Error,
-        //  LogLevel.Warning was added in the same QC item so the
+        // LogLevel.Warning was added in the same QC item so the
         // WARN chip in SystemLogPanel actually has a level to filter to.
         // Pre-fix the chip filtered to a level no source level mapped to,
         // so flipping it on hid every row regardless of content.

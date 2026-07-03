@@ -13,7 +13,7 @@ namespace Phoenix.Controls.Shared.Services
         private static readonly JsonSerializerOptions _options = new()
         {
             WriteIndented = true,
-            //  (P0-7) — AllowNamedFloatingPointLiterals lets us
+            // AllowNamedFloatingPointLiterals lets us
             // READ back any "NaN"/"Infinity" string already persisted in
             // an older .phxlayer without throwing; but on the WRITE path
             // Serialize() refuses to emit a non-finite double regardless
@@ -85,7 +85,7 @@ namespace Phoenix.Controls.Shared.Services
             }
             finally
             {
-                //  If the write OR the swap failed, the .tmp file
+                // If the write OR the swap failed, the .tmp file
                 // is now an orphan sitting next to the live .phxlayer with
                 // partial / stale content. Leaving it on disk piles up junk
                 // every failed save AND confuses any tooling that globs
@@ -103,13 +103,13 @@ namespace Phoenix.Controls.Shared.Services
 
         public static string Serialize(Layer layer)
         {
-            //  (P0-7) — pre-flight numeric validation. A keyframe
+            // Pre-flight numeric validation. A keyframe
             // with a NaN TimeMs (or non-finite bezier handle, or numeric
             // Value) makes System.Text.Json throw ArgumentException mid-
             // write, which previously surfaced to the user as a hard save
             // failure with no breadcrumb back to the offending widget. Now
             // we walk the layer first, log each issue to GlobalLogger
-            // (no modal — per feedback_no_modal_dialogs_for_repeatable_rejections.md),
+            // (no modal for repeatable rejections),
             // and throw a specific exception the caller can catch to
             // surface a non-modal warning chip / log entry instead of a
             // ContentDialog.
@@ -136,14 +136,14 @@ namespace Phoenix.Controls.Shared.Services
             var layer = JsonSerializer.Deserialize<Layer>(json, _options)
                 ?? throw new InvalidDataException("Layer JSON deserialized to null.");
 
-            //  (P1-9) — load-time migration for trigger names that
+            // Load-time migration for trigger names that
             // pre-date WidgetTrigger's identifier validation. The JSON
             // converter uses WidgetTrigger.SetForLoad so the raw on-disk
             // name survives deserialization; here we rewrite anything that
             // wouldn't pass IsValidName to a deterministic trigger_<hash>
             // fallback so the runtime / exporter / clipboard producer all
             // see a well-formed identifier. Logged once per rewrite at
-            // Communication tier (per feedback_no_modal_dialogs_for_repeatable_rejections.md).
+            // Communication tier (no modal for repeatable rejections).
             foreach (var widget in layer.Widgets)
             {
                 if (widget.Triggers is null) continue;
@@ -160,7 +160,7 @@ namespace Phoenix.Controls.Shared.Services
                         trigger.SetForLoad(fallback);
                     }
 
-                    // Sweep 24 (P1-D2) — soft cap on per-track keyframe count.
+                    // Soft cap on per-track keyframe count.
                     // Unbounded timelines turn into perceptible sample-time
                     // lag once the cached sort has to rebuild. 256 is the
                     // soft ceiling: we warn, we don't truncate. The freeze
@@ -182,7 +182,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// Sweep 24 (P1-D2) — soft ceiling on <c>WidgetTimeline.Keyframes</c>
+        /// Soft ceiling on <c>WidgetTimeline.Keyframes</c>
         /// per track. Crossed only by warning, never by rejection (existing
         /// user layers must keep loading per the freeze posture). The cache
         /// in <c>WidgetTimeline.SortedKeyframes</c> still works above the

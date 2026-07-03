@@ -176,7 +176,7 @@ namespace Phoenix.Controls.Hub.Core.Translation
 
         public async Task<string> TranslateAsync(string text, string targetLanguage, CancellationToken ct = default)
         {
-            // [P1 swarm-audit 2026-05-29] Fail fast if disposed. Without this, a
+            // Fail fast if disposed. Without this, a
             // TranslateAsync racing Dispose() would touch the disposed _gate / _http
             // and throw ObjectDisposedException. A disposed translator passes the
             // original text through (captions never go silent).
@@ -207,7 +207,7 @@ namespace Phoenix.Controls.Hub.Core.Translation
 
             try
             {
-                // M91 — wait for a concurrency slot, but bound the wait so a stuck
+                // Wait for a concurrency slot, but bound the wait so a stuck
                 // backend can't pile up callers indefinitely. On timeout, return the
                 // original text (passthrough) and log a Communication-level message.
                 bool slotAcquired;
@@ -222,7 +222,7 @@ namespace Phoenix.Controls.Hub.Core.Translation
                 }
                 catch (ObjectDisposedException)
                 {
-                    // [P1 swarm-audit 2026-05-29] Dispose() raced us and disposed _gate
+                    // Dispose() raced us and disposed _gate
                     // after the upfront _disposed check passed. Degrade to passthrough
                     // rather than throwing on a disposed member.
                     Volatile.Write(ref _lastOutcome, (int)TranslationOutcome.Passthrough);

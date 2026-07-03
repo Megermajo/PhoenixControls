@@ -28,7 +28,7 @@ public sealed class VarChainTraceDialog : ContentDialog
     public string? PinnedVar { get; private set; }
 
     /// <summary>
-    ///  Set by the launcher (LogicCanvasView.Menus.TraceVariable)
+    /// Set by the launcher (LogicCanvasView.Menus.TraceVariable)
     /// to the canvas's reveal-node hook. Clicking a writer/reader row invokes it
     /// with the node id so the canvas selects + frames + flashes that node, and
     /// the dialog hides so the node is visible.
@@ -126,7 +126,7 @@ public sealed class VarChainTraceDialog : ContentDialog
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        //  WRITERS panel — 3px left accent stripe (cyan via
+        // WRITERS panel — 3px left accent stripe (cyan via
         // VarChainWriterBrush, applied in code below), neutral on the other edges.
         WritersHeader = new TextBlock
         {
@@ -136,7 +136,7 @@ public sealed class VarChainTraceDialog : ContentDialog
         };
         Grid.SetRow(WritersHeader, 0);
 
-        //  IsItemClickEnabled so a row click jumps to
+        // IsItemClickEnabled so a row click jumps to
         // (selects + frames + flashes) the node on canvas.
         WritersList = new ListView
         {
@@ -173,7 +173,7 @@ public sealed class VarChainTraceDialog : ContentDialog
         Grid.SetColumn(WritersBorder, 0);
         body.Children.Add(WritersBorder);
 
-        //  READERS panel — 3px amber left accent (VarChainReaderBrush),
+        // READERS panel — 3px amber left accent (VarChainReaderBrush),
         // mirroring the writers stripe.
         ReadersHeader = new TextBlock
         {
@@ -284,12 +284,12 @@ public sealed class VarChainTraceDialog : ContentDialog
     private void OnVarSubmitted(ComboBox sender, ComboBoxTextSubmittedEventArgs args)
     {
         RefreshChain(args.Text);
-        //  Editable ComboBox drops focus after Enter;
+        // Editable ComboBox drops focus after Enter;
         // restore it so the user can immediately type another query.
         try { sender.Focus(FocusState.Programmatic); } catch { /* best-effort */ }
     }
 
-    //  Click a writer/reader row → reveal the node on the
+    // Click a writer/reader row → reveal the node on the
     // canvas and hide this (non-modal) dialog so the node is visible.
     private void OnRowClick(object sender, ItemClickEventArgs e)
     {
@@ -340,7 +340,7 @@ public sealed class VarChainTraceDialog : ContentDialog
         UpdateSummary(trace.VarName, trace.Writers.Count, trace.Readers.Count);
     }
 
-    //  Show a per-side "No writers/readers for {var}."
+    // Show a per-side "No writers/readers for {var}."
     // message when a valid variable simply has none on that side (vs. a blank
     // panel). Carries the variable name so the streamer doesn't have to infer
     // which query produced the empty result.

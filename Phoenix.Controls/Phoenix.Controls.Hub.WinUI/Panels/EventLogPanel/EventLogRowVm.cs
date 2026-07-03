@@ -17,7 +17,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.EventLogPanel;
 /// warning. If a future feature wants to update a row in place (e.g.
 /// streaming payload preview), reintroduce INotifyPropertyChanged then.
 ///
-/// B43 (audit/winui-regressions-2026-05-24): EventLog was queryable only
+/// EventLog was queryable only
 /// through the Architect Databank tab with manual refresh. This panel
 /// gives Hub a live tail surface so operators can watch external triggers
 /// + audit events arrive without leaving the Hub workspace.

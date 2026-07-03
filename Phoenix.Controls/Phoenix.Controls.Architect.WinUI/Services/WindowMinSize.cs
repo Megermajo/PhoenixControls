@@ -9,12 +9,12 @@ using WinRT.Interop;
 namespace Phoenix.Controls.Architect.WinUI.Services;
 
 /// <summary>
-/// 0.10.0 (arch-ux-state #12) — enforce a hard minimum window size via the
+/// 0.10.0 — enforce a hard minimum window size via the
 /// classic WM_GETMINMAXINFO subclass. WindowsAppSDK 1.5 (this pin) doesn't
 /// expose <c>OverlappedPresenter.PreferredMinimumWidth / PreferredMinimumHeight</c>
 /// — those landed in 1.6. Mirrors the same pattern used by
 /// <c>Phoenix.Controls.Hub.WinUI.Services.PopOutWindowFactory.EnforceMinimumSize</c>
-/// but Architect-local per <c>feedback_visualist_architect_chrome_independence.md</c>
+/// but Architect-local per the per-pillar chrome rule
 /// (chrome / Win32 plumbing stays per-pillar even when the pattern duplicates).
 ///
 /// DIP-scaled by the window's current DPI so a 200% scale machine still

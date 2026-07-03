@@ -13,8 +13,8 @@ namespace Phoenix.Controls.Architect.WinUI.Services;
 /// Process-wide registry of open Architect sibling-graph windows, keyed
 /// by absolute .phxg path (case-insensitive on Windows). Implements the
 /// "exactly one Architect window per .phxg, focus the existing one if
-/// already open" rule from TODO.md Architect P1 (multi-window
-/// restoration). Untitled "new" windows are tracked under
+/// already open" rule for multi-window restoration. Untitled "new"
+/// windows are tracked under
 /// <see cref="UntitledKeyPrefix"/>-{guid} so multiple New invocations
 /// each get a separate sibling.
 ///
@@ -28,13 +28,13 @@ public static class ArchitectWindowRegistry
 {
     private const string UntitledKeyPrefix = "__untitled:";
 
-    //  ConcurrentDictionary so any future dispatcher-hop callers
+    // ConcurrentDictionary so any future dispatcher-hop callers
     // (e.g. bus / IPC opens off the UI thread) don't race on the
     // process-wide sibling-window registry.
     private static readonly ConcurrentDictionary<string, ArchitectSiblingWindow> s_open
         = new(StringComparer.OrdinalIgnoreCase);
 
-    //  Per-path async-load reservation set. The dedup contract
+    // Per-path async-load reservation set. The dedup contract
     // ("exactly one Architect window per .phxg") was racy after the
     // sync→async conversion: OpenFileAsync registered the window only AFTER
     // the 100–1000ms LoadGraphAsync completed, so two concurrent opens for
@@ -51,7 +51,7 @@ public static class ArchitectWindowRegistry
     private static readonly HashSet<string> s_loading
         = new(StringComparer.OrdinalIgnoreCase);
 
-    //  Serializes the multi-step read-then-modify sequences over
+    // Serializes the multi-step read-then-modify sequences over
     // s_open (FindKey → TryRemove(oldKey) → s_open[newKey] in Rebind; the
     // FindKey + TryRemove pair in Unregister). ConcurrentDictionary makes each
     // individual op atomic, but Rebind's "find old key, then swap to a new key"
@@ -67,7 +67,7 @@ public static class ArchitectWindowRegistry
     /// the front and returns it. Returns null on load failure (the
     /// underlying ArchitectViewModel.OpenAsync already logs the cause).
     ///
-    ///  Was synchronous OpenFile; converted to await the async
+    /// Was synchronous OpenFile; converted to await the async
     /// load path so the deadlock-prone sync shim on ArchitectViewModel
     /// could be removed. Sync void call sites (drag-drop handlers, recent
     /// menu) wrap this in AsyncErrorBoundary.SafeRunAsync.
@@ -79,7 +79,7 @@ public static class ArchitectWindowRegistry
 
         string key = NormalizeKey(absolutePath);
 
-        //  Atomic check-then-reserve. Under the gate we (a) re-focus a
+        // Atomic check-then-reserve. Under the gate we (a) re-focus a
         // live existing window, (b) evict a dead one, or (c) reserve the key
         // for THIS call so a concurrent open of the same path during the async
         // load backs off instead of building a duplicate window.
@@ -95,8 +95,7 @@ public static class ArchitectWindowRegistry
             {
                 // Another OpenFileAsync is mid-load for this exact path. Honour
                 // the one-window contract by backing off — the first call will
-                // register + activate the window. Logged (not modal) per
-                // feedback_no_modal_dialogs_for_repeatable_rejections.
+                // register + activate the window. Logged, not modal.
                 GlobalLogger.Log(
                     $"ArchitectWindowRegistry: '{absolutePath}' is already opening in another sibling window; skipping duplicate.",
                     "ArchitectWindowRegistry", LogLevel.Debug);
@@ -111,7 +110,7 @@ public static class ArchitectWindowRegistry
 
         if (existing is not null)
         {
-            //  Validate liveness: if the cached window
+            // Validate liveness: if the cached window
             // is dead (its OnClosed→Unregister never ran, or its native window
             // was torn down out-of-band), Activate() throws on the destroyed
             // HWND. Pre-fix that throw was swallowed and a dead reference
@@ -194,7 +193,7 @@ public static class ArchitectWindowRegistry
     {
         if (window is null) return;
 
-        //  Hold s_registryLock across the whole find-old-key →
+        // Hold s_registryLock across the whole find-old-key →
         // check-clash → swap-to-new-key sequence so a concurrent
         // Unregister/Register can't interleave mid-rebind and leave the old key
         // still mapped (stale-reference refocus) or two keys on one window.
@@ -222,7 +221,7 @@ public static class ArchitectWindowRegistry
     }
 
     /// <summary>
-    /// B18 (audit/winui-regressions-2026-05-24) — bring the sibling
+    /// Bring the sibling
     /// window that owns <paramref name="vm"/> to the front. Used by
     /// SubGraphWindow's "Reveal call-site" so clicking the chrome button
     /// in a macro/process editor focuses the parent .phxg's window
@@ -237,7 +236,7 @@ public static class ArchitectWindowRegistry
         if (vm is null) return;
         try
         {
-            // [P2] Iterate under s_registryLock so a concurrent Register /
+            // Iterate under s_registryLock so a concurrent Register /
             // Unregister / Rebind can't mutate s_open mid-foreach (which would
             // throw InvalidOperationException). Matches the write-side locking in
             // Rebind/Unregister/Register. The inner Activate() can throw on a dead
@@ -270,7 +269,7 @@ public static class ArchitectWindowRegistry
     internal static void Unregister(ArchitectSiblingWindow window)
     {
         if (window is null) return;
-        //  Hold s_registryLock across find-then-remove so this can't
+        // Hold s_registryLock across find-then-remove so this can't
         // race a concurrent Rebind's compound key swap.
         lock (s_registryLock)
         {
@@ -281,7 +280,7 @@ public static class ArchitectWindowRegistry
 
     private static void Register(ArchitectSiblingWindow window, string key)
     {
-        //  Single op, but taken under s_registryLock so it serializes
+        // Single op, but taken under s_registryLock so it serializes
         // against Rebind/Unregister's compound updates to s_open.
         lock (s_registryLock)
         {

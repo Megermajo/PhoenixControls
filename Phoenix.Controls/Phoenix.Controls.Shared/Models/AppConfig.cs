@@ -51,7 +51,7 @@ namespace Phoenix.Controls.Shared.Models
         public Dictionary<string, string> Webhooks { get; set; } = new();
 
         /// <summary>
-        /// P4 — Discord bot token used by <c>discord.send_message</c> /
+        /// Discord bot token used by <c>discord.send_message</c> /
         /// <c>discord.send_embed</c> (https://discord.com/api/v10). Empty (default)
         /// disables the bot REST path; scripts get
         /// <c>result.discord_error = "No Discord bot token configured."</c> and no
@@ -69,7 +69,7 @@ namespace Phoenix.Controls.Shared.Models
         public string BotUsername { get; set; } = "";
 
         /// <summary>
-        /// QC06-03 — Twitch numeric user id of the bot account, preferred over
+        /// Twitch numeric user id of the bot account, preferred over
         /// <see cref="BotUsername"/> for the self-trigger guard because the
         /// numeric id is immutable and unambiguous (Twitch login is lowercase
         /// ASCII; displayName is operator-styled and may be non-ASCII). When
@@ -110,7 +110,7 @@ namespace Phoenix.Controls.Shared.Models
         public string DefaultAIModel { get; set; } = "gpt-4o-mini";
 
         /// <summary>
-        /// QC37-02 — per-request <c>max_tokens</c> cap for AI prompt /
+        /// Per-request <c>max_tokens</c> cap for AI prompt /
         /// streaming calls. Previously hardcoded to 1024 (single-shot) and
         /// 4096 (streaming). Surfaced to config so streamers can tune the
         /// cap against the model context window they're paying for. The
@@ -126,7 +126,7 @@ namespace Phoenix.Controls.Shared.Models
         public int ScriptTimeoutSeconds { get; set; } = 30;
 
         /// <summary>
-        ///  — retention window (days) for the unbounded persistence
+        /// Retention window (days) for the unbounded persistence
         /// tables (<c>EventLog</c> / <c>SystemHistory</c>). On every
         /// <see cref="Services.DB.Initialize"/> the rows older than this cap
         /// are deleted in a single DELETE per table. Set to 0 (or negative) to
@@ -146,10 +146,9 @@ namespace Phoenix.Controls.Shared.Models
         /// Maximum number of event-triggered scripts running concurrently — Twitch
         /// sub/cheer/raid/follow, OBS/YouTube events, internal <c>event.trigger</c>,
         /// on_startup, on_bus, on_state_change, and scheduler fires all draw from this
-        /// pool. Previously hard-coded to 5 in ScriptManager (C16 "AppConfig knob to be
-        /// added later"); surfaced here so a busy channel that legitimately fans many
+        /// pool. Previously hard-coded to 5 in ScriptManager; surfaced here so a busy channel that legitimately fans many
         /// events at once isn't throttled into the 30s queue-then-drop cycle. Default 8
-        /// (up from the old 5) gives headroom for sub-trains / raid+shoutout bursts while
+        /// gives headroom for sub-trains / raid+shoutout bursts while
         /// still bounding a runaway loop. 0 = unlimited (not recommended). Nested
         /// <c>event.trigger</c> calls re-enter the held slot, so they don't count against
         /// this cap. Excess invocations queue on the semaphore (30s) — then drop.
@@ -157,7 +156,7 @@ namespace Phoenix.Controls.Shared.Models
         public int MaxConcurrentEventScripts { get; set; } = 8;
 
         /// <summary>
-        /// QC41-02 — maximum number of <c>on_websocket("name")</c>-triggered
+        /// Maximum number of <c>on_websocket("name")</c>-triggered
         /// scripts running concurrently from the external WebSocket listener.
         /// Mirrors <see cref="MaxConcurrentWebhookScripts"/>; default 4 keeps a
         /// chatty external bridge from spawning unlimited script invocations
@@ -168,7 +167,7 @@ namespace Phoenix.Controls.Shared.Models
         public int MaxConcurrentWebsocketScripts { get; set; } = 4;
 
         /// <summary>
-        ///  Maximum number of hotkey-triggered scripts running
+        /// Maximum number of hotkey-triggered scripts running
         /// concurrently from <see cref="HotkeysEnabled"/>'s HotkeyService.
         /// Split out from the shared default so a flurry of held / repeating
         /// chord registrations can't starve chat/webhook concurrency. Default
@@ -178,7 +177,7 @@ namespace Phoenix.Controls.Shared.Models
         public int MaxConcurrentHotkeyScripts { get; set; } = 5;
 
         /// <summary>
-        ///  Maximum number of clipboard-triggered scripts running
+        /// Maximum number of clipboard-triggered scripts running
         /// concurrently from <see cref="ClipboardWatchEnabled"/>'s
         /// ClipboardService. Split out from the shared default for the same
         /// reason as <see cref="MaxConcurrentHotkeyScripts"/>: a fast
@@ -198,7 +197,7 @@ namespace Phoenix.Controls.Shared.Models
         public int SystemLogMaxRows { get; set; } = 10000;
 
         /// <summary>
-        /// QC10-09 — maximum messages retained in Hub's Chat panel buffer. The
+        /// Maximum messages retained in Hub's Chat panel buffer. The
         /// "X / N" count text in the panel header is derived from this value, so
         /// changing it here propagates to both the trim-oldest behaviour and the
         /// indicator string (which used to hard-code "/ 2000" in two places).
@@ -207,7 +206,7 @@ namespace Phoenix.Controls.Shared.Models
         public int ChatMaxRows { get; set; } = 2000;
 
         /// <summary>
-        /// C5 (audit 2026-05-24) — persisted LiveFeed filter chips. Each entry
+        /// Persisted LiveFeed filter chips. Each entry
         /// is the string name of a <c>LiveFeedFilter</c> enum value (e.g.
         /// "All", "Subs", "Raids", "Visual", "Redeem", "Follow", "Errors").
         /// The panel restores the active chip set on startup; an empty list
@@ -218,7 +217,7 @@ namespace Phoenix.Controls.Shared.Models
         public List<string> LiveFeedActiveChips { get; set; } = new();
 
         /// <summary>
-        /// C7 (audit 2026-05-24) — persisted SystemLog level chips. Entries
+        /// Persisted SystemLog level chips. Entries
         /// are string names of <c>SystemLogLevel</c> enum values (e.g. "Debug",
         /// "Info", "Warn", "Error"). Empty list means "use default" — i.e.
         /// Info+Warn+Error visible, Debug off, matching the panel's first-run
@@ -227,11 +226,11 @@ namespace Phoenix.Controls.Shared.Models
         public List<string> SystemLogActiveLevels { get; set; } = new();
 
         /// <summary>
-        /// C7 (audit 2026-05-24) — persisted SystemLog source filter. Null /
+        /// Persisted SystemLog source filter. Null /
         /// empty means "no source filter" (every source surfaces); a non-empty
         /// string narrows the panel to rows whose <c>Source</c> matches
         /// (case-insensitive, exact). Set via the SystemLog row right-click
-        /// "Filter to source" menu (B6).
+        /// "Filter to source" menu.
         /// </summary>
         public string? SystemLogSourceFilter { get; set; } = null;
 
@@ -239,7 +238,7 @@ namespace Phoenix.Controls.Shared.Models
         /// <summary>Milliseconds to wait before retrying a lost Bus connection in Architect.</summary>
         public int ArchitectReconnectBackoffMs { get; set; } = 5000;
 
-        // 0.10.0 — Architect UX state persistence (arch-ux-state task #3).
+        // Architect UX state persistence.
         // Each field is restored on MainView.Loaded (after CliBootstrap.HandleCli)
         // and written back when the user mutates the corresponding affordance.
         // 0 / "" means "no recall yet — use the layout default".
@@ -263,7 +262,7 @@ namespace Phoenix.Controls.Shared.Models
         public bool ArchitectShowGrid { get; set; } = true;
 
         /// <summary>
-        ///  — Architect View → Minimap persisted state. Toggle for
+        /// Architect View → Minimap persisted state. Toggle for
         /// the bottom-right compact overview navigator (200×140 DIP panel)
         /// that mirrors NodeViewModel + FrameViewModel positions and lets the
         /// user click / drag-pan to jump the viewport. Default true so the
@@ -272,19 +271,19 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool ArchitectMinimapVisible { get; set; } = true;
 
-        //  #10 — LeftRail collapse + floating Inspector window state.
+        // LeftRail collapse + floating Inspector window state.
         // Both surfaces persist across restarts so a user who likes a tight
         // canvas-first layout doesn't have to re-collapse on every relaunch.
 
         /// <summary>
-        ///  #10 — LeftRail collapsed to a 32 px strip (chevron-toggled).
+        /// LeftRail collapsed to a 32 px strip (chevron-toggled).
         /// Default false = full 220 px rail. Persisted so the toggle survives restarts.
         /// </summary>
         public bool ArchitectRailCollapsed { get; set; } = false;
 
         /// <summary>
-        /// Architect right-side Inspector card visibility. 0.11.5 canvas-polish
-        /// r3 flipped the default from false → true (Majo's "Inspector must be
+        /// Architect right-side Inspector card visibility. 0.11.5
+        /// flipped the default from false → true (Majo's "Inspector must be
         /// active as default" feedback). The toggle moved from the LeftRail
         /// header onto the inspector card's own chevron header so the
         /// roll-up/roll-down affordance lives where the user expects.
@@ -329,7 +328,7 @@ namespace Phoenix.Controls.Shared.Models
         public bool   LiveCaptionsAutoLaunch { get; set; } = false;
 
         /// <summary>
-        /// H58 — privacy gate. When false (default), captions are ONLY broadcast on the
+        /// Privacy gate. When false (default), captions are ONLY broadcast on the
         /// internal bus (Architect dashboards) and are NOT pushed to OBS browser sources
         /// or external HTTP translators. Setting this to true is an explicit opt-in to
         /// have system-audio captions reach connected overlays / third-party endpoints.
@@ -337,7 +336,7 @@ namespace Phoenix.Controls.Shared.Models
         public bool   LiveCaptionsBroadcastToOverlays { get; set; } = false;
 
         /// <summary>
-        /// H58 — explicit allowlist of layer ids permitted to receive CAPTION_UPDATE
+        /// Explicit allowlist of layer ids permitted to receive CAPTION_UPDATE
         /// broadcasts. Empty list combined with LiveCaptionsBroadcastToOverlays=true
         /// means "all active layers" (legacy behavior). Add layer ids to scope captions
         /// to specific overlays (e.g. only the on-screen-captions widget).
@@ -377,7 +376,7 @@ namespace Phoenix.Controls.Shared.Models
         public string WebhookSecret { get; set; } = "";
 
         /// <summary>
-        /// C17 (audit/winui-regressions-2026-05-24) — per-endpoint HMAC secret
+        /// Per-endpoint HMAC secret
         /// override map for <c>/webhook/&lt;path&gt;</c>. Key = the path
         /// trailing portion (e.g. <c>"github"</c> for <c>/webhook/github</c>);
         /// value = the secret that the request's <c>X-PhoenixControls-Secret</c>
@@ -410,7 +409,7 @@ namespace Phoenix.Controls.Shared.Models
         /// <summary>Maximum bytes accepted for a /asset/url remote response. Default 5 MiB.</summary>
         public int MaxAssetSizeBytes { get; set; } = 5 * 1024 * 1024;
 
-        // ── Sweep 6 follow-up: URL Image Cache TTL ───────────────────────
+        // ── URL Image Cache TTL ───────────────────────
         /// <summary>
         /// Time-to-live (in hours) for entries in the Hub's URL image cache.
         /// Used to wire <c>UrlImageCache.Ttl</c> from configuration instead of
@@ -418,9 +417,9 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public int UrlImageCacheTtlHours { get; set; } = 24;
 
-        // ── Sweep 7: Streamer.bot auth + broadcaster guard ───────────────
+        // ── Streamer.bot auth + broadcaster guard ───────────────
         /// <summary>
-        /// Optional password used by the WS L64 Streamer.bot auth
+        /// Optional password used by the WS Streamer.bot auth
         /// handshake. Empty string disables the handshake (default — matches
         /// SB's default unauthenticated WS behavior).
         /// </summary>
@@ -428,27 +427,27 @@ namespace Phoenix.Controls.Shared.Models
         public string StreamerBotPassword { get; set; } = "";
 
         /// <summary>
-        /// Twitch broadcaster login name used by the WS M31 broadcaster
+        /// Twitch broadcaster login name used by the WS broadcaster
         /// guard to suppress self-induced follow / channel-point redeem events.
         /// </summary>
         public string BroadcasterUsername { get; set; } = "";
 
         /// <summary>
-        /// Twitch broadcaster numeric user id used by the WS M31
+        /// Twitch broadcaster numeric user id used by the WS
         /// broadcaster guard. Preferred over <see cref="BroadcasterUsername"/>
         /// when present because user ids are stable across renames.
         /// </summary>
         public string BroadcasterUserId { get; set; } = "";
 
         /// <summary>
-        /// WS M31 — when true (default), drop follow events whose
+        /// When true (default), drop follow events whose
         /// follower matches the broadcaster (some test-tools and rare SB
         /// scenarios surface a self-follow that would otherwise spam scripts).
         /// </summary>
         public bool SuppressBroadcasterFollow { get; set; } = true;
 
         /// <summary>
-        /// WS M31 — when true (default), drop channel-point redemption
+        /// When true (default), drop channel-point redemption
         /// events triggered by the broadcaster account (broadcasters often
         /// test-redeem their own rewards; suppressing keeps scripts honest).
         /// </summary>
@@ -491,7 +490,7 @@ namespace Phoenix.Controls.Shared.Models
         public int RemotePairingTtlSeconds { get; set; } = 300;
 
         /// <summary>
-        /// [QC18-S2 P2] When <c>true</c> (default), <see cref="RemoteBridgeServer"/>
+        /// When <c>true</c> (default), <see cref="RemoteBridgeServer"/>
         /// refuses to start over plaintext HTTP on a non-loopback bind. Pairing
         /// codes and bearer tokens travel verbatim over this socket, so a LAN-
         /// segment sniffer can grab them outright. Set <see cref="RemoteTlsCertPath"/>
@@ -500,7 +499,7 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool RemotePairingRequiresHttps { get; set; } = true;
 
-        // ── ViewerServer v2 (Phoenix.Controls.ViewerServer — QC27-01) ────
+        // ── ViewerServer v2 (Phoenix.Controls.ViewerServer) ────
         /// <summary>
         /// Master toggle for the v2 <c>ViewerServer</c> hosted in
         /// <c>Phoenix.Controls.ViewerServer</c>. Default <c>false</c> — when off,
@@ -535,7 +534,7 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public string ViewerServerChannel { get; set; } = "channel";
 
-        // ── WebSocket server ( — external listener for WS.Server nodes) ──
+        // ── WebSocket server (external listener for WS.Server nodes) ──
         /// <summary>
         /// Master toggle for the Hub's WebSocketServerService — fires
         /// <c>on_websocket("name")</c> handler blocks when a client message
@@ -560,7 +559,7 @@ namespace Phoenix.Controls.Shared.Models
         public int WebSocketServerPort { get; set; } = 18083;
 
         /// <summary>
-        /// QC41-02 — shared-secret token required as a <c>?token=</c> query
+        /// Shared-secret token required as a <c>?token=</c> query
         /// parameter on every <c>/ws/&lt;name&gt;</c> upgrade. Generated on
         /// first launch via <c>RandomNumberGenerator</c> (base64-url, 32 bytes)
         /// when empty; the server short-circuits the upgrade with WebSocket
@@ -574,7 +573,7 @@ namespace Phoenix.Controls.Shared.Models
         public string WebSocketServerToken { get; set; } = "";
 
         /// <summary>
-        /// QC41-02 — explicit opt-in for LAN-exposed WebSocket binds. Even
+        /// Explicit opt-in for LAN-exposed WebSocket binds. Even
         /// when <see cref="WebSocketServerBindHost"/> is set to a LAN IP /
         /// <c>0.0.0.0</c>, the service refuses to bind unless this flag is
         /// true. Forces a streamer who flips the bind host (perhaps via a
@@ -587,7 +586,7 @@ namespace Phoenix.Controls.Shared.Models
         public bool WebSocketServerLanModeEnabled { get; set; } = false;
 
         /// <summary>
-        ///  — master toggle for the Hub's HotkeyService. Off by
+        /// Master toggle for the Hub's HotkeyService. Off by
         /// default so a fresh-install Hub doesn't claim arbitrary keystrokes
         /// from the OS. Hotkey bindings live in each script's
         /// <c>on_hotkey("Ctrl+Shift+P"):</c> blocks; the service walks every
@@ -597,7 +596,7 @@ namespace Phoenix.Controls.Shared.Models
         public bool HotkeysEnabled { get; set; } = false;
 
         /// <summary>
-        ///  — master toggle for the Hub's ClipboardService. Off by
+        /// Master toggle for the Hub's ClipboardService. Off by
         /// default for privacy: a fresh-install Hub must not silently observe
         /// the streamer's clipboard contents. Streamers turn it on when a
         /// script with an <c>on_clipboard:</c> block needs to react to copy
@@ -606,7 +605,7 @@ namespace Phoenix.Controls.Shared.Models
         public bool ClipboardWatchEnabled { get; set; } = false;
 
         /// <summary>
-        /// QC36-04 — maximum length (in characters of the decoded text) that
+        /// Maximum length (in characters of the decoded text) that
         /// the ClipboardService will forward to <c>on_clipboard:</c> scripts.
         /// A multi-megabyte paste from an IDE / large document otherwise
         /// inflates the script var dictionary and can be sent verbatim to
@@ -618,7 +617,7 @@ namespace Phoenix.Controls.Shared.Models
         public int ClipboardMaxLengthBytes { get; set; } = 4096;
 
         /// <summary>
-        /// QC36-11 — cumulative byte cap on a single message aggregated
+        /// Cumulative byte cap on a single message aggregated
         /// across continuation frames in <c>WebSocketServerService</c>. A
         /// malicious or buggy client streaming a never-ending fragment
         /// stream would otherwise grow the receive buffer unboundedly. On
@@ -629,7 +628,7 @@ namespace Phoenix.Controls.Shared.Models
         public int WebSocketMaxMessageBytes { get; set; } = 1024 * 1024;
 
         /// <summary>
-        /// QC36-07 — when true, route Twitch.ChatMessage events through the
+        /// When true, route Twitch.ChatMessage events through the
         /// shared <c>IsBroadcasterActor</c> guard so a chat line typed by
         /// the configured broadcaster account is dropped before reaching the
         /// script engine. Default false because chat-based testing is a
@@ -669,7 +668,7 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool SeenWelcomeDialog { get; set; } = false;
 
-        // ── OBS WebSocket direct subscription (audit B38) ────────────────
+        // ── OBS WebSocket direct subscription ────────────────
         // Hub opens a direct OBS WS v5 connection (separate from the
         // Streamer.bot DoAction proxy) so scripts can react to OBS state
         // changes via `on_obs("EventType")`. Default OFF — fresh installs
@@ -693,7 +692,7 @@ namespace Phoenix.Controls.Shared.Models
         /// <summary>
         /// OBS WebSocket server password (when OBS has authentication
         /// enabled). Empty string disables the auth challenge path. The
-        /// B38 handshake SHA256s this with the server-issued salt +
+        /// handshake SHA256s this with the server-issued salt +
         /// challenge per the OBS WS v5 spec
         /// (authResponse = base64(SHA256(base64(SHA256(password+salt)) +
         /// challenge))). DPAPI-protected at rest (same posture as
@@ -704,7 +703,7 @@ namespace Phoenix.Controls.Shared.Models
         public string ObsWebSocketPassword { get; set; } = "";
 
         /// <summary>
-        /// B38 — OBS WS v5 EventSubscription bitmask requested in the
+        /// OBS WS v5 EventSubscription bitmask requested in the
         /// Identify (OpCode 1) payload. Default 1023 (0x3FF) covers every
         /// non-high-volume category:
         ///   General(1) | Config(2) | Scenes(4) | Inputs(8) | Transitions(16)

@@ -13,7 +13,7 @@ using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Hub.WinUI.Dialogs;
 
-// Settings dialog (TODO.md P0 #7) — tabbed editor for the cross-cutting
+// Settings dialog — tabbed editor for the cross-cutting
 // AppConfig fields users would otherwise have to hand-edit in
 // %AppData%/PhoenixControls/Hub/config.json. Bound to ConfigManager.Current
 // on open; PrimaryButtonClick (Save) writes the changes back via
@@ -29,7 +29,7 @@ public sealed partial class SettingsDialog : ContentDialog
 {
     private readonly int _initialPivotIndex;
 
-    // HUB-UX P1 — inline numeric validation.
+    // Inline numeric validation.
     //
     // The pre-redesign pattern (ParseInt-and-revert silently) hid bad
     // inputs from the user: "I typed 65555 into HudPort, hit Save, and
@@ -60,7 +60,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
     /// <summary>
     /// Open Settings on a specific Pivot tab. Used by status-strip dots
-    /// (Sprint F #3) so a click on "Streamer.bot disconnected" jumps the
+    /// so a click on "Streamer.bot disconnected" jumps the
     /// user straight to the Connection tab where the URL/password live.
     /// Out-of-range or negative values clamp to 0 silently — the dialog
     /// should never refuse to open just because a caller passed a bad
@@ -76,7 +76,7 @@ public sealed partial class SettingsDialog : ContentDialog
             // Hydrate is the only step that touches user data on disk
             // (ConfigManager.Current) — guard it so a corrupt config can
             // never block the dialog from opening. Errors land in the
-            // System Log per feedback_no_modal_dialogs_for_repeatable_rejections.md.
+            // System Log rather than a modal dialog.
             try
             {
                 HydrateFromConfig();
@@ -122,7 +122,7 @@ public sealed partial class SettingsDialog : ContentDialog
                 (int)Tab.Captions     => LiveCaptionsEnabledBox,
                 (int)Tab.Features     => HotkeysEnabledBox,
                 (int)Tab.Localization => LanguageCombo,
-                // C18 — diagnostics has no leading input; the re-run button
+                // Diagnostics has no leading input; the re-run button
                 // is the only interactive surface so land focus there.
                 (int)Tab.Diagnostics  => DiagnosticsRerunMigrationsButton,
                 _ => StreamerBotUrlBox,
@@ -150,7 +150,7 @@ public sealed partial class SettingsDialog : ContentDialog
         Captions     = 5,
         Features     = 6,
         Localization = 7,
-        // C18 (audit/winui-regressions-2026-05-24) — Diagnostics tab. Hosts
+        // Diagnostics tab. Hosts
         // the AppDataMigrator status surface + re-run affordance; future
         // diagnostic affordances (database integrity, log-tier sampling)
         // can land in the same pivot without churning callers.
@@ -199,7 +199,7 @@ public sealed partial class SettingsDialog : ContentDialog
         CaptionsPivotItem.Header     = Localizer.T("dialog.settings.tab.captions", "Captions");
         FeaturesPivotItem.Header     = Localizer.T("dialog.settings.tab.features", "Features");
         LocalizationPivotItem.Header = Localizer.T("dialog.settings.tab.localization", "Localization");
-        // C18 — Diagnostics tab header.
+        // Diagnostics tab header.
         DiagnosticsPivotItem.Header  = Localizer.T("dialog.settings.tab.diagnostics", "Diagnostics");
 
         // Connection tab labels.
@@ -214,7 +214,7 @@ public sealed partial class SettingsDialog : ContentDialog
         SuppressBroadcasterRedeemBox.Content = Localizer.T(
             "dialog.settings.checkbox.suppress_broadcaster_redeem",
             "Suppress channel-point redemptions triggered by the broadcaster");
-        //   follow-up — ApplyLocalizedChrome for the new
+        // ApplyLocalizedChrome for the
         // SuppressBroadcasterChat / WebSocket LAN+Token / ViewerServer rows.
         SuppressBroadcasterChatBox.Content = Localizer.T(
             "dialog.settings.checkbox.suppress_broadcaster_chat",
@@ -242,7 +242,7 @@ public sealed partial class SettingsDialog : ContentDialog
         ScriptTimeoutLabel.Text             = Localizer.T("dialog.settings.label.script_timeout", "SCRIPT TIMEOUT (seconds, 0 = unlimited)");
         MaxChatLabel.Text                   = Localizer.T("dialog.settings.label.max_concurrent_chat_scripts", "MAX CONCURRENT CHAT SCRIPTS");
         MaxWebhookLabel.Text                = Localizer.T("dialog.settings.label.max_concurrent_webhook_scripts", "MAX CONCURRENT WEBHOOK SCRIPTS");
-        // C17 (audit/winui-regressions-2026-05-24) — global WebhookSecret was
+        // Global WebhookSecret was
         // relabeled to "fallback" so the UI conveys precedence with the new
         // per-endpoint WebhookSecrets list below.
         WebhookSecretLabel.Text             = Localizer.T("dialog.settings.label.webhook_secret", "DEFAULT WEBHOOK SECRET (FALLBACK)");
@@ -288,12 +288,12 @@ public sealed partial class SettingsDialog : ContentDialog
         WebSocketServerEnabledBox.Content   = Localizer.T("dialog.settings.checkbox.websocket_relay", "WebSocket relay enabled");
         WebSocketServerBindHostLabel.Text   = Localizer.T("dialog.settings.label.websocket_bind_host", "WEBSOCKET BIND HOST");
         WebSocketServerPortLabel.Text       = Localizer.T("dialog.settings.label.websocket_port", "WEBSOCKET PORT");
-        //   follow-up — ApplyLocalizedChrome for the new
+        // ApplyLocalizedChrome for the
         // SuppressBroadcasterChat / WebSocket LAN+Token / ViewerServer rows.
         WebSocketServerLanModeEnabledBox.Content = Localizer.T(
             "dialog.settings.checkbox.websocket_lan_mode",
             "WebSocket relay LAN mode (binds the configured host instead of loopback)");
-        // [S38] Token is fully internal — generated at ConfigManager.Load,
+        // Token is fully internal — generated at ConfigManager.Load,
         // never surfaced to the user. The Regenerate button is a panic
         // affordance that mints a fresh value and persists same-turn.
         WebSocketServerTokenLabel.Text = Localizer.T(
@@ -338,7 +338,7 @@ public sealed partial class SettingsDialog : ContentDialog
         // "↻ requires restart" badge — Style strips this out so each instance
         // can be localized via Localizer.T(). Set on every named badge.
         //
-        //  Badges 8/9/10/11 added for StreamerBotUrl / LogicDirectory /
+        // Badges 8/9/10/11 cover StreamerBotUrl / LogicDirectory /
         // LayoutDirectory / LiveCaptionsEnabled — all read at service init only.
         // Badge 4 (RemoteEnabled) was removed because the Remote Devices panel
         // start/stops the bridge in place, so the toggle is hot-applied.
@@ -353,7 +353,7 @@ public sealed partial class SettingsDialog : ContentDialog
         RequiresRestartBadge9.Text  = restartBadge;
         RequiresRestartBadge10.Text = restartBadge;
         RequiresRestartBadge11.Text = restartBadge;
-        //   follow-up — ApplyLocalizedChrome for the new
+        // ApplyLocalizedChrome for the
         // SuppressBroadcasterChat / WebSocket LAN+Token / ViewerServer rows.
         RequiresRestartBadgeWsLan.Text          = restartBadge;
         RequiresRestartBadgeViewerEnabled.Text  = restartBadge;
@@ -374,7 +374,7 @@ public sealed partial class SettingsDialog : ContentDialog
             "dialog.settings.diagnostics.log_retention_days_label",
             "DELETE ENTRIES OLDER THAN (days)");
 
-        // C18 — Diagnostics → AppDataMigrator section. Labels seed once on
+        // Diagnostics → AppDataMigrator section. Labels seed once on
         // Loaded; the value labels (last-run / status) are populated by
         // HydrateMigrationDiagnostics during HydrateFromConfig so the dialog
         // opens with a credible snapshot before the user touches anything.
@@ -433,7 +433,7 @@ public sealed partial class SettingsDialog : ContentDialog
         MaxChatBox.Text          = cfg.MaxConcurrentChatScripts.ToString(CultureInfo.InvariantCulture);
         MaxWebhookBox.Text       = cfg.MaxConcurrentWebhookScripts.ToString(CultureInfo.InvariantCulture);
         WebhookSecretBox.Password = cfg.WebhookSecret ?? "";
-        // C17 — hydrate the per-endpoint secrets list. The backing collection
+        // Hydrate the per-endpoint secrets list. The backing collection
         // is mutated in place so the ListView's bound rows reflect Add / Edit /
         // Remove without forcing a rebind round-trip.
         HydrateWebhookSecrets(cfg);
@@ -484,7 +484,7 @@ public sealed partial class SettingsDialog : ContentDialog
         HotkeysEnabledBox.IsChecked         = cfg.HotkeysEnabled;
         ClipboardWatchEnabledBox.IsChecked  = cfg.ClipboardWatchEnabled;
 
-        //  Language — populate from Localizer.Available (set during
+        // Language — populate from Localizer.Available (set during
         // PillarBootstrap). Each entry is a (code, endonym) pair; the
         // ComboBox displays the endonym while we persist the ISO code. The
         // raw ISO-code fallback ("zh", "ja", etc.) is used when a bundle
@@ -508,7 +508,7 @@ public sealed partial class SettingsDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Hard-coded endonym mapping for the shipped language bundles.
+    /// Hard-coded endonym mapping for the shipped language bundles.
     /// Falls back to the raw ISO code for codes we haven't translated yet —
     /// better to show "zh" than a blank dropdown row, and the user can
     /// still pick it because the combo item still carries the code.
@@ -594,13 +594,13 @@ public sealed partial class SettingsDialog : ContentDialog
         //                     for the user-facing field).
         //   - Timeouts:       0..86400 (0 = unlimited per the project conventions;
         //                     86400 = 24 hours upper guard).
-        //   - Concurrency:    0..1000  ( AppConfig docs both
+        // - Concurrency:    0..1000  (AppConfig docs both
         //                     MaxConcurrent*Scripts fields as "0 = unlimited";
         //                     the validator previously forbade 0 and silently
         //                     dropped the documented behavior. Accept 0
         //                     here — the engine handles the semaphore-skip.
         //                     1000 cap prevents typos like "9999999").
-        //   - UpdateTimeout:  0..600   ( AppConfig docs 0 as "use
+        // - UpdateTimeout:  0..600   (AppConfig docs 0 as "use
         //                     HttpClient default (100s)"; accept it.
         //                     600s upper guard.)
         //   - Body / asset:   1..2^30 bytes (1 GiB hard cap).
@@ -680,14 +680,14 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private async void OnPrimaryClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        // TASK2 — do NOT hard-block the dialog on an invalid numeric field. The legacy
-        // HUB-UX P1 gate cancelled the close, which also trapped every OTHER field (a valid
+        // Do NOT hard-block the dialog on an invalid numeric field. The legacy
+        // gate cancelled the close, which also trapped every OTHER field (a valid
         // Bot Username couldn't be saved while one numeric field was off). That contradicts
         // this dialog's stated design (top-of-class: "bad inputs roll back to defaults rather
         // than blocking the dialog, so the user can never get stuck unable to save a typo").
         // Restore it: roll each invalid numeric field back to its last-saved value (so no
         // out-of-range garbage is persisted), surface the error inline + log it non-blocking
-        // (per feedback_no_modal_dialogs_for_repeatable_rejections), and let Save proceed so
+        // (no modal dialog), and let Save proceed so
         // the rest of the form still commits.
         var invalidFields = new List<NumericField>();
         foreach (var f in _numericFields)
@@ -702,7 +702,7 @@ public sealed partial class SettingsDialog : ContentDialog
                 "SettingsDialog", LogLevel.System);
         }
 
-        //  Defer the close so the async TryCommitAndPersistAsync
+        // Defer the close so the async TryCommitAndPersistAsync
         // can await the disk write (OneDrive-backed AppData stalls a few
         // hundred ms on cloud sync; doing that on the UI thread visibly
         // hitches the dismiss animation). On commit failure we cancel the
@@ -735,8 +735,7 @@ public sealed partial class SettingsDialog : ContentDialog
     /// text. A valid-but-unusual login (e.g. "xX_bot_Xx", "h0tdog99") is saved verbatim. A
     /// non-empty value that fails the Twitch login rule is still saved as typed (no hardlock,
     /// no auto-"correction") but surfaces a non-blocking System-log warning so the user knows
-    /// it may not match a real account — per feedback_no_modal_dialogs_for_repeatable_rejections
-    /// (GlobalLogger, never a ContentDialog). Empty clears the field.
+    /// it may not match a real account (GlobalLogger, never a ContentDialog). Empty clears the field.
     /// </summary>
     private static string CommitTwitchLogin(TextBox box, string label)
     {
@@ -751,14 +750,14 @@ public sealed partial class SettingsDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Commits every form field back to <see cref="ConfigManager.Current"/>,
+    /// Commits every form field back to <see cref="ConfigManager.Current"/>,
     /// writes the config + language files to disk, and returns true on success.
     /// Extracted from the original inline body of <see cref="OnPrimaryClick"/>
     /// so the Force Download path can persist the user's in-flight edits
     /// before exiting Hub — the legacy path skipped this and silently
     /// discarded any field the streamer hadn't already Saved.
     ///
-    ///  Async so the OneDrive-backed AppData write doesn't peg
+    /// Async so the OneDrive-backed AppData write doesn't peg
     /// the UI thread; only the disk-write call is thread-pooled, every
     /// in-memory field copy still runs on the UI dispatcher so we can
     /// touch the XAML controls without an Invoke wrapper.
@@ -774,11 +773,10 @@ public sealed partial class SettingsDialog : ContentDialog
         {
             var cfg = ConfigManager.Current;
 
-            // QC42-06 — sanity-check port collisions before the save commits.
+            // Sanity-check port collisions before the save commits.
             // HUDServerPort / RemotePort / WebSocketServerPort must each be
             // unique; the IPC bus on 18081 is also reserved. Conflicts are
-            // logged (not modal — per feedback_no_modal_dialogs_for_repeatable_rejections)
-            // and the dialog still saves the rest of the fields; the user
+            // logged (not modal) and the dialog still saves the rest of the fields; the user
             // sees the conflict in the System Log and corrects on next open.
             int hudPort       = ParseInt(HudPortBox.Text,             cfg.HUDServerPort);
             int remotePort    = ParseInt(RemotePortBox.Text,          cfg.RemotePort);
@@ -792,12 +790,12 @@ public sealed partial class SettingsDialog : ContentDialog
             // Bot Username is a COMMA-SEPARATED list of Twitch logins — solo setups run a
             // bot account plus the broadcaster account, and WS.RebuildBlockedAccountsCache
             // (Hub/Core/WS.cs) splits the field on ',' before matching. The per-field
-            // "grammar control" added in ba311f08 validated it against a SINGLE-login regex
+            // a "grammar control" validated it against a SINGLE-login regex
             // (^[A-Za-z0-9_]{4,25}$), so a legitimate multi-account list like
             // "PhoenixControls, StreamElements, Streamlabs" was falsely flagged "not a valid
             // Twitch login" in the System Log. That regression is gone: save the field
-            // verbatim (trimmed), no validation, no warning — the pre-ba311f08 behavior.
-            // (Regression report 2026-06-04.) Broadcaster Username stays single-valued and
+            // verbatim (trimmed), no validation, no warning — the original behavior.
+            // Broadcaster Username stays single-valued and
             // keeps the soft, non-blocking login check.
             cfg.BotUsername           = BotUsernameBox.Text?.Trim() ?? "";
             cfg.BroadcasterUsername   = CommitTwitchLogin(BroadcasterUsernameBox, "Broadcaster Username");
@@ -819,7 +817,7 @@ public sealed partial class SettingsDialog : ContentDialog
             cfg.MaxConcurrentChatScripts    = ParseInt(MaxChatBox.Text, cfg.MaxConcurrentChatScripts);
             cfg.MaxConcurrentWebhookScripts = ParseInt(MaxWebhookBox.Text, cfg.MaxConcurrentWebhookScripts);
             cfg.WebhookSecret               = WebhookSecretBox.Password ?? "";
-            // C17 — persist the per-endpoint secret overrides. CommitWebhookSecrets
+            // Persist the per-endpoint secret overrides. CommitWebhookSecrets
             // rewrites cfg.WebhookSecrets from the in-dialog ObservableCollection
             // so removed rows actually disappear from disk (a naive merge would
             // accumulate orphans).
@@ -882,7 +880,7 @@ public sealed partial class SettingsDialog : ContentDialog
 
             await ConfigManager.SaveAsync(Paths.AppConfigJson).ConfigureAwait(true);
 
-            //  Persist language choice (LanguageConfig — separate from
+            // Persist language choice (LanguageConfig — separate from
             // AppConfig). Combo entries are LanguageOption records carrying both
             // endonym (display) and ISO code (persistence). The legacy
             // string-only path is kept as a forgiveness fallback in case a test
@@ -928,10 +926,9 @@ public sealed partial class SettingsDialog : ContentDialog
     }
 
     /// <summary>
-    /// QC42-06 — log a System-tier warning when the user's port choices
+    /// Log a System-tier warning when the user's port choices
     /// collide with each other or with the reserved IPC bus port (18081).
-    /// Non-blocking: the save still commits. Per
-    /// feedback_no_modal_dialogs_for_repeatable_rejections this kind of
+    /// Non-blocking: the save still commits. This kind of
     /// repeatable rejection routes through GlobalLogger, not a ContentDialog.
     /// </summary>
     private const int ReservedBusPort = 18081;
@@ -984,7 +981,7 @@ public sealed partial class SettingsDialog : ContentDialog
     }
 
     /// <summary>
-    /// [S38] Regenerate the WebSocket relay token — operator-facing "panic
+    /// Regenerate the WebSocket relay token — operator-facing "panic
     /// button". Calls <see cref="ConfigManager.RegenerateWebSocketServerToken"/>
     /// which mints a fresh 32-byte base64-url token and persists same-turn,
     /// so existing clients are invalidated on their next WS upgrade
@@ -1033,7 +1030,7 @@ public sealed partial class SettingsDialog : ContentDialog
         UpdateStatusText.Text = Localizer.T("dialog.settings.status.querying_github",
                                             "Querying GitHub for the latest release…");
 
-        //  Persist any in-flight field edits to disk BEFORE we kick
+        // Persist any in-flight field edits to disk BEFORE we kick
         // off the force-download exit path. The legacy flow ran Force Download
         // straight into Application.Exit() without touching ConfigManager,
         // silently dropping any edit the user hadn't already Saved (typical
@@ -1147,7 +1144,7 @@ public sealed partial class SettingsDialog : ContentDialog
         }
     }
 
-    // C18 (audit/winui-regressions-2026-05-24) — AppDataMigrator re-run.
+    // AppDataMigrator re-run.
     //
     // The migrator's <see cref="AppDataMigrator.RunOnce"/> entry point is
     // gated by a process-wide once-only flag (s_ranOnce) by design — a
@@ -1160,8 +1157,7 @@ public sealed partial class SettingsDialog : ContentDialog
     //   • The status line below the button makes the result visible in the
     //     dialog itself, not just buried in the System Log.
     //   • The confirmation dialog establishes intent (per the modal-only-
-    //     for-destructive-singletons rule in
-    //     feedback_no_modal_dialogs_for_repeatable_rejections.md — this
+    //     for-destructive-singletons rule — this
     //     IS a destructive single-action, mutating AppData).
     //
     // The confirmation is mandatory because the migrator can move folders
@@ -1297,11 +1293,11 @@ public sealed partial class SettingsDialog : ContentDialog
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // C17 — per-webhook secret editor (audit/winui-regressions-2026-05-24)
+    // Per-webhook secret editor
     // ────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// C17 — in-dialog row model for the per-webhook secret list. The full
+    /// In-dialog row model for the per-webhook secret list. The full
     /// secret stays on the row so Edit can re-open the dialog populated; the
     /// list rendering binds <see cref="MaskedSecret"/> so a streamer's screen
     /// share never leaks the plaintext value. Mutable so the Edit handler
@@ -1371,7 +1367,7 @@ public sealed partial class SettingsDialog : ContentDialog
         // Reject duplicate paths up front — the dictionary semantics would
         // silently overwrite the previous row, which is exactly the bug per-
         // webhook rotation is meant to prevent. Surface via the System Log
-        // per feedback_no_modal_dialogs_for_repeatable_rejections.md.
+        // rather than a modal dialog.
         foreach (var row in _webhookSecretRows)
         {
             if (string.Equals(row.Path, pathOut, StringComparison.OrdinalIgnoreCase))

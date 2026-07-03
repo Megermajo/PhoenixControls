@@ -10,7 +10,7 @@ namespace Phoenix.Controls.Hub.WinUI.Panels.ChatPanel;
 
 public sealed class ChatViewModel : ObservableObject, IDisposable
 {
-    // QC10-09 — default chat-row cap used when AppConfig.ChatMaxRows is missing
+    // Default chat-row cap used when AppConfig.ChatMaxRows is missing
     // or non-positive. The "X / N" indicator string (CountText) and the trim-
     // oldest cap both derive from _maxRows so they can never drift apart;
     // previously both ends hard-coded 2000 in separate spots.
@@ -18,7 +18,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
     private readonly int _maxRows;
 
     private readonly IChatSource _source;
-    // C1 (2026-05-14): per-VM dispatcher pump, ctor-injected by PanelFactory.
+    // Per-VM dispatcher pump, ctor-injected by PanelFactory.
     // Replaces the prior static DispatcherQueueOwner slot.
     private readonly UiDispatcherPump _ui;
     private readonly IConnectionStatus? _status;
@@ -26,12 +26,12 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private ConnectionState _streamerBotState;
 
-    // Perf-review C3/H6 (2026-05-14): dispatcher-hop coalescing. Raid bursts
+    // Dispatcher-hop coalescing. Raid bursts
     // can land 200+ chat messages/sec; previous code did one dq.TryEnqueue per
     // message. Accumulate pending rows on the producer side and enqueue a
     // single FlushPending per dispatcher tick. Also tracks last-emitted
     // CountText so the Raise is skipped when the displayed string doesn't
-    // change (perf-review M2).
+    // change.
     private readonly object _pendingLock = new();
     private System.Collections.Generic.List<ChatRowVm> _pendingAdds = new();
     private bool _flushScheduled;
@@ -42,7 +42,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
         _source = source;
         _ui = new UiDispatcherPump(dispatcher);
         _status = status;
-        // QC10-09 — pull the chat buffer cap from AppConfig. ConfigManager
+        // Pull the chat buffer cap from AppConfig. ConfigManager
         // is safe to read at construction: Hub.WinUI's startup loads the
         // config before the workspace view materialises panel VMs (same
         // ordering SystemLogViewModel relies on).
@@ -62,7 +62,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
             // IConnectionStatus.
             _streamerBotState = ConnectionState.Connected;
         }
-        // HUB-UX-D7 (2026-05-14) — fan-out: every subscriber to
+        // Fan-out: every subscriber to
         // MessageReceived gets every chat line; no primary-subscriber gate.
         foreach (var m in _source.Snapshot())
         {
@@ -82,7 +82,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
     public ObservableCollection<ChatRowVm> Rows { get; } = new();
 
     /// <summary>
-    ///  Runtime theme-swap hook. Drops the static fallback brush
+    /// Runtime theme-swap hook. Drops the static fallback brush
     /// caches and re-resolves UsernameBrush / BadgeBrush on every materialised
     /// row so x:Bind OneWay picks up the new theme without rebuilding the
     /// row VMs. Called by ChatView.OnActualThemeChanged.
@@ -99,7 +99,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
         set => Set(ref _draft, value);
     }
 
-    // QC10-09 — both numerator and denominator now derive from runtime state
+    // Both numerator and denominator now derive from runtime state
     // (_maxRows comes from AppConfig.ChatMaxRows; trim-oldest in FlushPending
     // uses the same field). The literal "/ 2000" used to appear here AND in
     // the trim cap, which silently desynced if either side moved.
@@ -130,7 +130,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
             ? Microsoft.UI.Xaml.Visibility.Collapsed
             : Microsoft.UI.Xaml.Visibility.Visible;
 
-    // Hub UI sweep 2026-05-22 — explicit disabled-state opacity for the SEND
+    // Explicit disabled-state opacity for the SEND
     // button. The XAML overrides Background/Foreground/BorderBrush with
     // ember tokens, which suppresses WinUI's built-in Disabled visual state;
     // without this, the button stayed ember-bright when IsEnabled flipped
@@ -150,7 +150,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
 
     private void OnMessageReceived(object? sender, ChatMessage msg)
     {
-        // HUB-UX-D7 (2026-05-14) — fan-out: this VM is one of N subscribers.
+        // Fan-out: this VM is one of N subscribers.
         var row = new ChatRowVm(msg);
         bool needsSchedule;
         lock (_pendingLock)
@@ -161,11 +161,11 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
         }
         if (!needsSchedule) return;
 
-        // Perf-review H1: HasThreadAccess fast-path baked into Post.
+        // HasThreadAccess fast-path baked into Post.
         _ui.Post(FlushPending);
     }
 
-    //  Payload-typed handler. The ChatPanel only cares about the
+    // Payload-typed handler. The ChatPanel only cares about the
     // StreamerBot channel; the diff happens in PullConnectionState so we
     // ignore other channels' transitions cheaply rather than gating here.
     private void OnConnectionStateChanged(object? sender, ConnectionStateChange e)
@@ -200,7 +200,7 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
             Rows.Add(row);
         }
         while (Rows.Count > _maxRows) Rows.RemoveAt(0);
-        // Perf-review M2: only raise CountText when the string actually
+        // Only raise CountText when the string actually
         // changed. Once Rows.Count hits the cap, CountText is constant; the
         // prior code re-fired the property change on every append forever.
         string next = CountText;

@@ -14,7 +14,7 @@ using Windows.UI;
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
 /// <summary>
-///  — compact overview navigator anchored to the bottom-right of
+/// Compact overview navigator anchored to the bottom-right of
 /// the canvas host. Mirrors every <see cref="NodeViewModel"/> +
 /// <see cref="FrameViewModel"/> position into a scaled 200×140 DIP map and
 /// overlays a translucent gold viewport rectangle that tracks the live
@@ -28,8 +28,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 ///     proportionally to the drag delta in canvas-space pixels.
 ///   * Header × → hide the panel (persisted via ArchitectMinimapVisible).
 ///
-/// Paint code stays per-pillar (see
-/// feedback_visualist_architect_chrome_independence.md). The node + frame
+/// Paint code stays per-pillar. The node + frame
 /// rect rendering uses NodeViewModel.HeaderColor directly so Math nodes,
 /// Twitch nodes, Logic nodes, etc. each look distinct at a glance — Twitch
 /// purple vs Math teal vs Logic amber.
@@ -58,7 +57,7 @@ public sealed partial class MiniMapOverlay : UserControl
     private double _scale = 1.0;
     private double _mapWidth = 200.0, _mapHeight = 124.0;
 
-    // [P2] Brush cache keyed by "<hex>|<alpha-hex>". Pre-fix RenderFrames /
+    // Brush cache keyed by "<hex>|<alpha-hex>". Pre-fix RenderFrames /
     // RenderNodes called SolidBrushFromHex per frame + per node on every
     // Rebuild(), each allocating a fresh SolidColorBrush. On a 146-node graph
     // at display cadence that was thousands of brush allocations per second
@@ -68,7 +67,7 @@ public sealed partial class MiniMapOverlay : UserControl
     // Cleared on Detach so a re-attached overlay starts clean.
     private readonly Dictionary<string, SolidColorBrush> _brushCache = new();
 
-    // arch-perf-polish round 2 — coalesce Rebuild() at displayed-frame
+    // Coalesce Rebuild() at displayed-frame
     // cadence. Pre-fix, every NodeViewModel X/Y/Width/Height PropertyChanged
     // (which fires per pointer-move during a node OR frame drag) called
     // Rebuild(), which clears NodeLayer + FrameLayer and constructs a
@@ -82,7 +81,7 @@ public sealed partial class MiniMapOverlay : UserControl
     // already on the LogicCanvasView side.
     private bool _rebuildDirty;
     private bool _viewportRectDirty;
-    // arch-perf P1-5 (Fix 8) — colour-only minimap edits (node header / frame
+    // Colour-only minimap edits (node header / frame
     // colour) no longer force a full O(N+F) Rectangle rebuild. _colorDirty drives
     // an in-place rect.Fill/Stroke repaint via these per-VM rect caches (populated
     // in RenderNodes/RenderFrames, cleared on Rebuild + Detach). Geometry edits
@@ -158,7 +157,7 @@ public sealed partial class MiniMapOverlay : UserControl
         {
             _host.SizeChanged += OnHostSizeChanged;
         }
-        // arch-perf-polish round 2 — hook a per-frame drain so the
+        // Hook a per-frame drain so the
         // dirty-flag pattern in OnNodePropertyChanged + OnFramePropertyChanged
         // actually flushes. Idempotent (the `_renderingHooked` flag guards
         // against double-subscription on a re-Attach without an intervening
@@ -189,7 +188,7 @@ public sealed partial class MiniMapOverlay : UserControl
         {
             _host.SizeChanged -= OnHostSizeChanged;
         }
-        // arch-perf-polish round 2 — release the per-frame drain when the
+        // Release the per-frame drain when the
         // overlay's parent host swaps so an unattached overlay doesn't keep
         // the canvas's render thread ticking.
         if (_renderingHooked)
@@ -200,10 +199,10 @@ public sealed partial class MiniMapOverlay : UserControl
         _rebuildDirty = false;
         _viewportRectDirty = false;
         _colorDirty = false;
-        // [P2] Release the brush cache so a detached overlay doesn't pin shared
+        // Release the brush cache so a detached overlay doesn't pin shared
         // SolidColorBrush instances; the next Attach repopulates lazily.
         _brushCache.Clear();
-        // arch-perf P1-5 (Fix 8) — release the per-VM rect caches too so a detached
+        // Release the per-VM rect caches too so a detached
         // overlay doesn't pin Rectangle instances; repopulated by the next Rebuild.
         _nodeRectCache.Clear();
         _frameRectCache.Clear();
@@ -212,7 +211,7 @@ public sealed partial class MiniMapOverlay : UserControl
     }
 
     /// <summary>
-    /// arch-perf-polish round 2 — drain the dirty flags at displayed-frame
+    /// Drain the dirty flags at displayed-frame
     /// cadence. Cheap when nothing is dirty (two bool checks). Runs Rebuild
     /// (which covers viewport-rect via its final UpdateViewportRect call)
     /// when the heavy flag is set, otherwise runs only the cheap viewport-
@@ -229,7 +228,7 @@ public sealed partial class MiniMapOverlay : UserControl
         }
         else if (_colorDirty)
         {
-            // arch-perf P1-5 (Fix 8) — colour-only repaint, no Rectangle churn.
+            // Colour-only repaint, no Rectangle churn.
             // Runs only when no geometry rebuild is pending (checked first), so
             // the rect caches still match the live node/frame set.
             _colorDirty = false;
@@ -243,7 +242,7 @@ public sealed partial class MiniMapOverlay : UserControl
     }
 
     /// <summary>
-    /// arch-perf-polish round 2 — flip the heavy-rebuild dirty flag. Drained
+    /// Flip the heavy-rebuild dirty flag. Drained
     /// in <see cref="OnRenderingTick"/>. Replaces direct <see cref="Rebuild"/>
     /// calls from PropertyChanged / CollectionChanged handlers so a drag-
     /// burst doesn't allocate fresh Rectangle instances per node per pointer
@@ -252,7 +251,7 @@ public sealed partial class MiniMapOverlay : UserControl
     private void RequestRebuild() => _rebuildDirty = true;
 
     /// <summary>
-    /// arch-perf-polish round 2 — flip the cheap viewport-rect dirty flag.
+    /// Flip the cheap viewport-rect dirty flag.
     /// Used for pan / zoom PropertyChanged paths where the node + frame
     /// dot positions haven't moved in canvas-space.
     /// </summary>
@@ -337,7 +336,7 @@ public sealed partial class MiniMapOverlay : UserControl
 
     private void OnNodePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // arch-perf P1-5 (Fix 8) — geometry edits warrant a full rebuild (rect
+        // Geometry edits warrant a full rebuild (rect
         // positions/sizes change); a colour-only edit just repaints the existing
         // rect's Fill in place (no Rectangle churn).
         if (e.PropertyName is nameof(NodeViewModel.X)
@@ -355,7 +354,7 @@ public sealed partial class MiniMapOverlay : UserControl
 
     private void OnFramePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // arch-perf P1-5 (Fix 8) — geometry → full rebuild; colour → in-place
+        // Geometry → full rebuild; colour → in-place
         // repaint. (The minimap frame rect derives both fill and stroke from
         // FrameColorHex; FrameFillHex isn't drawn on the minimap but is routed to
         // the cheap colour pass anyway so it never forces a rebuild.)
@@ -453,12 +452,12 @@ public sealed partial class MiniMapOverlay : UserControl
     private void RenderFrames()
     {
         FrameLayer.Children.Clear();
-        _frameRectCache.Clear(); // arch-perf P1-5 (Fix 8) — rebuild the colour cache
+        _frameRectCache.Clear(); // rebuild the colour cache
         if (_vm is null) return;
 
         foreach (var f in _vm.Frames)
         {
-            // arch-ux-polish — soften the minimap frame fill from the
+            // Soften the minimap frame fill from the
             // canvas-side #40<rgb> (~25%) down to ~9% alpha. On the
             // bright minimap surface, 25% reads as opaque saturated
             // blocks that overpower the per-node dots; the minimap's
@@ -479,14 +478,14 @@ public sealed partial class MiniMapOverlay : UserControl
             Microsoft.UI.Xaml.Controls.Canvas.SetLeft(rect, (f.X - _boundsX) * _scale);
             Microsoft.UI.Xaml.Controls.Canvas.SetTop (rect, (f.Y - _boundsY) * _scale);
             FrameLayer.Children.Add(rect);
-            _frameRectCache[f] = rect; // arch-perf P1-5 (Fix 8) — for in-place colour repaint
+            _frameRectCache[f] = rect; // for in-place colour repaint
         }
     }
 
     private void RenderNodes()
     {
         NodeLayer.Children.Clear();
-        _nodeRectCache.Clear(); // arch-perf P1-5 (Fix 8) — rebuild the colour cache
+        _nodeRectCache.Clear(); // rebuild the colour cache
         if (_vm is null) return;
 
         foreach (var n in _vm.Nodes)
@@ -503,11 +502,11 @@ public sealed partial class MiniMapOverlay : UserControl
             Microsoft.UI.Xaml.Controls.Canvas.SetLeft(rect, (n.X - _boundsX) * _scale);
             Microsoft.UI.Xaml.Controls.Canvas.SetTop (rect, (n.Y - _boundsY) * _scale);
             NodeLayer.Children.Add(rect);
-            _nodeRectCache[n] = rect; // arch-perf P1-5 (Fix 8) — for in-place colour repaint
+            _nodeRectCache[n] = rect; // for in-place colour repaint
         }
     }
 
-    // arch-perf P1-5 (Fix 8) — in-place colour repaint for node + frame minimap
+    // In-place colour repaint for node + frame minimap
     // rects, avoiding a full O(N+F) Rectangle rebuild on a colour-only edit. Only
     // touches Fill/Stroke (brushes are cached in _brushCache); positions/sizes are
     // untouched. A cache miss (vm not yet rendered) is skipped — it can't occur
@@ -658,7 +657,7 @@ public sealed partial class MiniMapOverlay : UserControl
     // ViewportRect, which already sets e.Handled) bubbled up to the
     // canvas's OnHostPointerPressed and started a marquee, which raced
     // the Tapped-driven CenterRequested pan jump and wedged Architect
-    // (Majo, 2026-05-24: "clicking on the map to jump the app froze
+    // (Majo: "clicking on the map to jump the app froze
     // and had to be closed via external help"). ViewportRect's own
     // PointerPressed handler already marks events handled at the inner
     // level, so this root-level guard only fires for events that no
@@ -675,7 +674,7 @@ public sealed partial class MiniMapOverlay : UserControl
     /// a cached shared instance for repeated colour+alpha pairs. Falls back to a
     /// neutral grey on parse failure so a malformed HeaderColorHex doesn't blank
     /// the minimap entry. The <paramref name="defaultAlpha"/> applies only to
-    /// #RRGGBB inputs. [P2] Caching collapses the per-node / per-frame brush
+    /// #RRGGBB inputs. Caching collapses the per-node / per-frame brush
     /// allocation that fired on every Rebuild() — most nodes share a category
     /// header colour, so the cache hit-rate is high.
     /// </summary>

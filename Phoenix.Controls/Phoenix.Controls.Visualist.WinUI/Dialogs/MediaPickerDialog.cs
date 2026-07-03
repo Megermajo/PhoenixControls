@@ -22,8 +22,7 @@ using Windows.Storage.Pickers;
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 
 /// <summary>
-/// Visualist WinUI regression audit 2026-05-31 (Area 3 P1) — port of the
-/// pre-T15 WinForms <c>MediaPickerDialog</c>
+/// Port of the pre-T15 WinForms <c>MediaPickerDialog</c>
 /// (Phoenix.Controls.Visualist/Forms/MediaPickerDialog.cs). Modal media browser
 /// behind the graph node "Browse Media…" gesture on Image.Load / Video.Load /
 /// Audio.Load nodes. Returns a RELATIVE media path (e.g. <c>images/welcome.png</c>)
@@ -40,12 +39,11 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// Data side reuses the existing <see cref="MediaLibrary"/> service
 /// (<see cref="MediaLibrary.Enumerate"/> / <see cref="MediaLibrary.MediaRoot"/>)
 /// that the read-only <see cref="MediaLibraryDialog"/> also consumes. The
-/// import + thumbnail decode live here in the dialog. Visualist-local per
-/// feedback_visualist_architect_chrome_independence.md.
+/// import + thumbnail decode live here in the dialog. Visualist-local.
 /// </para>
 ///
 /// <para>
-/// [DIALOG-NO-XAML-FIX 2026-06-29] No .xaml / InitializeComponent — a
+/// No .xaml / InitializeComponent — a
 /// code-constructed library ContentDialog throws XamlParseException at
 /// Application.LoadComponent when <c>new</c>'d detached (proven by the 1.0.6
 /// runtime stack trace; resource stripping never helped because the throw is in
@@ -406,7 +404,7 @@ public sealed class MediaPickerDialog : ContentDialog
             _rows.Add(new Row(item, kind));
         }
 
-        // P2 — clear any stale selection the GridView may retain across the
+        // Clear any stale selection the GridView may retain across the
         // ItemsSource rebind. WinUI's ListView/GridView can hold an object
         // reference that's no longer in the (filtered/refreshed) collection,
         // which left the primary button enabled against a phantom row even when
@@ -431,7 +429,7 @@ public sealed class MediaPickerDialog : ContentDialog
         // Decode sequentially — a serial walk keeps memory bounded. UI mutations
         // marshal back to the dispatcher per row.
         //
-        // P2 — disk-backed thumbnail cache: try MediaLibrary's cache first
+        // Disk-backed thumbnail cache: try MediaLibrary's cache first
         // (LocalAppData/Visualist/thumbcache, keyed by path + mtime). On a hit we
         // replay the cached PNG bytes straight into a BitmapImage — no re-decode.
         // On a miss we decode + downscale the source to a 96px PNG, show it, and
@@ -563,7 +561,7 @@ public sealed class MediaPickerDialog : ContentDialog
 
     private void OnGridSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // P2 — validate the selection is a row still present in the current
+        // Validate the selection is a row still present in the current
         // (possibly just-filtered) collection. A stale reference left over from a
         // prior ItemsSource would otherwise re-enable the primary button against a
         // row the user can't see.
@@ -623,7 +621,7 @@ public sealed class MediaPickerDialog : ContentDialog
             var files = await picker.PickMultipleFilesAsync();
             if (files is null || files.Count == 0) return;
 
-            // R33 — route through the single MediaLibrary.Import convention
+            // Route through the single MediaLibrary.Import convention
             // (kind subfolder + sanitize + collision-safe) instead of the prior
             // flat-copy-to-root that diverged from File→Import Media's layout.
             int imported = 0;

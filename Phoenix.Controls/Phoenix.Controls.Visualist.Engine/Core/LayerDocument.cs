@@ -68,7 +68,7 @@ namespace Phoenix.Controls.Visualist.Core
         public static LayerDocument Open(string path)
         {
             var layer = LayerSerializer.Read(path);
-            // QC50-12 — one-shot upgrade for legacy graph attributes whose
+            // One-shot upgrade for legacy graph attributes whose
             // serialised form has since changed (Particles.Emit Position /
             // Velocity moved from comma-CSV to per-component scalars). Runs
             // on load only; the canonical form is written back on the next
@@ -200,7 +200,7 @@ namespace Phoenix.Controls.Visualist.Core
         public void PushUndo()
         {
             // Serialize can throw LayerNumericValidationException when the
-            // layer holds a NaN/Infinity keyframe ( P0-7). Mirror the
+            // layer holds a NaN/Infinity keyframe. Mirror the
             // protective pattern in Undo/Redo: catch the rejection, log it
             // non-modally, and skip the snapshot rather than letting an
             // unhandled exception abort the caller's mutation flow

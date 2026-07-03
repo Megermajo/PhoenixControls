@@ -6,7 +6,7 @@ using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Hub.Core
 {
-    //  Sandbox release-note: every file.* command below resolves the
+    // Sandbox release-note: every file.* command below resolves the
     // user-supplied path against a fixed sandbox root — Paths.HubData/files.
     // Absolute paths and any ../-bearing path that escapes the root are rejected
     // and surface result.file_error without touching disk. Hub's port-18080
@@ -21,7 +21,7 @@ namespace Phoenix.Controls.Hub.Core
     // is preserved byte-for-byte.
     public partial class ScriptManager
     {
-        //  Resolved once at static init. Paths.HubData() returns the
+        // Resolved once at static init. Paths.HubData() returns the
         // Hub's data directory (solution-anchored in dev, AppBase-relative in
         // shipped builds); we tack on "/files" for the script sandbox so user
         // scripts can never reach sibling folders (logic/, layers/, config.json).
@@ -29,7 +29,7 @@ namespace Phoenix.Controls.Hub.Core
             Path.Combine(Paths.HubData(), "files"));
 
         /// <summary>
-        ///  Chroot a script-supplied path under <see cref="s_fileSandboxRoot"/>.
+        /// Chroot a script-supplied path under <see cref="s_fileSandboxRoot"/>.
         /// Returns <c>true</c> + a fully-qualified path that is guaranteed to live
         /// inside the sandbox. Returns <c>false</c> for empty / null input, absolute
         /// paths (drive-rooted or UNC), and any input whose normalised form escapes
@@ -79,7 +79,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             // P3 — file.read_text(path) — reads UTF-8 contents into result.file_content;
             // exception messages (FileNotFound, UnauthorizedAccess, IO) land in result.file_error
-            // with Content cleared.  Path is resolved under the sandbox root
+            // with Content cleared. Path is resolved under the sandbox root
             // (Paths.HubData/files); absolute paths and ../-escapes are rejected.
             _engine.RegisterCommand("file.read_text", async (args) =>
             {
@@ -117,7 +117,7 @@ namespace Phoenix.Controls.Hub.Core
             // P3 — file.write_text(path, content, append?) — writes UTF-8. Creates
             // parent directories on demand (mirrors File.AppendAllText behaviour even
             // for the overwrite path so users don't have to MkDir manually). Append=true
-            // appends; otherwise the file is replaced.  Path is resolved
+            // appends; otherwise the file is replaced. Path is resolved
             // under the sandbox root.
             _engine.RegisterCommand("file.write_text", async (args) =>
             {
@@ -157,7 +157,7 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            //  — file.read_json(path). Mirrors file.read_text but
+            // file.read_json(path). Mirrors file.read_text but
             // additionally validates that the file content is parseable JSON.
             // On parse failure the raw content still goes to result.file_content
             // (so a script can inspect it) and result.file_error carries the

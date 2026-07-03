@@ -38,7 +38,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
 {
     private DispatcherTimer? _pollTimer;
     private string? _lastPhase;
-    //  0 = no cancel in flight, 1 = cancel already initiated. Swapped
+    // 0 = no cancel in flight, 1 = cancel already initiated. Swapped
     // via Interlocked.Exchange so spamming ESC during the cancel window can't
     // race past the guard and fire OnCancelClicked twice (which would write
     // cancel.signal twice, log two "Updater cancel requested" lines, and
@@ -47,7 +47,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     // and the write that set it true.
     private int _userCancelled;
 
-    //  Watchdog state. Once the dialog observes any "swap" phase
+    // Watchdog state. Once the dialog observes any "swap" phase
     // entry (or progress effectively halts in await_hub_exit), we stamp
     // _swapWatchdogStart. The Closing handler consults
     // <see cref="WedgedDurationSeconds"/> below to decide whether to treat
@@ -59,7 +59,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     private bool _wedgedConfirmShown;
 
     /// <summary>
-    ///  Threshold (in seconds) after which a swap-phase progress
+    /// Threshold (in seconds) after which a swap-phase progress
     /// stall is treated as "the Updater appears wedged" and ESC is allowed
     /// to dismiss the dialog (with confirmation). 30s comfortably exceeds
     /// the worst observed swap duration on a healthy machine; anything
@@ -68,9 +68,9 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     private const int WedgedDurationSeconds = 30;
 
     /// <summary>
-    ///  Threshold (in seconds) after which an <c>await_hub_exit</c>
+    /// Threshold (in seconds) after which an <c>await_hub_exit</c>
     /// phase stall is treated as "the Updater is unresponsive / was killed
-    /// externally". At this point the QC42-03 wedge-confirm path may have
+    /// externally". At this point the wedge-confirm path may have
     /// fired already, but if the user dismissed it (or didn't try ESC at
     /// all) they are otherwise trapped — Hub is being held alive by a dead
     /// Updater waiting on a sentinel that will never clear. 60s is double
@@ -83,7 +83,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     private const int UnresponsiveDurationSeconds = 60;
 
     /// <summary>
-    ///  DispatcherTimer used to re-evaluate the unresponsive
+    /// DispatcherTimer used to re-evaluate the unresponsive
     /// threshold once we've entered <c>await_hub_exit</c>. Separate from
     /// the polling timer (which is driven by progress-file IO and stops
     /// firing if the Updater is dead) so the watchdog clock keeps
@@ -122,16 +122,16 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     private async void OnDialogClosing(ContentDialog sender, ContentDialogClosingEventArgs args)
     {
         // Normal terminal route — OnPollTick observed complete/failed
-        // and called Hide(). Let it through.  Volatile.Read so
+        // and called Hide(). Let it through. Volatile.Read so
         // a cancel-in-flight on another tick isn't observed pre-write.
         if (Volatile.Read(ref _userCancelled) == 1 || _lastPhase is "complete" or "failed") return;
 
-        //  Unresponsive escape — once the watchdog has surfaced
+        // Unresponsive escape — once the watchdog has surfaced
         // the "Updater appears unresponsive" banner the user has been
         // explicitly told the install is unchanged and they can dismiss.
         // ESC / close-button / OnCloseClicked should all just exit; the
         // sentinel is left in place so the next Hub launch's
-        // ClearStaleSentinel will clean it up via the QC39-09 timestamp
+        // ClearStaleSentinel will clean it up via the timestamp
         // fallback once the recorded write-time ages out.
         if (_unresponsiveSurfaced)
         {
@@ -153,7 +153,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
             return;
         }
 
-        //  Past the cancellable window — by default the swap is
+        // Past the cancellable window — by default the swap is
         // about to start or is in flight and dismissing leaves a half-
         // applied install, so block close. BUT: if no progress has been
         // observed for >WedgedDurationSeconds we treat the dialog as
@@ -168,7 +168,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
             _wedgedConfirmShown = true;
             try
             {
-                // Hub UI sweep 2026-05-22 — RequestedTheme=Dark pins the
+                // RequestedTheme=Dark pins the
                 // dialog to the coal/ember chrome; without it WinUI's
                 // ContentDialog defaults to ElementTheme.Default which
                 // pulls Fluent's light-grey title-bar and button chrome.
@@ -233,7 +233,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Returns true when the Updater has been parked on an
+    /// Returns true when the Updater has been parked on an
     /// uncancellable phase (<c>await_hub_exit</c> / <c>swap</c>) for at
     /// least <see cref="WedgedDurationSeconds"/> with no progress change.
     /// The progress-changed clock advances whenever phase / percent / text
@@ -285,7 +285,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
         _pollInFlight = true;
         try
         {
-            // [HUB-UX P2] ReadProgress() does File.Exists + File.ReadAllText +
+            // ReadProgress() does File.Exists + File.ReadAllText +
             // JsonDocument.Parse. Run it off the dispatcher so the 250 ms poll
             // never blocks the UI thread on disk IO. ConfigureAwait(true)
             // resumes on the UI thread so every mutation below stays UI-bound.
@@ -357,7 +357,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
 
         StatusText.Text = text ?? "";
 
-        //  Watchdog bookkeeping. Treat any (phase, percent, text)
+        // Watchdog bookkeeping. Treat any (phase, percent, text)
         // change as forward progress and stamp _lastProgressChangedUtc.
         // Once we first cross into await_hub_exit / swap, snapshot
         // _swapWatchdogStart so IsSwapWedged() can apply its threshold.
@@ -376,9 +376,9 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
         if (phase is "await_hub_exit" or "swap" && _swapWatchdogStart is null)
             _swapWatchdogStart = DateTime.UtcNow;
 
-        //  Start the unresponsive watchdog the first time we
+        // Start the unresponsive watchdog the first time we
         // observe await_hub_exit. swap is excluded — a slow swap is best
-        // handled by the QC42-03 wedge-confirm path because aborting
+        // handled by the wedge-confirm path because aborting
         // mid-swap leaves a half-applied install, whereas await_hub_exit
         // is pre-swap and dismissing is safe (install is untouched).
         if (phase == "await_hub_exit" && _unresponsiveWatchdog is null)
@@ -390,7 +390,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Spins up a 1 s DispatcherTimer that re-evaluates
+    /// Spins up a 1 s DispatcherTimer that re-evaluates
     /// <see cref="IsUpdaterUnresponsive"/> on every tick. Once the
     /// threshold trips, the timer surfaces the inline banner + Close
     /// button and self-stops — it's a one-shot escalation, not a
@@ -428,7 +428,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Returns true when the dialog has been parked on
+    /// Returns true when the dialog has been parked on
     /// <c>await_hub_exit</c> for ≥<see cref="UnresponsiveDurationSeconds"/>
     /// without any progress write. Distinct from
     /// <see cref="IsSwapWedged"/> — that path covers the swap phase and
@@ -444,7 +444,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Reveals the unresponsive banner + Close button and
+    /// Reveals the unresponsive banner + Close button and
     /// hides the now-stale Cancel button. Logging is at System level so
     /// the SystemLog panel shows the user-visible recovery affordance
     /// without spamming Debug.
@@ -475,7 +475,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     }
 
     /// <summary>
-    ///  Handler for the watchdog-only Close button. Hide() triggers
+    /// Handler for the watchdog-only Close button. Hide() triggers
     /// the Closing handler, which observes <see cref="_unresponsiveSurfaced"/>
     /// and lets the dismissal proceed without confirmation.
     /// </summary>
@@ -485,7 +485,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     }
 
     /// <summary>
-    /// HUB-UX P2 — paints the dialog into a failure state on terminal
+    /// Paints the dialog into a failure state on terminal
     /// phases. On "failed" we tint the progress bar red, surface the
     /// warning glyph next to the eyebrow, and flip the dialog frame
     /// border to ErrBrush so the whole window reads as "this didn't
@@ -536,7 +536,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
     /// </summary>
     private async void OnCancelClicked(object sender, RoutedEventArgs e)
     {
-        //  Single-shot guard. Two cancel paths can collide here:
+        // Single-shot guard. Two cancel paths can collide here:
         // direct button click, ESC → OnDialogClosing → re-invocation, and
         // the watchdog-confirm path. Interlocked.Exchange returns the
         // PREVIOUS value, so the first caller sees 0 (proceed) and every
@@ -553,7 +553,7 @@ public sealed partial class UpdaterProgressDialog : ContentDialog
         try
         {
             string path = UpdateChecker.CancelSignalFilePath;
-            //  P1: cancel.signal is tiny (a single ISO-8601 string),
+            // cancel.signal is tiny (a single ISO-8601 string),
             // but File.WriteAllText still blocks the dispatcher. Task.Run is
             // the minimal-touch fix — it keeps OnCancelClicked's signature
             // compatible with the two direct-invocation call sites that

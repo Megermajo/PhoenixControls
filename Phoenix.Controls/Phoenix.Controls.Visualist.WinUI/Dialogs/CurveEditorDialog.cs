@@ -20,7 +20,7 @@ using XamlPath = Microsoft.UI.Xaml.Shapes.Path;
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 
 /// <summary>
-/// B27 (audit/winui-regressions-2026-05-24) — curve editor reached from the
+/// Curve editor reached from the
 /// timeline scrubber's right-click "Edit Curve…" item on a keyframe marker.
 ///
 /// On <see cref="ShowAsync"/>:
@@ -34,11 +34,10 @@ namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
 /// On "Save" (Primary), copies the picked curve + handles back to the
 /// keyframe model. "Cancel" leaves the keyframe alone.
 ///
-/// Per feedback_visualist_architect_chrome_independence.md the dialog stays
-/// Visualist-local — no Shared lift.
+/// The dialog stays Visualist-local — no Shared lift.
 /// </summary>
 ///
-// [DIALOG-NO-XAML-FIX 2026-06-29] No .xaml / InitializeComponent — a
+// No .xaml / InitializeComponent — a
 // code-constructed library ContentDialog throws XamlParseException at
 // Application.LoadComponent when `new`'d detached (proven by the 1.0.6 runtime
 // stack trace; resource stripping never helped because the throw is in the XAML
@@ -208,7 +207,7 @@ public sealed class CurveEditorDialog : ContentDialog
 
         PrimaryButtonClick += OnSaveClicked;
 
-        // R49 — route the strings the WinUI port left hardcoded through the
+        // Route the strings the WinUI port left hardcoded through the
         // Localizer (fallbacks preserve the current English text).
         ApplyLocalization();
 
@@ -345,7 +344,7 @@ public sealed class CurveEditorDialog : ContentDialog
         StepPill     .IsChecked = _curve == KeyframeCurve.Step;
         // Inform the user when handles are inert — the preview still updates
         // so they can compare curves, but the drag handles are only writable
-        // for Bezier. R59 (P3): spell out the asymmetric clamp so users know
+        // for Bezier. Spell out the asymmetric clamp so users know
         // why a handle dragged above/below the box "sticks" at the edge yet the
         // curve still bounces — X is constrained, Y may overshoot.
         BezierHint.Text = _curve == KeyframeCurve.Bezier
@@ -527,7 +526,7 @@ public sealed class CurveEditorDialog : ContentDialog
     // curves (bounce / anticipation) keep their honest value and are written
     // back on Save; only the on-screen handle dot + tangent endpoint are
     // boxed so they don't escape the preview frame. The readout shows the true
-    // (possibly out-of-range) value. This is what the lines 336-339 comment
+    // (possibly out-of-range) value. This is what the pointer-move comment
     // always claimed but the prior code never actually did (no render clamp).
     private static double LogicalToSurfaceYClamped(double cy, double h)
         => LogicalToSurfaceY(Math.Clamp(cy, 0, 1), h);

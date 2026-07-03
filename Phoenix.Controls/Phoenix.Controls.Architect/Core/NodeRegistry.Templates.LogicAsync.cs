@@ -4,7 +4,7 @@ using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.Core
 {
-    //  — small-band carve: LOGIC (comparison/gate adders) +
+    // Small-band carve: LOGIC (comparison/gate adders) +
     // ASYNC/SYNC (Async.Delay / Timeout / Parallel / Join, Async wait
     // primitives, Chat.* peek/wait helpers). Two thematically-related
     // groups bundled into one partial since each on its own is too
@@ -69,7 +69,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("OnTime", ColExec), ("Late", ColExec) },
                 new Dictionary<string, string> { { "MS", "5000" } });
 
-            // M15 — branch fan-out raised from 3 → 8 (Branch1..Branch8), mirroring
+            // Branch fan-out raised from 3 → 8 (Branch1..Branch8), mirroring
             // L15's Array.Make and sweep 7's Logic.Switch / Logic.Sequence raise.
             // GraphSerializer.MigrateNodes back-fills the new Branch4..Branch8
             // sockets on load, so saved graphs keep working — extra branches are

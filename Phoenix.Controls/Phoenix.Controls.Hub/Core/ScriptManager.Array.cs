@@ -35,7 +35,7 @@ namespace Phoenix.Controls.Hub.Core
                     ?? (IReadOnlyList<string>)args;
                 return items.Count >= 1 ? string.Join(",", items) : null;
             });
-            // M18 — clamp out-of-range index instead of silently swallowing it as
+            // Clamp out-of-range index instead of silently swallowing it as
             // empty string. Sets result._oob_clamped = "true" when clamping kicks
             // in so downstream graphs can branch on the error pin if any. Empty
             // arrays bypass clamping (no valid index exists) and return "" with
@@ -63,13 +63,13 @@ namespace Phoenix.Controls.Hub.Core
                 _engine.SetLocalResultVar("result._oob_clamped", "false");
                 return parts[idx];
             });
-            // M19 — empty list → length 0. The previous `Split(',').Length` returns
+            // Empty list → length 0. The previous `Split(',').Length` returns
             // 1 for an empty string, which disagreed with for_each iterating 0 times.
             _engine.RegisterCommand("array.length", async (args) => {
                 string list = _engine.CurrentBoundArgs?.GetOrDefault<string>("List", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 return string.IsNullOrEmpty(list) ? "0" : list.Split(',').Length.ToString(CultureInfo.InvariantCulture);
             });
-            // M20 — case-sensitive ordinal compare is the unified default across
+            // Case-sensitive ordinal compare is the unified default across
             // array.contains / array.filter (and any future array.indexof). The
             // optional 3rd arg "ignore_case" / "true" opts in to a case-insensitive
             // compare for callers that need it. Previously array.contains used
@@ -94,7 +94,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (string.IsNullOrEmpty(value) && string.IsNullOrEmpty(list)) return null;
                 return string.IsNullOrEmpty(list) ? value : $"{list},{value}";
             });
-            // M20 — case-sensitive ordinal substring match by default; opt-in
+            // Case-sensitive ordinal substring match by default; opt-in
             // via 3rd-arg ignore_case flag. Previously this used the default
             // string.Contains (culture-sensitive) which disagreed with the
             // ordinal compare in array.contains.
@@ -115,7 +115,7 @@ namespace Phoenix.Controls.Hub.Core
         {
             // ── Array slice ──────────────────────────────────────────────────
             // array.slice(array, start_index) — returns sliced array (comma-separated)
-            // M18 — clamp out-of-range start instead of silently returning empty.
+            // Clamp out-of-range start instead of silently returning empty.
             // Negative starts clamp to 0; starts past the end clamp to length (i.e.
             // an empty slice but with _oob_clamped=true so callers can detect it).
             _engine.RegisterCommand("array.slice", async (args) => {

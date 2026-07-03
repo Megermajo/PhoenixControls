@@ -4,7 +4,7 @@ using System.Drawing;
 namespace Phoenix.Controls.Shared.Services
 {
     /// <summary>
-    ///  — DPI scaling helper for code paths that compute pixel sizes
+    /// DPI scaling helper for code paths that compute pixel sizes
     /// outside the WinForms AutoScale pipeline. Use this for:
     /// <list type="bullet">
     ///   <item><description>Canvas rendering math (pixel-perfect drawing where the

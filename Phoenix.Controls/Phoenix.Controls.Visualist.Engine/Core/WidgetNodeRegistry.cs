@@ -11,7 +11,7 @@ namespace Phoenix.Controls.Visualist.Core
     /// WidgetNodeRegistry — Phase 4 / Phase 5 catalog of node templates available
     /// inside the per-widget node editor.
     ///
-    /// Pruned to **visual + math only** per Q8 contract (no DB / Bus / Twitch / AI / HTTP / System nodes;
+    /// Pruned to **visual + math only** (no DB / Bus / Twitch / AI / HTTP / System nodes;
     /// those live in Architect's NodeRegistry and are off-limits for visual graphs).
     ///
     /// Phase 4 lands the registry skeleton + categories; Phase 5 populates with concrete templates.
@@ -27,18 +27,18 @@ namespace Phoenix.Controls.Visualist.Core
             IReadOnlyDictionary<string, string> DefaultAttributes);
 
         // ─────────────────────────────────────────────────────────────────────
-        // M65 — Allowed-category drift note.
+        // Allowed-category drift note.
         //
         // the project docs currently documents the visual-side spec as:
         //     AllowedCategories = { Inputs, Image, Math, Vector, Triggers, Sink, Debug }
         //
-        // "Text" was added in sweep N — Caption.LiveCaption + Text.Render need it
+        // "Text" was added because Caption.LiveCaption + Text.Render need it
         // to render captioned/translated streams without forcing them through the
         // Inputs bucket. The category is intentional and stays. Update the project docs
         // spec accordingly in next doc pass; until then this comment is the
         // canonical justification so future sweeps don't quietly remove it.
         //
-        // QC22-07 (2026-05-16) — Caption.LiveCaption was inadvertently registered
+        // Caption.LiveCaption was inadvertently registered
         // under "Inputs" instead of "Text"; the registration has now been moved
         // to "Text" in NodeTemplates.cs so the catalog matches this docstring.
         // Text.Render / Text.Translate were already correctly "Text".
@@ -53,17 +53,17 @@ namespace Phoenix.Controls.Visualist.Core
             "Image",
             "Math",
             "Vector",
-            // L44 — "Triggers" is shared between Architect and Visualist by name only.
+            // "Triggers" is shared between Architect and Visualist by name only.
             // Architect: flow-driven — Triggers fire scripts.
             // Visualist: tab/pull model — Triggers are subscriptions widgets pull from.
-            // Same category name, different runtime semantics. See
-            // `WidgetNodeRegistry.AllowedCategories` rationale (M65 block above) for the
-            // companion drift note covering this set as a whole.
+            // Same category name, different runtime semantics. See the
+            // allowed-category drift note above for the
+            // companion rationale covering this set as a whole.
             "Triggers",
             "Sink",
             "Debug",
             "Text",
-            // Track D — widget-local pure-data bands. Strictly visual/math:
+            // Widget-local pure-data bands. Strictly visual/math:
             //   "Time"    — design-time clock-driven scalars (Oscillator, Easing, …).
             //   "String"  — string transforms (Concat, Upper, Slice, …).
             //   "Convert" — type bridges (NumberToString, HexToColor, …).
@@ -76,7 +76,7 @@ namespace Phoenix.Controls.Visualist.Core
 
         // Categories that MUST NOT appear (Architect's domain).
         //
-        //  Aligned to the actual Architect category names — the prior list
+        // Aligned to the actual Architect category names — the prior list
         // ({DB, Database, Twitch, HTTP, Streamer.bot}) was authored against a different
         // naming scheme and only "Bus" / "AI" / "System" ever matched anything real.
         // Cross-referenced against `Category =` in NodeRegistry.Templates.*.cs:
@@ -99,7 +99,7 @@ namespace Phoenix.Controls.Visualist.Core
         public static IReadOnlyDictionary<string, NodeTemplate> Templates => _templates;
 
         // ─────────────────────────────────────────────────────────────────────
-        // F17 — Per-template tooltip overrides.
+        // Per-template tooltip overrides.
         //
         // The NodeTemplate record carries no Tooltip/Description field today, but
         // some templates need extra warnings surfaced to the editor (and to tests).
@@ -116,7 +116,7 @@ namespace Phoenix.Controls.Visualist.Core
             new(StringComparer.OrdinalIgnoreCase)
             {
                 // ── Inputs ────────────────────────────────────────────────
-                // Tooltip text moved to Localizer locale files in 1c5e499. Alpha
+                // Tooltip text moved to Localizer locale files. Alpha
                 // guidance for Image.Load / Image.LoadUrl / Video.Load now lives
                 // in those locale resources rather than inline strings — see the
                 // visualist.node.bubble.* keys in the i18n bundle. Keep the
@@ -203,7 +203,7 @@ namespace Phoenix.Controls.Visualist.Core
         public static string? GetTooltip(string title) =>
             _tooltips.TryGetValue(title, out var t) ? t : null;
 
-        // L43 (sweep 8) — UE-Blueprints glyph titles for math operators. The
+        // UE-Blueprints glyph titles for math operators. The
         // canonical Title (e.g. "Math.Div") stays the dictionary key for
         // serialisation and template lookup; the override is consulted only by
         // renderers via GetDisplayTitle. The actual templates live in

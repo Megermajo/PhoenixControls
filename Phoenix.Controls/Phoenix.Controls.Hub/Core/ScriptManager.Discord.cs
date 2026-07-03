@@ -160,7 +160,7 @@ namespace Phoenix.Controls.Hub.Core
                         ? stored
                         : urlArg;
 
-                    //  SSRF guardrail — the webhook URL is script-derived (and
+                    // SSRF guardrail — the webhook URL is script-derived (and
                     // ultimately chat-derived via {var.*} substitution). Without this gate
                     // a malicious viewer could coax a Hub-running script into POSTing the
                     // chat message to http://127.0.0.1:18081/ (Bus), http://127.0.0.1:11434/
@@ -200,7 +200,7 @@ namespace Phoenix.Controls.Hub.Core
     }
 
     /// <summary>
-    ///  SSRF guardrail for <c>discord.webhook</c>. Validates that the
+    /// SSRF guardrail for <c>discord.webhook</c>. Validates that the
     /// webhook URL targets a Discord-owned hostname over HTTPS and that every
     /// IP the hostname resolves to is a public, routable address. Rejects:
     ///   * non-https schemes

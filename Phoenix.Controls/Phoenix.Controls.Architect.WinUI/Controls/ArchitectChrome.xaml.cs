@@ -39,15 +39,14 @@ public sealed partial class ArchitectChrome : UserControl
     public event EventHandler? FileSaveRequested;
 
     /// <summary>Raised by File → Save As... or Ctrl+Shift+S — MainView always
-    /// shows the picker even when a path is already loaded. Architect UX
-    /// review P1-31.</summary>
+    /// shows the picker even when a path is already loaded.</summary>
     public event EventHandler? FileSaveAsRequested;
 
     /// <summary>Raised by File → Export to .phx — MainWindow runs ScriptExporter.Export.</summary>
     public event EventHandler? FileExportRequested;
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #5) — Raised by File → Restore previous version…
+    /// 0.10.0 — Raised by File → Restore previous version…
     /// MainView shows a ContentDialog listing the existing
     /// <c>.phxg.bak[1-3]</c> rolling backups by timestamp; picking one
     /// restores it as the active file and reloads.
@@ -87,7 +86,7 @@ public sealed partial class ArchitectChrome : UserControl
     /// <summary>Raised by View → Show Grid toggle. Carries the new IsChecked state.</summary>
     public event EventHandler<bool>? ViewShowGridToggled;
     /// <summary>
-    ///  — Raised by View → Minimap toggle. Carries the new
+    /// Raised by View → Minimap toggle. Carries the new
     /// IsChecked state; MainView routes to LogicCanvasView.SetMinimapVisible
     /// which flips the overlay's Visibility AND persists into
     /// AppConfig.ArchitectMinimapVisible.
@@ -97,7 +96,7 @@ public sealed partial class ArchitectChrome : UserControl
     public event EventHandler? HelpNodeRefRequested;
 
     /// <summary>
-    ///  P1-A16 — Raised by Script → Sync Event Peers. MainView
+    /// Raised by Script → Sync Event Peers. MainView
     /// routes to <c>LogicCanvasView.RequestSyncEventPeersFromShell()</c>,
     /// which kicks the existing debounced cross-file sync timer (the same
     /// path used by wire-drop and event-rename edits).
@@ -105,7 +104,7 @@ public sealed partial class ArchitectChrome : UserControl
     public event EventHandler? ScriptSyncEventPeersRequested;
 
     /// <summary>
-    ///  P1-A17 — Raised by Help → Keyboard Shortcuts…. MainView
+    /// Raised by Help → Keyboard Shortcuts…. MainView
     /// pops <see cref="Dialogs.KeyboardShortcutsDialog"/> as a
     /// ContentDialog; also reachable from F1 when no node is selected.
     /// </summary>
@@ -113,11 +112,11 @@ public sealed partial class ArchitectChrome : UserControl
 
     /// <summary>Raised by View → Bookmarks legend… — MainView opens the
     /// bookmark legend flyout on the canvas so users can discover the
-    /// Ctrl+1..9 / Alt+1..9 chords. 0.10.0 UX P2.</summary>
+    /// Ctrl+1..9 / Alt+1..9 chords. 0.10.0.</summary>
     public event EventHandler? ViewBookmarksRequested;
 
     /// <summary>
-    /// B11 (audit/winui-regressions-2026-05-24) — Raised by View →
+    /// Raised by View →
     /// Toggle Inspector (and by the F4 canvas chord, which MainView
     /// bridges into the same handler). MainView flips the inspector
     /// column's expanded / rolled-up state through the same plumbing
@@ -148,16 +147,15 @@ public sealed partial class ArchitectChrome : UserControl
     }
 
     // Routes every menu item / menu name through Localizer.T after
-    // InitializeComponent. Each chrome owns its own LocalizeMenu impl per
-    // feedback_visualist_architect_chrome_independence.md — Architect's keys
-    // are namespaced under chrome.architect.*; Visualist's under
+    // InitializeComponent. Each chrome owns its own LocalizeMenu impl —
+    // Architect's keys are namespaced under chrome.architect.*; Visualist's under
     // chrome.visualist.*; common menu titles share chrome.menu.*.
     private void LocalizeMenu()
     {
         MenuFile.Title = Localizer.T("chrome.menu.file", "File");
         MenuEdit.Title = Localizer.T("chrome.menu.edit", "Edit");
         MenuView.Title = Localizer.T("chrome.menu.view", "View");
-        //  P1-A16 — Script menu localization. Mirrors the
+        // Script menu localization. Mirrors the
         // pre-T15 "architect.mainform.menu.script" key family so any
         // translation work that already covered the WinForms suite still
         // resolves the same way under the WinUI chrome.
@@ -181,16 +179,16 @@ public sealed partial class ArchitectChrome : UserControl
 
         MenuViewFrame.Text    = Localizer.T("chrome.architect.view.frameSelection", "Frame Selection");
         MenuViewShowGrid.Text = Localizer.T("chrome.architect.view.showGrid",       "Show Grid");
-        //  — Minimap toggle. Namespaced under chrome.architect.view.*
+        // Minimap toggle. Namespaced under chrome.architect.view.*
         // alongside Show Grid / Live Debug so the localization workflow groups
         // canvas-view toggles together.
         MenuViewMinimap.Text  = Localizer.T("chrome.architect.view.minimap",        "Minimap");
         LiveDebugToggle.Text  = Localizer.T("chrome.architect.view.liveDebug",      "Live Debug Trace");
-        // B11 (audit/winui-regressions-2026-05-24) — Toggle Inspector.
+        // Toggle Inspector.
         MenuViewToggleInspector.Text = Localizer.T("chrome.architect.view.toggleInspector", "Toggle Inspector");
 
         MenuHelpNodeRef.Text = Localizer.T("chrome.architect.help.nodeReference", "Node Reference");
-        //  P1-A16 / P1-A17 — Script menu + Help → Keyboard Shortcuts…
+        // Script menu + Help → Keyboard Shortcuts…
         // localization. Pre-T15 keys: "architect.mainform.menu.script.sync_event_peers"
         // and "architect.mainform.menu.help.shortcuts".
         MenuScriptSyncEventPeers.Text = Localizer.T("chrome.architect.script.syncEventPeers", "Sync Event Peers");
@@ -234,7 +232,7 @@ public sealed partial class ArchitectChrome : UserControl
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #3) — sync the "Show Grid" toggle's IsChecked
+    /// 0.10.0 — sync the "Show Grid" toggle's IsChecked
     /// without firing the menu-flyout Click handler. Used by
     /// MainView.ApplyPersistedLayoutAndState to restore the persisted state
     /// silently (no toggle event roundtrip).
@@ -246,7 +244,7 @@ public sealed partial class ArchitectChrome : UserControl
     }
 
     /// <summary>
-    ///  — sync the "Minimap" toggle's IsChecked without firing the
+    /// Sync the "Minimap" toggle's IsChecked without firing the
     /// menu Click handler. Used by MainView's layout-restore path so the
     /// persisted state lands silently AND by the in-overlay × glyph path
     /// (LogicCanvasView raises MinimapVisibilityChanged; MainView listens
@@ -259,7 +257,7 @@ public sealed partial class ArchitectChrome : UserControl
     }
 
     /// <summary>
-    /// 0.10.0 (arch-ux-state #3) — sync the "Live Debug Trace" toggle's
+    /// 0.10.0 — sync the "Live Debug Trace" toggle's
     /// IsChecked silently. Routed through SetField-less for parity with the
     /// ShowGrid sister.
     /// </summary>
@@ -303,7 +301,7 @@ public sealed partial class ArchitectChrome : UserControl
     }
 
     /// <summary>
-    ///  Reflect the undo/redo stack depth onto the
+    /// Reflect the undo/redo stack depth onto the
     /// Edit-menu items so they grey out when there's nothing to undo/redo
     /// (pre-fix they stayed enabled and an empty-stack undo silently no-op'd).
     /// Pushed by MainView from the canvas's UndoRedoChanged signal.
@@ -341,7 +339,7 @@ public sealed partial class ArchitectChrome : UserControl
             ViewShowGridToggled?.Invoke(this, t.IsChecked);
     }
 
-    //  — View → Minimap toggle. Routes to MainView →
+    // View → Minimap toggle. Routes to MainView →
     // LogicCanvasView.SetMinimapVisible which flips Visibility + persists.
     private void OnViewMinimapClicked(object sender, RoutedEventArgs e)
     {
@@ -355,15 +353,15 @@ public sealed partial class ArchitectChrome : UserControl
     private void OnViewBookmarksClicked(object sender, RoutedEventArgs e)
         => ViewBookmarksRequested?.Invoke(this, EventArgs.Empty);
 
-    // B11 (audit/winui-regressions-2026-05-24) — View → Toggle Inspector.
+    // View → Toggle Inspector.
     private void OnViewToggleInspectorClicked(object sender, RoutedEventArgs e)
         => InspectorToggleRequested?.Invoke(this, EventArgs.Empty);
 
-    //  P1-A16 — Script → Sync Event Peers.
+    // Script → Sync Event Peers.
     private void OnScriptSyncEventPeersClicked(object sender, RoutedEventArgs e)
         => ScriptSyncEventPeersRequested?.Invoke(this, EventArgs.Empty);
 
-    //  P1-A17 — Help → Keyboard Shortcuts….
+    // Help → Keyboard Shortcuts….
     private void OnHelpShortcutsClicked(object sender, RoutedEventArgs e)
         => HelpKeyboardShortcutsRequested?.Invoke(this, EventArgs.Empty);
 

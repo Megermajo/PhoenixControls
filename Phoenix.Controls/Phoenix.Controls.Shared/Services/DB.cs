@@ -1,4 +1,4 @@
-//  — Concurrency / retention / WAL invariants
+// Concurrency / retention / WAL invariants
 // ---------------------------------------------------
 // 1. `_lock` is a SemaphoreSlim(1,1) and is NON-REENTRANT. A handler that
 //    holds it and re-enters another DB.* method on the SAME async context
@@ -30,7 +30,7 @@ namespace Phoenix.Controls.Shared.Services
 {
     public partial class DB : IDisposable, IScriptDb
     {
-        // BH-018 — double-checked locking on the singleton accessor. The previous
+        // Double-checked locking on the singleton accessor. The previous
         // `??=` is not thread-safe; concurrent first-touch paths (Hub launching
         // Architect via several Task.Run(() => DB.Instance.Initialize())
         // sites) could each construct a DB and run the WAL/DDL block
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Shared.Services
 
         /// <summary>
         /// True when Initialize ran and the underlying SqliteConnection is open.
-        /// Surface for the Hub status strip (P2) and any health probe; cheap to call.
+        /// Surface for the Hub status strip and any health probe; cheap to call.
         /// </summary>
         public bool IsHealthy => _connection != null && _connection.State == ConnectionState.Open;
 
@@ -68,7 +68,7 @@ namespace Phoenix.Controls.Shared.Services
         private SqliteConnection? _connection;
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
 
-        //  (P1-16) — re-entry guard. SemaphoreSlim is non-reentrant;
+        // Re-entry guard. SemaphoreSlim is non-reentrant;
         // a DB.* method that calls another DB.* method on the same async
         // context (e.g. ClearTableAsync awaits LogEventAsync internally)
         // would deadlock under the bare WaitAsync. AsyncLocal flows through
@@ -77,7 +77,7 @@ namespace Phoenix.Controls.Shared.Services
         // Use only via AcquireLockAsync / ReleaseLock — never read directly.
         private static readonly AsyncLocal<bool> _heldByThisAsyncCtx = new();
 
-        //  (P1-P3) — periodic WAL checkpoint. SQLite only auto-
+        // Periodic WAL checkpoint. SQLite only auto-
         // checkpoints when the WAL reaches ~1000 pages (~4MB) so a quiet but
         // long-running Hub session can otherwise grow the .wal file far past
         // the main .db. The timer runs PRAGMA wal_checkpoint(RESTART) every
@@ -86,13 +86,13 @@ namespace Phoenix.Controls.Shared.Services
         private System.Threading.Timer? _walCheckpointTimer;
         private static readonly TimeSpan WalCheckpointInterval = TimeSpan.FromMinutes(30);
 
-        // BH-011 — Initialize is sync (callers don't await), so racing threads
+        // Initialize is sync (callers don't await), so racing threads
         // could each pass the early-out check and double-Open a SqliteConnection.
         // A dedicated sync lock guards the init body without entangling the
         // async _lock that serializes per-query access.
         private readonly object _initLock = new();
 
-        //  One-shot disposal flag. Read/written under _initLock. Once
+        // One-shot disposal flag. Read/written under _initLock. Once
         // set, EnsureConnected refuses to resurrect the connection and the
         // public surface throws ObjectDisposedException. The singleton-null
         // step in Dispose() means production callers normally just get a
@@ -104,7 +104,7 @@ namespace Phoenix.Controls.Shared.Services
         private DB()
         {
             // Shared across Hub and Architect — AppData ensures both processes find the same file.
-            // Filename bumped to phoenix_v3.db as part of T14's brand alignment (Majo
+            // Filename bumped to phoenix_v3.db as part of the brand alignment (Majo
             // confirmed no installed clients on the legacy sovereign_v2.db naming, so
             // the rename ships without a migration shim — fresh installs and existing
             // dev installs alike just get a new DB next to the old one if any).
@@ -114,11 +114,11 @@ namespace Phoenix.Controls.Shared.Services
 
         public void Initialize(string? customPath = null)
         {
-            // BH-011 — guard the entire body with _initLock so concurrent callers
+            // Guard the entire body with _initLock so concurrent callers
             // can't both pass the early-out check and double-Open a connection.
             lock (_initLock)
             {
-                //  Singleton lifecycle: once Dispose has torn the
+                // Singleton lifecycle: once Dispose has torn the
                 // shared connection down, any subsequent Initialize on the
                 // same instance is a bug — the test seam in Dispose() also
                 // nulls _instance so the next DB.Instance access yields a
@@ -126,7 +126,7 @@ namespace Phoenix.Controls.Shared.Services
                 if (_disposed)
                     throw new ObjectDisposedException(nameof(DB));
 
-                //  If the connection is already open and the caller
+                // If the connection is already open and the caller
                 // wants to redirect the singleton to a NEW path, that is a
                 // hard error — switching the backing file out from under
                 // already-acquired connection handles silently re-routes every
@@ -164,7 +164,7 @@ namespace Phoenix.Controls.Shared.Services
 
                 GlobalLogger.Log($"Phoenix Controls databank initialized at: {_dbPath}", "System.DB");
 
-                // BH-026 — verify the on-disk DB is structurally valid BEFORE
+                // Verify the on-disk DB is structurally valid BEFORE
                 // wal_checkpoint or DDL runs. A SHM/wal-index desync (observed
                 // 2026-05-08 on the live phoenix_v3.db) can leave the WAL holding
                 // commit frames whose `db_size_after_commit` field truncates the
@@ -186,7 +186,7 @@ namespace Phoenix.Controls.Shared.Services
                     _connection.Open();
                 }
 
-                // BH-026 — drain any stale WAL/SHM state by toggling journal_mode
+                // Drain any stale WAL/SHM state by toggling journal_mode
                 // through DELETE before re-enabling WAL. The 2026-05-08 corruption
                 // was driven by a stale wal-index in the .db-shm carrying a
                 // smaller `db_size` view than the main file, so every subsequent
@@ -207,7 +207,7 @@ namespace Phoenix.Controls.Shared.Services
                     try
                     {
                         using var drain = new SqliteCommand("PRAGMA journal_mode=DELETE;", _connection);
-                        //  Cap the lock-wait like every other
+                        // Cap the lock-wait like every other
                         // command in this file. Without it the drain inherits
                         // Microsoft.Data.Sqlite's 30s default command timeout, so
                         // a DELETE checkpoint blocked by the boot log-writer
@@ -235,7 +235,7 @@ namespace Phoenix.Controls.Shared.Services
                     command.ExecuteNonQuery();
                 }
 
-                //  Flush pending WAL data so external tools
+                // Flush pending WAL data so external tools
                 // (e.g. the VS Code SQLite viewer) see recent state. PASSIVE, not
                 // TRUNCATE: TRUNCATE takes an exclusive lock and waits for every
                 // other connection to release — at boot the GlobalLogger writer
@@ -291,7 +291,7 @@ namespace Phoenix.Controls.Shared.Services
                 // Timestamp. Without these indexes the boot-time sweep degraded
                 // to a full table scan + WAL drain that landed at ~31 s on
                 // user installs that had been running for weeks (DB.Initialize
-                // end (elapsed 31643ms) — Hub UI sweep 2026-05-22). Cheap to
+                // end, elapsed 31643ms). Cheap to
                 // build once; pays back every subsequent retention sweep and
                 // any future Timestamp-range query.
                 string createTimestampIndexes = @"
@@ -308,8 +308,8 @@ namespace Phoenix.Controls.Shared.Services
                 using (var cmd = new SqliteCommand(GiveawayTablesDdl, _connection))
                     cmd.ExecuteNonQuery();
 
-                //  (P1-P2) — retention sweep for the unbounded append-
-                // only tables. `EventLog` (every external trigger + L18 audit
+                // Retention sweep for the unbounded append-
+                // only tables. `EventLog` (every external trigger + audit
                 // event) and `SystemHistory` (every GlobalLogger.Log) otherwise
                 // accumulate at ~thousands of rows per active streaming hour.
                 // Reads AppConfig.LogRetentionDays from the loaded config (or
@@ -317,7 +317,7 @@ namespace Phoenix.Controls.Shared.Services
                 // Set the field to 0 (or negative) to disable the sweep —
                 // useful when forensic capture of full history is required.
                 //
-                // Hub UI sweep 2026-05-22: deferred off the synchronous boot
+                // Deferred off the synchronous boot
                 // path. Previously this DELETE ran inline inside Initialize,
                 // pinning the splash for the full sweep duration. Now it's
                 // dispatched to AsyncErrorBoundary right after the WAL
@@ -332,7 +332,7 @@ namespace Phoenix.Controls.Shared.Services
                         "System.DB", "RetentionSweep");
                 }
 
-                //  (P1-P3) — periodic WAL checkpoint. The TRUNCATE
+                // Periodic WAL checkpoint. The TRUNCATE
                 // above only runs once per process; without this timer the
                 // .wal file grows unbounded between Hub restarts as writes
                 // accumulate beyond SQLite's ~1000-page auto-checkpoint
@@ -361,7 +361,7 @@ namespace Phoenix.Controls.Shared.Services
         public Task RunRetentionSweepNowAsync(int retentionDays)
             => RunRetentionSweepAsync(retentionDays);
 
-        // Hub UI sweep 2026-05-22 — retention sweep body, run off the boot
+        // Retention sweep body, run off the boot
         // path. Acquires the shared connection lock so it can't race a
         // script-driven write, and uses the dedicated idx_eventlog_ts /
         // idx_systemhistory_ts indexes created during Initialize so the
@@ -406,7 +406,7 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
-        //  (P1-P3) — periodic WAL checkpoint body. Routed through the
+        // Periodic WAL checkpoint body. Routed through the
         // shared `_lock` so it can't race a concurrent script-driven write,
         // and through AsyncErrorBoundary so a transient checkpoint failure
         // (SQLITE_BUSY when a long reader holds back the truncate) is logged
@@ -430,7 +430,7 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
-        // BH-026 — structural-validity gate. Caller MUST hold _initLock and
+        // Structural-validity gate. Caller MUST hold _initLock and
         // _connection MUST be open. Returns true when SQLite reports "ok" for
         // the entire DB. Any non-"ok" row OR a SqliteException (corruption,
         // missing-page, cantopen) is treated as unhealthy so the caller falls
@@ -459,7 +459,7 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
-        // BH-026 — moves the corrupt .db / .db-wal / .db-shm trio out of the
+        // Moves the corrupt .db / .db-wal / .db-shm trio out of the
         // way so a fresh Initialize sweep can recreate the databank in place.
         // Files land under <dir>/quarantine/<utc-stamp>/ alongside the original
         // location; both Hub status surfaces and any future support tooling can
@@ -604,7 +604,7 @@ namespace Phoenix.Controls.Shared.Services
             }
             catch (Exception ex)
             {
-                // [P1] EnsureConnected() / ExecuteScalarAsync() can throw
+                // EnsureConnected() / ExecuteScalarAsync() can throw
                 // (SqliteException, ObjectDisposedException, etc.). Callers like
                 // InsertUserRowAsync read the return value and treat default(T)
                 // as a benign empty result, so an uncaught throw here surfaced as
@@ -628,7 +628,7 @@ namespace Phoenix.Controls.Shared.Services
             if (existing != null && existing.State == System.Data.ConnectionState.Open)
                 return;
 
-            //  Mutating _connection (assignment OR Open()) under
+            // Mutating _connection (assignment OR Open()) under
             // anything other than _initLock races Initialize's open path.
             // Always take _initLock when we're about to construct/open, so
             // the WAL drain + DDL + Open sequence either lands wholly before
@@ -637,7 +637,7 @@ namespace Phoenix.Controls.Shared.Services
             // non-Initialize entry point), so the lock cost is negligible.
             lock (_initLock)
             {
-                //  Re-check disposal under the lock so a Dispose
+                // Re-check disposal under the lock so a Dispose
                 // that finished after our fast-path read can't be resurrected
                 // here. Throwing matches the rest of the public API.
                 if (_disposed)
@@ -655,7 +655,7 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
-        //  (P1-16) — symmetric re-entry guard. Returns true when this
+        // Symmetric re-entry guard. Returns true when this
         // call actually took the semaphore (caller MUST pass true to
         // ReleaseLock); false when the current async context already held it
         // (no-op — outer scope owns the release). ALWAYS use the pair:
@@ -695,7 +695,7 @@ namespace Phoenix.Controls.Shared.Services
                 }).ConfigureAwait(false);
         }
 
-        // M14 — dedicated SystemHistory writer connection, owned by GlobalLogger.
+        // Dedicated SystemHistory writer connection, owned by GlobalLogger.
         //
         // The shared singleton DB.Instance serializes every operation behind a
         // single SemaphoreSlim (_lock above) — script reads, databank tab
@@ -766,7 +766,7 @@ namespace Phoenix.Controls.Shared.Services
             {
                 if (_logDbConnection is { State: System.Data.ConnectionState.Open }) return;
 
-                //  Coordinate with the singleton's _initLock so this
+                // Coordinate with the singleton's _initLock so this
                 // dedicated log connection cannot open against a file that
                 // Initialize is mid-flight on. The original code raced the
                 // structural-integrity quarantine path: a log INSERT firing
@@ -827,7 +827,7 @@ namespace Phoenix.Controls.Shared.Services
                 }).ConfigureAwait(false);
         }
 
-        // B9 — Vars-table editability bridge. The Architect Databank Browser
+        // Vars-table editability bridge. The Architect Databank Browser
         // edits cells by (tableName, rowId, columnName, value) but Vars is a
         // protected system table on SetCellAsync. Routing through
         // SetVariableAsync requires the VarKey (PK), so the browser needs a
@@ -1009,7 +1009,7 @@ namespace Phoenix.Controls.Shared.Services
 
         public async Task DeleteVariableAsync(string key)
         {
-            // BH-023 — gate empty/whitespace + reserved-prefix keys at the persistence
+            // Gate empty/whitespace + reserved-prefix keys at the persistence
             // layer so script-driven `db.delete_var(global._event_queue)` (or any other
             // engine-internal var) is rejected even if a future caller forgets to pre-
             // validate. Mirrors the SetVariableAsync rejection shape.
@@ -1038,7 +1038,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// BH-023 — keys reserved for engine bookkeeping (per-execution counters,
+        /// Keys reserved for engine bookkeeping (per-execution counters,
         /// state-change flipflops, internal queues). Scripts can READ these via
         /// {global._foo} but must not delete or trample them.
         /// </summary>
@@ -1307,7 +1307,7 @@ namespace Phoenix.Controls.Shared.Services
                     $"Insert into system table '{tableName}' denied.");
             }
 
-            // BH-002 — iterate keys and values together as KeyValuePairs and skip BOTH
+            // Iterate keys and values together as KeyValuePairs and skip BOTH
             // when a key fails IsValidIdentifier. The previous implementation incremented
             // the column counter only on valid keys but the parameter counter j on every
             // value, so values for rejected keys silently shifted onto the next valid
@@ -1393,7 +1393,7 @@ namespace Phoenix.Controls.Shared.Services
                 return;
             }
 
-            // L18: audit trail before truncate (system-table path already returned above)
+            // Audit trail before truncate (system-table path already returned above)
             await LogEventAsync(
                 "ScriptEngine", "DbClearTable", "",
                 $"{{\"tableName\":\"{tableName}\"}}").ConfigureAwait(false);
@@ -1615,7 +1615,7 @@ namespace Phoenix.Controls.Shared.Services
                     "DB", LogLevel.CriticalError);
                 return;
             }
-            // C5 — system-table protection (parity with DeleteRowAsync / ClearTableAsync).
+            // System-table protection (parity with DeleteRowAsync / ClearTableAsync).
             // Adding a column to SystemHistory / EventLog / Vars from script-driven
             // db.* commands could break the schema invariants other Hub paths depend on.
             if (IsSystemTable(tableName))
@@ -1629,7 +1629,7 @@ namespace Phoenix.Controls.Shared.Services
             await ExecuteAsync($"ALTER TABLE [{tableName}] ADD COLUMN [{columnName}] {safeType}", _ => { });
         }
 
-        // C9 — Column-level mutations on the Architect Databank Browser.
+        // Column-level mutations on the Architect Databank Browser.
         // SQLite 3.25+ supports RENAME COLUMN and 3.35+ supports DROP COLUMN
         // (Microsoft.Data.Sqlite 8.x bundles 3.41+); TYPE changes have no
         // ALTER counterpart and require the safe table-recreation pattern.
@@ -1639,7 +1639,7 @@ namespace Phoenix.Controls.Shared.Services
         // duplicate column-name collisions are screened so a botched edit
         // can't poison the table_info contract subsequent reads depend on.
 
-        // C9 — affinities accepted by ChangeColumnTypeAsync. SQLite has
+        // Affinities accepted by ChangeColumnTypeAsync. SQLite has
         // dynamic typing so the declared affinity is advisory, but limiting
         // the surface to the standard five keeps the DDL emitter predictable
         // and matches what the Architect inspector ComboBox offers.
@@ -1649,7 +1649,7 @@ namespace Phoenix.Controls.Shared.Services
                 "TEXT", "INTEGER", "REAL", "BLOB", "NUMERIC",
             };
 
-        // C9 — reserved column-name aliases SQLite resolves to the rowid
+        // Reserved column-name aliases SQLite resolves to the rowid
         // even when no INTEGER PRIMARY KEY column is declared. Letting a
         // user rename a column to any of these would silently shadow the
         // implicit rowid SELECT projection elsewhere in the codebase relies
@@ -1661,7 +1661,7 @@ namespace Phoenix.Controls.Shared.Services
             };
 
         /// <summary>
-        /// C9 — Drop a column from a user table via SQLite's native
+        /// Drop a column from a user table via SQLite's native
         /// <c>ALTER TABLE ... DROP COLUMN</c> (3.35+; Microsoft.Data.Sqlite 8.x
         /// bundles 3.41+ so this is always available). System tables and the
         /// primary-key column are rejected with a logged reason. Returns
@@ -1752,7 +1752,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// C9 — Rename a column on a user table via SQLite's native
+        /// Rename a column on a user table via SQLite's native
         /// <c>ALTER TABLE ... RENAME COLUMN</c> (3.25+; always available with
         /// Microsoft.Data.Sqlite 8.x). System tables, reserved rowid aliases
         /// (<c>rowid</c> / <c>oid</c> / <c>_rowid_</c>), and case-insensitive
@@ -1852,7 +1852,7 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// C9 — Change a column's declared SQLite affinity. SQLite has no
+        /// Change a column's declared SQLite affinity. SQLite has no
         /// <c>ALTER COLUMN ... TYPE</c>, so this performs the safe
         /// table-recreation pattern under a single transaction: read
         /// <c>PRAGMA table_info</c>, build a <c>__tmp_&lt;table&gt;</c> with
@@ -2255,7 +2255,7 @@ namespace Phoenix.Controls.Shared.Services
                     "DB", LogLevel.CriticalError);
                 return;
             }
-            // C5 — system-table protection (parity with DeleteRowAsync / ClearTableAsync).
+            // System-table protection (parity with DeleteRowAsync / ClearTableAsync).
             if (IsSystemTable(tableName))
             {
                 GlobalLogger.Log(
@@ -2274,7 +2274,7 @@ namespace Phoenix.Controls.Shared.Services
 
         public void Dispose()
         {
-            //  (P1-P3) — stop the periodic WAL checkpoint timer
+            // Stop the periodic WAL checkpoint timer
             // FIRST so a scheduled callback can't fire mid-Dispose and try
             // to take the soon-to-be-disposed semaphore. Timer.Dispose is
             // safe to call multiple times and on a never-started timer.
@@ -2282,7 +2282,7 @@ namespace Phoenix.Controls.Shared.Services
             catch { /* best effort */ }
             _walCheckpointTimer = null;
 
-            // M26 — drain in-flight callers before closing the connection / disposing
+            // Drain in-flight callers before closing the connection / disposing
             // the semaphore. A bare Close+Dispose races with any caller currently
             // awaiting _lock.WaitAsync(): they'd resume after Dispose() and hit a
             // closed connection or a disposed SemaphoreSlim, surfacing as
@@ -2312,7 +2312,7 @@ namespace Phoenix.Controls.Shared.Services
                         "Pending awaiters may observe ObjectDisposedException.");
                 }
 
-                //  Set _disposed under _initLock BEFORE tearing the
+                // Set _disposed under _initLock BEFORE tearing the
                 // connection down, so any thread racing through EnsureConnected
                 // either observes the flag (and throws) or already passed the
                 // fast path (and will fail on a closed connection — which the
@@ -2322,7 +2322,7 @@ namespace Phoenix.Controls.Shared.Services
                 lock (_initLock)
                 {
                     _disposed = true;
-                    // R3 (audit 2026-06-03): guard the primary connection teardown so a
+                    // Guard the primary connection teardown so a
                     // throw here can't skip the dedicated log-connection teardown below
                     // (which would leak its SqliteConnection + WAL/-shm handles).
                     try { _connection?.Close(); _connection?.Dispose(); }
@@ -2330,7 +2330,7 @@ namespace Phoenix.Controls.Shared.Services
                     _connection = null;
                 }
 
-                // [P1 swarm-audit 2026-05-29] The dedicated log connection
+                // The dedicated log connection
                 // (_logDbConnection, used by GlobalLogger's writer pump via
                 // WriteLogDedicatedAsync) was never closed/disposed here — it
                 // leaked a SqliteConnection plus its WAL/-shm handles on every

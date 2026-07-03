@@ -16,7 +16,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 
 /// <summary>
 /// Builds dark-chromed pop-out windows for <see cref="Panels.Common.IPopOutSource"/>
-/// consumers (Hub UI sweep P1 #2). Centralises the AppWindow.TitleBar
+/// consumers. Centralises the AppWindow.TitleBar
 /// customisation that previously lived inline in HubWorkspaceView so every
 /// pop-out picks up the coal background + ember caption-button hover the
 /// MainWindow uses, instead of the default light-grey system frame.
@@ -25,7 +25,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 /// already paint flat coal surfaces, and adding system backdrop on top
 /// produces a translucent halo that fights the panel's own card chrome.
 ///
-/// Post HUB-UX-D7 (2026-05-14): pop-outs fan out — the workspace allows
+/// Pop-outs fan out — the workspace allows
 /// arbitrary depth / multiple instances per panel kind. Each Create() call
 /// returns a fresh Window with its own VM lifecycle; closing one does NOT
 /// affect the embedded panel or sibling pop-outs. The per-panel
@@ -54,7 +54,7 @@ internal static class PopOutWindowFactory
     ///
     /// <paramref name="panelNameKey"/> resolves the bare panel name
     /// ("Live Feed", "Chat", …) via Localizer. "Phoenix Controls" is the
-    /// retail brand (per project_phoenix_controls_brand_name memory) and
+    /// retail brand and
     /// stays in the host language as a literal prefix — it's not a
     /// translatable token.
     /// </summary>
@@ -62,7 +62,7 @@ internal static class PopOutWindowFactory
     {
         if (content is null) throw new ArgumentNullException(nameof(content));
 
-        // Hub UI sweep P2 — pop-out child dead-↗ fix. The panel inside a
+        // Pop-out child dead-↗ fix. The panel inside a
         // pop-out hides its own ↗ button so fan-out spawning is anchored
         // to the embedded workspace (see IPopOutAware doc-comment).
         if (content is Panels.Common.IPopOutAware aware)
@@ -103,7 +103,7 @@ internal static class PopOutWindowFactory
         EnforceMinimumSize(window);
         ApplyOpenFadeIn(content);
 
-        // M17 (2026-05-14): register the pop-out Window with the activation
+        // Register the pop-out Window with the activation
         // tracker so ScriptStatusDot pulses inside a popped-out ScriptPanel
         // pause when the pop-out is deactivated (e.g. user is interacting
         // with the main Hub window). Window.Content was assigned above so
@@ -163,7 +163,7 @@ internal static class PopOutWindowFactory
     // Without this anchor, the GC reclaims the delegate and Win32 calls into
     // freed memory the first time WM_GETMINMAXINFO fires.
     //
-    //  ConcurrentDictionary so a pop-out close racing with another
+    // ConcurrentDictionary so a pop-out close racing with another
     // pop-out's creation can't tear the bucket list (Window.Closed runs on
     // the dispatcher but the lookup table itself is process-wide static).
     // The map is keyed by HWND, which is an OS-recycled value: in the narrow
@@ -310,8 +310,8 @@ internal static class PopOutWindowFactory
         }
     }
 
-    // Motion budget — ~120 ms ease-out fade on first paint (Hub UI sweep
-    // P1 #5). The Composition API gives smoother results than a
+    // Motion budget — ~120 ms ease-out fade on first paint. The
+    // Composition API gives smoother results than a
     // Storyboard for this short an animation; fall back silently if the
     // visual isn't available yet (some WinUI 3 reentry edge cases).
     private static void ApplyOpenFadeIn(UserControl content)

@@ -19,7 +19,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 ///   <item><see cref="Panning"/> — middle-mouse pan in flight.</item>
 ///   <item><see cref="TextEditing"/> — inline editor has focus; suppress canvas chords.</item>
 /// </list>
-/// Per <c>feedback_visualist_architect_chrome_independence.md</c> the
+/// Per the per-pillar chrome rule the
 /// Visualist analogue is intentionally a separate enum even though it
 /// shares the same shape — the two pillars never share canvas paint code.
 /// </remarks>

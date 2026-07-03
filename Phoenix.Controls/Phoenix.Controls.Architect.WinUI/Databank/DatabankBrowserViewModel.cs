@@ -12,7 +12,7 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Architect.WinUI.Databank;
 
 // View-model for the Databank Browser tab. Lifts data through the
-// IRelationalSource contract so tests / Track 9 / future remote viewers
+// IRelationalSource contract so tests / future remote viewers
 // can swap the source without touching this code.
 //
 // Bind:
@@ -31,7 +31,7 @@ namespace Phoenix.Controls.Architect.WinUI.Databank;
 // the grid stays in sync without callers driving a separate reload.
 public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
 {
-    //  True while the VM is "released" — between a
+    // True while the VM is "released" — between a
     // tab-away (View.OnUnloaded → Dispose) and the next reuse. Architect caches
     // both the DatabankBrowserView and this VM (ArchitectViewModel.DatabankBrowser),
     // re-inserting the view into MainPaneRegion on every Databank tab visit, so
@@ -48,7 +48,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     public const int PageSize = 500;
 
     private readonly IRelationalSource _source;
-    //  (P1-A7) — undo controller shared with the canvas via the
+    // Undo controller shared with the canvas via the
     // owning ArchitectViewModel. Null when the VM is constructed standalone
     // (tests, headless wiring); cell edits then write through with no
     // undo entry, which matches pre-sprint behaviour. AVM passes its
@@ -68,12 +68,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     private bool _sortDescending;
     private string? _lastErrorMessage;
     private List<TableInfo> _allTables = new();
-    //  Debounce timer for the row filter so a
+    // Debounce timer for the row filter so a
     // burst of keystrokes collapses to one VisibleRows rebuild (~180ms after the
     // last key) instead of clearing + rebuilding up to PageSize row-VMs per key.
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _filterDebounce;
 
-    //  Captured on construction — the UI (DispatcherQueue)
+    // Captured on construction — the UI (DispatcherQueue)
     // thread in the running app; null under headless tests (no DispatcherQueue).
     // The async load/mutation methods fetch their snapshot OFF the UI thread via
     // ConfigureAwait(false), then marshal the ObservableCollection edits + bound-
@@ -90,7 +90,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         : this(source, history: null) { }
 
     /// <summary>
-    ///  (P1-A7) — constructor overload that plumbs an
+    /// Constructor overload that plumbs an
     /// <see cref="UndoRedoController"/> so cell edits enter the same undo
     /// stack as graph edits. Pass null for tests / headless wiring where
     /// the undo stack isn't relevant.
@@ -99,7 +99,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     {
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _history = history;
-        //  Capture the UI dispatcher (null in headless tests).
+        // Capture the UI dispatcher (null in headless tests).
         _ui = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         Tables           = new ObservableCollection<TableInfo>();
         SystemTables     = new ObservableCollection<TableInfo>();
@@ -109,7 +109,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         Schema           = new ObservableCollection<ColumnSchemaInfo>();
     }
 
-    //  Run a UI-bound mutation (collection edits + bound-
+    // Run a UI-bound mutation (collection edits + bound-
     // property writes) on the captured UI thread and await its completion. Runs
     // inline when already on the UI thread (the natural pre-await call paths) or
     // when there is no dispatcher (headless tests, where nothing is XAML-bound).
@@ -191,7 +191,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
                 _sortDescending = false;
                 // Wrap the reload so a faulted DB query (locked file, schema
                 // mismatch) lands in GlobalLogger instead of disappearing as
-                // an unobserved task exception (TODO 2026-05-07 round 2 P2).
+                // an unobserved task exception.
                 _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
                     () => ReloadRowsAsync(),
                     "DatabankBrowserViewModel", $"ReloadRows({value?.Name ?? "<null>"})");
@@ -246,14 +246,14 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
     }
 
-    //  Debounce the row-filter rebuild. The
+    // Debounce the row-filter rebuild. The
     // two-way binding stays snappy (SetField fired immediately above); only the
     // VisibleRows rebuild is deferred ~180ms past the last keystroke. Falls back
     // to a synchronous apply off the UI thread (tests / headless) where there's
     // no DispatcherQueue.
     private void RequestFilterApply()
     {
-        //  A binding update reaching us means the VM
+        // A binding update reaching us means the VM
         // is live again — clear the released flag so the lazily-created timer
         // below isn't immediately suppressed when the tab is reopened.
         _released = false;
@@ -315,7 +315,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>True when there's a previous page to step back to.
-    ///  Gated on !IsLoadingRows so the paging buttons
+    /// Gated on !IsLoadingRows so the paging buttons
     /// disable during an in-flight query (no rapid double-paging).</summary>
     public bool CanPagePrev => _pageIndex > 0 && !_isLoadingRows;
 
@@ -388,7 +388,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     {
         get
         {
-            //  Snapshot the collection reference + a
+            // Snapshot the collection reference + a
             // local index copy so the bounds check and the indexer read the same
             // state. ApplyFilter() can Clear()+rebuild VisibleRows on the filter
             // debounce tick between the Count check and the index access; reading
@@ -410,14 +410,14 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         {
             if (SetField(ref _isLoadingRows, value))
             {
-                //  paging buttons disable while loading.
+                // paging buttons disable while loading.
                 OnPropertyChanged(nameof(CanPagePrev));
                 OnPropertyChanged(nameof(CanPageNext));
             }
         }
     }
 
-    /// <summary> True when a row filter is active but the
+    /// <summary>True when a row filter is active but the
     /// current page has no matching rows — drives a "no matches" message so an
     /// empty grid reads as "filtered to nothing", not "broken / still loading".</summary>
     public bool HasNoFilterMatches
@@ -439,7 +439,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     /// command path so the InfoBar fades on the next happy operation.</summary>
     public void ClearError()
     {
-        //  Called from success paths that run on a thread-pool
+        // Called from success paths that run on a thread-pool
         // continuation (after a source mutation's ConfigureAwait(false)); the
         // LastErrorMessage write raises PropertyChanged, so marshal it.
         RunOnUi(() =>
@@ -452,7 +452,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     private void ReportError(string message, Exception? ex)
     {
         // Log immediately on the calling thread (the logger is thread-safe); only
-        // the bound-property write needs the UI thread. 
+        // the bound-property write needs the UI thread.
         if (ex is not null)
         {
             Phoenix.Controls.Shared.Services.GlobalLogger.Error(
@@ -474,7 +474,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         {
             var infos = await _source.ListTablesAsync(ct).ConfigureAwait(false);
 
-            //  The projections + SelectedTable assignment below
+            // The projections + SelectedTable assignment below
             // mutate ObservableCollections and raise PropertyChanged; marshal them.
             await RunOnUiAsync(() =>
             {
@@ -538,7 +538,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
 
     private async Task ReloadRowsAsync()
     {
-        //  A reload means the VM is in active use
+        // A reload means the VM is in active use
         // again after any prior tab-away release — re-arm so a stale released
         // flag can't suppress the freshly-allocated CTS / later timer ticks.
         _released = false;
@@ -552,7 +552,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         old?.Dispose();
         var ct = _loadCts.Token;
 
-        //  This method is entered from both the UI thread (user
+        // This method is entered from both the UI thread (user
         // sort / page / table-select) AND a thread-pool continuation (via
         // RefreshAfterMutationAsync after a source write's ConfigureAwait(false)).
         // So even the grid-reset clears below can run off the UI thread — marshal
@@ -623,7 +623,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         SelectedRowIndex = -1;
         OnPropertyChanged(nameof(SelectedRow));
-        //  refresh the no-matches message after the rebuild.
+        // refresh the no-matches message after the rebuild.
         OnPropertyChanged(nameof(HasNoFilterMatches));
         OnPropertyChanged(nameof(NoMatchesText));
     }
@@ -646,7 +646,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     /// </summary>
     private async Task ReloadSchemaAsync()
     {
-        //  Entered from the SelectedTable setter (UI) and from
+        // Entered from the SelectedTable setter (UI) and from
         // RefreshAfterColumnMutationAsync (thread-pool continuation). Schema is an
         // ObservableCollection bound to the inspector's Schema tab, and listeners
         // re-bind on SchemaChanged — so both the Clear/Add and the event raise must
@@ -801,7 +801,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     /// Persist a cell edit. The row VM mirrors the new value optimistically
     /// before the call; on failure the snapshot reload restores the truth.
     ///
-    ///  (P1-A7) — when an <see cref="UndoRedoController"/> is
+    /// When an <see cref="UndoRedoController"/> is
     /// wired in via the constructor, the pre-edit cell value is captured
     /// BEFORE the DB write and pushed as an undo operation. Ctrl+Z then
     /// replays the pre-edit value through <see cref="ApplyUndoCellRewrite"/>,
@@ -862,7 +862,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    ///  — replay helper for the Undo / Redo callbacks. Mirrors
+    /// Replay helper for the Undo / Redo callbacks. Mirrors
     /// the value into the row VM (so the bound cell repaints even when
     /// the row isn't the current selection) and persists through
     /// <see cref="IRelationalSource.UpdateCellAsync"/> directly — bypassing
@@ -925,14 +925,14 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
     }
 
-    // C9 — Column-level mutations on the Architect Databank Browser.
+    // Column-level mutations on the Architect Databank Browser.
     // Each method delegates to IRelationalSource (which routes through DB)
     // and forces a schema + row reload so the inspector's Schema tab, the
     // column-header strip, and the row grid all reflect the new shape
     // without callers having to drive a separate refresh.
 
     /// <summary>
-    /// C9 — Drop a column from the selected table. Rejected for system
+    /// Drop a column from the selected table. Rejected for system
     /// tables at this layer (with a logged + banner-surfaced reason) and
     /// for primary-key columns at the persistence layer. On success the
     /// row snapshot reloads so the bound column-header strip drops the
@@ -973,7 +973,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C9 — Rename a column on the selected table. The new name passes
+    /// Rename a column on the selected table. The new name passes
     /// through the persistence layer's identifier + reserved-alias guards
     /// before the ALTER lands; banner errors surface on rejection.
     /// </summary>
@@ -1018,7 +1018,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C9 — Change a column's declared SQLite affinity. The persistence
+    /// Change a column's declared SQLite affinity. The persistence
     /// layer performs the table-recreation pattern under a single
     /// transaction; on success the schema + row reload picks up the new
     /// type so the inline cell editor (TextBox / NumericBox / CheckBox
@@ -1057,7 +1057,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C9 — Returns true when <paramref name="name"/> is a syntactically
+    /// Returns true when <paramref name="name"/> is a syntactically
     /// valid SQLite-style identifier (alphanumeric + underscore, first
     /// character not a digit). Mirrors the DB layer's IsValidIdentifier
     /// regex so the banner-error path catches the obvious cases before the
@@ -1077,7 +1077,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// C9 — Reload both the table aggregate (row/col counts in the
+    /// Reload both the table aggregate (row/col counts in the
     /// sidebar) AND the current page's row snapshot + schema. Used after
     /// every column-shape mutation so VisibleColumns / Schema / row cells
     /// all reflect the new on-disk shape together. Distinct from
@@ -1104,7 +1104,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         {
             await _source.CreateTableAsync(tableName, columns).ConfigureAwait(false);
             await ReloadTablesAsync().ConfigureAwait(false);
-            //  Landing on the freshly-created table — the
+            // Landing on the freshly-created table — the
             // SelectedTable setter raises PropertyChanged + kicks a reload, so it
             // must run on the UI thread (we're on a pool continuation here).
             await RunOnUiAsync(() =>
@@ -1138,7 +1138,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
             await _source.DropTableAsync(table.Name).ConfigureAwait(false);
             // If the dropped table was the active selection, clear it so the
             // post-reload selection-recovery picks the next user table.
-            //  SelectedTable setter raises PropertyChanged +
+            // SelectedTable setter raises PropertyChanged +
             // kicks a reload — marshal it (we're on a pool continuation here).
             await RunOnUiAsync(() =>
             {
@@ -1255,7 +1255,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
 
     private async Task RefreshAfterMutationAsync()
     {
-        //  Selective single-table refresh.
+        // Selective single-table refresh.
         // Pre-fix this re-listed EVERY table — including the read-only system
         // tables (Vars / EventLog / SystemHistory / paired-device) — and
         // re-counted rows + columns for each, on every cell edit / insert /
@@ -1281,7 +1281,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    ///  Replace a single table's <see cref="TableInfo"/>
+    /// Replace a single table's <see cref="TableInfo"/>
     /// in the backing list + visible projections after a selective refresh,
     /// preserving sidebar order and the current selection. Keeps the cheap
     /// per-mutation path from churning the whole table list.
@@ -1327,7 +1327,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    ///  Release the per-instance resources the
+    /// Release the per-instance resources the
     /// pre-fix VM leaked when the Databank tab closed or the user navigated
     /// away: the in-flight load <see cref="CancellationTokenSource"/> (each
     /// holds a WaitHandle kernel resource) and the filter-debounce
@@ -1440,7 +1440,7 @@ public sealed class DatabankRowViewModel
 /// Type-aware editor selector for the inline cell-edit overlay. Pre-fix the
 /// browser opened a generic modal TextBox for every cell regardless of column
 /// SqlType, so BOOLEAN columns made users type the literal string "true" and
-/// INTEGER columns accepted any text including garbage. Architect UX review P0-4.
+/// INTEGER columns accepted any text including garbage.
 /// </summary>
 public enum DatabankCellEditor { Text, Bool, Integer, Real }
 
@@ -1448,7 +1448,7 @@ public sealed class DatabankCellViewModel : ObservableObject
 {
     private string? _value;
     private bool _isEditing;
-    //  Pre-edit value captured per cell when this
+    // Pre-edit value captured per cell when this
     // cell enters edit mode. Pre-fix the baseline lived as a single view-level
     // field, so double-tapping a second cell before the first committed
     // overwrote the first cell's baseline — an Esc/validation rollback on the
@@ -1504,7 +1504,7 @@ public sealed class DatabankCellViewModel : ObservableObject
     }
 
     /// <summary>
-    ///  The value this cell held the instant it
+    /// The value this cell held the instant it
     /// entered edit mode. Captured in the <see cref="IsEditing"/> setter on the
     /// false→true transition (before the user types anything) and consumed by
     /// the view's rollback paths (Esc, parse-validation failure, persist
@@ -1521,7 +1521,7 @@ public sealed class DatabankCellViewModel : ObservableObject
         {
             if (SetField(ref _isEditing, value))
             {
-                //  Snapshot the pre-edit value on
+                // Snapshot the pre-edit value on
                 // the transition INTO edit mode. _value is still the committed
                 // value here (double-tap flips IsEditing before any keystroke),
                 // so this captures the true baseline for this cell alone.

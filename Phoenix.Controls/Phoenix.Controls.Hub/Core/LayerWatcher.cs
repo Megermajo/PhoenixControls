@@ -14,7 +14,7 @@ namespace Phoenix.Controls.Hub.Core
     /// Mirrors the LogicWatcher pattern: any file change re-deserializes via LayerSerializer
     /// and updates LayerRegistry idempotently.
     ///
-    /// M77: Editors save in multiple stages (write to .tmp → rename → modify timestamp), so
+    /// Editors save in multiple stages (write to .tmp → rename → modify timestamp), so
     /// FileSystemWatcher fires multiple events for one logical save. We debounce per-file at
     /// 250ms (mirroring LogicWatcher) and then call WaitForFileStable before the reload, so
     /// the reload pipeline pushes to OBS exactly once per logical save instead of 2-5 times.
@@ -32,7 +32,7 @@ namespace Phoenix.Controls.Hub.Core
         private readonly PathDebouncer _debouncer = new();
         private int _disposed;
 
-        // P1-19 — mirrors LogicWatcher . Default FSW InternalBufferSize is
+        // Mirrors LogicWatcher. Default FSW InternalBufferSize is
         // 8 KB; a bulk-save burst (e.g. Visualist re-saving every .phxlayer after
         // a preset change) can overflow the kernel-side ring, raising
         // FileSystemWatcher.Error with ERROR_NOTIFY_ENUM_DIR and silently ending
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Hub.Core
         internal Action<string>? ReloadDelegate { get; set; }
 
         /// <summary>
-        /// QC05-03 / QC58-01 — test seam parallel to <see cref="ReloadDelegate"/>.
+        /// Test seam parallel to <see cref="ReloadDelegate"/>.
         /// Production callers leave this null; the default path forwards to
         /// <see cref="LayerRuntime.DiscardLayer"/> on the runtime supplied via the
         /// constructor (or the singleton fallback).
@@ -71,7 +71,7 @@ namespace Phoenix.Controls.Hub.Core
             : this(layersPath, registry, runtime: null) { }
 
         /// <summary>
-        /// QC05-03 / QC58-01 — explicit runtime injection so tests can supply a
+        /// Explicit runtime injection so tests can supply a
         /// mock and production wires the singleton. A null runtime falls back to
         /// <see cref="LayerRuntime.Instance"/> at discard time so existing callers
         /// (BugFixSweep5_LayerWatcher_Tests) don't have to construct a runtime
@@ -92,7 +92,7 @@ namespace Phoenix.Controls.Hub.Core
             // Initial pass — pick up any files already on disk before the watcher starts.
             ScanAll();
 
-            // P1-19 — Start() is idempotent. If a prior watcher exists (re-Start
+            // Start() is idempotent. If a prior watcher exists (re-Start
             // on hot-reconfigure), tear it down first so we don't leak the FSW.
             if (_watcher != null)
             {
@@ -105,7 +105,7 @@ namespace Phoenix.Controls.Hub.Core
             GlobalLogger.Log($"Phoenix Controls Layer Watcher is active on: {_layersPath}", "LayerWatcher");
         }
 
-        // P1-19 — factored out so OnWatcherError → TryRecreateWatcher can rebuild
+        // Factored out so OnWatcherError → TryRecreateWatcher can rebuild
         // the FSW with the same wiring as the initial Start() call. Mirrors
         // LogicWatcher.BuildWatcher exactly: same buffer size, same handler
         // wiring order, EnableRaisingEvents flipped AFTER every += line.
@@ -133,7 +133,7 @@ namespace Phoenix.Controls.Hub.Core
                 if (!string.IsNullOrEmpty(id))
                 {
                     _registry.RemoveLayer(id);
-                    // QC05-03 / QC58-01 — also discard the per-widget trigger queues
+                    // Also discard the per-widget trigger queues
                     // for this layer so the channel pumps / idle watchdogs / CTSes
                     // don't leak for the lifetime of the Hub process.
                     InvokeDiscard(id);
@@ -142,7 +142,7 @@ namespace Phoenix.Controls.Hub.Core
             watcher.Renamed += (s, e) =>
             {
                 // The atomic save produces a PAIR of Renamed events. The NEW name is
-                // what decides what each one means (QC58-02 + 0.12.x ~RF fix):
+                // what decides what each one means:
                 //
                 //   "foo.phxlayer.tmp -> foo.phxlayer"   (new IS a .phxlayer) — the save
                 //       landing. Register/reload the final, keep the id.
@@ -176,7 +176,7 @@ namespace Phoenix.Controls.Hub.Core
                     if (!string.IsNullOrEmpty(oldId))
                     {
                         _registry.RemoveLayer(oldId);
-                        // QC05-03 / QC58-01 — discard the per-widget trigger queues only
+                        // Discard the per-widget trigger queues only
                         // on a genuine layer→layer rename, never on a save landing.
                         InvokeDiscard(oldId);
                     }
@@ -184,7 +184,7 @@ namespace Phoenix.Controls.Hub.Core
                 ScheduleReload(e.FullPath);
             };
 
-            // P1-19 — Error subscription mirrors LogicWatcher . Without
+            // Error subscription mirrors LogicWatcher. Without
             // this, an InternalBufferSize overflow or OneDrive handle invalidation
             // silently ends layer hot-reload until the Hub is restarted. Wired
             // BEFORE EnableRaisingEvents flips so the first overflow event always
@@ -195,7 +195,7 @@ namespace Phoenix.Controls.Hub.Core
             return watcher;
         }
 
-        // P1-19 — mirrors LogicWatcher.OnWatcherError. Logs the inner exception
+        // Mirrors LogicWatcher.OnWatcherError. Logs the inner exception
         // (FileSystemWatcher.ErrorEventArgs.GetException unpacks the
         // Win32Exception that arrives on buffer overflow) and kicks off a
         // throttled recreate.
@@ -214,7 +214,7 @@ namespace Phoenix.Controls.Hub.Core
             TryRecreateWatcher();
         }
 
-        // P1-19 — mirrors LogicWatcher.TryRecreateWatcher. Single-flighted via
+        // Mirrors LogicWatcher.TryRecreateWatcher. Single-flighted via
         // _recreateLock and throttled to one attempt per RecreateThrottle so an
         // unrecoverable path (deleted dir, ACL change, OneDrive virtualisation)
         // can't pin the watcher in a tight rebuild loop.
@@ -266,14 +266,14 @@ namespace Phoenix.Controls.Hub.Core
 
         public void Stop()
         {
-            // BH-031 — flip _disposed BEFORE tearing down the debouncer, so a
+            // Flip _disposed BEFORE tearing down the debouncer, so a
             // debounce timer can't be created after Stop has started tearing
             // down. PathDebouncer.Dispose flips its own internal flag inside
             // its lock, mirroring the previous in-line critical section and
             // eliminating the race where a late Reload registered a ghost
             // layer post-shutdown.
             Interlocked.Exchange(ref _disposed, 1);
-            // [P1 swarm-audit 2026-05-29] Serialize the _watcher teardown under
+            // Serialize the _watcher teardown under
             // _recreateLock so this read-modify-write can't interleave with a
             // concurrent TryRecreateWatcher (which also disposes + reassigns
             // _watcher under the same lock). Without it, Stop() and an in-flight
@@ -312,7 +312,7 @@ namespace Phoenix.Controls.Hub.Core
             _debouncer.Schedule(capturedPath, DebounceMs, () =>
             {
                 if (Volatile.Read(ref _disposed) != 0) return;
-                // QC58-03 — offload the file-stability polling + the reload to a
+                // Offload the file-stability polling + the reload to a
                 // dedicated task so the debouncer's Timer callback (a thread-pool
                 // worker) isn't blocked by up to ~500ms of Thread.Sleep + the
                 // synchronous deserialize/registry mutation. Without the offload
@@ -322,7 +322,7 @@ namespace Phoenix.Controls.Hub.Core
                 // stability polling + Task.Delay-backed read retries) so the
                 // pool worker yields between polls instead of pinning a thread.
                 //
-                // [QC18-S1 P1] Route through AsyncErrorBoundary.SafeRunAsync so a
+                // Route through AsyncErrorBoundary.SafeRunAsync so a
                 // fault inside the reload pipeline (anything the inner
                 // ReloadAsync re-throws past its own catch — e.g. an unexpected
                 // exception type that WAS swallowed by the legacy bare-Task.Run
@@ -343,7 +343,7 @@ namespace Phoenix.Controls.Hub.Core
                             capturedPath, CancellationToken.None,
                             maxAttempts: 10, delayMs: 50).ConfigureAwait(false);
 
-                        // BH-031 — re-check after the WaitForFileStable awaits. Stop() may
+                        // Re-check after the WaitForFileStable awaits. Stop() may
                         // have flipped _disposed while we were polling the file size, and
                         // mutating the registry post-shutdown leaves ghost layers behind.
                         if (Volatile.Read(ref _disposed) != 0) return;
@@ -379,7 +379,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC58-03 — async cousin of <see cref="InvokeReload"/> used by the
+        /// Async cousin of <see cref="InvokeReload"/> used by the
         /// debounced reload pipeline so the read-retry backoff can yield the
         /// thread-pool worker instead of pinning it on <see cref="Thread.Sleep"/>.
         /// Falls back to the sync test seam delegate when one is injected so
@@ -397,7 +397,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC05-03 / QC58-01 — forward layer-removal events to LayerRuntime so its
+        /// Forward layer-removal events to LayerRuntime so its
         /// per-widget queue pumps shut down. Tests can inject via
         /// <see cref="DiscardDelegate"/>; production routes to the supplied
         /// runtime instance, falling back to the singleton if none was injected.
@@ -429,13 +429,13 @@ namespace Phoenix.Controls.Hub.Core
         {
             try
             {
-                // BH-031 — final disposed check immediately before the registry mutation.
+                // Final disposed check immediately before the registry mutation.
                 // Covers the case where the timer body's earlier checks passed but Stop
                 // ran between the InvokeReload entry and now.
                 if (Volatile.Read(ref _disposed) != 0) return;
                 if (!File.Exists(path)) return;
 
-                // QC58-04 — LayerSerializer.Read used to fail on the first
+                // LayerSerializer.Read used to fail on the first
                 // IOException (transient file-share contention while the
                 // editor is still releasing the file handle), leaving the
                 // registry pinned at its prior state. Retry up to 3 times
@@ -443,7 +443,7 @@ namespace Phoenix.Controls.Hub.Core
                 Layer? layer = TryReadWithRetry(path, attempts: 3, backoffMs: 50, out var lastEx);
                 if (layer is null)
                 {
-                    // QC58-04 — persistent read failure is "transient I/O could
+                    // Persistent read failure is "transient I/O could
                     // not be resolved", not a structural error. The Layer stays
                     // pinned at its prior in-memory state; surface as a Warning-
                     // style log via the System tier instead of Error so the
@@ -464,7 +464,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC58-03 — async sibling of <see cref="Reload"/>. Used by the debounced
+        /// Async sibling of <see cref="Reload"/>. Used by the debounced
         /// reload pipeline so the IOException retry backoff yields the thread-pool
         /// worker via <see cref="Task.Delay"/> instead of holding it on
         /// <see cref="Thread.Sleep"/>. ScanAll keeps the sync path because the
@@ -497,7 +497,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC58-04 — bounded retry for <see cref="LayerSerializer.Read"/>. Returns
+        /// Bounded retry for <see cref="LayerSerializer.Read"/>. Returns
         /// the parsed Layer on success or null after <paramref name="attempts"/>
         /// failures, writing the last exception to <paramref name="lastEx"/>.
         /// Retries only on IO / unauthorized-access errors; deserialization
@@ -533,7 +533,7 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// QC58-03 — async variant of <see cref="TryReadWithRetry"/>; backs off
+        /// Async variant of <see cref="TryReadWithRetry"/>; backs off
         /// with <see cref="Task.Delay"/> instead of <see cref="Thread.Sleep"/>
         /// so the calling thread-pool worker is released between attempts.
         /// </summary>
