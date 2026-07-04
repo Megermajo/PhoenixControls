@@ -176,7 +176,15 @@ namespace Phoenix.Controls.Architect.Core
             string n = ctx.Resolve(node, "N", "3");
             string counter = $"global._don_counter_{ctx.IdPrefix(node)}";
             ctx.Emit($"{prefix}{counter} += 1");
-            ctx.Emit($"{prefix}if {counter} <= {n}:");
+            // Braced read (same root cause as Flow.FlipFlop / Flow.DoOnce). A bare
+            // `global._don_counter_X` in the condition is never DB-preloaded
+            // (DbPreloadRegex only matches {braced} refs) AND SubstituteVars is
+            // braces-only, so EvalSingle compared the literal identifier — the
+            // numeric double.TryParse failed, the condition was always false, and
+            // Loop Body never ran (Completed fired every trigger). The `+= 1` LHS
+            // stays bare: the assignment reads the current value via ResolveVar,
+            // which defaults an absent global to "0".
+            ctx.Emit($"{prefix}if {{{counter}}} <= {n}:");
             ctx.FollowNamed(node, "Loop Body", indent + 1);
             var comp = ctx.GetNamedTarget(node, "Completed");
             if (comp != null)
@@ -651,11 +659,18 @@ namespace Phoenix.Controls.Architect.Core
                 // freshness for display purposes, not the persisted total.
                 string nodePrefix = node.Id.Replace("-", "")[..6];
                 string amtMat = amt;
-                if (amt.Contains("("))
+                // Strict callable detector + braced consumption (mirrors
+                // ForLoopHandler). increment_cell's Amount arg is SUBSTITUTED then
+                // double.TryParse'd by the engine — a bare `global._pre_X_amt`
+                // reaches the command as a literal identifier, fails the parse, and
+                // increments by 0. Brace it so the engine substitutes the hoisted
+                // value. Contains("(") also mis-hoisted parenthesised literals like
+                // "(foo)"; IsCallableExpression gates on the shared CallableRegex.
+                if (ScriptExporter.IsCallableExpression(amt))
                 {
                     string amtVar = $"global._pre_{nodePrefix}_amt";
                     ctx.Emit($"{prefix}{amtVar} = {amt}");
-                    amtMat = amtVar;
+                    amtMat = $"{{{amtVar}}}";
                 }
                 // tableName + key are interpolated INSIDE double-quoted
                 // literals, so a user-typed value containing `"` or `\` would break
