@@ -7,6 +7,14 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607042 - 2026.07.04
+
+**Fixed**
+- Architect: the "Do N" flow node now runs its Loop Body for the first N calls — before, it skipped straight to Completed every time and never ran the body.
+- Architect: a Databank "Increment" node now adds a calculated Amount correctly — when the Amount came from another node it was adding zero instead of the real value.
+- Architect: point and currency transfers now subtract from the sender — a transfer could add to the receiver while the sender kept everything, quietly duplicating currency.
+- Improved reliability and stability of counters and loops in Architect.
+
 ## Hotfix - 1.0.2607041 - 2026.07.04
 
 **New**
