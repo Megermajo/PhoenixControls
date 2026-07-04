@@ -7,6 +7,19 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607041 - 2026.07.04
+
+**New**
+- Hub now offers to install updates: while a newer release is out, a prompt at startup asks to "Install & restart" — one click downloads the update, applies it, and restarts Hub.
+
+**Fixed**
+- The "Download & install latest release" button in Settings no longer fails with "one or more numeric fields are invalid" — a hidden, never-filled Viewer server port field was blocking every download attempt.
+- Saving Settings no longer silently resets the Viewer server options (enabled, port, LAN access, channel name) to their defaults.
+- An invalid number in Settings can no longer block downloading an update — bad values now roll back to the last saved ones instead, same as Save.
+- Improved reliability and stability of in-app updates.
+
+> Heads up — the in-app updater was broken in earlier versions, so it can't install this update for you. Download and install this version manually once (use the Download button); from this version on, the in-app updater works normally.
+
 ## Hotfix - 1.0.2607031 - 2026.07.03
 
 **New**
