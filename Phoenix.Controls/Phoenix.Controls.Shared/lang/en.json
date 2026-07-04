@@ -625,5 +625,9 @@
   "dialog.settings.update.force_download_error_format":  "Force download threw: {0}",
   "dialog.settings.update.release_available_format":  "Latest release: {0}\nLocal version: {1}\nAsset: {2}\nSHA-256: {3}\nSpawning Phoenix.Controls.Updater — Hub will close shortly.",
   "dialog.settings.update.force_download_failed_format":  "Force download failed: {0}",
-  "dialog.settings.update.unexpected_status_format":  "Unexpected status: {0}"
+  "dialog.settings.update.unexpected_status_format":  "Unexpected status: {0}",
+  "dialog.update_prompt.title":  "Update available",
+  "dialog.update_prompt.body_format":  "Phoenix Controls {0} is available — you are running {1}.\n\nInstall now? Hub closes, applies the update, and restarts automatically.",
+  "dialog.update_prompt.install":  "Install & restart",
+  "dialog.update_prompt.later":  "Later"
 }

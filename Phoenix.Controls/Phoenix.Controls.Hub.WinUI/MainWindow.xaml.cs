@@ -7,6 +7,7 @@ using Phoenix.Controls.Hub.Core;
 using Phoenix.Controls.Hub.WinUI.Controls;
 using Phoenix.Controls.Hub.WinUI.Dialogs;
 using Phoenix.Controls.Hub.WinUI.Services;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.WinUI.Contracts;
@@ -41,6 +42,9 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     // Field exists so we can detach on Close even if the
     // window closes before Loaded ever fires.
     private RoutedEventHandler? _onDeferStartupUpdateCheck;
+    // One update prompt at a time — the deferred startup check and a manual
+    // re-check can both surface ReleaseAvailable in the same session.
+    private bool _updatePromptOpen;
 
     private readonly HubWorkspaceView _hubWorkspace = new();
     private Phoenix.Controls.Architect.WinUI.MainView? _architectView;
@@ -1377,7 +1381,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         await _updateChecker.CheckAsync().ConfigureAwait(false);
     }
 
-    private static void OnUpdateStatusChanged(UpdateStatus status)
+    private void OnUpdateStatusChanged(UpdateStatus status)
     {
         switch (status)
         {
@@ -1389,6 +1393,15 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 GlobalLogger.Log(
                     $"Update available: {ra.LocalVersion} → {ra.RemoteTag}.",
                     "UpdateChecker", LogLevel.System);
+                // StatusChanged fires on a thread-pool continuation
+                // (CheckAsync runs ConfigureAwait(false)); the prompt is a
+                // ContentDialog, so marshal onto the UI thread first.
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    _ = HubAsyncBoundary.SafeRunAsync(
+                        () => ShowUpdatePromptAsync(ra),
+                        "MainWindow", "update prompt");
+                });
                 break;
             case UpdateStatus.NetworkError ne:
                 // Demoted to Debug — the underlying cause (HTTP non-success or
@@ -1400,6 +1413,71 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 GlobalLogger.Log($"Update check failed: {ne.Message}",
                     "UpdateChecker", LogLevel.Debug);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Modal update prompt — fires on every launch (and every manual
+    /// re-check) while a newer release exists. Deliberately NO per-version
+    /// suppression: the prompt keeps nudging until the user actually
+    /// updates or turns the startup check off in Settings. "Install &amp;
+    /// restart" hands off to the same <see cref="UpdateApplyFlow"/> tail as
+    /// Settings → Force Download so both entry points share one apply path.
+    /// </summary>
+    private async Task ShowUpdatePromptAsync(UpdateStatus.ReleaseAvailable release)
+    {
+        if (_updatePromptOpen) return;
+        // The startup check is deferred past the first Loaded fire, so a
+        // missing XamlRoot here means the window is tearing down — skip
+        // quietly; the next launch prompts again.
+        XamlRoot? root = (Content as FrameworkElement)?.XamlRoot;
+        if (root is null) return;
+
+        _updatePromptOpen = true;
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = root,
+                Title = Localizer.T("dialog.update_prompt.title", "Update available"),
+                Content = new TextBlock
+                {
+                    Text = string.Format(
+                        Localizer.T("dialog.update_prompt.body_format",
+                            "Phoenix Controls {0} is available — you are running {1}.\n\nInstall now? Hub closes, applies the update, and restarts automatically."),
+                        release.RemoteTag, release.LocalVersion),
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                PrimaryButtonText = Localizer.T("dialog.update_prompt.install", "Install & restart"),
+                CloseButtonText   = Localizer.T("dialog.update_prompt.later", "Later"),
+                DefaultButton = ContentDialogButton.Primary,
+                RequestedTheme = ElementTheme.Dark,
+            };
+
+            ContentDialogResult result;
+            try
+            {
+                result = await dialog.ShowAsync();
+            }
+            catch (Exception ex)
+            {
+                // WinUI 3 allows one ContentDialog per XamlRoot — another
+                // dialog (e.g. the first-run Welcome) may already be up.
+                // Not worth a retry loop: the prompt re-fires next launch.
+                GlobalLogger.Log(
+                    $"Update prompt skipped — another dialog is likely open ({ex.Message}).",
+                    "MainWindow", LogLevel.Debug);
+                return;
+            }
+            if (result != ContentDialogResult.Primary) return;
+
+            // Prompt is closed by now (ShowAsync returned), so the progress
+            // dialog may take the XamlRoot. On success Hub is already exiting.
+            UpdateApplyFlow.BeginApplyWithProgress(release, root, "MainWindow");
+        }
+        finally
+        {
+            _updatePromptOpen = false;
         }
     }
 }

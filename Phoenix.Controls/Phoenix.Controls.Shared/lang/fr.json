@@ -622,5 +622,9 @@
   "dialog.settings.update.force_download_error_format":  "Le t�l�chargement forc� a �chou� : {0}",
   "dialog.settings.update.release_available_format":  "Derni�re version : {0}\nVersion locale : {1}\nAsset : {2}\nSHA-256 : {3}\nLancement de Phoenix.Controls.Updater � Hub va se fermer sous peu.",
   "dialog.settings.update.force_download_failed_format":  "�chec du t�l�chargement forc� : {0}",
-  "dialog.settings.update.unexpected_status_format":  "Statut inattendu : {0}"
+  "dialog.settings.update.unexpected_status_format":  "Statut inattendu : {0}",
+  "dialog.update_prompt.title":  "Mise à jour disponible",
+  "dialog.update_prompt.body_format":  "Phoenix Controls {0} est disponible — vous utilisez {1}.\n\nInstaller maintenant ? Hub se ferme, applique la mise à jour et redémarre automatiquement.",
+  "dialog.update_prompt.install":  "Installer et redémarrer",
+  "dialog.update_prompt.later":  "Plus tard"
 }

@@ -45,9 +45,9 @@ Run `Phoenix.Controls.Hub.WinUI` — it hosts Architect and Visualist inside it.
 ## Releases are built from this branch
 
 Every published release is built on GitHub-hosted CI **from this branch**, then
-signed and packaged into the installer on the [Releases](https://github.com/Megermajo/PhoenixControls/releases/latest)
+packaged into the installer on the [Releases](https://github.com/Megermajo/PhoenixControls/releases/latest)
 page. See the [Code signing policy](https://github.com/Megermajo/PhoenixControls/blob/main/CODE_SIGNING_POLICY.md)
-for how that works.
+for the current signing status.
 
 ## Contributing
 

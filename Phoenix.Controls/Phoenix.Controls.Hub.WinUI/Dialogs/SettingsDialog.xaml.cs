@@ -470,6 +470,18 @@ public sealed partial class SettingsDialog : ContentDialog
         WebSocketServerBindHostBox.Text  = cfg.WebSocketServerBindHost ?? "";
         WebSocketServerPortBox.Text      = cfg.WebSocketServerPort.ToString(CultureInfo.InvariantCulture);
 
+        // ViewerServer v2 group. Every box that RegisterNumericValidators
+        // registers MUST be seeded here: an unseeded box is empty, empty
+        // fails the "Required" rule, and the numeric-rollback pass then
+        // treats the untouched field as user garbage. Before this group was
+        // hydrated, the empty port box hard-blocked Force Download from the
+        // Updates tab and every Save wrote the blank defaults back over the
+        // user's Enabled/LAN/Channel values.
+        ViewerServerEnabledBox.IsChecked = cfg.ViewerServerEnabled;
+        ViewerServerPortBox.Text         = cfg.ViewerServerPort.ToString(CultureInfo.InvariantCulture);
+        ViewerServerLanBox.IsChecked     = cfg.ViewerServerLan;
+        ViewerServerChannelBox.Text      = cfg.ViewerServerChannel ?? "";
+
         // ── Captions
         LiveCaptionsEnabledBox.IsChecked    = cfg.LiveCaptionsEnabled;
         LiveCaptionsAutoLaunchBox.IsChecked = cfg.LiveCaptionsAutoLaunch;
@@ -664,18 +676,29 @@ public sealed partial class SettingsDialog : ContentDialog
     }
 
     /// <summary>
-    /// Runs every registered validator against the current field text.
-    /// Returns the first invalid field (so Save can focus it) or null
-    /// when everything passes.
+    /// Rolls every numeric field that fails its validator back to the
+    /// last-persisted config value (re-validating via TextChanged) so no
+    /// out-of-range garbage reaches the commit. This is the ONLY sanction
+    /// for invalid numerics — no flow may hard-block on one, because the
+    /// fields span several Pivot tabs and a blocked flow can point at a
+    /// field the user cannot even see (this bricked Force Download for
+    /// every install while the un-hydrated viewer port sat empty).
+    /// Returns the number of fields rolled back.
     /// </summary>
-    private NumericField? FirstInvalidField()
+    private int RollBackInvalidNumericFields(string consequenceNote)
     {
+        var invalidFields = new List<NumericField>();
         foreach (var f in _numericFields)
-        {
-            (bool ok, _) = f.Validator(f.Box.Text ?? string.Empty);
-            if (!ok) return f;
-        }
-        return null;
+            if (!f.Validator(f.Box.Text ?? string.Empty).ok) invalidFields.Add(f);
+        if (invalidFields.Count == 0) return 0;
+
+        foreach (var f in invalidFields)
+            f.Box.Text = f.CurrentText();   // roll back to the persisted value (re-validates via TextChanged)
+        foreach (var f in _numericFields) ApplyValidation(f);
+        GlobalLogger.Log(
+            $"Settings: {invalidFields.Count} numeric field(s) had an invalid value — rolled back to the last saved value; {consequenceNote}.",
+            "SettingsDialog", LogLevel.System);
+        return invalidFields.Count;
     }
 
     private async void OnPrimaryClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
@@ -685,22 +708,10 @@ public sealed partial class SettingsDialog : ContentDialog
         // Bot Username couldn't be saved while one numeric field was off). That contradicts
         // this dialog's stated design (top-of-class: "bad inputs roll back to defaults rather
         // than blocking the dialog, so the user can never get stuck unable to save a typo").
-        // Restore it: roll each invalid numeric field back to its last-saved value (so no
+        // Roll each invalid numeric field back to its last-saved value (so no
         // out-of-range garbage is persisted), surface the error inline + log it non-blocking
-        // (no modal dialog), and let Save proceed so
-        // the rest of the form still commits.
-        var invalidFields = new List<NumericField>();
-        foreach (var f in _numericFields)
-            if (!f.Validator(f.Box.Text ?? string.Empty).ok) invalidFields.Add(f);
-        if (invalidFields.Count > 0)
-        {
-            foreach (var f in invalidFields)
-                f.Box.Text = f.CurrentText();   // roll back to the persisted value (re-validates via TextChanged)
-            foreach (var f in _numericFields) ApplyValidation(f);
-            GlobalLogger.Log(
-                $"Settings: {invalidFields.Count} numeric field(s) had an invalid value — rolled back to the last saved value; your other changes were saved.",
-                "SettingsDialog", LogLevel.System);
-        }
+        // (no modal dialog), and let Save proceed so the rest of the form still commits.
+        RollBackInvalidNumericFields("your other changes were saved");
 
         // Defer the close so the async TryCommitAndPersistAsync
         // can await the disk write (OneDrive-backed AppData stalls a few
@@ -762,7 +773,7 @@ public sealed partial class SettingsDialog : ContentDialog
     /// in-memory field copy still runs on the UI dispatcher so we can
     /// touch the XAML controls without an Invoke wrapper.
     ///
-    /// Caller is responsible for checking <see cref="FirstInvalidField"/>
+    /// Caller is responsible for running <see cref="RollBackInvalidNumericFields"/>
     /// up front. Returns false (and logs via GlobalLogger) when an
     /// underlying File.Replace / Save throws, so OnPrimaryClick can cancel
     /// the dialog dismissal.
@@ -1035,22 +1046,13 @@ public sealed partial class SettingsDialog : ContentDialog
         // straight into Application.Exit() without touching ConfigManager,
         // silently dropping any edit the user hadn't already Saved (typical
         // case: typed a new bot username, hit Force Download to flip back to
-        // master, and lost the username edit after relaunch). If validation
-        // blocks the commit, refuse Force Download — the streamer needs to
-        // fix the field before we exit out of the dialog.
-        if (FirstInvalidField() is { } bad)
-        {
-            foreach (var f in _numericFields) ApplyValidation(f);
-            try { bad.Box.Focus(FocusState.Programmatic); } catch { /* best-effort */ }
-            UpdateStatusText.Text = Localizer.T(
-                "dialog.settings.status.force_download_blocked_invalid",
-                "Force download blocked — fix the highlighted invalid fields first, then retry.");
-            ForceDownloadButton.IsEnabled = true;
-            GlobalLogger.Log(
-                "Force download blocked — one or more numeric fields are invalid.",
-                "SettingsDialog", LogLevel.System);
-            return;
-        }
+        // master, and lost the username edit after relaunch). Invalid numeric
+        // fields roll back to their last-saved values exactly like Save does —
+        // the update path must never be held hostage by a bad field, least of
+        // all one sitting on a different Pivot tab where the user can't see
+        // the red border (the old hard-block here bricked Force Download for
+        // every install while the un-hydrated viewer port box sat empty).
+        RollBackInvalidNumericFields("force download continues with the saved values");
         if (!await TryCommitAndPersistAsync().ConfigureAwait(true))
         {
             UpdateStatusText.Text = Localizer.T(
@@ -1095,38 +1097,9 @@ public sealed partial class SettingsDialog : ContentDialog
                 XamlRoot? rootForProgress = this.XamlRoot;
                 this.Hide();
 
-                // The Updater needs the SUITE ROOT ({app}\, parent of Hub\ /
-                // Updater\), not the Hub exe's own folder. AppContext.BaseDirectory
-                // is {app}\Hub\ in the installer layout, so use the shared
-                // resolver to climb to the suite root.
-                string installRoot = UpdateChecker.ResolveSuiteRoot();
-                bool spawned = UpdateChecker.BeginApply(rel, installRoot);
-                if (!spawned)
-                {
-                    GlobalLogger.Log(
-                        "Could not spawn Phoenix.Controls.Updater.exe — see SystemLog for details.",
-                        "SettingsDialog", LogLevel.CriticalError);
-                    return;
-                }
-
-                // BeginApply staged the sentinel + cleared any leftover progress
-                // file. Open the progress dialog AFTER spawning the Updater so
-                // the dialog's first poll has a real progress entry to read.
-                if (rootForProgress is not null)
-                {
-                    var progressDialog = new UpdaterProgressDialog
-                    {
-                        XamlRoot = rootForProgress,
-                    };
-                    // Fire-and-forget ShowAsync — Hub is about to exit; we just
-                    // need the dialog visible while the Updater downloads.
-                    _ = progressDialog.ShowAsync();
-                }
-
-                // Application.Exit was previously called inline. The Updater
-                // now waits on the sentinel PID before mutating files, so the
-                // dialog gets ~30s of polling visibility before Hub goes down.
-                Application.Current.Exit();
+                // Spawn-failure is logged inside the flow (CriticalError);
+                // on success Hub is already exiting.
+                UpdateApplyFlow.BeginApplyWithProgress(rel, rootForProgress, "SettingsDialog");
                 break;
             }
             case UpdateStatus.NetworkError ne:

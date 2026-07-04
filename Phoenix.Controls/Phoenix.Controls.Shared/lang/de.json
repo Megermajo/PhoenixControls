@@ -622,5 +622,9 @@
   "dialog.settings.update.force_download_error_format":  "Erzwungener Download warf: {0}",
   "dialog.settings.update.release_available_format":  "Neueste Version: {0}\nLokale Version: {1}\nAsset: {2}\nSHA-256: {3}\nStarte Phoenix.Controls.Updater � Hub wird in K�rze beendet.",
   "dialog.settings.update.force_download_failed_format":  "Erzwungener Download fehlgeschlagen: {0}",
-  "dialog.settings.update.unexpected_status_format":  "Unerwarteter Status: {0}"
+  "dialog.settings.update.unexpected_status_format":  "Unerwarteter Status: {0}",
+  "dialog.update_prompt.title":  "Update verfügbar",
+  "dialog.update_prompt.body_format":  "Phoenix Controls {0} ist verfügbar — installiert ist {1}.\n\nJetzt installieren? Hub wird geschlossen, das Update angewendet und automatisch neu gestartet.",
+  "dialog.update_prompt.install":  "Installieren & neu starten",
+  "dialog.update_prompt.later":  "Später"
 }
