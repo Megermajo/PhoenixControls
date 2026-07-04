@@ -7,6 +7,15 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607043 - 2026.07.04
+
+**Fixed**
+- Installing an update now completes. The updater used to finish downloading and then close with an error instead of applying the update; updates now install and Hub restarts on its own.
+- The "update available" prompt now matches the Phoenix Controls look instead of showing as a plain system dialog.
+- Architect no longer crashes when exporting a script with very deeply nested macros — it now stops cleanly with a clear message.
+
+> Heads up — the in-app updater couldn't finish installing in earlier versions, so it can't install this update for you. Download and install this version manually once (use the Download button); from this version on, the in-app updater installs updates on its own.
+
 ## Hotfix - 1.0.2607042 - 2026.07.04
 
 **Fixed**

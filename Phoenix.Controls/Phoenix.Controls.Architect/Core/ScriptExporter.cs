@@ -56,6 +56,17 @@ namespace Phoenix.Controls.Architect.Core
         // O(depth) linear scan of the stack on each Process.Spawn / Macro.Call.
         private readonly HashSet<string> _macroStackSet;
 
+        // Hard ceiling on macro/process expansion nesting depth. The _macroStack
+        // guard above catches CYCLES, but a legitimately deep UNIQUE chain
+        // (M1→M2→…→Mn, no repeated key) still recurses one nested
+        // ScriptExporter().Export() per level — past a few dozen levels that
+        // overflows the thread stack as an UNCATCHABLE StackOverflowException that
+        // kills the whole process (Architect on save, or a test host). This is the
+        // export-time analogue of ScriptEngine.MaxExecutionDepth: no real graph
+        // nests macros more than single digits deep, so a ceiling of 64 rejects
+        // only pathological / corrupt input, and does so as a clean throw.
+        internal const int MaxMacroExpansionDepth = 64;
+
         // ── Export index ─────────────────────────────────────────────────────
         // Lazily-built per-export lookup indices over the (immutable-during-export)
         // _graph. Built once on first use, reused for the whole Export() pass, and
@@ -1845,6 +1856,19 @@ namespace Phoenix.Controls.Architect.Core
             {
                 var chain = string.Join(" → ", _macroStack.Reverse().Append(cycleKey));
                 throw new InvalidOperationException($"Circular macro reference: {chain}");
+            }
+
+            // Depth ceiling for the non-cyclic-but-pathologically-deep chain (see
+            // MaxMacroExpansionDepth). _macroStack.Count is the current nesting
+            // depth; throwing here — before the push/recurse below — stops the
+            // recursion cleanly instead of letting it ride the call stack into an
+            // uncatchable StackOverflowException.
+            if (_macroStack.Count >= MaxMacroExpansionDepth)
+            {
+                var chain = string.Join(" → ", _macroStack.Reverse().Append(cycleKey));
+                throw new InvalidOperationException(
+                    $"Macro nesting too deep (>{MaxMacroExpansionDepth} levels): {chain}. " +
+                    "Flatten the macro/process call chain.");
             }
 
             // A body called from multiple reachable sites/events

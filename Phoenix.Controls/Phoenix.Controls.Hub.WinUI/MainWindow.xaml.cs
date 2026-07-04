@@ -1436,22 +1436,49 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         _updatePromptOpen = true;
         try
         {
+            // Phoenix chrome — the prompt is code-built (dynamic version
+            // strings), so it can't inherit a XAML dialog's StaticResource
+            // brushes; pull the same Coal/Ember tokens the About/Settings
+            // dialogs use from the app resources so it reads as part of the
+            // shell family instead of a bare WinUI dialog.
+            var eyebrow = new TextBlock
+            {
+                Text = "PHOENIX CONTROLS",
+                FontFamily = ResolveFont("DisplayFont", "Segoe UI"),
+                FontSize = 10,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                CharacterSpacing = 180,
+                Foreground = ResolveBrush("EmberPrimaryBrush", Microsoft.UI.Colors.Orange),
+                Margin = new Thickness(0, 0, 0, 6),
+            };
+            var body = new TextBlock
+            {
+                Text = string.Format(
+                    Localizer.T("dialog.update_prompt.body_format",
+                        "Phoenix Controls {0} is available — you are running {1}.\n\nInstall now? Hub closes, applies the update, and restarts automatically."),
+                    release.RemoteTag, release.LocalVersion),
+                TextWrapping = TextWrapping.Wrap,
+                FontFamily = ResolveFont("SansFont", "Segoe UI"),
+                FontSize = 13,
+                Foreground = ResolveBrush("CoalBodyTextBrush", Microsoft.UI.Colors.Gainsboro),
+            };
+            var promptContent = new StackPanel { Width = 420 };
+            promptContent.Children.Add(eyebrow);
+            promptContent.Children.Add(body);
+
             var dialog = new ContentDialog
             {
                 XamlRoot = root,
                 Title = Localizer.T("dialog.update_prompt.title", "Update available"),
-                Content = new TextBlock
-                {
-                    Text = string.Format(
-                        Localizer.T("dialog.update_prompt.body_format",
-                            "Phoenix Controls {0} is available — you are running {1}.\n\nInstall now? Hub closes, applies the update, and restarts automatically."),
-                        release.RemoteTag, release.LocalVersion),
-                    TextWrapping = TextWrapping.Wrap,
-                },
+                Content = promptContent,
                 PrimaryButtonText = Localizer.T("dialog.update_prompt.install", "Install & restart"),
                 CloseButtonText   = Localizer.T("dialog.update_prompt.later", "Later"),
                 DefaultButton = ContentDialogButton.Primary,
                 RequestedTheme = ElementTheme.Dark,
+                Background = ResolveBrush("CoalShellBrush", Microsoft.UI.Colors.Black),
+                BorderBrush = ResolveBrush("CoalCardBrush", Microsoft.UI.Colors.DimGray),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
             };
 
             ContentDialogResult result;
@@ -1479,5 +1506,34 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         {
             _updatePromptOpen = false;
         }
+    }
+
+    /// <summary>
+    /// Resolve an app-resource brush by key for a runtime-built dialog, falling
+    /// back to a solid colour if the key is missing or non-Brush. Mirrors
+    /// <c>SettingsDialog.ResolveBrushOrFallback</c> so code-built prompts pick
+    /// up the Phoenix Coal/Ember tokens the same way the XAML dialogs do.
+    /// </summary>
+    private static Microsoft.UI.Xaml.Media.Brush ResolveBrush(string key, global::Windows.UI.Color fallback)
+    {
+        if (Application.Current?.Resources is { } res
+            && res.TryGetValue(key, out var found)
+            && found is Microsoft.UI.Xaml.Media.Brush b)
+            return b;
+        return new Microsoft.UI.Xaml.Media.SolidColorBrush(fallback);
+    }
+
+    /// <summary>
+    /// Resolve an app-resource font family (the <c>*Font</c> tokens are
+    /// <c>&lt;x:String&gt;</c> resources, so a direct cast would throw) with a
+    /// system fallback.
+    /// </summary>
+    private static Microsoft.UI.Xaml.Media.FontFamily ResolveFont(string key, string fallback)
+    {
+        string family = (Application.Current?.Resources is { } res
+            && res.TryGetValue(key, out var found)
+            && found is string s && !string.IsNullOrWhiteSpace(s))
+            ? s : fallback;
+        return new Microsoft.UI.Xaml.Media.FontFamily(family);
     }
 }

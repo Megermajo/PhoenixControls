@@ -84,6 +84,27 @@ public sealed class UpdaterArgs
     /// <summary>Optional SHA-256 hex of the archive on disk. Re-verified before unpack; if absent, only the per-file manifest hashes are checked.</summary>
     public string? ArchiveSha256 { get; init; }
 
+    // ── Self-relocation (temp re-exec) ──────────────────────────────────
+
+    /// <summary>
+    /// True when this process is the temp copy re-exec'd by
+    /// <see cref="UpdaterBootstrap"/>. When the Updater ships inside the
+    /// install tree it must rename (installer layout: <c>&lt;root&gt;\Updater\</c>),
+    /// Windows won't let it move that tree while its own CWD + mapped .exe
+    /// image sit inside it. The first instance copies itself to <c>%TEMP%</c>
+    /// and relaunches with <c>--detached</c>; only the detached copy performs
+    /// the swap. Never set by Hub — only by the relocation relaunch.
+    /// </summary>
+    public bool Detached { get; init; }
+
+    /// <summary>
+    /// PID of the in-tree Updater instance that relocated us. The detached
+    /// copy waits for it to exit before mutating files so the original's
+    /// mapped image (inside the tree being renamed) is released first.
+    /// <c>0</c> when not relocated.
+    /// </summary>
+    public int ParentPid { get; init; }
+
     /// <summary>
     /// Test-only override for the runner's state directory (updater.log,
     /// last-update-result.json, updating.lock, …). Never parsed from argv —
@@ -117,6 +138,8 @@ public sealed class UpdaterArgs
         string? releaseTag    = null;
         string? updateArchive = null;
         string? archiveSha    = null;
+        bool    detached      = false;
+        int?    parentPid     = null;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -164,6 +187,14 @@ public sealed class UpdaterArgs
                 case "--archive-sha256":
                     if (++i >= args.Length) { error = "--archive-sha256 expects a hex string"; return false; }
                     archiveSha = args[i];
+                    break;
+                case "--detached":
+                    detached = true;
+                    break;
+                case "--parent-pid":
+                    if (++i >= args.Length) { error = "--parent-pid expects a number"; return false; }
+                    if (!int.TryParse(args[i], out int ppid) || ppid <= 0) { error = $"--parent-pid: '{args[i]}' is not a positive integer"; return false; }
+                    parentPid = ppid;
                     break;
                 default:
                     error = $"unknown argument: {a}";
@@ -231,6 +262,8 @@ public sealed class UpdaterArgs
             ReleaseTag    = releaseTag,
             UpdateArchive = hasUpdate ? Path.GetFullPath(updateArchive!) : null,
             ArchiveSha256 = archiveSha is { Length: > 0 } ? archiveSha.ToLowerInvariant() : null,
+            Detached      = detached,
+            ParentPid     = parentPid ?? 0,
         };
         return true;
     }

@@ -38,6 +38,26 @@ internal static class Program
             return 2;
         }
 
+        // Self-relocation guard. When the Updater ships inside the tree it must
+        // swap (installer layout: <root>\Updater\), Windows won't let it rename
+        // that tree while our CWD + mapped image sit inside it — the swap always
+        // failed right after the sentinel wait. Copy ourselves to %TEMP% and
+        // re-exec from there; the detached copy does the actual work. Skip when
+        // we ARE the detached copy (guard against a relocation loop).
+        if (!parsed.Detached)
+        {
+            if (UpdaterBootstrap.TryRelocateToTemp(parsed, args, out int relocateExit))
+                return relocateExit; // exit now so our CWD + image locks release
+            // else: no relocation needed (running from outside the tree) or the
+            // attempt failed — fall through and run in place, as before.
+        }
+        else
+        {
+            // Detached copy: wait for the in-tree parent to exit so its mapped
+            // image is released before we rename the tree.
+            UpdaterBootstrap.OnDetachedStartup(parsed);
+        }
+
         var runner = new UpdateRunner(parsed);
         UpdateOutcome outcome = await runner.RunAsync();
         return outcome switch
