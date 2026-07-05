@@ -7,6 +7,13 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607051 - 2026.07.05
+
+**Fixed**
+- German menus and dialogs no longer show broken placeholder symbols in place of accented letters — the text reads correctly again.
+- French menus and dialogs no longer show broken placeholder symbols in place of accented letters — the text reads correctly again.
+- Spanish menus and dialogs no longer show broken placeholder symbols in place of accented letters and inverted question marks — the text reads correctly again.
+
 ## Hotfix - 1.0.2607043 - 2026.07.04
 
 **Fixed**
