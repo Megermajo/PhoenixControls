@@ -81,6 +81,8 @@
                                 <Grid.ColumnDefinitions>
                                     <!-- Timestamp (mono-value, Phase A token) -->
                                     <ColumnDefinition Width="Auto" />
+                                    <!-- Platform tag (brand-colored letter: T / Y / K) -->
+                                    <ColumnDefinition Width="12" />
                                     <!-- Role-glyph badge (always rendered — every role
                                          permutation resolves to a non-null geometry) -->
                                     <ColumnDefinition Width="16" />
@@ -95,7 +97,17 @@
                                            VerticalAlignment="Center"
                                            Text="{x:Bind Timestamp}" />
 
-                                <PathIcon Grid.Column="1"
+                                <TextBlock Grid.Column="1"
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Center"
+                                           FontSize="10"
+                                           FontWeight="Bold"
+                                           Foreground="{x:Bind PlatformBrush}"
+                                           ToolTipService.ToolTip="{x:Bind PlatformName}"
+                                           AutomationProperties.Name="{x:Bind PlatformName}"
+                                           Text="{x:Bind PlatformTag}" />
+
+                                <PathIcon Grid.Column="2"
                                           Width="14" Height="14"
                                           VerticalAlignment="Center"
                                           HorizontalAlignment="Center"
@@ -104,14 +116,14 @@
                                           AutomationProperties.Name="{x:Bind BadgeLabel}"
                                           local:ChatBadgeData.SafeData="{x:Bind BadgeGeometry}" />
 
-                                <TextBlock Grid.Column="2"
+                                <TextBlock Grid.Column="3"
                                            VerticalAlignment="Center"
                                            Foreground="{x:Bind UsernameBrush, Mode=OneWay}"
                                            FontWeight="SemiBold"
                                            FontSize="12"
                                            Text="{x:Bind Username}" />
 
-                                <TextBlock Grid.Column="3"
+                                <TextBlock Grid.Column="4"
                                            Margin="6,0,0,0"
                                            VerticalAlignment="Center"
                                            Foreground="{StaticResource CoalPrimaryTextBrush}"

@@ -622,11 +622,12 @@ public sealed partial class LogicCanvasView
         // all leave the default arrow), so we only repaint when Idle.
         if (_drag == DragState.Idle)
         {
-            if (_useImmediateMode) UpdateFrameEdgeHoverCursorWin2D(HostToCanvas(point));
+            // Model-driven frame-edge cursor + hover highlight (the retained
+            // path's per-element pointer events don't exist on the GPU canvas).
+            // One host→canvas projection and ONE (cached) model hit-test feed
+            // both — each previously ran its own full scene walk per move.
+            if (_useImmediateMode) UpdateIdleHoverWin2D(HostToCanvas(point));
             else UpdateFrameEdgeHoverCursor(e.OriginalSource);
-            // Model-driven hover highlight (the
-            // retained path's per-element pointer events don't exist on the GPU canvas).
-            if (_useImmediateMode) UpdateImmediateHover(HostToCanvas(point));
         }
 
         switch (_drag)

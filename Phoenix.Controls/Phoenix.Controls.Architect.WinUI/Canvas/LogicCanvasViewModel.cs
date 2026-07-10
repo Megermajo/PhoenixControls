@@ -225,6 +225,28 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     public void SetAnyLinkDirty() => AnyLinkDirty = true;
     public void ClearAnyLinkDirty() => AnyLinkDirty = false;
 
+    // ─── Graph-edit stamp (shared cache invalidator) ─────────────────────
+    //
+    // Monotonic counter bumped on every observable graph edit: the VM-level
+    // mutation entry points (OnGraphMutated / LoadGraph / Reset /
+    // ApplyIncrementalReroute / RefreshMacroCallSockets) plus — via
+    // ArchitectViewModel's shared-history hook — every undo-stack push, which
+    // covers the inline pill/attribute commits that mutate Node.Attributes
+    // without raising GraphMutatedAny. Static because the shared
+    // UndoRedoController spans the parent canvas and every open SubGraphWindow,
+    // so one bump must reach every canvas's stamp-keyed cache. Consumers (the
+    // var-chain trace memo below, LeftRail's discovered-vars cache) treat any
+    // stamp change as "graph may have changed" and recompute lazily; a spurious
+    // bump costs one extra recompute, never a stale result.
+    private static int s_graphEditStamp;
+
+    /// <summary>Current graph-edit stamp — see the field comment above.</summary>
+    internal static int GraphEditStamp => System.Threading.Volatile.Read(ref s_graphEditStamp);
+
+    /// <summary>Invalidate every stamp-keyed cache ("the graph may have changed").</summary>
+    internal static void BumpGraphEditStamp()
+        => System.Threading.Interlocked.Increment(ref s_graphEditStamp);
+
     public BulkObservableCollection<NodeViewModel> Nodes { get; }
     public BulkObservableCollection<LinkViewModel> Links { get; }
     public BulkObservableCollection<FrameViewModel> Frames { get; }
@@ -473,6 +495,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         Zoom = 1.0;
         _pickerVarChainName  = null;
         _hoveredVarChainName = null;
+        InvalidateVarChainTraceCache();
         OnPropertyChanged(nameof(PickerVarChainName));
         OnPropertyChanged(nameof(HoveredVarChainName));
     }
@@ -524,6 +547,8 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     public void LoadGraph(Graph graph, bool wildcardAlreadyResolved = false)
     {
         _graph = graph ?? throw new ArgumentNullException(nameof(graph));
+        BumpGraphEditStamp();
+        InvalidateVarChainTraceCache();
         Selection = null;
 
         // Pre-fix every VM was
@@ -594,6 +619,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     /// </summary>
     public void OnGraphMutated()
     {
+        BumpGraphEditStamp();
         foreach (var l in Links) l.RecomputePath();
         SyncSocketConnectivity();
         GraphMutatedAny?.Invoke(this, EventArgs.Empty);
@@ -670,6 +696,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         foreach (var lvm in addedLinkVms) lvm.RecomputePath();
 
         _graph.MarkStructuralChange();
+        BumpGraphEditStamp();
         GraphMutatedAny?.Invoke(this, EventArgs.Empty);
         return addedVm;
     }
@@ -942,7 +969,11 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
             changed = true;
         }
 
-        if (changed) _graph.MarkStructuralChange();
+        if (changed)
+        {
+            _graph.MarkStructuralChange();
+            BumpGraphEditStamp();
+        }
         return changed;
     }
 
@@ -1124,6 +1155,42 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ─── Var-chain trace memo ────────────────────────────────────────────
+    //
+    // ApplyVarChainHighlights fires on every var-token pill hover-change and
+    // used to run VarChainAnalyzer.Analyze (O(nodes) + a regex per attribute)
+    // plus fresh HashSet allocations per call. The memo below keys the last
+    // trace per role (hover / picker) on (graph reference, var name,
+    // GraphEditStamp) so re-hovering the same var skips the whole-graph walk —
+    // and a pinned picker trace stops being re-analyzed on every hover
+    // enter/exit. The HashSet pairs are persistent, cleared-and-refilled in
+    // place. Any graph edit bumps the stamp (see s_graphEditStamp), so a stale
+    // trace can't survive an edit.
+    private Graph? _hoverTraceGraph;
+    private string? _hoverTraceName;
+    private int _hoverTraceStamp = -1;
+    private readonly HashSet<string> _hoverTraceWriterIds = new();
+    private readonly HashSet<string> _hoverTraceReaderIds = new();
+    private Graph? _pickerTraceGraph;
+    private string? _pickerTraceName;
+    private int _pickerTraceStamp = -1;
+    private readonly HashSet<string> _pickerTraceWriterIds = new();
+    private readonly HashSet<string> _pickerTraceReaderIds = new();
+
+    // Drop the memoized traces (and their pinned Graph references) — called on
+    // LoadGraph / Reset / Dispose so a replaced graph isn't kept alive through
+    // the memo fields. Ordinary edits don't need this: the stamp key already
+    // forces a re-analyze on the next hover.
+    private void InvalidateVarChainTraceCache()
+    {
+        _hoverTraceGraph = null;
+        _hoverTraceName = null;
+        _hoverTraceStamp = -1;
+        _pickerTraceGraph = null;
+        _pickerTraceName = null;
+        _pickerTraceStamp = -1;
+    }
+
     /// <summary>
     /// Re-walk every node and flip its <see cref="NodeViewModel.IsVarChainWriter"/>
     /// / <see cref="NodeViewModel.IsVarChainReader"/> / <see cref="NodeViewModel.IsDimmedByPicker"/>
@@ -1132,12 +1199,11 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     /// </summary>
     private void ApplyVarChainHighlights()
     {
-        // Untraced UI-thread hot path: fires on every
-        // var-token pill hover-change and runs VarChainAnalyzer.Analyze
-        // (O(nodes) + a regex per attribute) plus an O(nodes) flag sweep. On a
-        // large graph this is a real per-hover cost during "clicking around", so
-        // breadcrumb it — if the next freeze lands here, the watchdog log names
-        // this instead of the generic render-tick tail.
+        // UI-thread hot path: fires on every var-token pill hover-change. The
+        // graph walk itself is memoized above; the residual per-call cost is
+        // the O(nodes) flag sweep. Keep the breadcrumb so a freeze landing
+        // here is named in the watchdog log rather than the generic
+        // render-tick tail.
         using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
             .Begin("Architect.VarChainHighlight");
         var hover  = _hoveredVarChainName;
@@ -1148,17 +1214,45 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         System.Collections.Generic.HashSet<string>? pickerWriters = null;
         System.Collections.Generic.HashSet<string>? pickerReaders = null;
 
+        int stamp = GraphEditStamp;
         if (!string.IsNullOrEmpty(hover))
         {
-            var trace = Phoenix.Controls.Architect.Core.VarChainAnalyzer.Analyze(_graph, hover);
-            writerIds = new(trace.Writers.Select(n => n.Id));
-            readerIds = new(trace.Readers.Select(n => n.Id));
+            // OrdinalIgnoreCase name key matches both the setter's early-out
+            // comparison and VarChainAnalyzer's case-insensitive matching, so
+            // equal-ignoring-case names yield identical traces.
+            if (_hoverTraceStamp != stamp
+                || !ReferenceEquals(_hoverTraceGraph, _graph)
+                || !string.Equals(_hoverTraceName, hover, StringComparison.OrdinalIgnoreCase))
+            {
+                var trace = Phoenix.Controls.Architect.Core.VarChainAnalyzer.Analyze(_graph, hover);
+                _hoverTraceWriterIds.Clear();
+                foreach (var n in trace.Writers) _hoverTraceWriterIds.Add(n.Id);
+                _hoverTraceReaderIds.Clear();
+                foreach (var n in trace.Readers) _hoverTraceReaderIds.Add(n.Id);
+                _hoverTraceGraph = _graph;
+                _hoverTraceName  = hover;
+                _hoverTraceStamp = stamp;
+            }
+            writerIds = _hoverTraceWriterIds;
+            readerIds = _hoverTraceReaderIds;
         }
         if (!string.IsNullOrEmpty(picker))
         {
-            var trace = Phoenix.Controls.Architect.Core.VarChainAnalyzer.Analyze(_graph, picker);
-            pickerWriters = new(trace.Writers.Select(n => n.Id));
-            pickerReaders = new(trace.Readers.Select(n => n.Id));
+            if (_pickerTraceStamp != stamp
+                || !ReferenceEquals(_pickerTraceGraph, _graph)
+                || !string.Equals(_pickerTraceName, picker, StringComparison.OrdinalIgnoreCase))
+            {
+                var trace = Phoenix.Controls.Architect.Core.VarChainAnalyzer.Analyze(_graph, picker);
+                _pickerTraceWriterIds.Clear();
+                foreach (var n in trace.Writers) _pickerTraceWriterIds.Add(n.Id);
+                _pickerTraceReaderIds.Clear();
+                foreach (var n in trace.Readers) _pickerTraceReaderIds.Add(n.Id);
+                _pickerTraceGraph = _graph;
+                _pickerTraceName  = picker;
+                _pickerTraceStamp = stamp;
+            }
+            pickerWriters = _pickerTraceWriterIds;
+            pickerReaders = _pickerTraceReaderIds;
         }
 
         foreach (var n in Nodes)
@@ -1206,6 +1300,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         _linksByNode.Clear();
         _linksBySocket.Clear();
         _selection = null;
+        InvalidateVarChainTraceCache();
 
         // Null every outbound delegate field so a subscriber that
         // forgot to unhook can't keep this VM alive through its handler.

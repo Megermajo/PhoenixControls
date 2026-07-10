@@ -90,6 +90,36 @@ namespace Phoenix.Controls.Hub.Core
             public const string ObsFilterVisible  = "Phoenix: OBS Filter Visible";
             public const string ObsScreenshot     = "Phoenix: OBS Screenshot";
 
+            // YouTube platform actions — same wrapper model as the Twitch set:
+            // Hub dispatches DoAction against these EXACT names; each pack action
+            // wraps SB's native YouTube sub-action (Send Message to Channel /
+            // Set Title / Ban+Timeout User / Create+End Poll / …). YT Get User is
+            // a data action — it writes phx_yt_* globals that Hub reads back via
+            // FetchActionGlobalsAsync.
+            public const string YtSendChat        = "Phoenix: YT Send Chat";
+            public const string YtSetTitle        = "Phoenix: YT Set Title";
+            public const string YtSetDescription  = "Phoenix: YT Set Description";
+            public const string YtTimeout         = "Phoenix: YT Timeout";
+            public const string YtBan             = "Phoenix: YT Ban";
+            public const string YtCreatePoll      = "Phoenix: YT Create Poll";
+            public const string YtEndPoll         = "Phoenix: YT End Poll";
+            public const string YtGetUser         = "Phoenix: YT Get User";
+
+            // Kick platform actions — same wrapper model. Kick Get User is a data
+            // action (phx_kick_* globals via FetchActionGlobalsAsync).
+            public const string KickSendChat         = "Phoenix: Kick Send Chat";
+            public const string KickReply            = "Phoenix: Kick Reply";
+            public const string KickTimeout          = "Phoenix: Kick Timeout";
+            public const string KickBan              = "Phoenix: Kick Ban";
+            public const string KickUnban            = "Phoenix: Kick Unban";
+            public const string KickUntimeout        = "Phoenix: Kick Untimeout";
+            public const string KickSetTitle         = "Phoenix: Kick Set Title";
+            public const string KickSetCategory      = "Phoenix: Kick Set Category";
+            public const string KickDeleteMessage    = "Phoenix: Kick Delete Message";
+            public const string KickSetRewardCost    = "Phoenix: Kick Set Reward Cost";
+            public const string KickSetRewardEnabled = "Phoenix: Kick Set Reward Enabled";
+            public const string KickGetUser          = "Phoenix: Kick Get User";
+
             // Authoritative set the connect-probe checks against (and that the
             // action pack must define). twitch.resolve_prediction is intentionally
             // absent — it has no live path (see its handler).
@@ -105,6 +135,23 @@ namespace Phoenix.Controls.Hub.Core
                 ObsStopRecording, ObsStartStreaming, ObsStopStreaming, ObsSaveReplay,
                 ObsSourcePosition, ObsSourceScale, ObsSourceRotation, ObsFilterVisible,
                 ObsScreenshot,
+            };
+
+            // Platform packs — deliberately NOT part of All. The probe checks them
+            // SEPARATELY so the report stays one grouped Communication-tier line
+            // per platform: a Twitch-only setup lacking every YT/Kick wrapper is
+            // normal, not a CriticalError, and must not be spammed per action.
+            public static readonly string[] YouTubeAll =
+            {
+                YtSendChat, YtSetTitle, YtSetDescription, YtTimeout, YtBan,
+                YtCreatePoll, YtEndPoll, YtGetUser,
+            };
+
+            public static readonly string[] KickAll =
+            {
+                KickSendChat, KickReply, KickTimeout, KickBan, KickUnban,
+                KickUntimeout, KickSetTitle, KickSetCategory, KickDeleteMessage,
+                KickSetRewardCost, KickSetRewardEnabled, KickGetUser,
             };
         }
 
@@ -179,6 +226,41 @@ namespace Phoenix.Controls.Hub.Core
                 GlobalLogger.Log(
                     $"Streamer.bot connected: all {PhxSbActions.All.Length} Phoenix action-pack actions present.",
                     "Script", LogLevel.Communication);
+
+            // YouTube / Kick platform packs — checked separately from the core
+            // set: ONE grouped Communication-tier line per platform. A Twitch-only
+            // setup is expected to lack all of these, so they never get the
+            // per-action CriticalError treatment the Twitch/OBS set uses above.
+            ReportPlatformActionPack("YouTube", "youtube.*", PhxSbActions.YouTubeAll, found);
+            ReportPlatformActionPack("Kick",    "kick.*",    PhxSbActions.KickAll,    found);
+        }
+
+        // Grouped per-platform action-pack report (YouTube / Kick). Missing
+        // wrapper actions collapse into a single Communication line naming the
+        // gap — the platform may simply not be in use on this setup, so the tier
+        // stays Communication regardless of how many names are absent. (A node
+        // that actually FIRES against a missing action still gets its loud
+        // CriticalError from DispatchNamedAction / FetchActionGlobalsAsync.)
+        private static void ReportPlatformActionPack(
+            string platform, string commandPrefix, string[] pack, HashSet<string> found)
+        {
+            var missing = pack.Where(x => !found.Contains(x)).ToArray();
+            if (missing.Length == 0)
+            {
+                GlobalLogger.Log(
+                    $"Streamer.bot connected: all {pack.Length} Phoenix {platform} action-pack actions present.",
+                    "Script", LogLevel.Communication);
+                return;
+            }
+            // Same enumeration cap as the core-set report — a fully absent pack
+            // shouldn't dump a wall of names.
+            const int cap = 8;
+            string names = string.Join(", ", missing.Take(cap))
+                + (missing.Length > cap ? $" (+{missing.Length - cap} more)" : "");
+            GlobalLogger.Log(
+                $"{missing.Length} Phoenix {platform} action(s) missing from Streamer.bot — {commandPrefix} " +
+                $"commands will no-op: {names}. Import the extended Phoenix action pack to enable them.",
+                "Script", LogLevel.Communication);
         }
 
         // Dispatch a Twitch action node against its Phoenix action-pack wrapper.

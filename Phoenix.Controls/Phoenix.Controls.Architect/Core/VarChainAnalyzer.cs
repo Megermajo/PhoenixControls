@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Models;
 
 namespace Phoenix.Controls.Architect.Core
@@ -139,10 +140,21 @@ namespace Phoenix.Controls.Architect.Core
         /// but no consumer yet.
         /// </summary>
         // Keep alphabetised within each section so additions land at predictable spots.
-        private static readonly IReadOnlyDictionary<string, string[]> ResultEmitterMap =
-            new Dictionary<string, string[]>(StringComparer.Ordinal)
+        private static readonly IReadOnlyDictionary<string, string[]> ResultEmitterMap = BuildResultEmitterMap();
+
+        // Literal entries first, then the PlatformEventCatalog fold — a plain
+        // collection initializer can't merge the 50 catalog entries, so the
+        // map is built here instead.
+        private static IReadOnlyDictionary<string, string[]> BuildResultEmitterMap()
+        {
+            var map = new Dictionary<string, string[]>(StringComparer.Ordinal)
             {
-                // Twitch event sources.
+                // Chat / Twitch event sources.
+                // Chat.Message — unified multi-platform chat trigger:
+                // Twitch.ChatMessage's set + the platform discriminator. The
+                // legacy titles below stay listed for graphs not yet re-saved
+                // through migration.
+                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform" },
                 ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand" },
                 ["Twitch.Subscription"]     = new[] { "user.name", "user.sub_months", "user.tier" },
                 // user.tier added: Twitch.Resub's template exposes a Tier output
@@ -228,6 +240,24 @@ namespace Phoenix.Controls.Architect.Core
                 ["Flow.ForLoop"] = new[] { "loop.index" },
                 ["Flow.ForEach"] = new[] { "loop.item" },
             };
+
+            // Catalog-driven platform events (YouTube/Kick) — folded in from
+            // the single source in PlatformEventCatalog instead of hand-listing
+            // 50 entries. The Hub runtime injects user.platform + event.payload
+            // for every catalog event on top of the per-socket tokens; literal
+            // entries above win on a title collision. Distinct guards the
+            // "Payload" socket, whose VarToken is already event.payload.
+            foreach (var def in PlatformEventCatalog.Events)
+            {
+                if (map.ContainsKey(def.Title)) continue;
+                map[def.Title] = def.Sockets.Select(s => s.VarToken)
+                    .Append("user.platform")
+                    .Append("event.payload")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            return map;
+        }
 
         private static bool WrittenByResultEmitter(string title, string varName)
         {

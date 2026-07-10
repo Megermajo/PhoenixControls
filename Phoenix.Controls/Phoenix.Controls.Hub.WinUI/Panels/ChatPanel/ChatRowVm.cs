@@ -53,7 +53,36 @@ public sealed class ChatRowVm : INotifyPropertyChanged
         // the row at 10pt mono; the panel already auto-scrolls so the
         // operator never relies on second-precision for ordering.
         Timestamp = msg.Timestamp.LocalDateTime.ToString("HH:mm");
+
+        // Platform tag — one brand-colored letter ahead of the role badge so
+        // multi-platform chat stays glance-sortable. Role coloring/badge are
+        // untouched (standing rule: role color + role badge are the row's
+        // functional encoding; the platform letter is an additive dimension).
+        switch (msg.Platform)
+        {
+            case "youtube":
+                PlatformTag = "Y";
+                PlatformName = "YouTube";
+                _platformBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0x4E, 0x45));
+                break;
+            case "kick":
+                PlatformTag = "K";
+                PlatformName = "Kick";
+                _platformBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x53, 0xFC, 0x18));
+                break;
+            default:
+                PlatformTag = "T";
+                PlatformName = "Twitch";
+                _platformBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0xA9, 0x70, 0xFF));
+                break;
+        }
     }
+
+    public string PlatformTag { get; }
+    public string PlatformName { get; }
+
+    private readonly Brush _platformBrush;
+    public Brush PlatformBrush => _platformBrush;
 
     public ChatMessage Message { get; }
     public string Username { get; }

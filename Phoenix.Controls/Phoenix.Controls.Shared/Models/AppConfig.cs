@@ -136,8 +136,33 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public int LogRetentionDays { get; set; } = 30;
 
+        /// <summary>
+        /// Row cap for the <c>EventLog</c> audit table, enforced by a
+        /// startup + daily sweep that keeps only the newest N rows (rowid
+        /// order). Complements <see cref="LogRetentionDays"/>: the day-based
+        /// sweep bounds age, this bounds absolute row count — EventLog rows
+        /// carry the full raw event JSON (multi-KB each), so a busy 24/7
+        /// stream can outgrow the day window long before it expires. The
+        /// default is deliberately small: EventLog is the recent-events
+        /// diagnostic surface, while long-term history lives in the
+        /// SystemHistory log database. Set to 0 (or negative) to keep every
+        /// row forever.
+        /// </summary>
+        public int EventLogRetentionRows { get; set; } = 10_000;
+
         /// <summary>Maximum number of chat-triggered scripts running concurrently. 0 = unlimited.</summary>
         public int MaxConcurrentChatScripts { get; set; } = 3;
+
+        /// <summary>
+        /// Dispatch mode for the scripts matched by ONE chat message. Default
+        /// false = they run one after another in registry order, so each script
+        /// sees the previous one's variable/DB writes — the historical
+        /// contract. True = they fan out concurrently up to
+        /// <see cref="MaxConcurrentChatScripts"/>, which is faster when one
+        /// script does slow I/O but requires scripts sharing persisted vars to
+        /// use atomic operations (<c>db.increment</c>) instead of get-then-set.
+        /// </summary>
+        public bool ParallelChatScripts { get; set; } = false;
 
         /// <summary>Maximum number of webhook-triggered scripts running concurrently. 0 = unlimited.</summary>
         public int MaxConcurrentWebhookScripts { get; set; } = 5;

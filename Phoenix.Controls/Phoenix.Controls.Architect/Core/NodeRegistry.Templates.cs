@@ -94,12 +94,13 @@ namespace Phoenix.Controls.Architect.Core
                 { "In",  "Pass-through input. Wildcard — once either side is wired, both pins take that type. Visual-only routing helper, no effect on data." },
                 { "Out", "Pass-through output. Wildcard — once either side is wired, both pins take that type." },
             });
-            SetSocketDescriptions("Twitch.ChatMessage", new()
+            SetSocketDescriptions("Chat.Message", new()
             {
                 { "User",      "Packed 7-element array [name, is_mod, is_sub, is_vip, is_broadcaster, color_hex, sub_months]. Feed through Array.Get or Array.Unpack to read individual fields." },
                 { "Command",   "Matched alias with the leading ! stripped. Empty when the message wasn't a command." },
                 { "Args",      "Words after the command, as a list. Iterate with Flow.ForEach or pull individual ones with Array.Get." },
                 { "IsCommand", "True if the message started with ! and matched the Commands filter on this node." },
+                { "Platform",  "Which platform sent the line: twitch, youtube or kick. Branch on it with Logic.Switch to answer per platform." },
             });
             SetSocketDescriptions("Public.Get", new()
             {
@@ -205,7 +206,7 @@ namespace Phoenix.Controls.Architect.Core
             SetKeywords("Math.Abs",            "absolute", "positive");
             SetKeywords("Math.Floor",          "round", "down");
             SetKeywords("Math.Ceil",           "round", "up", "ceiling");
-            SetKeywords("Twitch.ChatMessage",  "chat", "message", "command");
+            SetKeywords("Chat.Message",        "chat", "message", "command", "twitch", "youtube", "kick");
             SetKeywords("Twitch.SendChat",     "say", "respond", "reply");
             SetKeywords("Twitch.LastActive",   "lastseen", "active", "presence");
             SetKeywords("Twitch.GetViewers",   "viewers", "audience", "list");
@@ -529,6 +530,9 @@ namespace Phoenix.Controls.Architect.Core
             };
             if (inputs  != null) foreach (var i in inputs)  template.Inputs.Add(i);
             if (outputs != null) foreach (var o in outputs) template.Outputs.Add(o);
+            // Socket lists are final at this point (nothing mutates them after
+            // registration), so the derived name/order caches freeze here.
+            template.RebuildSocketLookups();
             _templates[title] = template;
         }
 

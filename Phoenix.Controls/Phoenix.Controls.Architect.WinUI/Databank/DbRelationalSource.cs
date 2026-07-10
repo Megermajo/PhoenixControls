@@ -32,6 +32,19 @@ public sealed class DbRelationalSource : IRelationalSource
         new(System.StringComparer.OrdinalIgnoreCase);
     private readonly object _rowCountCacheLock = new();
 
+    // Per-table column-list cache mirroring _rowCountCache. Pre-fix
+    // GetRowSnapshotAsync re-issued PRAGMA table_info on every page
+    // navigation and sort through GetColumnsAsync, though the column shape
+    // cannot change during a table session. Every column-DDL path (add /
+    // drop / rename / change-type) plus create/drop table invalidates, and
+    // the browser VM clears the cache on table-selection change so staleness
+    // is bounded to one table session. Row counts are deliberately NOT
+    // cached beyond _rowCountCache's mutation-invalidated scheme — the
+    // COUNT(*) probes double as external-write detection.
+    private readonly Dictionary<string, IReadOnlyList<ColumnInfo>> _columnCache =
+        new(System.StringComparer.OrdinalIgnoreCase);
+    private readonly object _columnCacheLock = new();
+
     /// <summary>Wrap the live <see cref="DB.Instance"/>.</summary>
     public DbRelationalSource() : this(DB.Instance) { }
 
@@ -70,6 +83,37 @@ public sealed class DbRelationalSource : IRelationalSource
         {
             if (tableName is null) _rowCountCache.Clear();
             else                   _rowCountCache.Remove(tableName);
+        }
+    }
+
+    // ── Column-list cache helpers ───────────────────────────────────────
+
+    private bool TryGetCachedColumns(string tableName, out IReadOnlyList<ColumnInfo>? columns)
+    {
+        lock (_columnCacheLock)
+            return _columnCache.TryGetValue(tableName, out columns);
+    }
+
+    private void StoreColumns(string tableName, IReadOnlyList<ColumnInfo> columns)
+    {
+        lock (_columnCacheLock)
+            _columnCache[tableName] = columns;
+    }
+
+    /// <summary>
+    /// Drop the cached column list for a table (or all tables when
+    /// <paramref name="tableName"/> is null) so the next
+    /// <see cref="GetColumnsAsync"/> re-issues PRAGMA table_info. Called
+    /// from every column-DDL path and on table create/drop; the browser VM
+    /// additionally clears the whole cache when the selected table changes
+    /// so each table session starts from the on-disk truth.
+    /// </summary>
+    public void InvalidateColumns(string? tableName = null)
+    {
+        lock (_columnCacheLock)
+        {
+            if (tableName is null) _columnCache.Clear();
+            else                   _columnCache.Remove(tableName);
         }
     }
 
@@ -164,6 +208,16 @@ public sealed class DbRelationalSource : IRelationalSource
 
     public async Task<IReadOnlyList<ColumnInfo>> GetColumnsAsync(string tableName, CancellationToken ct = default)
     {
+        // Serve the column list from the per-table cache when possible —
+        // GetRowSnapshotAsync calls here on every page step and sort, where
+        // the column shape cannot have changed. DDL paths and the VM's
+        // table-selection change invalidate, so a miss re-reads the truth.
+        if (TryGetCachedColumns(tableName, out var cachedColumns) && cachedColumns is not null)
+        {
+            ct.ThrowIfCancellationRequested();
+            return cachedColumns;
+        }
+
         // Single PRAGMA table_info round-trip.
         // Pre-fix this issued TWO queries against PRAGMA table_info for the
         // same table — GetTableColumnTypesAsync (a Dictionary) plus
@@ -179,6 +233,7 @@ public sealed class DbRelationalSource : IRelationalSource
         var infos = new List<ColumnInfo>(schema.Count);
         foreach (var s in schema)
             infos.Add(new ColumnInfo(s.Name, s.SqlType ?? string.Empty));
+        StoreColumns(tableName, infos);
         return infos;
     }
 
@@ -308,6 +363,7 @@ public sealed class DbRelationalSource : IRelationalSource
     {
         ct.ThrowIfCancellationRequested();
         await _db.AddColumnAsync(tableName, columnName, sqlType).ConfigureAwait(false);
+        InvalidateColumns(tableName);
     }
 
     // Column-level mutations. Delegate to DB which holds the lock /
@@ -322,7 +378,11 @@ public sealed class DbRelationalSource : IRelationalSource
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        return await _db.DropColumnAsync(tableName, columnName).ConfigureAwait(false);
+        bool dropped = await _db.DropColumnAsync(tableName, columnName).ConfigureAwait(false);
+        // Invalidate regardless of the outcome — a spurious invalidation only
+        // costs one PRAGMA re-read; a missed one shows stale headers.
+        InvalidateColumns(tableName);
+        return dropped;
     }
 
     public async Task<bool> RenameColumnAsync(
@@ -332,7 +392,9 @@ public sealed class DbRelationalSource : IRelationalSource
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        return await _db.RenameColumnAsync(tableName, oldName, newName).ConfigureAwait(false);
+        bool renamed = await _db.RenameColumnAsync(tableName, oldName, newName).ConfigureAwait(false);
+        InvalidateColumns(tableName);
+        return renamed;
     }
 
     public async Task<bool> ChangeColumnTypeAsync(
@@ -342,7 +404,9 @@ public sealed class DbRelationalSource : IRelationalSource
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        return await _db.ChangeColumnTypeAsync(tableName, columnName, newAffinityType).ConfigureAwait(false);
+        bool changed = await _db.ChangeColumnTypeAsync(tableName, columnName, newAffinityType).ConfigureAwait(false);
+        InvalidateColumns(tableName);
+        return changed;
     }
 
     public async Task CreateTableAsync(
@@ -357,6 +421,7 @@ public sealed class DbRelationalSource : IRelationalSource
         var list = columns.Select(c => (c.Name, c.SqlType)).ToList();
         await _db.CreateUserTableAsync(tableName, list).ConfigureAwait(false);
         InvalidateRowCount(tableName);
+        InvalidateColumns(tableName);
     }
 
     public async Task ClearTableAsync(string tableName, CancellationToken ct = default)
@@ -371,5 +436,6 @@ public sealed class DbRelationalSource : IRelationalSource
         ct.ThrowIfCancellationRequested();
         await _db.DropUserTableAsync(tableName).ConfigureAwait(false);
         InvalidateRowCount(tableName);
+        InvalidateColumns(tableName);
     }
 }

@@ -128,6 +128,14 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                 GraphReplaced?.Invoke(this, EventArgs.Empty);
             });
 
+        // Every push/undo/redo on the shared history marks a possible graph
+        // edit — including the inline pill/attribute commits that mutate
+        // Node.Attributes without raising GraphMutatedAny. Bump the global
+        // graph-edit stamp so stamp-keyed caches (var-chain trace memo,
+        // LeftRail's discovered-vars cache) re-validate lazily. Spurious bumps
+        // (e.g. History.Reset) only cost one extra recompute.
+        History.CanExecuteChanged += OnHistoryStackChanged;
+
         // Hand the shared History to the databank
         // browser so cell edits enter the same undo stack as graph edits.
         // Must follow History construction; the field declarations are
@@ -185,6 +193,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
             LogicCanvas.SelectionChanged     -= OnCanvasSelectionChanged;
             LogicCanvas.GraphLoaded          -= OnCanvasGraphLoaded;
             LogicCanvas.GraphMutatedAny      -= OnCanvasGraphMutated;
+            History.CanExecuteChanged        -= OnHistoryStackChanged;
             DatabankBrowser.SelectionChanged -= OnDatabankSelectionChanged;
             DatabankBrowser.SchemaChanged    -= OnDatabankSchemaChanged;
             LogicCanvas.RequestPublishMacroGlobally = null;
@@ -606,7 +615,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         if (macro is null || string.IsNullOrEmpty(macro.MacroId)) return;
 
         var graph = LogicCanvas.Graph;
-        bool any = false;
+        List<string>? touched = null;
         foreach (var node in graph.Nodes)
         {
             if (!string.Equals(node.Title, "Macro.Call", StringComparison.Ordinal)) continue;
@@ -619,10 +628,10 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                 entryTitle: "Macro.Entry", exitTitle: "Macro.Exit",
                 nameAttrKey: "MacroName", nameValue: macro.Name,
                 fixedOutputNames: System.Array.Empty<string>());
-            any = true;
+            (touched ??= new List<string>()).Add(node.Id);
         }
 
-        if (any) FinishCallSiteRefresh();
+        if (touched is not null) FinishCallSiteRefresh(touched);
     }
 
     /// <summary>
@@ -648,7 +657,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         if (process is null || string.IsNullOrEmpty(process.ProcessId)) return;
 
         var graph = LogicCanvas.Graph;
-        bool any = false;
+        List<string>? touched = null;
         foreach (var node in graph.Nodes)
         {
             if (!string.Equals(node.Title, "Process.Start", StringComparison.Ordinal)) continue;
@@ -661,10 +670,10 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                 entryTitle: "Process.Entry", exitTitle: "Process.Exit",
                 nameAttrKey: "ProcessName", nameValue: process.Name,
                 fixedOutputNames: new[] { "Done", "InstanceId" });
-            any = true;
+            (touched ??= new List<string>()).Add(node.Id);
         }
 
-        if (any) FinishCallSiteRefresh();
+        if (touched is not null) FinishCallSiteRefresh(touched);
     }
 
     /// <summary>
@@ -853,7 +862,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         RunOnCanvasThread(() =>
         {
             var graph = LogicCanvas.Graph;
-            bool any = false;
+            List<string>? touched = null;
             foreach (var node in graph.Nodes)
             {
                 if (!string.Equals(node.Title, "Macro.Call", StringComparison.Ordinal)) continue;
@@ -866,30 +875,31 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                     .Where(s => s.Name != "Flow" && !s.IsPlaceholder)
                     .Select(s => s.Id)
                     .ToHashSet();
-                if (droppedIds.Count == 0) { any = true; continue; }
+                if (droppedIds.Count == 0) { (touched ??= new List<string>()).Add(node.Id); continue; }
                 node.Sockets.RemoveAll(s => droppedIds.Contains(s.Id));
                 graph.Links.RemoveAll(l =>
                     droppedIds.Contains(l.FromSocketId) || droppedIds.Contains(l.ToSocketId));
-                any = true;
+                (touched ??= new List<string>()).Add(node.Id);
             }
-            if (any) FinishCallSiteRefresh();
+            if (touched is not null) FinishCallSiteRefresh(touched);
         });
     }
 
     /// <summary>
     /// Common tail for the call-site refresh paths: invalidate the graph's
-    /// id-cache, re-snapshot the affected node VMs' socket rows, and tell the
+    /// id-cache, re-snapshot the touched node VMs' socket rows, and tell the
     /// canvas to recompute wires + connectivity. Must run on the canvas thread.
     /// </summary>
-    private void FinishCallSiteRefresh()
+    private void FinishCallSiteRefresh(IReadOnlyList<string> touchedNodeIds)
     {
         LogicCanvas.Graph.MarkStructuralChange();
-        // Re-snapshot every node VM's socket rows. Targeting only the touched
-        // nodes would need a node-id list threaded through; the VM count is
-        // small (tens) and RebuildSockets is cheap, so a full pass keeps the
-        // helper simple and guarantees no stale row VM survives.
-        foreach (var nvm in LogicCanvas.Nodes)
-            nvm.RebuildSockets();
+        // Re-snapshot only the touched call-site nodes' socket rows — the sync
+        // passes above mutate nothing but the listed nodes, so every other
+        // node VM's rows are already current. FindNode is O(1) against the
+        // canvas's id→VM index; a MACRO_SYNC over a large graph no longer
+        // rebuilds every node's socket VMs.
+        foreach (var id in touchedNodeIds)
+            LogicCanvas.FindNode(id)?.RebuildSockets();
         // Recompute wire beziers + IsConnected flags, and flag the graph dirty
         // (a call-site signature change is a real graph mutation the user will
         // want to save). OnGraphMutated raises GraphMutatedAny → IsDirty=true.
@@ -1025,6 +1035,13 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     private bool _suppressGraphLoadedDirtyReset;
 
     private void OnCanvasGraphMutated(object? sender, EventArgs e) { IsDirty = true; }
+
+    // See the constructor's subscription comment — undo-stack activity is the
+    // one signal that covers attribute/pill commits, so it feeds the global
+    // graph-edit stamp.
+    private void OnHistoryStackChanged(object? sender, EventArgs e)
+        => LogicCanvasViewModel.BumpGraphEditStamp();
+
     private void OnCanvasGraphLoaded(object? sender, EventArgs e)
     {
         if (_suppressGraphLoadedDirtyReset) return;

@@ -553,6 +553,7 @@ namespace Phoenix.Controls.Hub.Core
             "Twitch.",
             "OBS.",
             "YouTube.",
+            "Kick.",
             "StreamerBot.",
             "Bus.",
             "Time.",
@@ -569,8 +570,11 @@ namespace Phoenix.Controls.Hub.Core
         internal static bool IsEventTriggerNode(string? title)
         {
             if (string.IsNullOrEmpty(title)) return false;
-            // Hard exclusion — chat-message events flood the view.
-            if (string.Equals(title, "Twitch.ChatMessage", StringComparison.OrdinalIgnoreCase))
+            // Hard exclusion — chat-message events flood the view. Covers the
+            // unified Chat.Message node plus all three per-platform chat events.
+            if (string.Equals(title, "Twitch.ChatMessage", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(title, "Chat.Message", StringComparison.OrdinalIgnoreCase) ||
+                ChatPlatforms.IsChatEventType(title))
                 return false;
             if (_eventTriggerExactTitles.Contains(title)) return true;
             foreach (var prefix in _eventTriggerPrefixes)
@@ -1128,6 +1132,19 @@ namespace Phoenix.Controls.Hub.Core
             // get_follow_age/last_active/get_viewers + streamerbot.get_user.
             RegisterTwitchDataCommands();
 
+            // ── YouTube platform actions ─────────────────────────────────────
+            // Carved into ScriptManager.YouTube.cs. youtube.* DoAction proxies
+            // (send_chat/set_title/set_description/timeout/ban/create_poll/
+            // end_poll) + the youtube.get_user data round-trip (phx_yt_* globals).
+            RegisterYouTubeCommands();
+
+            // ── Kick platform actions ────────────────────────────────────────
+            // Carved into ScriptManager.Kick.cs. kick.* DoAction proxies
+            // (send_chat/reply/timeout/ban/unban/untimeout/set_title/set_category/
+            // delete_message/set_reward_cost/set_reward_enabled) + the
+            // kick.get_user data round-trip (phx_kick_* globals).
+            RegisterKickCommands();
+
             // ── Array slice + helpers ────────────────────────────────────────
             // Carved into ScriptManager.Array.cs (RegisterArrayHelperCommands).
             // slice/sort/shuffle/reverse/unique — CSV in/out, OOB clamping
@@ -1288,8 +1305,24 @@ namespace Phoenix.Controls.Hub.Core
             // Resolving once and copying the dict per-script collapses
             // that to one DB hit per message and removes a measurable
             // chunk of the chat-trigger latency Majo reported.
+            // Chat is multi-platform: the engine EventType is the message's own
+            // platform chat event ("Twitch.ChatMessage" / "YouTube.Message" /
+            // "Kick.ChatMessage") so on_chat(platform, ...) headers gate correctly.
+            // For YouTube/Kick, selection is the union of on_chat scripts and
+            // scripts that declare the platform chat event as a plain
+            // on_event(...) — YouTube.Message used to arrive via the generic
+            // event path, so hand-authored on_event(YouTube.Message) files must
+            // keep firing now that the message rides the chat queue instead.
+            // Twitch deliberately does NOT get the union: an
+            // on_event(Twitch.ChatMessage) file never fired on chat before the
+            // multi-platform pipeline (chat never entered the generic path), and
+            // widening it would be a silent behavior change for existing setups.
+            string chatEventType = ChatPlatforms.ChatEventTypeFor(chatData.Platform)
+                ?? ChatPlatforms.TwitchChatEvent;
+            bool unionEventDeclarations = chatEventType != ChatPlatforms.TwitchChatEvent;
             var matching = new List<ScriptInfo>();
-            foreach (var info in ScriptRegistry.Instance.WhereEnabled(s => s.HasChatHeader))
+            foreach (var info in ScriptRegistry.Instance.WhereEnabled(
+                s => s.HasChatHeader || (unionEventDeclarations && s.EventTypes.Contains(chatEventType))))
                 matching.Add(info);
             if (matching.Count == 0) return;
 
@@ -1297,79 +1330,120 @@ namespace Phoenix.Controls.Hub.Core
             sharedVars["user.points"] = await DB.Instance.GetVariableAsync(
                 $"user.{chatData.Username?.ToLowerInvariant()}.points", "0").ConfigureAwait(false);
 
-            foreach (var info in matching)
+            // Dispatch mode (AppConfig.ParallelChatScripts):
+            //
+            // Sequential (default) — one message's matching scripts run one
+            // after another in registry order, each awaited before the next
+            // starts. This is the historical contract: script B always sees
+            // script A's completed SetScriptVarAsync / db writes, so
+            // get-then-set on shared persisted vars is safe and chat replies
+            // arrive in registry order.
+            //
+            // Parallel (opt-in) — fan out concurrently and await the batch;
+            // _chatSemaphore inside RunChatScriptAsync (MaxConcurrentChatScripts)
+            // is the concurrency bound. Faster when one script does slow I/O
+            // (ai.prompt / http.*), but ordering and read-modify-write
+            // atomicity across siblings are gone: scripts sharing persisted
+            // vars must use atomic operations (db.increment), not get-then-set.
+            // Isolation contract: each RunChatScriptAsync invocation is its own
+            // async flow, so the engine's AsyncLocal-backed EventType /
+            // ScriptFile writes (and _eventSemaphoreHeld) set inside it never
+            // leak across sibling scripts — the same mechanism parallel_begin's
+            // RunParallelBranch relies on. Faults are caught per-script inside
+            // RunChatScriptAsync, so WhenAll never observes a script error.
+            if (ConfigManager.Current.ParallelChatScripts)
             {
+                var scriptRuns = new List<Task>(matching.Count);
+                foreach (var info in matching)
+                    scriptRuns.Add(RunChatScriptAsync(info.FileName, sharedVars, chatEventType));
+                await Task.WhenAll(scriptRuns).ConfigureAwait(false);
+            }
+            else
+            {
+                foreach (var info in matching)
+                    await RunChatScriptAsync(info.FileName, sharedVars, chatEventType).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// One matching chat script, run as its own async operation so
+        /// <see cref="ExecuteOnChatScriptsAsync"/> can dispatch a message's scripts
+        /// either sequentially (default) or concurrently
+        /// (<see cref="AppConfig.ParallelChatScripts"/>). <paramref name="sharedVars"/>
+        /// is read-only here — the per-script copy below keeps sibling scripts
+        /// from seeing each other's var mutations.
+        /// </summary>
+        private async Task RunChatScriptAsync(string fn, Dictionary<string, string> sharedVars, string chatEventType)
+        {
+            try
+            {
+                string content = await ScriptRegistry.Instance.GetContentAsync(fn).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(content)) return;
+
+                // Per-script copy so script-local var mutations don't
+                // bleed into sibling scripts triggered by the same
+                // chat message (vars dict is mutated by ExecuteScript).
+                // Comparer matches BuildChatVars's default — ScriptEngine
+                // re-wraps with OrdinalIgnoreCase at its own boundary.
+                var vars = new Dictionary<string, string>(sharedVars);
+
+                if (_chatSemaphore.CurrentCount == 0)
+                    GlobalLogger.Log($"Rate limit reached for chat scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
+                EmitQueued(fn);
+                // Bound the wait so a hung chat script can't head-of-line
+                // the entire chat queue. Mirrors the 30s pattern used by the event
+                // and webhook semaphores. Drop this script on timeout.
+                bool acquired;
                 try
                 {
-                    string content = await ScriptRegistry.Instance.GetContentAsync(info.FileName).ConfigureAwait(false);
-                    if (string.IsNullOrEmpty(content)) continue;
-
-                    // Per-script copy so script-local var mutations don't
-                    // bleed into sibling scripts triggered by the same
-                    // chat message (vars dict is mutated by ExecuteScript).
-                    // Comparer matches BuildChatVars's default — ScriptEngine
-                    // re-wraps with OrdinalIgnoreCase at its own boundary.
-                    var vars = new Dictionary<string, string>(sharedVars);
-
-                    string fn = info.FileName;
-                    if (_chatSemaphore.CurrentCount == 0)
-                        GlobalLogger.Log($"Rate limit reached for chat scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
-                    EmitQueued(fn);
-                    // Bound the wait so a hung chat script can't head-of-line
-                    // the entire chat queue. Mirrors the 30s pattern used by the event
-                    // and webhook semaphores. Drop and continue on timeout.
-                    bool acquired;
-                    try
-                    {
-                        acquired = await _chatSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        // _chatSemaphore was disposed by shutdown while this chat message was in
-                        // flight — drop the remaining matches cleanly so teardown completes (the
-                        // entry guard above covers the common case; this closes the race window).
-                        return;
-                    }
-                    if (!acquired)
-                    {
-                        GlobalLogger.Log(
-                            $"Chat script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentChatScripts}).",
-                            "ScriptManager", LogLevel.CriticalError);
-                        continue;
-                    }
-                    var token = BeginExecutionTracked(fn);
-                    // [event-slot relief] This chat script is already gated by
-                    // _chatSemaphore. Mark the async flow as "holding a slot" so a nested
-                    // event.trigger from its body re-enters (AcquireEventSlotAsync returns
-                    // Reentered) instead of seizing a SEPARATE _eventSemaphore slot. Before
-                    // this, 3 concurrent command-bearing chat scripts could consume 3 of
-                    // the 5 event slots, starving real Twitch events (sub/cheer/raid) into
-                    // the 30s queue-then-drop cycle. Captured + restored so the flag is
-                    // scoped to this script's flow and doesn't leak across loop iterations.
-                    bool savedHeld = _eventSemaphoreHeld.Value;
-                    _eventSemaphoreHeld.Value = true;
-                    try
-                    {
-                        _engine.EventType  = "Twitch.ChatMessage";
-                        _engine.ScriptFile = fn;
-                        await TimedExecuteAsync(fn, content, vars, token.Cts.Token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        GlobalLogger.Log($"Script '{fn}' cancelled (timeout or manual).", "ScriptManager", LogLevel.System);
-                    }
-                    finally
-                    {
-                        _eventSemaphoreHeld.Value = savedHeld;
-                        EndExecutionTracked(token);
-                        try { _chatSemaphore.Release(); } catch (ObjectDisposedException) { }
-                    }
+                    acquired = await _chatSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (ObjectDisposedException)
                 {
-                    // Full exception (chain + stack) to ring buffer.
-                    GlobalLogger.Error("ScriptEngine", $"Script Error in {info.FileName}", ex);
+                    // _chatSemaphore was disposed by shutdown while this chat message was in
+                    // flight — drop cleanly so teardown completes (the entry guard in
+                    // ExecuteOnChatScriptsAsync covers the common case; this closes the race window).
+                    return;
                 }
+                if (!acquired)
+                {
+                    GlobalLogger.Log(
+                        $"Chat script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentChatScripts}).",
+                        "ScriptManager", LogLevel.CriticalError);
+                    return;
+                }
+                var token = BeginExecutionTracked(fn);
+                // [event-slot relief] This chat script is already gated by
+                // _chatSemaphore. Mark the async flow as "holding a slot" so a nested
+                // event.trigger from its body re-enters (AcquireEventSlotAsync returns
+                // Reentered) instead of seizing a SEPARATE _eventSemaphore slot. Before
+                // this, 3 concurrent command-bearing chat scripts could consume 3 of
+                // the 5 event slots, starving real Twitch events (sub/cheer/raid) into
+                // the 30s queue-then-drop cycle. Captured + restored so the flag is
+                // scoped to this script's flow and doesn't leak to sibling scripts.
+                bool savedHeld = _eventSemaphoreHeld.Value;
+                _eventSemaphoreHeld.Value = true;
+                try
+                {
+                    _engine.EventType  = chatEventType;
+                    _engine.ScriptFile = fn;
+                    await TimedExecuteAsync(fn, content, vars, token.Cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    GlobalLogger.Log($"Script '{fn}' cancelled (timeout or manual).", "ScriptManager", LogLevel.System);
+                }
+                finally
+                {
+                    _eventSemaphoreHeld.Value = savedHeld;
+                    EndExecutionTracked(token);
+                    try { _chatSemaphore.Release(); } catch (ObjectDisposedException) { }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Full exception (chain + stack) to ring buffer.
+                GlobalLogger.Error("ScriptEngine", $"Script Error in {fn}", ex);
             }
         }
 
@@ -1391,6 +1465,7 @@ namespace Phoenix.Controls.Hub.Core
             return new()
             {
                 { "user.name",           userLower },
+                { "user.platform",       chatData.Platform ?? ChatPlatforms.Twitch },
                 { "user.is_mod",         chatData.IsMod.ToString().ToLower() },
                 { "user.is_sub",         chatData.IsSub.ToString().ToLower() },
                 { "user.is_broadcaster", chatData.IsBroadcaster.ToString().ToLower() },
@@ -2009,6 +2084,12 @@ namespace Phoenix.Controls.Hub.Core
         internal static Dictionary<string, string> BuildGenericEventVars(string eventType, System.Text.Json.JsonElement data)
         {
             var vars = new Dictionary<string, string>();
+            // Source token for every SB-routed event ("Twitch.Follow" → "twitch",
+            // "Kick.Follow" → "kick") so scripts can branch cross-platform without
+            // string-slicing the event type themselves.
+            int sourceDot = eventType.IndexOf('.');
+            if (sourceDot > 0)
+                vars["user.platform"] = eventType.Substring(0, sourceDot).ToLowerInvariant();
             try
             {
                 if (data.TryGetProperty("displayName", out var name))
@@ -2143,6 +2224,14 @@ namespace Phoenix.Controls.Hub.Core
                     // Same isAnonymous propagation as GiftBomb.
                     SetAnonymousFlag(vars, data);
                 }
+
+                // Catalog-driven extraction for the YouTube/Kick event surface.
+                // The bespoke Twitch probes above stay behavior-frozen; every
+                // event declared in PlatformEventCatalog resolves its vars (and
+                // the raw event.payload fallback) through the shared resolver.
+                var platformDef = PlatformEventCatalog.Find(eventType);
+                if (platformDef is not null)
+                    PlatformEventVarResolver.Apply(platformDef, data, vars);
             }
             catch { /* Best effort extraction */ }
             return vars;

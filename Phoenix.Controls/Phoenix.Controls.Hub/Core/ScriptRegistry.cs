@@ -137,6 +137,26 @@ namespace Phoenix.Controls.Hub.Core
         private System.Threading.Timer? _persistTimer;
         private const int PersistDebounceMs = 750;
 
+        // Coalesces the OnChanged raise from the per-execution hot path.
+        // RecordExecution used to raise OnChanged synchronously on EVERY script
+        // execution; each raise triggers an O(N-scripts) UI-dispatch rebuild of
+        // the Scripts panel — many times a second on a busy stream, for what is
+        // a counter/timestamp change. Executions now open (or mark dirty) a
+        // short window and the one-shot timer raises once per window; a call
+        // landing inside an open window makes the fire callback re-arm, so a
+        // burst always ends with a trailing raise that reflects the final
+        // state. Deliberately arm-on-first (not re-arm-on-every-call): a
+        // trailing-edge debounce would starve the panel indefinitely under a
+        // sustained execution flood, whereas this shape raises at most once per
+        // interval and still converges. Structural raises (LoadScripts /
+        // Refresh / SetEnabled / process-instance register) stay synchronous —
+        // only the execution-stats path is coalesced.
+        private readonly object _changedRaiseLock = new();
+        private System.Threading.Timer? _changedRaiseTimer;
+        private bool _changedRaiseArmed;
+        private bool _changedRaisePending;
+        private const int ChangedRaiseCoalesceMs = 300;
+
         public event Action? OnChanged;
 
         public void LoadScripts(string logicPath)
@@ -701,8 +721,63 @@ namespace Phoenix.Controls.Hub.Core
                 info.LastMemKb      = memKb;
                 // Debounced — coalesce a flood of per-execution flushes into one write.
                 SchedulePersist();
-                SafeEvent.Raise(OnChanged, "ScriptRegistry", "OnChanged");
+                // Coalesced — see the _changedRaiseLock field block. The stats
+                // written above are visible to whichever raise fires next; the
+                // trailing raise guarantees the panel converges on the final
+                // post-burst state.
+                ScheduleChangedRaise();
             }
+        }
+
+        /// <summary>
+        /// Opens a coalescing window for the hot-path OnChanged raise (or marks an
+        /// already-open window dirty). See the <see cref="_changedRaiseLock"/> field
+        /// block for the full rationale. Safe to call from any thread — RecordExecution
+        /// lands here from concurrent chat / event / webhook dispatch flows.
+        /// </summary>
+        private void ScheduleChangedRaise()
+        {
+            lock (_changedRaiseLock)
+            {
+                if (_changedRaiseArmed)
+                {
+                    // Window already open — the fire callback re-arms for us so
+                    // this call's stats still get a trailing raise.
+                    _changedRaisePending = true;
+                    return;
+                }
+                _changedRaiseArmed = true;
+                // Singleton-lifetime timer; never explicitly disposed (the registry
+                // lives for the whole Hub process). Mirrors _persistTimer.
+                _changedRaiseTimer ??= new System.Threading.Timer(
+                    _ => FireCoalescedChanged(), null, Timeout.Infinite, Timeout.Infinite);
+                try { _changedRaiseTimer.Change(ChangedRaiseCoalesceMs, Timeout.Infinite); }
+                catch (ObjectDisposedException) { _changedRaiseArmed = false; /* shutdown race — a lost UI refresh is harmless */ }
+            }
+        }
+
+        private void FireCoalescedChanged()
+        {
+            lock (_changedRaiseLock)
+            {
+                if (_changedRaisePending)
+                {
+                    // Executions landed while this window was open — keep it armed
+                    // and fire again one interval later so the panel picks up the
+                    // final post-burst state. Sustained floods therefore raise at
+                    // most once per interval instead of once per execution.
+                    _changedRaisePending = false;
+                    try { _changedRaiseTimer?.Change(ChangedRaiseCoalesceMs, Timeout.Infinite); }
+                    catch (ObjectDisposedException) { _changedRaiseArmed = false; }
+                }
+                else
+                {
+                    _changedRaiseArmed = false;
+                }
+            }
+            // Raise outside the lock so a slow subscriber can't block the
+            // scheduling path RecordExecution runs on.
+            SafeEvent.Raise(OnChanged, "ScriptRegistry", "OnChanged");
         }
 
         public void SetEnabled(string fileName, bool enabled)

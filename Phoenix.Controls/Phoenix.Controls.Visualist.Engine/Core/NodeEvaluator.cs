@@ -97,6 +97,47 @@ namespace Phoenix.Controls.Visualist.Core
             public static readonly PreviewSnapshot None = new();
         }
 
+        // Per-call graph index + memo store threaded through the recursive walkers.
+        // Built once at each public Evaluate* entry (never cached across calls —
+        // attribute edits between calls must be seen) so node / link resolution is
+        // an O(1) lookup per hop instead of a whole-graph FirstOrDefault scan,
+        // which made a single evaluation quadratic in graph size. Both index maps
+        // keep the first occurrence per key, preserving the prior FirstOrDefault
+        // first-match semantics. The scalar / vector / string memos mirror
+        // EvalImageMemoized so a pure-data chain feeding several downstream
+        // sockets is walked once per evaluation instead of once per consumer.
+        private sealed class EvalContext
+        {
+            public readonly Dictionary<string, double?>   ScalarMemo = new(StringComparer.Ordinal);
+            public readonly Dictionary<string, double[]?> VectorMemo = new(StringComparer.Ordinal);
+            public readonly Dictionary<string, string?>   StringMemo = new(StringComparer.Ordinal);
+
+            private readonly Dictionary<string, Node> _nodeById;
+            private readonly Dictionary<(string, string), Link> _linkByTarget;
+
+            public EvalContext(Graph graph)
+            {
+                _nodeById = new Dictionary<string, Node>(graph.Nodes.Count, StringComparer.Ordinal);
+                foreach (var n in graph.Nodes)
+                    if (n.Id is not null && !_nodeById.ContainsKey(n.Id)) _nodeById[n.Id] = n;
+                _linkByTarget = new Dictionary<(string, string), Link>(graph.Links.Count);
+                foreach (var l in graph.Links)
+                {
+                    if (l.ToNodeId is null || l.ToSocketId is null) continue;
+                    var key = (l.ToNodeId, l.ToSocketId);
+                    if (!_linkByTarget.ContainsKey(key)) _linkByTarget[key] = l;
+                }
+            }
+
+            public Node? FindNode(string? id) =>
+                id is not null && _nodeById.TryGetValue(id, out var n) ? n : null;
+
+            /// <summary>First link wired into the (toNodeId, toSocketId) input socket.</summary>
+            public Link? FindLink(string? toNodeId, string? toSocketId) =>
+                toNodeId is not null && toSocketId is not null &&
+                _linkByTarget.TryGetValue((toNodeId, toSocketId), out var l) ? l : null;
+        }
+
         // Thread-static holder for eventData + once-per-fire dedup. The evaluator is
         // synchronous and single-threaded per Evaluate() call (xUnit runs each test on
         // its own thread by default), so [ThreadStatic] keeps the current trigger's
@@ -161,16 +202,20 @@ namespace Phoenix.Controls.Visualist.Core
             var snapshots = new Dictionary<string, PreviewSnapshot>(StringComparer.Ordinal);
             if (graph is null) return snapshots;
 
+            // One index build for the whole pass — the upstream walk below runs for
+            // every preview node on every graph mutation, so a per-node index build
+            // would be O(N·(N+M)) on the UI thread.
+            var ctx = new EvalContext(graph);
             foreach (var node in graph.Nodes)
             {
                 var src = NodeTemplates.GetPreviewSource(node.Title);
                 if (src == PreviewSource.None) continue;
-                snapshots[node.Id] = ResolvePreviewSnapshot(graph, node, src);
+                snapshots[node.Id] = ResolvePreviewSnapshot(ctx, node, src);
             }
             return snapshots;
         }
 
-        private static PreviewSnapshot ResolvePreviewSnapshot(Graph graph, Node node, PreviewSource src)
+        private static PreviewSnapshot ResolvePreviewSnapshot(EvalContext ctx, Node node, PreviewSource src)
         {
             switch (src)
             {
@@ -201,7 +246,7 @@ namespace Phoenix.Controls.Visualist.Core
                 }
 
                 case PreviewSource.UpstreamImage:
-                    return ResolveUpstreamImageSnapshot(graph, node);
+                    return ResolveUpstreamImageSnapshot(ctx, node);
             }
 
             return new PreviewSnapshot { Declared = src };
@@ -211,7 +256,7 @@ namespace Phoenix.Controls.Visualist.Core
         // resolvable Image source. Lives next to the rest of the evaluator so
         // the canvas can paint from a pre-computed snapshot rather than
         // re-walking the graph on every Invalidate.
-        private static PreviewSnapshot ResolveUpstreamImageSnapshot(Graph graph, Node start)
+        private static PreviewSnapshot ResolveUpstreamImageSnapshot(EvalContext ctx, Node start)
         {
             var inSock = start.Sockets.FirstOrDefault(s =>
                 s.Type == SocketType.Input &&
@@ -220,26 +265,9 @@ namespace Phoenix.Controls.Visualist.Core
             if (inSock is null)
                 return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = PreviewSource.UpstreamImage, Hint = "(no input)" };
 
-            var firstLink = graph.Links.FirstOrDefault(l => l.ToNodeId == start.Id && l.ToSocketId == inSock.Id);
+            var firstLink = ctx.FindLink(start.Id, inSock.Id);
             if (firstLink is null)
                 return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = PreviewSource.UpstreamImage, Hint = "(no image upstream)" };
-
-            // Pre-index nodes by id and links by (ToNodeId, ToSocketId) so the upstream
-            // walk below uses O(1) lookups instead of O(n)/O(m) linear scans per hop —
-            // EvaluatePreviews calls this for every preview node on every graph mutation,
-            // so the previous per-hop FirstOrDefault scans were O(NodeCount * 100 * (N+M))
-            // on the UI thread. Both dictionaries keep the first occurrence per key to
-            // preserve the prior FirstOrDefault first-match semantics.
-            var nodeById = new Dictionary<string, Node>(StringComparer.Ordinal);
-            foreach (var gn in graph.Nodes)
-                if (gn.Id is not null && !nodeById.ContainsKey(gn.Id)) nodeById[gn.Id] = gn;
-            var linkByTarget = new Dictionary<(string, string), Link>();
-            foreach (var gl in graph.Links)
-            {
-                if (gl.ToNodeId is null || gl.ToSocketId is null) continue;
-                var k = (gl.ToNodeId, gl.ToSocketId);
-                if (!linkByTarget.ContainsKey(k)) linkByTarget[k] = gl;
-            }
 
             var visited = new HashSet<string>(StringComparer.Ordinal) { start.Id };
             string nextNodeId = firstLink.FromNodeId;
@@ -248,7 +276,7 @@ namespace Phoenix.Controls.Visualist.Core
                 if (!visited.Add(nextNodeId))
                     return new PreviewSnapshot { Kind = PreviewKind.Error, Declared = PreviewSource.UpstreamImage, Hint = "(cycle in upstream chain)" };
 
-                var n = nodeById.GetValueOrDefault(nextNodeId);
+                var n = ctx.FindNode(nextNodeId);
                 if (n is null)
                     return new PreviewSnapshot { Kind = PreviewKind.Error, Declared = PreviewSource.UpstreamImage, Hint = "(broken link)" };
 
@@ -278,9 +306,7 @@ namespace Phoenix.Controls.Visualist.Core
                 if (upSock is null)
                     return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = PreviewSource.UpstreamImage, Hint = "(no decodable image upstream)" };
 
-                var upLink = (n.Id is not null && upSock.Id is not null)
-                    ? linkByTarget.GetValueOrDefault((n.Id, upSock.Id))
-                    : null;
+                var upLink = ctx.FindLink(n.Id, upSock.Id);
                 if (upLink is null)
                     return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = PreviewSource.UpstreamImage, Hint = "(chain broken)" };
                 nextNodeId = upLink.FromNodeId;
@@ -296,6 +322,7 @@ namespace Phoenix.Controls.Visualist.Core
             // diamond-graphs (a node feeding two downstream branches is computed
             // once, not twice).
             var memo = new Dictionary<string, ImageMetadata?>();
+            var ctx  = new EvalContext(graph);
             var sink = graph.Nodes.FirstOrDefault(DisplaySinkNode.Is);
             if (sink is null) return result;
 
@@ -303,11 +330,11 @@ namespace Phoenix.Controls.Visualist.Core
             var visiting = new HashSet<string>();
             if (imageSocket is not null)
             {
-                var upstreamLink = graph.Links.FirstOrDefault(l => l.ToNodeId == sink.Id && l.ToSocketId == imageSocket.Id);
+                var upstreamLink = ctx.FindLink(sink.Id, imageSocket.Id);
                 if (upstreamLink is not null)
                 {
                     result.DisplayConnected = true;
-                    result.Display = EvalImageMemoized(graph, upstreamLink.FromNodeId, upstreamLink.FromSocketId, layerResolution, widgetRect, visiting, result.VisitedNodeIds, memo);
+                    result.Display = EvalImageMemoized(ctx, upstreamLink.FromNodeId, upstreamLink.FromSocketId, layerResolution, widgetRect, visiting, result.VisitedNodeIds, memo);
                 }
             }
 
@@ -322,16 +349,16 @@ namespace Phoenix.Controls.Visualist.Core
             {
                 foreach (var inSock in completeSink.Sockets.Where(s => s.Type == SocketType.Input))
                 {
-                    var link = graph.Links.FirstOrDefault(l => l.ToNodeId == completeSink.Id && l.ToSocketId == inSock.Id);
+                    var link = ctx.FindLink(completeSink.Id, inSock.Id);
                     if (link is null) continue;
                     result.CompleteConnected = true;
                     if (inSock.DataType == SocketDataType.Image)
                     {
-                        EvalImageMemoized(graph, link.FromNodeId, link.FromSocketId, layerResolution, widgetRect, visiting, result.VisitedNodeIds, memo);
+                        EvalImageMemoized(ctx, link.FromNodeId, link.FromSocketId, layerResolution, widgetRect, visiting, result.VisitedNodeIds, memo);
                     }
                     else
                     {
-                        EvalScalarNode(graph, link.FromNodeId, link.FromSocketId, layerResolution, visiting, result.VisitedNodeIds);
+                        EvalScalarNode(ctx, link.FromNodeId, link.FromSocketId, layerResolution, visiting, result.VisitedNodeIds);
                     }
                 }
             }
@@ -340,20 +367,20 @@ namespace Phoenix.Controls.Visualist.Core
 
         // Memoization wrapper around EvalImage.
         private static ImageMetadata? EvalImageMemoized(
-            Graph graph, string nodeId, string socketId,
+            EvalContext ctx, string nodeId, string socketId,
             LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited,
             Dictionary<string, ImageMetadata?> memo)
         {
             string key = $"{nodeId}:{socketId}";
             if (memo.TryGetValue(key, out var cached)) return cached;
-            var result = EvalImage(graph, nodeId, socketId, layerRes, widgetRect, visiting, visited);
+            var result = EvalImage(ctx, nodeId, socketId, layerRes, widgetRect, visiting, visited);
             memo[key] = result;
             return result;
         }
 
         private static ImageMetadata? EvalImage(
-            Graph graph, string nodeId, string socketId,
+            EvalContext ctx, string nodeId, string socketId,
             LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
@@ -367,7 +394,7 @@ namespace Phoenix.Controls.Visualist.Core
             // subsequent evaluation (matches the EvalScalarNode / EvalVectorNode pattern).
             try
             {
-            var node = graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+            var node = ctx.FindNode(nodeId);
             if (node is null)
                 return new ImageMetadata { HasError = true, ErrorMessage = $"unknown node id {nodeId}" };
 
@@ -375,20 +402,20 @@ namespace Phoenix.Controls.Visualist.Core
             {
                 "Image.Load"        => EvalImageLoad(node, widgetRect),
                 "Image.LoadUrl"     => EvalImageLoadUrl(node, widgetRect),
-                "Image.Scale"       => EvalImageScale(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Transform"   => EvalImageTransform(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.ColorAdjust" => EvalImageColorAdjust(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Blur"        => EvalImageBlur(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Gaussian"    => EvalImageGaussian(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Mosaic"      => EvalImageMosaic(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Shadow"      => EvalImageShadow(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Glow"        => EvalImageGlow(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Distort"     => EvalImageDistort(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Mask"        => EvalImageMask(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Crop"        => EvalImageCrop(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Tile"        => EvalImageTile(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Blend"       => EvalImageBlend(graph, node, layerRes, widgetRect, visiting, visited),
-                "Image.Combine"     => EvalImageCombine(graph, node, layerRes, widgetRect, visiting, visited),
+                "Image.Scale"       => EvalImageScale(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Transform"   => EvalImageTransform(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.ColorAdjust" => EvalImageColorAdjust(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Blur"        => EvalImageBlur(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Gaussian"    => EvalImageGaussian(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Mosaic"      => EvalImageMosaic(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Shadow"      => EvalImageShadow(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Glow"        => EvalImageGlow(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Distort"     => EvalImageDistort(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Mask"        => EvalImageMask(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Crop"        => EvalImageCrop(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Tile"        => EvalImageTile(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Blend"       => EvalImageBlend(ctx, node, layerRes, widgetRect, visiting, visited),
+                "Image.Combine"     => EvalImageCombine(ctx, node, layerRes, widgetRect, visiting, visited),
                 // Procedural mask shape generators. The C# mirror is a
                 // metadata walker (no real canvas), so each kernel just stamps a
                 // layer-sized ImageMetadata so downstream Image.Mask + Display
@@ -404,13 +431,13 @@ namespace Phoenix.Controls.Visualist.Core
                 "Mask.Bezier"         => EvalMaskShapeStub(layerRes, "Mask.Bezier"),
                 "Mask.Star"           => EvalMaskShapeStub(layerRes, "Mask.Star"),
                 // Viewer passes the upstream image through unchanged.
-                "Viewer"            => EvalImagePassthrough(graph, node, "In",    layerRes, widgetRect, visiting, visited),
+                "Viewer"            => EvalImagePassthrough(ctx, node, "In",    layerRes, widgetRect, visiting, visited),
                 // Result.If — barrier between an Image source and Display. Reads
                 // eventData[When] and compares to Equals; passes In through on match,
                 // emits null (branch blocked) on mismatch or when the named arg is
                 // missing. Logs once per fire when the arg is missing so authoring
                 // mistakes (mis-typed When attr) surface in GlobalLogger.
-                "Result.If"         => EvalResultIf(graph, node, layerRes, widgetRect, visiting, visited),
+                "Result.If"         => EvalResultIf(ctx, node, layerRes, widgetRect, visiting, visited),
 
                 // Design-time stubs for templates registered in
                 // WidgetNodeRegistry that previously hit the HasError default.
@@ -458,7 +485,7 @@ namespace Phoenix.Controls.Visualist.Core
                 // Text.Translate — text→text node. Pass through any wired Image
                 // input (some authors wire an upstream image alongside text);
                 // otherwise stamp widget-rect dims so dim-propagation continues.
-                "Text.Translate"      => EvalImageOrStub(graph, node, "In", layerRes, widgetRect, visiting, visited, "Text.Translate"),
+                "Text.Translate"      => EvalImageOrStub(ctx, node, "In", layerRes, widgetRect, visiting, visited, "Text.Translate"),
 
                 // Video.Load — outputs a video stream. Design-time stub returns
                 // widget-rect dims with the Source attribute so authoring sees
@@ -578,17 +605,17 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageScale(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
             // Find the image input.
             var imgSocket = node.Sockets.FirstOrDefault(s => s.Name == "In" && s.Type == SocketType.Input);
             if (imgSocket is null) return new ImageMetadata { HasError = true, ErrorMessage = "Image.Scale missing 'In' socket" };
 
-            var imgLink = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == imgSocket.Id);
+            var imgLink = ctx.FindLink(node.Id, imgSocket.Id);
             if (imgLink is null) return new ImageMetadata { HasError = true, ErrorMessage = "Image.Scale 'In' socket not connected" };
 
-            var upstream = EvalImage(graph, imgLink.FromNodeId, imgLink.FromSocketId, layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImage(ctx, imgLink.FromNodeId, imgLink.FromSocketId, layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
             // Factor: scalar input or attribute fallback.
@@ -599,11 +626,10 @@ namespace Phoenix.Controls.Visualist.Core
             // that rendered fine in OBS would show a HasError stub at design time.
             // Mirror the JS behavior: warn via GlobalLogger and fall through to the
             // attribute value so the design-time preview stays in sync with runtime.
-            bool factorWired = node.Sockets.Any(s => s.Name == "Factor" && s.Type == SocketType.Input)
-                && graph.Links.Any(l => l.ToNodeId == node.Id &&
-                    node.Sockets.Any(s => s.Id == l.ToSocketId && s.Name == "Factor"));
+            var factorSock = node.Sockets.FirstOrDefault(s => s.Name == "Factor" && s.Type == SocketType.Input);
+            bool factorWired = factorSock is not null && ctx.FindLink(node.Id, factorSock.Id) is not null;
             double? wired = factorWired
-                ? ResolveScalarSocket(graph, node, "Factor", layerRes, visiting, visited)
+                ? ResolveScalarSocket(ctx, node, "Factor", layerRes, visiting, visited)
                 : null;
             if (factorWired && wired is null)
             {
@@ -634,56 +660,73 @@ namespace Phoenix.Controls.Visualist.Core
 
         // layerRes threaded through so Math.Resolution can return the layer's
         // dimensions when reached via an upstream scalar walk.
-        private static double? ResolveScalarSocket(Graph graph, Node node, string socketName,
+        private static double? ResolveScalarSocket(EvalContext ctx, Node node, string socketName,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
             var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
             if (sock is null) return null;
-            var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+            var link = ctx.FindLink(node.Id, sock.Id);
             if (link is null) return null;
-            return EvalScalarNode(graph, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
+            return EvalScalarNode(ctx, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
         }
 
-        private static double? EvalScalarNode(Graph graph, string nodeId,
+        private static double? EvalScalarNode(EvalContext ctx, string nodeId,
             string? fromSocketId,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
+            // Per-call memo mirroring EvalImageMemoized — a pure Math chain feeding
+            // several downstream sockets is walked once per evaluation instead of
+            // once per consumer (diamonds otherwise degrade toward O(2^depth)).
+            // Keyed on the producing output socket too because Vector*.Split
+            // resolves a different component per output. Checked before the
+            // cycle-guard but populated only after a node completes, so a
+            // cycle-bail still returns null without poisoning the memo.
+            string memoKey = fromSocketId is null ? nodeId : $"{nodeId}:{fromSocketId}";
+            if (ctx.ScalarMemo.TryGetValue(memoKey, out var cached)) return cached;
             if (!visiting.Add(nodeId)) return null; // cycle — bail
             visited.Add(nodeId);
             try
             {
-                var src = graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+                double? result = Core();
+                ctx.ScalarMemo[memoKey] = result;
+                return result;
+            }
+            finally { visiting.Remove(nodeId); }
+
+            double? Core()
+            {
+                var src = ctx.FindNode(nodeId);
                 if (src is null) return null;
 
                 switch (src.Title)
                 {
                     case "Scalar.Constant":
                         return ParseDouble(src.Attributes.GetValueOrDefault("Value", "0"));
-                    case "Math.Add":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => a + b);
-                    case "Math.Sub":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => a - b);
-                    case "Math.Mul":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => a * b);
+                    case "Math.Add":   return Binary(ctx, src, "A", "B", layerRes, visiting, visited, (a, b) => a + b);
+                    case "Math.Sub":   return Binary(ctx, src, "A", "B", layerRes, visiting, visited, (a, b) => a - b);
+                    case "Math.Mul":   return Binary(ctx, src, "A", "B", layerRes, visiting, visited, (a, b) => a * b);
                     // Match compositor.js EXACTLY. The browser runtime
                     // (the source of truth for what the streamer sees) does
                     // `b === 0 ? 0 : a / b` (evalMathBinary). This C# design-time
                     // mirror previously returned NaN and the comment wrongly claimed
                     // JS emits Infinity/NaN — it does not. Returning 0 keeps the
                     // design-time preview identical to the OBS render.
-                    case "Math.Div":   return Binary(graph, src, "A", "B", layerRes, visiting, visited, (a, b) => b == 0 ? 0 : a / b);
+                    case "Math.Div":   return Binary(ctx, src, "A", "B", layerRes, visiting, visited, (a, b) => b == 0 ? 0 : a / b);
                     case "Math.Lerp":
                     {
-                        double? a = ResolveScalarSocket(graph, src, "A", layerRes, visiting, visited);
-                        double? b = ResolveScalarSocket(graph, src, "B", layerRes, visiting, visited);
-                        double? t = ResolveScalarSocket(graph, src, "T", layerRes, visiting, visited);
+                        double? a = ResolveScalarSocket(ctx, src, "A", layerRes, visiting, visited);
+                        double? b = ResolveScalarSocket(ctx, src, "B", layerRes, visiting, visited);
+                        double? t = ResolveScalarSocket(ctx, src, "T", layerRes, visiting, visited);
                         if (a is null || b is null || t is null) return null;
                         return a.Value + (b.Value - a.Value) * t.Value;
                     }
                     case "Math.Clamp":
                     {
-                        double? v   = ResolveScalarSocket(graph, src, "V",   layerRes, visiting, visited);
-                        double? mn  = ResolveScalarSocket(graph, src, "Min", layerRes, visiting, visited);
-                        double? mx  = ResolveScalarSocket(graph, src, "Max", layerRes, visiting, visited);
+                        double? v   = ResolveScalarSocket(ctx, src, "V",   layerRes, visiting, visited);
+                        double? mn  = ResolveScalarSocket(ctx, src, "Min", layerRes, visiting, visited);
+                        double? mx  = ResolveScalarSocket(ctx, src, "Max", layerRes, visiting, visited);
                         if (v is null || mn is null || mx is null) return null;
                         return System.Math.Clamp(v.Value, mn.Value, mx.Value);
                     }
@@ -700,68 +743,68 @@ namespace Phoenix.Controls.Visualist.Core
                     // Mirrors compositor.js evalMathBinary / evalMathClamp.
                     case "Math.Mod":
                     {
-                        double a = ResolveScalarOrAttr(graph, src, "A", "A", 0, layerRes, visiting, visited);
-                        double b = ResolveScalarOrAttr(graph, src, "B", "B", 1, layerRes, visiting, visited);
+                        double a = ResolveScalarOrAttr(ctx, src, "A", "A", 0, layerRes, visiting, visited);
+                        double b = ResolveScalarOrAttr(ctx, src, "B", "B", 1, layerRes, visiting, visited);
                         return b == 0 ? 0 : a - b * System.Math.Floor(a / b);
                     }
                     case "Math.Pow":
                     {
-                        double @base = ResolveScalarOrAttr(graph, src, "Base", "Base", 1, layerRes, visiting, visited);
-                        double exp   = ResolveScalarOrAttr(graph, src, "Exp",  "Exp",  2, layerRes, visiting, visited);
+                        double @base = ResolveScalarOrAttr(ctx, src, "Base", "Base", 1, layerRes, visiting, visited);
+                        double exp   = ResolveScalarOrAttr(ctx, src, "Exp",  "Exp",  2, layerRes, visiting, visited);
                         return System.Math.Pow(@base, exp);
                     }
                     case "Math.Min":
                     {
-                        double a = ResolveScalarOrAttr(graph, src, "A", "A", 0, layerRes, visiting, visited);
-                        double b = ResolveScalarOrAttr(graph, src, "B", "B", 0, layerRes, visiting, visited);
+                        double a = ResolveScalarOrAttr(ctx, src, "A", "A", 0, layerRes, visiting, visited);
+                        double b = ResolveScalarOrAttr(ctx, src, "B", "B", 0, layerRes, visiting, visited);
                         return System.Math.Min(a, b);
                     }
                     case "Math.Max":
                     {
-                        double a = ResolveScalarOrAttr(graph, src, "A", "A", 0, layerRes, visiting, visited);
-                        double b = ResolveScalarOrAttr(graph, src, "B", "B", 0, layerRes, visiting, visited);
+                        double a = ResolveScalarOrAttr(ctx, src, "A", "A", 0, layerRes, visiting, visited);
+                        double b = ResolveScalarOrAttr(ctx, src, "B", "B", 0, layerRes, visiting, visited);
                         return System.Math.Max(a, b);
                     }
                     case "Math.Abs":
-                        return System.Math.Abs(ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited));
+                        return System.Math.Abs(ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited));
                     case "Math.Sqrt":
                     {
-                        double v = ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited);
+                        double v = ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited);
                         return v < 0 ? 0 : System.Math.Sqrt(v);
                     }
                     case "Math.Floor":
-                        return System.Math.Floor(ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited));
+                        return System.Math.Floor(ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited));
                     case "Math.Ceil":
-                        return System.Math.Ceiling(ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited));
+                        return System.Math.Ceiling(ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited));
                     case "Math.Round":
                         // MidpointRounding.AwayFromZero matches JS Math.round (round-half-up).
-                        return System.Math.Round(ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited),
+                        return System.Math.Round(ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited),
                             MidpointRounding.AwayFromZero);
                     case "Math.Sign":
-                        return System.Math.Sign(ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited));
+                        return System.Math.Sign(ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited));
                     case "Math.Negate":
-                        return -ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited);
+                        return -ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited);
                     case "Math.Sin":
-                        return System.Math.Sin(ResolveScalarOrAttr(graph, src, "Degrees", "Degrees", 0, layerRes, visiting, visited) * System.Math.PI / 180);
+                        return System.Math.Sin(ResolveScalarOrAttr(ctx, src, "Degrees", "Degrees", 0, layerRes, visiting, visited) * System.Math.PI / 180);
                     case "Math.Cos":
-                        return System.Math.Cos(ResolveScalarOrAttr(graph, src, "Degrees", "Degrees", 0, layerRes, visiting, visited) * System.Math.PI / 180);
+                        return System.Math.Cos(ResolveScalarOrAttr(ctx, src, "Degrees", "Degrees", 0, layerRes, visiting, visited) * System.Math.PI / 180);
                     case "Math.Tan":
-                        return System.Math.Tan(ResolveScalarOrAttr(graph, src, "Degrees", "Degrees", 0, layerRes, visiting, visited) * System.Math.PI / 180);
+                        return System.Math.Tan(ResolveScalarOrAttr(ctx, src, "Degrees", "Degrees", 0, layerRes, visiting, visited) * System.Math.PI / 180);
                     case "Math.Remap":
                     {
-                        double v      = ResolveScalarOrAttr(graph, src, "V",      "V",      0, layerRes, visiting, visited);
-                        double inMin  = ResolveScalarOrAttr(graph, src, "InMin",  "InMin",  0, layerRes, visiting, visited);
-                        double inMax  = ResolveScalarOrAttr(graph, src, "InMax",  "InMax",  1, layerRes, visiting, visited);
-                        double outMin = ResolveScalarOrAttr(graph, src, "OutMin", "OutMin", 0, layerRes, visiting, visited);
-                        double outMax = ResolveScalarOrAttr(graph, src, "OutMax", "OutMax", 1, layerRes, visiting, visited);
+                        double v      = ResolveScalarOrAttr(ctx, src, "V",      "V",      0, layerRes, visiting, visited);
+                        double inMin  = ResolveScalarOrAttr(ctx, src, "InMin",  "InMin",  0, layerRes, visiting, visited);
+                        double inMax  = ResolveScalarOrAttr(ctx, src, "InMax",  "InMax",  1, layerRes, visiting, visited);
+                        double outMin = ResolveScalarOrAttr(ctx, src, "OutMin", "OutMin", 0, layerRes, visiting, visited);
+                        double outMax = ResolveScalarOrAttr(ctx, src, "OutMax", "OutMax", 1, layerRes, visiting, visited);
                         double d = inMax - inMin;
                         double t = d == 0 ? 0 : (v - inMin) / d;
                         return outMin + t * (outMax - outMin);
                     }
                     case "Math.Compare":
                     {
-                        double a = ResolveScalarOrAttr(graph, src, "A", "A", 0, layerRes, visiting, visited);
-                        double b = ResolveScalarOrAttr(graph, src, "B", "B", 0, layerRes, visiting, visited);
+                        double a = ResolveScalarOrAttr(ctx, src, "A", "A", 0, layerRes, visiting, visited);
+                        double b = ResolveScalarOrAttr(ctx, src, "B", "B", 0, layerRes, visiting, visited);
                         string mode = StripQuotes(src.Attributes.GetValueOrDefault("Mode", "GreaterThan"));
                         const double eps = 1e-6;
                         bool ok = mode switch
@@ -785,10 +828,10 @@ namespace Phoenix.Controls.Visualist.Core
                         return 0; // timeMs/1000 with timeMs = 0 at design time.
                     case "Time.Oscillator":
                     {
-                        double freq = ResolveScalarOrAttr(graph, src, "Frequency", "Frequency", 1, layerRes, visiting, visited);
-                        double amp  = ResolveScalarOrAttr(graph, src, "Amplitude", "Amplitude", 1, layerRes, visiting, visited);
-                        double ph   = ResolveScalarOrAttr(graph, src, "Phase",     "Phase",     0, layerRes, visiting, visited);
-                        double off  = ResolveScalarOrAttr(graph, src, "Offset",    "Offset",    0, layerRes, visiting, visited);
+                        double freq = ResolveScalarOrAttr(ctx, src, "Frequency", "Frequency", 1, layerRes, visiting, visited);
+                        double amp  = ResolveScalarOrAttr(ctx, src, "Amplitude", "Amplitude", 1, layerRes, visiting, visited);
+                        double ph   = ResolveScalarOrAttr(ctx, src, "Phase",     "Phase",     0, layerRes, visiting, visited);
+                        double off  = ResolveScalarOrAttr(ctx, src, "Offset",    "Offset",    0, layerRes, visiting, visited);
                         const double t = 0; // timeMs/1000 at design time.
                         return off + amp * System.Math.Sin(2 * System.Math.PI * (freq * t + ph));
                     }
@@ -798,7 +841,7 @@ namespace Phoenix.Controls.Visualist.Core
                         // Period is resolved (wired-wins) for parity even though the
                         // ramp evaluates to 0 at the design-time origin.
                         double p = System.Math.Max(
-                            ResolveScalarOrAttr(graph, src, "Period", "Period", 1, layerRes, visiting, visited), 1e-6);
+                            ResolveScalarOrAttr(ctx, src, "Period", "Period", 1, layerRes, visiting, visited), 1e-6);
                         const double t = 0; // timeMs/1000 at design time.
                         return (t % p) / p;
                     }
@@ -807,7 +850,7 @@ namespace Phoenix.Controls.Visualist.Core
                         // REUSE KeyframeInterpolation.ApplyCurve so the easing formulas
                         // stay single-sourced with the keyframe sampler. Mode maps 1:1
                         // onto KeyframeCurve (Linear/EaseIn/EaseOut/EaseInOut/Step).
-                        double tIn = ResolveScalarOrAttr(graph, src, "T", "T", 0, layerRes, visiting, visited);
+                        double tIn = ResolveScalarOrAttr(ctx, src, "T", "T", 0, layerRes, visiting, visited);
                         string mode = StripQuotes(src.Attributes.GetValueOrDefault("Mode", "EaseInOut"));
                         KeyframeCurve curve = mode switch
                         {
@@ -828,12 +871,12 @@ namespace Phoenix.Controls.Visualist.Core
                     // a String input and returns its character count.
                     case "Convert.StringToNumber":
                     {
-                        string s = ResolveStringOrAttr(graph, src, "In", "In", "", layerRes, visiting, visited);
+                        string s = ResolveStringOrAttr(ctx, src, "In", "In", "", layerRes, visiting, visited);
                         return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : 0;
                     }
                     case "String.Length":
                     {
-                        string s = ResolveStringOrAttr(graph, src, "In", "In", "", layerRes, visiting, visited);
+                        string s = ResolveStringOrAttr(ctx, src, "In", "In", "", layerRes, visiting, visited);
                         return s.Length;
                     }
 
@@ -861,7 +904,7 @@ namespace Phoenix.Controls.Visualist.Core
                             "Vector4.Split" => 4,
                             _               => 4,
                         };
-                        var vec = ResolveVectorInputSocket(graph, src, "V", splitLen, layerRes, visiting, visited);
+                        var vec = ResolveVectorInputSocket(ctx, src, "V", splitLen, layerRes, visiting, visited);
                         if (vec is null) return null;
                         return outSock.Name switch
                         {
@@ -885,7 +928,6 @@ namespace Phoenix.Controls.Visualist.Core
                 }
                 return null;
             }
-            finally { visiting.Remove(nodeId); }
         }
 
         // ── Vector evaluator ────────────────────────────────────────────────────
@@ -911,9 +953,10 @@ namespace Phoenix.Controls.Visualist.Core
         public static double[]? EvaluateVectorOutput(Graph graph, string nodeId,
             LayerResolution layerResolution)
         {
+            var ctx      = new EvalContext(graph);
             var visiting = new HashSet<string>();
             var visited  = new List<string>();
-            return EvalVectorNode(graph, nodeId, layerResolution, visiting, visited);
+            return EvalVectorNode(ctx, nodeId, layerResolution, visiting, visited);
         }
 
         // Public entry points mirroring EvaluateVectorOutput for the
@@ -931,9 +974,10 @@ namespace Phoenix.Controls.Visualist.Core
         public static double? EvaluateScalarOutput(Graph graph, string nodeId,
             LayerResolution layerResolution)
         {
+            var ctx      = new EvalContext(graph);
             var visiting = new HashSet<string>();
             var visited  = new List<string>();
-            return EvalScalarNode(graph, nodeId, null, layerResolution, visiting, visited);
+            return EvalScalarNode(ctx, nodeId, null, layerResolution, visiting, visited);
         }
 
         /// <summary>
@@ -946,23 +990,24 @@ namespace Phoenix.Controls.Visualist.Core
         public static string? EvaluateStringOutput(Graph graph, string nodeId,
             LayerResolution layerResolution)
         {
+            var ctx      = new EvalContext(graph);
             var visiting = new HashSet<string>();
             var visited  = new List<string>();
-            return EvalStringNode(graph, nodeId, null, layerResolution, visiting, visited);
+            return EvalStringNode(ctx, nodeId, null, layerResolution, visiting, visited);
         }
 
-        private static double[]? ResolveVectorInputSocket(Graph graph, Node node, string socketName,
+        private static double[]? ResolveVectorInputSocket(EvalContext ctx, Node node, string socketName,
             int expectedLength,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
             var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
             if (sock is null) return null;
-            var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+            var link = ctx.FindLink(node.Id, sock.Id);
             if (link is null) return null;
 
             // Try the vector evaluator first.
-            var vec = EvalVectorNode(graph, link.FromNodeId, layerRes, visiting, visited);
+            var vec = EvalVectorNode(ctx, link.FromNodeId, layerRes, visiting, visited);
             if (vec is not null)
             {
                 // Narrowing-with-zero-pad: a Vector2 wired into a Vector{3,4} socket is
@@ -983,7 +1028,7 @@ namespace Phoenix.Controls.Visualist.Core
             // the value across all components of the expected vector width. Without this,
             // wiring `Scalar.Constant → Math.LerpVector3.A` would silently resolve to null
             // and the design-time mirror would diverge from what OBS actually renders.
-            var scalar = EvalScalarNode(graph, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
+            var scalar = EvalScalarNode(ctx, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
             if (scalar is not null)
                 return BroadcastScalarToVector(scalar.Value, expectedLength);
 
@@ -999,15 +1044,29 @@ namespace Phoenix.Controls.Visualist.Core
             return r;
         }
 
-        private static double[]? EvalVectorNode(Graph graph, string nodeId,
+        private static double[]? EvalVectorNode(EvalContext ctx, string nodeId,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
+            // Per-call memo mirroring EvalImageMemoized / EvalScalarNode. Keyed by
+            // node id only — the vector walker has no per-output-socket variance.
+            // Cycle-bails return null without memoizing so cycle detection holds.
+            // Memoized arrays are shared, never mutated: consumers copy before
+            // padding (ResolveVectorInputSocket) and otherwise only read components.
+            if (ctx.VectorMemo.TryGetValue(nodeId, out var cached)) return cached;
             if (!visiting.Add(nodeId)) return null; // cycle — bail
             visited.Add(nodeId);
             try
             {
-                var src = graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+                double[]? result = Core();
+                ctx.VectorMemo[nodeId] = result;
+                return result;
+            }
+            finally { visiting.Remove(nodeId); }
+
+            double[]? Core()
+            {
+                var src = ctx.FindNode(nodeId);
                 if (src is null) return null;
 
                 switch (src.Title)
@@ -1049,25 +1108,25 @@ namespace Phoenix.Controls.Visualist.Core
                     // ── Vector combiners ────────────────────────────────────
                     case "Vector.Combine":
                     {
-                        double? x = ResolveScalarSocket(graph, src, "X", layerRes, visiting, visited);
-                        double? y = ResolveScalarSocket(graph, src, "Y", layerRes, visiting, visited);
+                        double? x = ResolveScalarSocket(ctx, src, "X", layerRes, visiting, visited);
+                        double? y = ResolveScalarSocket(ctx, src, "Y", layerRes, visiting, visited);
                         if (x is null || y is null) return null;
                         return new[] { x.Value, y.Value };
                     }
                     case "Vector3.Combine":
                     {
-                        double? x = ResolveScalarSocket(graph, src, "X", layerRes, visiting, visited);
-                        double? y = ResolveScalarSocket(graph, src, "Y", layerRes, visiting, visited);
-                        double? z = ResolveScalarSocket(graph, src, "Z", layerRes, visiting, visited);
+                        double? x = ResolveScalarSocket(ctx, src, "X", layerRes, visiting, visited);
+                        double? y = ResolveScalarSocket(ctx, src, "Y", layerRes, visiting, visited);
+                        double? z = ResolveScalarSocket(ctx, src, "Z", layerRes, visiting, visited);
                         if (x is null || y is null || z is null) return null;
                         return new[] { x.Value, y.Value, z.Value };
                     }
                     case "Vector4.Combine":
                     {
-                        double? x = ResolveScalarSocket(graph, src, "X", layerRes, visiting, visited);
-                        double? y = ResolveScalarSocket(graph, src, "Y", layerRes, visiting, visited);
-                        double? z = ResolveScalarSocket(graph, src, "Z", layerRes, visiting, visited);
-                        double? w = ResolveScalarSocket(graph, src, "W", layerRes, visiting, visited);
+                        double? x = ResolveScalarSocket(ctx, src, "X", layerRes, visiting, visited);
+                        double? y = ResolveScalarSocket(ctx, src, "Y", layerRes, visiting, visited);
+                        double? z = ResolveScalarSocket(ctx, src, "Z", layerRes, visiting, visited);
+                        double? w = ResolveScalarSocket(ctx, src, "W", layerRes, visiting, visited);
                         if (x is null || y is null || z is null || w is null) return null;
                         return new[] { x.Value, y.Value, z.Value, w.Value };
                     }
@@ -1076,11 +1135,11 @@ namespace Phoenix.Controls.Visualist.Core
                     // Mirrors the scalar Math.Lerp path: a + (b - a) * t, applied per
                     // component. T is a scalar shared across all components.
                     case "Math.LerpVector2":
-                        return LerpVectorN(graph, src, expectedLength: 2, layerRes, visiting, visited);
+                        return LerpVectorN(ctx, src, expectedLength: 2, layerRes, visiting, visited);
                     case "Math.LerpVector3":
-                        return LerpVectorN(graph, src, expectedLength: 3, layerRes, visiting, visited);
+                        return LerpVectorN(ctx, src, expectedLength: 3, layerRes, visiting, visited);
                     case "Math.LerpVector4":
-                        return LerpVectorN(graph, src, expectedLength: 4, layerRes, visiting, visited);
+                        return LerpVectorN(ctx, src, expectedLength: 4, layerRes, visiting, visited);
 
                     // ── Layer resolution (vector parity) ────────────────────
                     case "Math.Resolution":
@@ -1088,16 +1147,15 @@ namespace Phoenix.Controls.Visualist.Core
                 }
                 return null;
             }
-            finally { visiting.Remove(nodeId); }
         }
 
-        private static double[]? LerpVectorN(Graph graph, Node node, int expectedLength,
+        private static double[]? LerpVectorN(EvalContext ctx, Node node, int expectedLength,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
-            var a = ResolveVectorInputSocket(graph, node, "A", expectedLength, layerRes, visiting, visited);
-            var b = ResolveVectorInputSocket(graph, node, "B", expectedLength, layerRes, visiting, visited);
-            double? t = ResolveScalarSocket(graph, node, "T", layerRes, visiting, visited);
+            var a = ResolveVectorInputSocket(ctx, node, "A", expectedLength, layerRes, visiting, visited);
+            var b = ResolveVectorInputSocket(ctx, node, "B", expectedLength, layerRes, visiting, visited);
+            double? t = ResolveScalarSocket(ctx, node, "T", layerRes, visiting, visited);
             if (a is null || b is null || t is null) return null;
             if (a.Length < expectedLength || b.Length < expectedLength) return null;
             var r = new double[expectedLength];
@@ -1106,12 +1164,12 @@ namespace Phoenix.Controls.Visualist.Core
             return r;
         }
 
-        private static double? Binary(Graph graph, Node node, string aName, string bName,
+        private static double? Binary(EvalContext ctx, Node node, string aName, string bName,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited, System.Func<double, double, double> op)
         {
-            double? a = ResolveScalarSocket(graph, node, aName, layerRes, visiting, visited);
-            double? b = ResolveScalarSocket(graph, node, bName, layerRes, visiting, visited);
+            double? a = ResolveScalarSocket(ctx, node, aName, layerRes, visiting, visited);
+            double? b = ResolveScalarSocket(ctx, node, bName, layerRes, visiting, visited);
             if (a is null || b is null) return null;
             return op(a.Value, b.Value);
         }
@@ -1128,16 +1186,30 @@ namespace Phoenix.Controls.Visualist.Core
         // Cross-walker calls: Convert.NumberToString reads a Scalar input via
         // EvalScalarNode; the scalar walker reciprocally handles Convert.StringToNumber
         // and String.Length by calling back into this walker via ResolveStringOrAttr.
-        private static string? EvalStringNode(Graph graph, string nodeId,
+        private static string? EvalStringNode(EvalContext ctx, string nodeId,
             string? fromSocketId,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
+            // Per-call memo mirroring EvalImageMemoized / EvalScalarNode. Keyed on
+            // the producing output socket too — Visual.OnTrigger resolves a
+            // different value per output. Cycle-bails return null without
+            // memoizing so cycle detection holds.
+            string memoKey = fromSocketId is null ? nodeId : $"{nodeId}:{fromSocketId}";
+            if (ctx.StringMemo.TryGetValue(memoKey, out var cached)) return cached;
             if (!visiting.Add(nodeId)) return null; // cycle — bail
             visited.Add(nodeId);
             try
             {
-                var src = graph.Nodes.FirstOrDefault(n => n.Id == nodeId);
+                string? result = Core();
+                ctx.StringMemo[memoKey] = result;
+                return result;
+            }
+            finally { visiting.Remove(nodeId); }
+
+            string? Core()
+            {
+                var src = ctx.FindNode(nodeId);
                 if (src is null) return null;
 
                 switch (src.Title)
@@ -1154,20 +1226,20 @@ namespace Phoenix.Controls.Visualist.Core
                     // ── String nodes ───────────────────────────────────────
                     case "String.Concat":
                     {
-                        string a = ResolveStringOrAttr(graph, src, "A", "A", "", layerRes, visiting, visited);
-                        string b = ResolveStringOrAttr(graph, src, "B", "B", "", layerRes, visiting, visited);
+                        string a = ResolveStringOrAttr(ctx, src, "A", "A", "", layerRes, visiting, visited);
+                        string b = ResolveStringOrAttr(ctx, src, "B", "B", "", layerRes, visiting, visited);
                         return a + b;
                     }
                     case "String.Upper":
-                        return ResolveStringOrAttr(graph, src, "In", "In", "", layerRes, visiting, visited).ToUpperInvariant();
+                        return ResolveStringOrAttr(ctx, src, "In", "In", "", layerRes, visiting, visited).ToUpperInvariant();
                     case "String.Lower":
-                        return ResolveStringOrAttr(graph, src, "In", "In", "", layerRes, visiting, visited).ToLowerInvariant();
+                        return ResolveStringOrAttr(ctx, src, "In", "In", "", layerRes, visiting, visited).ToLowerInvariant();
                     case "String.Slice":
                     {
-                        string s = ResolveStringOrAttr(graph, src, "In", "In", "", layerRes, visiting, visited);
+                        string s = ResolveStringOrAttr(ctx, src, "In", "In", "", layerRes, visiting, visited);
                         int len = s.Length;
-                        double startD = ResolveScalarOrAttr(graph, src, "Start", "Start", 0,  layerRes, visiting, visited);
-                        double countD = ResolveScalarOrAttr(graph, src, "Count", "Count", -1, layerRes, visiting, visited);
+                        double startD = ResolveScalarOrAttr(ctx, src, "Start", "Start", 0,  layerRes, visiting, visited);
+                        double countD = ResolveScalarOrAttr(ctx, src, "Count", "Count", -1, layerRes, visiting, visited);
                         int st = System.Math.Clamp((int)startD, 0, len);
                         int n  = countD < 0 ? len - st : System.Math.Max(0, (int)countD);
                         if (st + n > len) n = len - st;
@@ -1175,9 +1247,9 @@ namespace Phoenix.Controls.Visualist.Core
                     }
                     case "String.Replace":
                     {
-                        string s    = ResolveStringOrAttr(graph, src, "In",   "In",   "", layerRes, visiting, visited);
-                        string find = ResolveStringOrAttr(graph, src, "Find", "Find", "", layerRes, visiting, visited);
-                        string with = ResolveStringOrAttr(graph, src, "With", "With", "", layerRes, visiting, visited);
+                        string s    = ResolveStringOrAttr(ctx, src, "In",   "In",   "", layerRes, visiting, visited);
+                        string find = ResolveStringOrAttr(ctx, src, "Find", "Find", "", layerRes, visiting, visited);
+                        string with = ResolveStringOrAttr(ctx, src, "With", "With", "", layerRes, visiting, visited);
                         if (string.IsNullOrEmpty(find)) return s; // Find=="" -> unchanged.
                         return s.Replace(find, with);
                     }
@@ -1185,22 +1257,22 @@ namespace Phoenix.Controls.Visualist.Core
                     // ── Convert nodes ───────────────────────────────────────
                     case "Convert.NumberToString":
                     {
-                        double v = ResolveScalarOrAttr(graph, src, "V", "V", 0, layerRes, visiting, visited);
+                        double v = ResolveScalarOrAttr(ctx, src, "V", "V", 0, layerRes, visiting, visited);
                         int decimals = (int)ParseDouble(src.Attributes.GetValueOrDefault("Decimals", "0"));
                         decimals = System.Math.Clamp(decimals, 0, 6);
                         return v.ToString("F" + decimals, CultureInfo.InvariantCulture);
                     }
                     case "Convert.ColorFromRGBA":
                     {
-                        int r = ClampByte(ResolveScalarOrAttr(graph, src, "R", "R", 255, layerRes, visiting, visited));
-                        int g = ClampByte(ResolveScalarOrAttr(graph, src, "G", "G", 255, layerRes, visiting, visited));
-                        int b = ClampByte(ResolveScalarOrAttr(graph, src, "B", "B", 255, layerRes, visiting, visited));
-                        int a = ClampByte(ResolveScalarOrAttr(graph, src, "A", "A", 255, layerRes, visiting, visited));
+                        int r = ClampByte(ResolveScalarOrAttr(ctx, src, "R", "R", 255, layerRes, visiting, visited));
+                        int g = ClampByte(ResolveScalarOrAttr(ctx, src, "G", "G", 255, layerRes, visiting, visited));
+                        int b = ClampByte(ResolveScalarOrAttr(ctx, src, "B", "B", 255, layerRes, visiting, visited));
+                        int a = ClampByte(ResolveScalarOrAttr(ctx, src, "A", "A", 255, layerRes, visiting, visited));
                         return $"#{r:x2}{g:x2}{b:x2}{a:x2}"; // alpha last.
                     }
                     case "Convert.HexToColor":
                     {
-                        string hex = ResolveStringOrAttr(graph, src, "Hex", "Hex", "#ffffff", layerRes, visiting, visited);
+                        string hex = ResolveStringOrAttr(ctx, src, "Hex", "Hex", "#ffffff", layerRes, visiting, visited);
                         return NormalizeHexColor(hex);
                     }
 
@@ -1231,7 +1303,6 @@ namespace Phoenix.Controls.Visualist.Core
                 }
                 return null;
             }
-            finally { visiting.Remove(nodeId); }
         }
 
         // String socket resolver with attribute fallback. Honours the
@@ -1239,17 +1310,17 @@ namespace Phoenix.Controls.Visualist.Core
         // resolves), then fall back to the (quote-stripped) attribute. Mirrors
         // ResolveScalarOrAttr for the string world.
         private static string ResolveStringOrAttr(
-            Graph graph, Node node, string socketName, string attrKey, string defaultValue,
+            EvalContext ctx, Node node, string socketName, string attrKey, string defaultValue,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
             var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
             if (sock is not null)
             {
-                var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+                var link = ctx.FindLink(node.Id, sock.Id);
                 if (link is not null)
                 {
-                    var resolved = EvalStringNode(graph, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
+                    var resolved = EvalStringNode(ctx, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
                     if (resolved is not null) return resolved;
                 }
             }
@@ -1285,16 +1356,16 @@ namespace Phoenix.Controls.Visualist.Core
         // the previous HasError-on-unwired-input behavior for templates whose
         // primary purpose isn't image transformation.
         private static ImageMetadata? EvalImageOrStub(
-            Graph graph, Node node, string imageInputName,
+            EvalContext ctx, Node node, string imageInputName,
             LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited,
             string kernelName)
         {
             var sock = node.Sockets.FirstOrDefault(s => s.Name == imageInputName && s.Type == SocketType.Input);
             if (sock is null) return new ImageMetadata { Width = widgetRect.Width, Height = widgetRect.Height, Kernel = kernelName };
-            var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+            var link = ctx.FindLink(node.Id, sock.Id);
             if (link is null) return new ImageMetadata { Width = widgetRect.Width, Height = widgetRect.Height, Kernel = kernelName };
-            return EvalImage(graph, link.FromNodeId, link.FromSocketId, layerRes, widgetRect, visiting, visited);
+            return EvalImage(ctx, link.FromNodeId, link.FromSocketId, layerRes, widgetRect, visiting, visited);
         }
 
         // Image.Crop dimension parity with compositor.js.
@@ -1317,13 +1388,13 @@ namespace Phoenix.Controls.Visualist.Core
         // the "Rect" attribute as comma-separated "x,y,w,h" (default "0,0,1,1",
         // full-image passthrough).
         private static ImageMetadata? EvalImageCrop(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double[]? rect = ResolveVectorInputSocket(graph, node, "Rect", 4, layerRes, visiting, visited);
+            double[]? rect = ResolveVectorInputSocket(ctx, node, "Rect", 4, layerRes, visiting, visited);
             if (rect is null)
             {
                 var raw = node.Attributes.GetValueOrDefault("Rect", "0,0,1,1");
@@ -1368,15 +1439,15 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImagePassthrough(
-            Graph graph, Node node, string imageInputName,
+            EvalContext ctx, Node node, string imageInputName,
             LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
             var sock = node.Sockets.FirstOrDefault(s => s.Name == imageInputName && s.Type == SocketType.Input);
             if (sock is null) return new ImageMetadata { HasError = true, ErrorMessage = $"{node.Title} missing '{imageInputName}' socket" };
-            var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+            var link = ctx.FindLink(node.Id, sock.Id);
             if (link is null) return new ImageMetadata { HasError = true, ErrorMessage = $"{node.Title} '{imageInputName}' socket not connected" };
-            return EvalImage(graph, link.FromNodeId, link.FromSocketId, layerRes, widgetRect, visiting, visited);
+            return EvalImage(ctx, link.FromNodeId, link.FromSocketId, layerRes, widgetRect, visiting, visited);
         }
 
         // ── Image kernel evaluators ─────────────────────────────────────────────
@@ -1400,21 +1471,21 @@ namespace Phoenix.Controls.Visualist.Core
         // socket existed on the template. KernelAttributes carries the
         // resolved value so tests can assert on what the kernel actually saw.
         private static ImageMetadata? EvalImageTransform(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
             // Translate / Scale are Vector2 sockets; the attribute fallbacks
             // are split as <name>X / <name>Y so a half-edited node still has a
             // sensible value per component.
             (double x, double y) translate = ResolveVector2OrAttrPair(
-                graph, node, "Translate", "TranslateX", "TranslateY", 0, 0, layerRes, visiting, visited);
+                ctx, node, "Translate", "TranslateX", "TranslateY", 0, 0, layerRes, visiting, visited);
             (double x, double y) scale     = ResolveVector2OrAttrPair(
-                graph, node, "Scale",     "ScaleX",     "ScaleY",     1, 1, layerRes, visiting, visited);
+                ctx, node, "Scale",     "ScaleX",     "ScaleY",     1, 1, layerRes, visiting, visited);
             double rotation = ResolveScalarOrAttr(
-                graph, node, "Rotate", "Rotation", 0, layerRes, visiting, visited);
+                ctx, node, "Rotate", "Rotation", 0, layerRes, visiting, visited);
 
             return new ImageMetadata
             {
@@ -1439,16 +1510,16 @@ namespace Phoenix.Controls.Visualist.Core
         // _evalScalarSocket-driven path so design-time previews track the
         // browser-side render once a Math chain drives a colour parameter.
         private static ImageMetadata? EvalImageColorAdjust(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double brightness = ResolveScalarOrAttr(graph, node, "Brightness", "Brightness", 0, layerRes, visiting, visited);
-            double contrast   = ResolveScalarOrAttr(graph, node, "Contrast",   "Contrast",   0, layerRes, visiting, visited);
-            double saturation = ResolveScalarOrAttr(graph, node, "Saturation", "Saturation", 0, layerRes, visiting, visited);
-            double hue        = ResolveScalarOrAttr(graph, node, "Hue",        "Hue",        0, layerRes, visiting, visited);
+            double brightness = ResolveScalarOrAttr(ctx, node, "Brightness", "Brightness", 0, layerRes, visiting, visited);
+            double contrast   = ResolveScalarOrAttr(ctx, node, "Contrast",   "Contrast",   0, layerRes, visiting, visited);
+            double saturation = ResolveScalarOrAttr(ctx, node, "Saturation", "Saturation", 0, layerRes, visiting, visited);
+            double hue        = ResolveScalarOrAttr(ctx, node, "Hue",        "Hue",        0, layerRes, visiting, visited);
 
             return new ImageMetadata
             {
@@ -1474,17 +1545,17 @@ namespace Phoenix.Controls.Visualist.Core
         // behaviour Image.Scale uses for its Factor socket.
 
         private static double ResolveScalarOrAttr(
-            Graph graph, Node node, string socketName, string attrKey, double defaultValue,
+            EvalContext ctx, Node node, string socketName, string attrKey, double defaultValue,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
             var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
             if (sock is not null)
             {
-                var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+                var link = ctx.FindLink(node.Id, sock.Id);
                 if (link is not null)
                 {
-                    var resolved = EvalScalarNode(graph, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
+                    var resolved = EvalScalarNode(ctx, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
                     if (resolved is not null) return resolved.Value;
                 }
             }
@@ -1496,7 +1567,7 @@ namespace Phoenix.Controls.Visualist.Core
         // attribute pairs for the unwired case so half-edited templates still
         // round-trip a sensible scalar per axis.
         private static (double x, double y) ResolveVector2OrAttrPair(
-            Graph graph, Node node, string socketName,
+            EvalContext ctx, Node node, string socketName,
             string xAttrKey, string yAttrKey,
             double defaultX, double defaultY,
             LayerResolution layerRes,
@@ -1505,16 +1576,16 @@ namespace Phoenix.Controls.Visualist.Core
             var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
             if (sock is not null)
             {
-                var link = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == sock.Id);
+                var link = ctx.FindLink(node.Id, sock.Id);
                 if (link is not null)
                 {
                     // Try vector evaluator first, then scalar-broadcast as a
                     // compatibility shim (mirrors ResolveVectorInputSocket /
                     // compositor.js _evalVectorSocket broadcast semantics).
-                    var vec = EvalVectorNode(graph, link.FromNodeId, layerRes, visiting, visited);
+                    var vec = EvalVectorNode(ctx, link.FromNodeId, layerRes, visiting, visited);
                     if (vec is not null && vec.Length >= 2)
                         return (vec[0], vec[1]);
-                    var scalar = EvalScalarNode(graph, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
+                    var scalar = EvalScalarNode(ctx, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
                     if (scalar is not null)
                         return (scalar.Value, scalar.Value);
                 }
@@ -1532,13 +1603,13 @@ namespace Phoenix.Controls.Visualist.Core
         // metadata that tests assert against.
 
         private static ImageMetadata? EvalImageBlur(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double radius = ResolveScalarOrAttr(graph, node, "Radius", "Radius", 0, layerRes, visiting, visited);
+            double radius = ResolveScalarOrAttr(ctx, node, "Radius", "Radius", 0, layerRes, visiting, visited);
             return new ImageMetadata
             {
                 Source = upstream.Source,
@@ -1553,14 +1624,14 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageGaussian(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double sx = ResolveScalarOrAttr(graph, node, "SigmaX", "SigmaX", 0, layerRes, visiting, visited);
-            double sy = ResolveScalarOrAttr(graph, node, "SigmaY", "SigmaY", 0, layerRes, visiting, visited);
+            double sx = ResolveScalarOrAttr(ctx, node, "SigmaX", "SigmaX", 0, layerRes, visiting, visited);
+            double sy = ResolveScalarOrAttr(ctx, node, "SigmaY", "SigmaY", 0, layerRes, visiting, visited);
             return new ImageMetadata
             {
                 Source = upstream.Source,
@@ -1576,13 +1647,13 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageMosaic(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double tileSize = ResolveScalarOrAttr(graph, node, "TileSize", "TileSize", 8, layerRes, visiting, visited);
+            double tileSize = ResolveScalarOrAttr(ctx, node, "TileSize", "TileSize", 8, layerRes, visiting, visited);
             return new ImageMetadata
             {
                 Source = upstream.Source,
@@ -1597,15 +1668,15 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageShadow(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double ox   = ResolveScalarOrAttr(graph, node, "OffsetX", "OffsetX", 4, layerRes, visiting, visited);
-            double oy   = ResolveScalarOrAttr(graph, node, "OffsetY", "OffsetY", 4, layerRes, visiting, visited);
-            double blur = ResolveScalarOrAttr(graph, node, "Blur",    "Blur",    6, layerRes, visiting, visited);
+            double ox   = ResolveScalarOrAttr(ctx, node, "OffsetX", "OffsetX", 4, layerRes, visiting, visited);
+            double oy   = ResolveScalarOrAttr(ctx, node, "OffsetY", "OffsetY", 4, layerRes, visiting, visited);
+            double blur = ResolveScalarOrAttr(ctx, node, "Blur",    "Blur",    6, layerRes, visiting, visited);
             return new ImageMetadata
             {
                 Source = upstream.Source,
@@ -1624,14 +1695,14 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageGlow(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double radius    = ResolveScalarOrAttr(graph, node, "Radius",    "Radius",    12, layerRes, visiting, visited);
-            double intensity = ResolveScalarOrAttr(graph, node, "Intensity", "Intensity", 1,  layerRes, visiting, visited);
+            double radius    = ResolveScalarOrAttr(ctx, node, "Radius",    "Radius",    12, layerRes, visiting, visited);
+            double intensity = ResolveScalarOrAttr(ctx, node, "Intensity", "Intensity", 1,  layerRes, visiting, visited);
             return new ImageMetadata
             {
                 Source = upstream.Source,
@@ -1649,14 +1720,14 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageDistort(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
-            double amp  = ResolveScalarOrAttr(graph, node, "Amplitude", "Amplitude", 8, layerRes, visiting, visited);
-            double freq = ResolveScalarOrAttr(graph, node, "Frequency", "Frequency", 4, layerRes, visiting, visited);
+            double amp  = ResolveScalarOrAttr(ctx, node, "Amplitude", "Amplitude", 8, layerRes, visiting, visited);
+            double freq = ResolveScalarOrAttr(ctx, node, "Frequency", "Frequency", 4, layerRes, visiting, visited);
             return new ImageMetadata
             {
                 Source = upstream.Source,
@@ -1674,11 +1745,11 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageMask(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
             // Image input is required.
-            var image = EvalImagePassthrough(graph, node, "Image", layerRes, widgetRect, visiting, visited);
+            var image = EvalImagePassthrough(ctx, node, "Image", layerRes, widgetRect, visiting, visited);
             if (image is null || image.HasError) return image;
 
             // Mask input is also required — surface an explicit error rather than
@@ -1686,7 +1757,7 @@ namespace Phoenix.Controls.Visualist.Core
             var maskSock = node.Sockets.FirstOrDefault(s => s.Name == "Mask" && s.Type == SocketType.Input);
             var maskLink = maskSock is null
                 ? null
-                : graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == maskSock.Id);
+                : ctx.FindLink(node.Id, maskSock.Id);
             if (maskLink is null)
             {
                 return new ImageMetadata
@@ -1701,7 +1772,7 @@ namespace Phoenix.Controls.Visualist.Core
             }
 
             // Walk the mask chain so cycles/errors upstream surface here too.
-            var mask = EvalImage(graph, maskLink.FromNodeId, maskLink.FromSocketId, layerRes, widgetRect, visiting, visited);
+            var mask = EvalImage(ctx, maskLink.FromNodeId, maskLink.FromSocketId, layerRes, widgetRect, visiting, visited);
             if (mask is { HasError: true })
             {
                 return new ImageMetadata
@@ -1733,7 +1804,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageBlend(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
             // A blend composites B (top) over A (bottom). A missing / empty /
@@ -1743,8 +1814,8 @@ namespace Phoenix.Controls.Visualist.Core
             // node body read "(no input)" even though A was a valid image). Only
             // surface an error when NEITHER side yields an image. Mirrors
             // evalImageBlend in compositor.js.
-            var a = EvalImagePassthrough(graph, node, "A", layerRes, widgetRect, visiting, visited);
-            var b = EvalImagePassthrough(graph, node, "B", layerRes, widgetRect, visiting, visited);
+            var a = EvalImagePassthrough(ctx, node, "A", layerRes, widgetRect, visiting, visited);
+            var b = EvalImagePassthrough(ctx, node, "B", layerRes, widgetRect, visiting, visited);
             // Treat a missing / errored side as "no image" (null) so the null-flow
             // below is explicit to the compiler.
             if (a is { HasError: true }) a = null;
@@ -1765,7 +1836,7 @@ namespace Phoenix.Controls.Visualist.Core
             }
 
             // Opacity socket honours wired upstream first.
-            double opacity = ResolveScalarOrAttr(graph, node, "Opacity", "Opacity", 1, layerRes, visiting, visited);
+            double opacity = ResolveScalarOrAttr(ctx, node, "Opacity", "Opacity", 1, layerRes, visiting, visited);
 
             return new ImageMetadata
             {
@@ -1782,7 +1853,7 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         private static ImageMetadata? EvalImageCombine(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
             // Same dual-input contract as Image.Blend (A bottom, B top required)
@@ -1791,8 +1862,8 @@ namespace Phoenix.Controls.Visualist.Core
             // they're typed Image.
             // Same empty-tolerance as Image.Blend: a missing/empty side contributes
             // nothing, so return the other rather than failing the whole node.
-            var a = EvalImagePassthrough(graph, node, "A", layerRes, widgetRect, visiting, visited);
-            var b = EvalImagePassthrough(graph, node, "B", layerRes, widgetRect, visiting, visited);
+            var a = EvalImagePassthrough(ctx, node, "A", layerRes, widgetRect, visiting, visited);
+            var b = EvalImagePassthrough(ctx, node, "B", layerRes, widgetRect, visiting, visited);
             if (a is { HasError: true }) a = null;
             if (b is { HasError: true }) b = null;
             if (a is null && b is null)
@@ -1807,7 +1878,7 @@ namespace Phoenix.Controls.Visualist.Core
             }
 
             // Opacity socket honours wired upstream first.
-            double opacity = ResolveScalarOrAttr(graph, node, "Opacity", "Opacity", 1, layerRes, visiting, visited);
+            double opacity = ResolveScalarOrAttr(ctx, node, "Opacity", "Opacity", 1, layerRes, visiting, visited);
 
             return new ImageMetadata
             {
@@ -1836,14 +1907,14 @@ namespace Phoenix.Controls.Visualist.Core
         // side does the same thing already (see compositor.js evalImageTile),
         // so the C# evaluator was the laggard.
         private static ImageMetadata? EvalImageTile(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
-            var upstream = EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            var upstream = EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
             if (upstream is null || upstream.HasError) return upstream;
 
             (double rx, double ry) = ResolveVector2OrAttrPair(
-                graph, node, "Repeat", "RepeatX", "RepeatY", 1, 1, layerRes, visiting, visited);
+                ctx, node, "Repeat", "RepeatX", "RepeatY", 1, 1, layerRes, visiting, visited);
 
             // Wrap parity with compositor.js. The browser kernel reads
             // `stripQuotes(attr(node, 'Wrap', '"repeat"'))` and branches on
@@ -1936,7 +2007,7 @@ namespace Phoenix.Controls.Visualist.Core
         // graph that uses the same When in two Result.If nodes only logs once per
         // fire per node, and never spams when the user re-renders.
         private static ImageMetadata? EvalResultIf(
-            Graph graph, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
             HashSet<string> visiting, List<string> visited)
         {
             string when    = StripQuotes(node.Attributes.GetValueOrDefault("When",   "\"\""));
@@ -1947,10 +2018,10 @@ namespace Phoenix.Controls.Visualist.Core
             var eqSock = node.Sockets.FirstOrDefault(s => s.Name == "Equals" && s.Type == SocketType.Input);
             if (eqSock is not null)
             {
-                var eqLink = graph.Links.FirstOrDefault(l => l.ToNodeId == node.Id && l.ToSocketId == eqSock.Id);
+                var eqLink = ctx.FindLink(node.Id, eqSock.Id);
                 if (eqLink is not null)
                 {
-                    var src = graph.Nodes.FirstOrDefault(n => n.Id == eqLink.FromNodeId);
+                    var src = ctx.FindNode(eqLink.FromNodeId);
                     if (src is not null)
                     {
                         // The widget evaluator has no String evaluator — most string
@@ -1998,7 +2069,7 @@ namespace Phoenix.Controls.Visualist.Core
                 return null; // Value-mismatch: intentional gate, no error surface.
 
             // Match — pass the upstream Image through unchanged.
-            return EvalImagePassthrough(graph, node, "In", layerRes, widgetRect, visiting, visited);
+            return EvalImagePassthrough(ctx, node, "In", layerRes, widgetRect, visiting, visited);
         }
 
         private static void LogMissingArg(Node node, string when)

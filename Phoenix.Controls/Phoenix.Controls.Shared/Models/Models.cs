@@ -149,6 +149,10 @@ namespace Phoenix.Controls.Shared.Models
         public string Username { get; set; } = "";
         public string Message { get; set; } = "";
         public string ColorHex { get; set; } = "#FFFFFF";
+        // Chat platform token ("twitch" / "youtube" / "kick" — see ChatPlatforms).
+        // Defaults to twitch so every pre-multi-platform construction site and
+        // test keeps its original meaning without edits.
+        public string Platform { get; set; } = Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch;
         public bool IsBroadcaster { get; set; } = false;
         public bool IsMod { get; set; } = false;
         public bool IsSub { get; set; } = false;

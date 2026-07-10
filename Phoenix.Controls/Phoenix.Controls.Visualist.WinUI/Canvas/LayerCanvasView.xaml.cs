@@ -154,6 +154,21 @@ public sealed partial class LayerCanvasView : UserControl
     // gesture (and any return to a previously-visited position) rebuilds.
     private (int X, int Y, int W, int H)? _lastGuideAnchorRect;
 
+    // Perf — the snap passes fed WidgetSnapCalculator a freshly-built
+    // List<Rectangle> of sibling rects on every PointerMoved. Siblings are
+    // static for the whole drag/resize gesture (only the anchor moves — the
+    // same invariant _lastGuideAnchorRect relies on), so the list is
+    // snapshotted once at gesture start (armed in the drag / resize-handle
+    // PointerPressed, cleared in EndWidgetDrag / FinishResize) and reused per
+    // move. The per-call rebuild remains as a fallback for any call outside
+    // an armed gesture.
+    private readonly List<System.Drawing.Rectangle> _gestureSiblingRects = new();
+    private bool _gestureSiblingRectsValid;
+
+    // Reusable moving-member set for the guide-overlay rebuild — cleared and
+    // refilled per rebuild rather than allocated per rebuild.
+    private readonly HashSet<LayerWidget> _guideDragSet = new();
+
     // ─── Live preview (canvas widget live preview) ──
     //
     // The pre-T15 WinForms LayerCanvas blit-rendered each widget from a hidden
@@ -1307,6 +1322,9 @@ public sealed partial class LayerCanvasView : UserControl
             _resizeStartLocal = p.Position;
             _resizeOriginW   = primary.Rect.Width;
             _resizeOriginH   = primary.Rect.Height;
+            // One sibling-rect snapshot for the whole resize gesture (see
+            // SnapshotGestureSiblingRects) — siblings can't move mid-resize.
+            SnapshotGestureSiblingRects(primary);
             handle.CapturePointer(args.Pointer);
             args.Handled = true;
         };
@@ -1376,6 +1394,8 @@ public sealed partial class LayerCanvasView : UserControl
         // Settle gesture state + guides BEFORE any re-render so Render's
         // mid-resize guard doesn't have to clean up after us.
         ClearAlignmentGuides();
+        ClearGestureSiblingRects();
+        _guideDragSet.Clear();
         _resizing     = false;
         _resizeMoved  = false;
         _resizeWidget = null;
@@ -1468,12 +1488,23 @@ public sealed partial class LayerCanvasView : UserControl
             right  - resized.Rect.X,
             bottom - resized.Rect.Y);
 
-        var others = new List<System.Drawing.Rectangle>();
-        foreach (LayerWidget w in layer.Widgets)
+        // Sibling rects snapshotted once at resize start (siblings are static
+        // mid-gesture); the inline rebuild covers any call outside an armed
+        // gesture.
+        List<System.Drawing.Rectangle> others;
+        if (_gestureSiblingRectsValid)
         {
-            if (ReferenceEquals(w, resized)) continue;
-            others.Add(new System.Drawing.Rectangle(
-                w.Rect.X, w.Rect.Y, w.Rect.Width, w.Rect.Height));
+            others = _gestureSiblingRects;
+        }
+        else
+        {
+            others = new List<System.Drawing.Rectangle>();
+            foreach (LayerWidget w in layer.Widgets)
+            {
+                if (ReferenceEquals(w, resized)) continue;
+                others.Add(new System.Drawing.Rectangle(
+                    w.Rect.X, w.Rect.Y, w.Rect.Width, w.Rect.Height));
+            }
         }
 
         WidgetSnapCalculator.SnapResult result = WidgetSnapCalculator.Snap(
@@ -1655,6 +1686,10 @@ public sealed partial class LayerCanvasView : UserControl
                 _dragView   = null;
                 _dragPointerId = 0;
             }
+            // Siblings can't move mid-gesture — snapshot their rects once for
+            // the whole drag instead of per pointer-move (see
+            // SnapshotGestureSiblingRects). Only when the drag actually armed.
+            if (_dragWidget is not null) SnapshotGestureSiblingRects(capture);
             args.Handled  = true;
             RecomputeHotkeyContext();
         };
@@ -1772,6 +1807,8 @@ public sealed partial class LayerCanvasView : UserControl
         }
 
         ClearAlignmentGuides();
+        ClearGestureSiblingRects();
+        _guideDragSet.Clear();
         _dragWidget      = null;
         _dragView        = null;
         _dragMoved       = false;
@@ -1997,6 +2034,37 @@ public sealed partial class LayerCanvasView : UserControl
         (int)Math.Round(v / (double)SnapGridStepPx) * SnapGridStepPx;
 
     /// <summary>
+    /// Snapshot every non-moving sibling's rect once at gesture start (drag
+    /// or resize). Siblings can't move mid-gesture — the invariant the
+    /// <see cref="_lastGuideAnchorRect"/> overlay cache already relies on — so
+    /// the per-move snap passes reuse this list instead of rebuilding it (plus
+    /// a rect per sibling) on every PointerMoved. Excludes the anchor and,
+    /// during a group drag, every other moving member — the same exclusions
+    /// the inline fallbacks in the snap passes apply.
+    /// </summary>
+    private void SnapshotGestureSiblingRects(LayerWidget anchor)
+    {
+        _gestureSiblingRects.Clear();
+        _gestureSiblingRectsValid = false;
+        if (_vm?.SelectedLayer is not Layer layer) return;
+        foreach (LayerWidget w in layer.Widgets)
+        {
+            if (ReferenceEquals(w, anchor)) continue;
+            if (_isGroupDragging && _groupDragOrigins.ContainsKey(w)) continue;
+            _gestureSiblingRects.Add(new System.Drawing.Rectangle(
+                w.Rect.X, w.Rect.Y, w.Rect.Width, w.Rect.Height));
+        }
+        _gestureSiblingRectsValid = true;
+    }
+
+    /// <summary>Symmetric teardown for <see cref="SnapshotGestureSiblingRects"/>.</summary>
+    private void ClearGestureSiblingRects()
+    {
+        _gestureSiblingRects.Clear();
+        _gestureSiblingRectsValid = false;
+    }
+
+    /// <summary>
     /// Snap the candidate move position by delegating to
     /// the pure-data <see cref="WidgetSnapCalculator"/> in the Visualist Engine.
     /// The calculator snaps the dragged rect against the layer-canvas
@@ -2027,14 +2095,24 @@ public sealed partial class LayerCanvasView : UserControl
 
         // Other-widget rects = every sibling except the dragged widget and,
         // during a group drag, every other moving member (so the formation
-        // never snaps to its own tail). Mirrors the prior inline exclusions.
-        var others = new List<System.Drawing.Rectangle>();
-        foreach (LayerWidget w in layer.Widgets)
+        // never snaps to its own tail). Snapshotted once at gesture start
+        // (siblings are static mid-gesture); the inline rebuild below covers
+        // any call outside an armed gesture.
+        List<System.Drawing.Rectangle> others;
+        if (_gestureSiblingRectsValid)
         {
-            if (ReferenceEquals(w, dragged)) continue;
-            if (_isGroupDragging && _groupDragOrigins.ContainsKey(w)) continue;
-            others.Add(new System.Drawing.Rectangle(
-                w.Rect.X, w.Rect.Y, w.Rect.Width, w.Rect.Height));
+            others = _gestureSiblingRects;
+        }
+        else
+        {
+            others = new List<System.Drawing.Rectangle>();
+            foreach (LayerWidget w in layer.Widgets)
+            {
+                if (ReferenceEquals(w, dragged)) continue;
+                if (_isGroupDragging && _groupDragOrigins.ContainsKey(w)) continue;
+                others.Add(new System.Drawing.Rectangle(
+                    w.Rect.X, w.Rect.Y, w.Rect.Width, w.Rect.Height));
+            }
         }
 
         // resizing:false — this is a MOVE (top-left tracks the cursor). The
@@ -2105,8 +2183,10 @@ public sealed partial class LayerCanvasView : UserControl
         // drag every member moves together so all of them are excluded from
         // the alignment cascade (a member shouldn't draw a guide against
         // another member). During a resize the anchor is the widget being
-        // resized — same guide overlay, different gesture.
-        var dragSet = new HashSet<LayerWidget>();
+        // resized — same guide overlay, different gesture. Reuses one cleared
+        // set per rebuild instead of allocating a fresh HashSet per move.
+        var dragSet = _guideDragSet;
+        dragSet.Clear();
         if (_isGroupDragging)
         {
             foreach (var kv in _groupDragOrigins) dragSet.Add(kv.Key);

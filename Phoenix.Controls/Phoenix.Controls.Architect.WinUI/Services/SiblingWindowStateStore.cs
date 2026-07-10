@@ -33,6 +33,23 @@ internal static class SiblingWindowStateStore
     private const int DefaultWidth   = 1280;
     private const int DefaultHeight  = 820;
 
+    // In-memory copy of every record this process has read or written,
+    // keyed by the same hash the on-disk file name uses — Restore for a
+    // path we've already touched never re-hits disk (the blocking
+    // File.ReadAllText on the UI thread stalled window activation under
+    // OneDrive / AV latency).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, WindowRecord>
+        s_recordCache = new(StringComparer.Ordinal);
+
+    // Serialises the actual disk writes so a queued thread-pool persist
+    // can't interleave with the terminal flushSync write. The per-key
+    // sequence check keeps a stale queued write (captured before a newer
+    // Persist) from landing after — and clobbering — the newer geometry.
+    private static readonly object s_writeGate = new();
+    private static readonly System.Collections.Generic.Dictionary<string, long>
+        s_lastWrittenSeq = new(StringComparer.Ordinal);
+    private static long s_saveSeq;
+
     private sealed class WindowRecord
     {
         public int X { get; set; }
@@ -171,13 +188,19 @@ internal static class SiblingWindowStateStore
 
     private static WindowRecord? TryLoadRecord(string absolutePath)
     {
+        string key = HashPath(absolutePath);
+        // Cache-first: also covers a Persist whose thread-pool write is
+        // still in flight — the cache already holds the newest geometry.
+        if (s_recordCache.TryGetValue(key, out var cached)) return cached;
         try
         {
             string path = ResolvePath(absolutePath);
             if (!File.Exists(path)) return null;
             string json = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(json)) return null;
-            return JsonSerializer.Deserialize<WindowRecord>(json);
+            var rec = JsonSerializer.Deserialize<WindowRecord>(json);
+            if (rec is not null) s_recordCache[key] = rec;
+            return rec;
         }
         catch (Exception ex)
         {
@@ -200,13 +223,18 @@ internal static class SiblingWindowStateStore
         {
             WriteIndented = true,
         });
+        string key = HashPath(absolutePath);
+        long seq = System.Threading.Interlocked.Increment(ref s_saveSeq);
+        // Publish to the in-memory cache immediately so a Restore racing the
+        // (possibly deferred) disk write sees the newest geometry.
+        s_recordCache[key] = rec;
         // On the terminal close path, write
         // synchronously: the host process may Environment.Exit(0) immediately
         // after, killing a still-queued Task.Run and losing the geometry. The
         // record is tiny so the synchronous write is negligible at close time.
         if (flushSync)
         {
-            try { File.WriteAllText(ResolvePath(absolutePath), json); }
+            try { WriteRecordGated(absolutePath, key, seq, json); }
             catch (Exception ex)
             {
                 GlobalLogger.Log(
@@ -218,7 +246,7 @@ internal static class SiblingWindowStateStore
         _ = AsyncErrorBoundary.SafeRunAsync(
             () => System.Threading.Tasks.Task.Run(() =>
             {
-                try { File.WriteAllText(ResolvePath(absolutePath), json); }
+                try { WriteRecordGated(absolutePath, key, seq, json); }
                 catch (Exception ex)
                 {
                     GlobalLogger.Log(
@@ -227,6 +255,18 @@ internal static class SiblingWindowStateStore
                 }
             }),
             "SiblingWindowStateStore", "SaveRecord");
+    }
+
+    private static void WriteRecordGated(string absolutePath, string key, long seq, string json)
+    {
+        lock (s_writeGate)
+        {
+            // A newer Persist for this path already landed — writing this
+            // stale snapshot would roll the geometry back.
+            if (s_lastWrittenSeq.TryGetValue(key, out long last) && last >= seq) return;
+            File.WriteAllText(ResolvePath(absolutePath), json);
+            s_lastWrittenSeq[key] = seq;
+        }
     }
 
     private static AppWindow ResolveAppWindow(Window window)

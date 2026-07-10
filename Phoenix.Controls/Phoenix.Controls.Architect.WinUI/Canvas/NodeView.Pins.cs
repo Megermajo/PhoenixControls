@@ -1244,9 +1244,12 @@ public sealed partial class NodeView
             // by OnSocketRowLoaded / OnSocketRowSizeChanged) over the static
             // SocketAnchor estimate so multi-line pill rows stay glued to
             // the painted centre. Falls back to SocketAnchor.Y when the row
-            // hasn't been measured yet (first layout pass).
-            var (_, ay) = NodeGeometry.SocketAnchor(_pinBoundVm.Model, ele.RowIndex, ele.Direction);
-            double yCentre = SocketRenderState.TryGetMeasuredRowCenterY(sock.Id) ?? ay;
+            // hasn't been measured yet (first layout pass) — computed lazily
+            // on that miss branch only, since SocketAnchor re-derives the
+            // node's width + row heights and the measured value wins on
+            // nearly every reposition after first layout.
+            double yCentre = SocketRenderState.TryGetMeasuredRowCenterY(sock.Id)
+                          ?? NodeGeometry.SocketAnchor(_pinBoundVm.Model, ele.RowIndex, ele.Direction).Y;
             // Pin chrome is 14×14 so centre-to-top-left offset is -7.
             // Inputs sit on x=0 (outer-left edge); outputs sit on x=width
             // (outer-right edge, live from NodeRoot.ActualWidth so the body

@@ -860,15 +860,21 @@ namespace Phoenix.Controls.Architect.Core
 
             // Append new sockets that exist on source but not yet on peer.
             // Insert above the trailing placeholder so the placeholder stays
-            // last; if no placeholder is present, append at the end.
-            targets = peer.Sockets
-                .Where(s => IsPayloadSocket(s) && s.Type == targetType)
-                .ToList();
+            // last; if no placeholder is present, append at the end. The
+            // surviving targets after the excess-drop are exactly the first
+            // `common` entries, so a counter stands in for re-filtering
+            // peer.Sockets; the insert index is resolved once and advanced per
+            // insert — only non-placeholders are inserted, so which placeholder
+            // comes first never changes mid-loop.
             int peerWidth = peer.Size.Width > 0 ? peer.Size.Width : NodeWidth;
             bool isInput  = targetType == SocketType.Input;
-            while (targets.Count < sources.Count)
+            var trailingPlaceholder = peer.Sockets.FirstOrDefault(s => s.IsPlaceholder && s.Type == targetType);
+            int insertAt = trailingPlaceholder is not null
+                ? peer.Sockets.IndexOf(trailingPlaceholder)
+                : peer.Sockets.Count;
+            for (int i = common; i < sources.Count; i++)
             {
-                var src = sources[targets.Count];
+                var src = sources[i];
                 var newSock = new Socket
                 {
                     Id       = Guid.NewGuid().ToString(),
@@ -878,12 +884,7 @@ namespace Phoenix.Controls.Architect.Core
                     DataType = src.DataType,
                     Offset   = new Point(isInput ? -6 : peerWidth - 14, 0),
                 };
-                var trailingPlaceholder = peer.Sockets.FirstOrDefault(s => s.IsPlaceholder && s.Type == targetType);
-                int insertAt = trailingPlaceholder is not null
-                    ? peer.Sockets.IndexOf(trailingPlaceholder)
-                    : peer.Sockets.Count;
-                peer.Sockets.Insert(insertAt, newSock);
-                targets.Add(newSock);
+                peer.Sockets.Insert(insertAt++, newSock);
                 _ = fallbackColor; // reserved for future "no source colour" branch — currently src.Color always wins
                 changed = true;
             }

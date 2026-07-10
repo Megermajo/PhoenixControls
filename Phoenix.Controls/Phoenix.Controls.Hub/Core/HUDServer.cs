@@ -55,12 +55,22 @@ namespace Phoenix.Controls.Hub.Core
         //     stalling the script engine that owns the trigger.
         private readonly ConcurrentDictionary<WebSocket, PerSocketSender> _layerSenders = new();
 
-        // Per-layer disconnect grace window. When OBS hides a browser source (or the
+        // Per-socket disconnect grace window. When OBS hides a browser source (or the
         // visibility flickers), the socket closes; we used to immediately drop the layer's
         // presence and any queued one-shot alerts. Instead, schedule a cancellable teardown
         // and let a fast reconnect restore presence without re-routing.
+        //
+        // Keyed by (LayerId, Socket), matching _layerSenders' per-socket keying. The
+        // dict used to key by layerId alone, so a reconnect to the same layer within
+        // the grace window cancelled the OLD socket's teardown and orphaned its
+        // PerSocketSender (dict entry + Channel + parked pump Task + linked CTS) in
+        // _layerSenders until Stop(). With the composite key each closed socket's
+        // teardown fires independently; presence stays continuous across a reconnect
+        // because LayerRegistry.UnregisterConnection only marks a layer inactive once
+        // its connection set empties, and the new socket registers before the old
+        // socket's grace window elapses.
         private const int LAYER_DISCONNECT_GRACE_SECONDS = 3;
-        private readonly ConcurrentDictionary<string, CancellationTokenSource> _pendingTeardowns = new();
+        private readonly ConcurrentDictionary<(string LayerId, WebSocket Socket), CancellationTokenSource> _pendingTeardowns = new();
 
         // Recently-reloaded layer ids. PushLayerReloadedAsync stamps each broadcast
         // so /api/layer/<id> can wait for the writer to settle before serving JSON. Five-
@@ -1333,9 +1343,14 @@ namespace Phoenix.Controls.Hub.Core
             var socket = wsContext.WebSocket;
 
             // If a previous socket for this layer is still inside its grace window,
-            // cancel the pending teardown. The new socket inherits presence; any one-shot
-            // alerts queued during the gap will dispatch as soon as the queue pump cycles.
-            CancelPendingTeardown(layerId!, _pendingTeardowns);
+            // do NOT cancel its pending teardown. Teardowns are keyed per (layer, socket):
+            // the old socket's teardown fires independently after the grace window and
+            // disposes its PerSocketSender (cancelling it here orphaned that sender in
+            // _layerSenders until Stop()). Presence stays continuous — the registration
+            // below adds this socket before the old one unregisters, and
+            // LayerRegistry.UnregisterConnection only marks the layer inactive once its
+            // connection set empties. One-shot alerts queued during the gap still
+            // dispatch as soon as the queue pump cycles.
 
             // Atomic gate. If five sockets all passed the
             // pre-upgrade fast-path within a microsecond of each other (their
@@ -1445,14 +1460,17 @@ namespace Phoenix.Controls.Hub.Core
                 // first, so by the time we dispose, no broadcast can re-add a lock.
                 //
                 // DON'T immediately unregister the connection. Defer the
-                // unregister until the grace window elapses without a reconnect; if a
-                // new client connects to the same layer in the meantime, the connect
-                // path cancels this teardown and presence stays continuous so queued
-                // one-shot alerts aren't dropped on a one-frame OBS visibility flicker.
+                // unregister until the grace window elapses; if a new client connects
+                // to the same layer in the meantime it registers its own presence
+                // first, so this teardown's UnregisterConnection can't empty the
+                // layer's connection set and queued one-shot alerts aren't dropped on
+                // a one-frame OBS visibility flicker. The teardown is keyed per
+                // (layer, socket) and always fires — it must, because it's the only
+                // path that disposes THIS socket's PerSocketSender.
                 var capturedLayerId = layerId!;
                 var capturedSocket  = socket;
                 ScheduleGraceTeardown(
-                    capturedLayerId,
+                    (capturedLayerId, capturedSocket),
                     _pendingTeardowns,
                     LAYER_DISCONNECT_GRACE_SECONDS * 1000,
                     () =>
@@ -1482,13 +1500,17 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         /// <remarks>
         /// Internal+static so unit tests can validate cancel-before-fire and fire-after-delay
-        /// without spinning a HUDServer / WebSocket pair.
+        /// without spinning a HUDServer / WebSocket pair. Generic over the key type: the
+        /// production dict keys by (LayerId, Socket) so reconnects don't cancel the old
+        /// socket's teardown, while existing tests exercise the same logic with plain
+        /// string keys.
         /// </remarks>
-        internal static CancellationTokenSource ScheduleGraceTeardown(
-            string key,
-            ConcurrentDictionary<string, CancellationTokenSource> pending,
+        internal static CancellationTokenSource ScheduleGraceTeardown<TKey>(
+            TKey key,
+            ConcurrentDictionary<TKey, CancellationTokenSource> pending,
             int graceMs,
             Action onTeardown)
+            where TKey : notnull
         {
             // Replace any previous pending teardown for this key — only the newest disconnect
             // gets to fire (earlier ones are stale once another close has happened).
@@ -1512,7 +1534,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (OperationCanceledException)
                 {
-                    return; // cancelled by reconnect or Stop()
+                    return; // cancelled by CancelPendingTeardown, a same-key reschedule, or Stop()
                 }
 
                 // Only fire if we're still the registered teardown for this key. A reconnect
@@ -1535,12 +1557,15 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>
         /// Cancels and removes any pending teardown for <paramref name="key"/>. Returns
-        /// true when a teardown was cancelled (i.e., a reconnect raced inside the grace
-        /// window), false when no teardown was pending.
+        /// true when a teardown was cancelled, false when no teardown was pending.
+        /// No production caller remains — the connect path deliberately lets the old
+        /// socket's teardown fire (it owns that socket's PerSocketSender disposal) —
+        /// but the helper stays as the test seam for the cancel-before-fire contract.
         /// </summary>
-        internal static bool CancelPendingTeardown(
-            string key,
-            ConcurrentDictionary<string, CancellationTokenSource> pending)
+        internal static bool CancelPendingTeardown<TKey>(
+            TKey key,
+            ConcurrentDictionary<TKey, CancellationTokenSource> pending)
+            where TKey : notnull
         {
             if (pending.TryRemove(key, out var cts))
             {

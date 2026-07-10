@@ -4,7 +4,7 @@
 //   RegisterProcessSession, RegisterDatabankSimple, RegisterImperative,
 //   RegisterBus, RegisterTwitchSimple, RegisterCollectionsValuesVars,
 //   RegisterPlatformsRest, RegisterVisualsDatabankAi, RegisterTwitchData,
-//   RegisterSystem.
+//   RegisterYouTubeKick, RegisterSystem.
 
 using System;
 using Phoenix.Controls.Shared.Models;
@@ -28,6 +28,7 @@ namespace Phoenix.Controls.Architect.Core
             RegisterPlatformsRest(registry);
             RegisterVisualsDatabankAi(registry);
             RegisterTwitchData(registry);
+            RegisterYouTubeKick(registry);
             RegisterSystem(registry);
             RegisterAsyncSimple(registry);
             RegisterProcessSession(registry);
@@ -924,6 +925,154 @@ namespace Phoenix.Controls.Architect.Core
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Twitch.GetFollowAge", "twitch.get_follow_age", userArg,
+                FollowNamedOutput: "Flow"));
+        }
+
+        // ── YouTube / Kick platform nodes ─────────────────────────────
+        // Outbound actions ("Platforms" category, DarkViolet) plus the two
+        // "Platform Data" lookups. Templates live in
+        // NodeRegistry.Templates.RemainingBands.cs; runtime handlers in
+        // ScriptManager.YouTube.cs / ScriptManager.Kick.cs; the manifest
+        // entries in CommandManifest.cs — command names + arg order here
+        // are the locked contract between all three.
+        //
+        // Action nodes follow the Twitch.* action pattern (flow continues
+        // through the "Done" output). The *.GetUser data nodes mirror the
+        // Twitch.GetUser descriptor shape exactly (emit + FollowNamedOutput
+        // "Flow"); their output sockets (Id / DisplayName / IsMod / ...)
+        // resolve to result vars in ScriptExporter.ResolveOutputFromNode's
+        // "Platform Data" arm.
+        private static void RegisterYouTubeKick(ExporterRegistry r)
+        {
+            // ── YouTube actions ────────────────────────────────────────────
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.SendChat", "youtube.send_chat",
+                new[] { new SocketArg("Message", "\"Hello chat!\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.SetTitle", "youtube.set_title",
+                new[] { new SocketArg("Title", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.SetDescription", "youtube.set_description",
+                new[] { new SocketArg("Description", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.Timeout", "youtube.timeout",
+                new[]
+                {
+                    new SocketArg("User", "{user.name}"),
+                    new SocketArg("Sec",  "300"),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.Ban", "youtube.ban",
+                new[] { new SocketArg("User", "{user.name}") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.CreatePoll", "youtube.create_poll",
+                new[]
+                {
+                    new SocketArg("Title",       "\"\""),
+                    new SocketArg("Choices",     "\"\""),
+                    new SocketArg("DurationSec", "60"),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.EndPoll", "youtube.end_poll",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            // ── Kick actions ───────────────────────────────────────────────
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.SendChat", "kick.send_chat",
+                new[] { new SocketArg("Message", "\"Hello chat!\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.Reply", "kick.reply",
+                new[]
+                {
+                    new SocketArg("MessageId", "{message.id}"),
+                    new SocketArg("Message",   "\"\""),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.Timeout", "kick.timeout",
+                new[]
+                {
+                    new SocketArg("User", "{user.name}"),
+                    new SocketArg("Sec",  "300"),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.Ban", "kick.ban",
+                new[] { new SocketArg("User", "{user.name}") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.Unban", "kick.unban",
+                new[] { new SocketArg("User", "{user.name}") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.Untimeout", "kick.untimeout",
+                new[] { new SocketArg("User", "{user.name}") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.SetTitle", "kick.set_title",
+                new[] { new SocketArg("Title", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.SetCategory", "kick.set_category",
+                new[] { new SocketArg("Category", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.DeleteMessage", "kick.delete_message",
+                new[] { new SocketArg("MessageId", "{message.id}") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.SetRewardCost", "kick.set_reward_cost",
+                new[]
+                {
+                    new SocketArg("RewardId", "\"\""),
+                    new SocketArg("Cost",     "0"),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.SetRewardEnabled", "kick.set_reward_enabled",
+                new[]
+                {
+                    new SocketArg("RewardId", "\"\""),
+                    new SocketArg("Enabled",  "true"),
+                },
+                FollowNamedOutput: "Done"));
+
+            // ── Platform Data lookups ──────────────────────────────────────
+            // Same shape as Twitch.GetUser above: emit the command, then flow
+            // continues through the exec "Flow" output; data sockets resolve
+            // via ScriptExporter.ResolveOutputFromNode ("Platform Data" arm).
+            var platformUserArg = new[] { new SocketArg("Username", "{user.name}") };
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "YouTube.GetUser", "youtube.get_user", platformUserArg,
+                FollowNamedOutput: "Flow"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Kick.GetUser", "kick.get_user", platformUserArg,
                 FollowNamedOutput: "Flow"));
         }
 

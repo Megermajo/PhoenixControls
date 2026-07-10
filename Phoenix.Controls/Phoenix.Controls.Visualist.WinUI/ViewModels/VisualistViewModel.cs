@@ -322,7 +322,8 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
     /// PushUndo (one entry per edit gesture) → write the raw value → MarkDirty,
     /// then signals a visual refresh. No-ops when the value is unchanged so a
     /// focus-out with no edit doesn't spend an undo slot. Returns true when a
-    /// write actually happened.
+    /// write actually happened. MarkDirty's OnChanged already re-raises
+    /// SelectedLayer, so no explicit re-raise is needed here.
     /// </summary>
     public bool CommitNodeAttribute(Node node, string attrKey, string newValue)
     {
@@ -332,10 +333,16 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
             node.Attributes ??= new Dictionary<string, string>();
             string original = node.Attributes.TryGetValue(attrKey, out var v) ? (v ?? "") : "";
             if (string.Equals(original, newValue, StringComparison.Ordinal)) return false;
-            _document.PushUndo();
+            // Inside a slider-drag gesture only the FIRST change snapshots undo
+            // (PushUndo is a whole-layer serialize) so the drag lands as ONE
+            // undo entry; the MarkDirty is deferred to EndNodeAttributeGesture.
+            if (!_attrGestureActive || !_attrGestureUndoPushed)
+            {
+                _document.PushUndo();
+                _attrGestureUndoPushed = _attrGestureActive;
+            }
             node.Attributes[attrKey] = newValue;
-            _document.MarkDirty();
-            RaiseSelectedLayerChanged();
+            MarkDirtyOrDefer();
             RaiseNodeParamCommitted(node);
             return true;
         }
@@ -344,6 +351,48 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
             GlobalLogger.Error("VisualistViewModel", $"CommitNodeAttribute('{node?.Title}'.'{attrKey}')", ex);
             return false;
         }
+    }
+
+    // ── slider-drag gesture batching (Inspector scalar / vector editors) ──
+    // A slider thumb drag streams ValueChanged → CommitNodeAttribute once per
+    // frame; each PushUndo is a whole-layer serialize and each MarkDirty
+    // re-raises SelectedLayer (full roster/triggers rebuild in the Inspector).
+    // The Inspector brackets the pointer gesture so the stream costs one undo
+    // snapshot (taken on the first actual change) and one MarkDirty (at
+    // gesture end); per-tick writes still update the attribute and raise
+    // NodeParamCommitted so the canvas preview tracks the drag live. Keyboard
+    // nudges / NumberBox edits never enter a gesture and commit as before.
+    private bool _attrGestureActive;
+    private bool _attrGestureUndoPushed;
+    private bool _attrGestureDirty;
+
+    public void BeginNodeAttributeGesture()
+    {
+        // Flush any dangling gesture (missed release) first so its deferred
+        // dirty-mark isn't lost.
+        EndNodeAttributeGesture();
+        _attrGestureActive = true;
+    }
+
+    public void EndNodeAttributeGesture()
+    {
+        if (!_attrGestureActive) return;
+        _attrGestureActive = false;
+        _attrGestureUndoPushed = false;
+        if (_attrGestureDirty)
+        {
+            _attrGestureDirty = false;
+            _document?.MarkDirty();
+        }
+    }
+
+    // MarkDirty gate: while a slider-drag gesture is active the dirty-mark is
+    // deferred to EndNodeAttributeGesture so the OnChanged → SelectedLayer
+    // rebuild fires once per gesture, not once per tick.
+    private void MarkDirtyOrDefer()
+    {
+        if (_attrGestureActive) { _attrGestureDirty = true; return; }
+        _document?.MarkDirty();
     }
 
     /// <summary>
@@ -470,13 +519,21 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         => new(ParamComponentKeys(node, p).Select(c => AnimatedPinRegistry.MakeParameterPath(node, c)),
                StringComparer.Ordinal);
 
+    // Cached variant for the playback-rate probes (the diamond refreshers poll
+    // on every PlayheadMs tick): the path set is deterministic per param, and
+    // the NodeParamVm set is rebuilt together with its node, so the seed from
+    // BuildNodeParams can't outlive the sockets it was derived from. The
+    // click-driven keyframe mutations keep computing fresh sets.
+    private HashSet<string> CachedParamPaths(Node node, NodeParamVm p)
+        => p.KeyframePaths ??= ParamPathSet(node, p);
+
     /// <summary>True when the parameter has any keyframe on any of its component paths.</summary>
     public bool ParamHasKeyframes(NodeParamVm p)
     {
         if (p is null || _selectedNode is not { } node) return false;
         WidgetTimeline? tl = ActiveTriggerObject?.Timeline;
         if (tl is null) return false;
-        var paths = ParamPathSet(node, p);
+        var paths = CachedParamPaths(node, p);
         return tl.Keyframes.Any(k => k != null && paths.Contains(k.ParameterPath));
     }
 
@@ -486,10 +543,33 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
         if (p is null || _selectedNode is not { } node) return false;
         WidgetTimeline? tl = ActiveTriggerObject?.Timeline;
         if (tl is null) return false;
-        var paths = ParamPathSet(node, p);
+        var paths = CachedParamPaths(node, p);
         double t = Math.Max(0, PlayheadMs);
         return tl.Keyframes.Any(k => k != null && paths.Contains(k.ParameterPath)
             && Math.Abs(k.TimeMs - t) <= KeyframeTimeTolerance);
+    }
+
+    /// <summary>
+    /// Single-pass has-keyframes / on-keyframe probe for the Inspector diamond —
+    /// one walk over the timeline instead of the two separate
+    /// <see cref="ParamHasKeyframes"/> + <see cref="IsParamOnKeyframe"/> scans.
+    /// <c>On</c> implies <c>Has</c>.
+    /// </summary>
+    public (bool Has, bool On) ParamKeyframeState(NodeParamVm p)
+    {
+        if (p is null || _selectedNode is not { } node) return (false, false);
+        WidgetTimeline? tl = ActiveTriggerObject?.Timeline;
+        if (tl is null) return (false, false);
+        var paths = CachedParamPaths(node, p);
+        double t = Math.Max(0, PlayheadMs);
+        bool has = false;
+        foreach (Keyframe? k in tl.Keyframes)
+        {
+            if (k is null || !paths.Contains(k.ParameterPath)) continue;
+            has = true;
+            if (Math.Abs(k.TimeMs - t) <= KeyframeTimeTolerance) return (true, true);
+        }
+        return (has, false);
     }
 
     /// <summary>Move the playhead to the prev (dir&lt;0) / next (dir&gt;0) keyframe on THIS parameter.</summary>
@@ -655,7 +735,9 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                 hit.Value = JsonSerializer.SerializeToElement(literal);
                 changed = true;
             }
-            if (changed) { _document.MarkDirty(); NotifyActiveTriggerChanged(); }
+            // Rides the value commit's undo entry AND its gesture batching — a
+            // slider drag on an on-keyframe param defers the dirty-mark too.
+            if (changed) { MarkDirtyOrDefer(); NotifyActiveTriggerChanged(); }
         }
         catch (Exception ex)
         {
@@ -892,6 +974,8 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                         k != null && string.Equals(k.ParameterPath, path, StringComparison.Ordinal)));
             }
 
+            // Seed the component-path cache the playback-rate diamond probes reuse.
+            param.KeyframePaths = ParamPathSet(node, param);
             SelectedNodeParams.Add(param);
         }
 
@@ -1016,6 +1100,8 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                 if (param.IsAnimatable)
                     param.IsAnimated = AnimatedPinRegistry.IsPinAnimated(timeline, node, socket);
 
+                // Seed the component-path cache the playback-rate diamond probes reuse.
+                param.KeyframePaths = ParamPathSet(node, param);
                 SelectedNodeParams.Add(param);
             }
         }
@@ -1073,6 +1159,8 @@ public sealed class VisualistViewModel : INotifyPropertyChanged, IDisposable
                     k != null && string.Equals(k.ParameterPath, path, StringComparison.Ordinal));
             });
         }
+        // Seed the component-path cache the playback-rate diamond probes reuse.
+        p.KeyframePaths = ParamPathSet(node, p);
         param = p;
         return true;
     }
@@ -2496,6 +2584,10 @@ public sealed class NodeParamVm : INotifyPropertyChanged
     public SocketDataType DataType { get; set; } = SocketDataType.Any;
     /// <summary>Set for a collapsed Vector*.Constant — the per-component attribute keys (X/Y[/Z[/W]]).</summary>
     public string[]? VectorComponentKeys { get; set; }
+    /// <summary>Precomputed keyframe component-path set (seeded by BuildNodeParams).
+    /// The param list is rebuilt together with its node, so the cache can't
+    /// outlive the socket/key shape it was derived from.</summary>
+    internal HashSet<string>? KeyframePaths { get; set; }
 
     // ── live values (two-way) ────────────────────────────────────────────
     private string  _textValue   = string.Empty;

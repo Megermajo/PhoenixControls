@@ -303,6 +303,38 @@ namespace Phoenix.Controls.Shared.Core
             AddT("twitch.is_online",      new ArgSpec("Channel", ArgType.String));
             AddT("twitch.get_follow_age", new ArgSpec("Username", ArgType.String));
 
+            // YouTube — outbound platform commands. Proxy commands routed
+            // through Streamer.bot DoAction (action name = "Phoenix: YT <Verb>");
+            // handlers live in ScriptManager.YouTube.cs. youtube.get_user is a
+            // data round-trip (result vars user.* fetched via
+            // FetchActionGlobalsAsync with the phx_yt_* prefix).
+            AddT("youtube.send_chat",       new ArgSpec("Message", ArgType.String));
+            AddT("youtube.set_title",       new ArgSpec("Title", ArgType.String));
+            AddT("youtube.set_description", new ArgSpec("Description", ArgType.String));
+            AddT("youtube.timeout",         new ArgSpec("User", ArgType.String), new ArgSpec("Sec", ArgType.Int, Optional: true, Default: "300"));
+            AddT("youtube.ban",             new ArgSpec("User", ArgType.String));
+            AddT("youtube.create_poll",     new ArgSpec("Title", ArgType.String), new ArgSpec("Choices", ArgType.String), new ArgSpec("DurationSec", ArgType.Int, Optional: true, Default: "60"));
+            AddT("youtube.end_poll");
+            AddT("youtube.get_user",        new ArgSpec("Username", ArgType.String));
+
+            // Kick — outbound platform commands. Proxy commands routed through
+            // Streamer.bot DoAction (action name = "Phoenix: Kick <Verb>");
+            // handlers live in ScriptManager.Kick.cs. kick.get_user is a data
+            // round-trip (result vars user.* fetched via FetchActionGlobalsAsync
+            // with the phx_kick_* prefix).
+            AddT("kick.send_chat",          new ArgSpec("Message", ArgType.String));
+            AddT("kick.reply",              new ArgSpec("MessageId", ArgType.String), new ArgSpec("Message", ArgType.String));
+            AddT("kick.timeout",            new ArgSpec("User", ArgType.String), new ArgSpec("Sec", ArgType.Int, Optional: true, Default: "300"));
+            AddT("kick.ban",                new ArgSpec("User", ArgType.String));
+            AddT("kick.unban",              new ArgSpec("User", ArgType.String));
+            AddT("kick.untimeout",          new ArgSpec("User", ArgType.String));
+            AddT("kick.set_title",          new ArgSpec("Title", ArgType.String));
+            AddT("kick.set_category",       new ArgSpec("Category", ArgType.String));
+            AddT("kick.delete_message",     new ArgSpec("MessageId", ArgType.String));
+            AddT("kick.set_reward_cost",    new ArgSpec("RewardId", ArgType.String), new ArgSpec("Cost", ArgType.Int));
+            AddT("kick.set_reward_enabled", new ArgSpec("RewardId", ArgType.String), new ArgSpec("Enabled", ArgType.Bool));
+            AddT("kick.get_user",           new ArgSpec("Username", ArgType.String));
+
             // System
             AddT("system.log", new ArgSpec("Message", ArgType.String), new ArgSpec("Level", ArgType.String, Optional: true, Default: "LogicExecution"));
 

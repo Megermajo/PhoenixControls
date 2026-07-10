@@ -682,12 +682,16 @@ public sealed partial class LogicCanvasView
             // Arrow-key node nudge. Moves the
             // current selection by 1 px (10 px with Shift) so keyboard-only
             // users can fine-tune layout without grabbing the mouse. Pushes
-            // a single undo entry per keystroke; group-drag is honoured.
+            // a single undo entry per key-hold GESTURE (snapshot on the
+            // fresh press, position-only mutation on auto-repeats) — the
+            // same one-entry-per-gesture idiom the pointer node-drag uses.
+            // KeyStatus.WasKeyDown discriminates repeat events; a discrete
+            // press snapshots exactly as before. Group-drag is honoured.
             case VirtualKey.Left:
             case VirtualKey.Right:
             case VirtualKey.Up:
             case VirtualKey.Down:
-                if (!ctrl && TryNudgeSelection(e.Key))
+                if (!ctrl && TryNudgeSelection(e.Key, e.KeyStatus.WasKeyDown))
                 {
                     e.Handled = true;
                     break;
@@ -701,13 +705,27 @@ public sealed partial class LogicCanvasView
         }
     }
 
+    // True once a nudge gesture has pushed its undo snapshot. Guards the
+    // (rare) case where the FIRST arrow event this canvas sees is already an
+    // auto-repeat (focus regained mid-hold): without at least one snapshot on
+    // the stack the repeat's mutation would be un-undoable, so an unarmed
+    // repeat snapshots anyway. Cleared at gesture end (arrow KeyUp) and on
+    // LostFocus in the QuickKeys partial — WasKeyDown mirrors global
+    // keyboard state, so a repeat delivered to a re-focused canvas must not
+    // reuse an arm from a gesture that ended while focus was elsewhere.
+    private bool _nudgeUndoArmed;
+
     /// <summary>
     /// Arrow-key node nudge. Returns true when something moved (so caller
-    /// marks the event handled). Single PushUndo per keystroke; the active
-    /// multi-selection moves together if more than one node is selected.
-    /// Pre-fix the canvas had no keyboard layout-tweak path at all.
+    /// marks the event handled). Single PushUndo per key-hold gesture — the
+    /// snapshot lands on the fresh press (<paramref name="isRepeat"/> false)
+    /// and auto-repeats only mutate positions, so holding a key no longer
+    /// serializes the whole graph ~30×/s. A discrete press snapshots exactly
+    /// as before. The active multi-selection moves together if more than one
+    /// node is selected. Pre-fix the canvas had no keyboard layout-tweak
+    /// path at all.
     /// </summary>
-    private bool TryNudgeSelection(VirtualKey key)
+    private bool TryNudgeSelection(VirtualKey key, bool isRepeat)
     {
         if (_vm is null) return false;
         // Resolve target set: multi-selection wins, otherwise the focused
@@ -733,7 +751,13 @@ public sealed partial class LogicCanvasView
         };
         if (dx == 0 && dy == 0) return false;
 
-        PushUndo();
+        // Snapshot once per gesture: the fresh press captures the pre-hold
+        // pose (so Ctrl+Z restores it in one step); repeats reuse it.
+        if (!isRepeat || !_nudgeUndoArmed)
+        {
+            PushUndo();
+            _nudgeUndoArmed = true;
+        }
         foreach (var n in targets)
             _vm.TranslateNode(n, dx, dy);
         return true;

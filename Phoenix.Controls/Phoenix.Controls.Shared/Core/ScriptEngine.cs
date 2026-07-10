@@ -608,12 +608,43 @@ namespace Phoenix.Controls.Shared.Core
         // MAIN EXECUTION LOOP
         // ─────────────────────────────────────────────────────────────────
 
+        // Per-content parse cache. The line split and the DB-preload key scan
+        // depend only on scriptContent, yet ran on EVERY execution — a fresh
+        // string[] plus a full regex pass per matching script per chat message /
+        // event. Keyed by string REFERENCE via ConditionalWeakTable:
+        // ScriptRegistry hands out the same cached Content instance until
+        // LogicWatcher's Refresh swaps in a new string, so a reload IS the
+        // invalidation signal by construction, and a dead content string takes
+        // its parse entry with it (weak keys — no eviction policy needed).
+        // Nested event.trigger runs a different content instance and gets its
+        // own entry; content-equal strings in distinct instances (e.g. test
+        // literals) merely re-parse, which is always correct.
+        // Lines is shared across concurrent executions and must stay
+        // read-only — ExecuteBlock and every block handler treat lines[] as
+        // immutable (no writer exists today; don't add one).
+        private sealed class ScriptParse
+        {
+            public readonly string[] Lines;
+            public readonly string[] DbPreloadKeys;
+            public ScriptParse(string content)
+            {
+                Lines = content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                DbPreloadKeys = DbPreloadRegex.Matches(content)
+                    .Cast<System.Text.RegularExpressions.Match>()
+                    .Select(m => m.Groups[1].Value)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+        }
+        private static readonly ConditionalWeakTable<string, ScriptParse> _scriptParseCache = new();
+
         public async Task<Dictionary<string, string>> ExecuteScriptAsync(
             string scriptContent,
             Dictionary<string, string> contextVars,
             CancellationToken cancellationToken = default)
         {
-            var lines = scriptContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            var parse = _scriptParseCache.GetValue(scriptContent, static c => new ScriptParse(c));
+            var lines = parse.Lines;
 
             // Merge context vars into a mutable dict for this execution
             var vars = new Dictionary<string, string>(contextVars, StringComparer.OrdinalIgnoreCase);
@@ -639,12 +670,15 @@ namespace Phoenix.Controls.Shared.Core
             // script's fan-out into a single query while preserving the
             // "skip if absent" semantics that the previous != "" guard
             // implemented.
-            var dbPreloadKeys = DbPreloadRegex.Matches(scriptContent)
-                .Cast<System.Text.RegularExpressions.Match>()
-                .Select(m => m.Groups[1].Value)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Where(k => !vars.ContainsKey(k))
-                .ToList();
+            // The regex scan + Distinct is precomputed per content instance in
+            // ScriptParse; only the vars-dependent "already provided by the
+            // caller" filter runs per execution.
+            var dbPreloadKeys = new List<string>(parse.DbPreloadKeys.Length);
+            foreach (var k in parse.DbPreloadKeys)
+            {
+                if (!vars.ContainsKey(k))
+                    dbPreloadKeys.Add(k);
+            }
             if (dbPreloadKeys.Count > 0)
             {
                 var loaded = await _db.GetVariablesAsync(dbPreloadKeys).ConfigureAwait(false);

@@ -1,12 +1,16 @@
+using System;
 using System.Collections.Generic;
 using System.Drawing;
+using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Localization;
+using Phoenix.Controls.Shared.Models;
 
 namespace Phoenix.Controls.Architect.Core
 {
     // First per-band carve from NodeRegistry.Templates.cs.
     // Owns the EVENTS band: every node template that *triggers* a script
-    // (Twitch.* events, YouTube.Message, System.Startup, Bus.OnMessage,
+    // (Chat.Message, Twitch.* events, the PlatformEventCatalog-driven
+    // YouTube.* / Kick.* events, System.Startup, Bus.OnMessage,
     // Event.Trigger / Event.Executor / Event.Return, HTTP.WebhookListener,
     // Schedule.* timers, State.OnChange). RegisterDefaults() in the parent
     // partial calls RegisterEventsTemplates() declaratively — no behaviour
@@ -15,6 +19,17 @@ namespace Phoenix.Controls.Architect.Core
     {
         private static void RegisterEventsTemplates()
         {
+            // Unified multi-platform chat trigger — replaces
+            // Twitch.ChatMessage. The Twitch / YouTube /
+            // Kick attributes are the per-platform checkmarks consumed by
+            // ScriptExporter.ProcessChatMessageEventNode (selection == {twitch}
+            // emits the legacy bare `on_chat:`; anything else emits
+            // `on_chat(<platforms>):`); new nodes default all-on.
+            // GraphSerializer.MigrateNodes retitles legacy Twitch.ChatMessage /
+            // YouTube.Message nodes onto this template on load with only their
+            // own platform checked, so migration is a zero-behavior-change
+            // rename and the old titles never survive a load.
+            //
             // IsMod / IsSub / IsBroadcaster / IsVip / SubMonths / ColorHex
             // outputs appended 2026-06-08. The engine already binds these chatter
             // fields (ScriptManager BuildChatVars: user.is_mod / user.is_sub /
@@ -22,9 +37,12 @@ namespace Phoenix.Controls.Architect.Core
             // but pre-fix they were reachable only by raw {user.is_mod}-style token
             // typing. Appended after Args so existing graphs keep their socket order
             // (additive — no prune). The ChatMessage-specific exporter block maps
-            // each socket name to its {user.*} var.
-            AddTemplate("Twitch.ChatMessage",  "Events", Color.ForestGreen,
-                Localizer.T("architect.node.bubble.twitch_chatmessage"),
+            // each socket name to its {user.*} var. Platform (→ {user.platform})
+            // is appended LAST for the same order-preservation reason: migrated
+            // nodes must keep their existing socket order, with Platform
+            // back-filling additively at the end.
+            AddTemplate("Chat.Message",        "Events", Color.Teal,
+                Localizer.T("architect.node.bubble.chat_message"),
                 null,
                 new[] {
                     ("Flow",          ColExec),
@@ -38,9 +56,16 @@ namespace Phoenix.Controls.Architect.Core
                     ("IsBroadcaster", ColBool),
                     ("IsVip",         ColBool),
                     ("SubMonths",     ColNumber),
-                    ("ColorHex",      ColString)
+                    ("ColorHex",      ColString),
+                    ("Platform",      ColString)
                 },
-                new Dictionary<string, string> { { "Commands", "" } });
+                new Dictionary<string, string>
+                {
+                    { "Commands", "" },
+                    { "Twitch",   "true" },
+                    { "YouTube",  "true" },
+                    { "Kick",     "true" }
+                });
 
             AddTemplate("Twitch.Subscription", "Events", Color.ForestGreen,
                 Localizer.T("architect.node.bubble.twitch_subscription"),
@@ -101,11 +126,6 @@ namespace Phoenix.Controls.Architect.Core
                 Localizer.T("architect.node.bubble.twitch_pointredeem"),
                 null,
                 new[] { ("Flow", ColExec), ("User", ColString), ("Reward", ColString), ("Input", ColString) });
-
-            AddTemplate("YouTube.Message",     "Events", Color.Red,
-                Localizer.T("architect.node.bubble.youtube_message"),
-                null,
-                new[] { ("Flow", ColExec), ("Message", ColString), ("User", ColString) });
 
             AddTemplate("System.Startup",      "Events", Color.DimGray,
                 Localizer.T("architect.node.bubble.system_startup"),
@@ -264,6 +284,62 @@ namespace Phoenix.Controls.Architect.Core
                 null,
                 new[] { ("Flow", ColExec), ("EventData", ColString) },
                 new Dictionary<string, string> { { "EventType", "CurrentProgramSceneChanged" } });
+
+            // ──────────────────────────────────────────────────────────────
+            // YouTube / Kick platform events.
+            // PlatformEventCatalog
+            // (Phoenix.Controls.Shared/Core/PlatformEventCatalog.cs) is the
+            // single source of truth for this surface — sockets, exporter
+            // var-tokens, payload probes, and bubble loc-keys all live on the
+            // catalog entry; this loop only turns each entry into a palette
+            // template (Flow output prepended, catalog sockets after, in
+            // catalog order). ScriptExporter, autocomplete/var-chain, and
+            // ScriptManager.BuildGenericEventVars consume the same entries, so
+            // adding an event to the catalog lights it up everywhere at once.
+            // Chat events (YouTube.Message / Kick.ChatMessage) are deliberately
+            // absent from the catalog — the unified Chat.Message node above
+            // covers them.
+            // ──────────────────────────────────────────────────────────────
+            foreach (var def in PlatformEventCatalog.Events)
+            {
+                // Header colors: YouTube keeps the old YouTube.Message red;
+                // Kick uses the brand green (#53FC18).
+                Color platformColor = def.Platform switch
+                {
+                    "youtube" => Color.Red,
+                    "kick"    => Color.FromArgb(83, 252, 24),
+                    _ => throw new InvalidOperationException(
+                        $"PlatformEventCatalog entry '{def.Title}' has unmapped platform '{def.Platform}' — add a header color to the RegisterEventsTemplates catalog loop."),
+                };
+
+                var outputs = new (string, Color)[def.Sockets.Count + 1];
+                outputs[0] = ("Flow", ColExec);
+                for (int i = 0; i < def.Sockets.Count; i++)
+                {
+                    var socket = def.Sockets[i];
+                    // Explicit type→color map. CreateNode derives
+                    // Socket.DataType back from this color (DataTypeFromColor),
+                    // so an unmapped catalog type would silently mint Any ◆
+                    // pins that refuse wires (recurring class bug) — throw
+                    // instead so a future SocketDataType extension in the
+                    // catalog is caught at startup, not on the canvas.
+                    Color socketColor = socket.Type switch
+                    {
+                        SocketDataType.String     => ColString,
+                        SocketDataType.Int        => ColNumber,
+                        SocketDataType.Bool       => ColBool,
+                        SocketDataType.Collection => ColList,
+                        _ => throw new InvalidOperationException(
+                            $"PlatformEventCatalog entry '{def.Title}' socket '{socket.Name}' has unmapped SocketDataType.{socket.Type} — extend the color map in the RegisterEventsTemplates catalog loop."),
+                    };
+                    outputs[i + 1] = (socket.Name, socketColor);
+                }
+
+                AddTemplate(def.Title, "Events", platformColor,
+                    Localizer.T(def.BubbleLocKey),
+                    null,
+                    outputs);
+            }
         }
     }
 }

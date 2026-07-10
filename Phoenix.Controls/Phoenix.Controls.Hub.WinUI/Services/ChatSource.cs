@@ -132,7 +132,8 @@ public sealed class ChatSource : IChatSource, IDisposable
         IsBroadcaster: m.IsBroadcaster,
         IsMod:         m.IsMod,
         IsVip:         m.IsVip,
-        IsSubscriber:  m.IsSub);
+        IsSubscriber:  m.IsSub,
+        Platform:      m.Platform ?? "twitch");
 
     private static ChatRole ToRole(ModelChatMessage m)
     {

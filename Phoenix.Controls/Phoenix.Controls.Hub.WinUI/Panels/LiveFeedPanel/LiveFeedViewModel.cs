@@ -18,6 +18,17 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     // GlobalLogger's 2000-entry ring; raise via config if needed.
     private const int MaxRows = 5000;
 
+    // Amortised at-cap eviction. RemoveAt(0) on a full 5000-row
+    // List/ObservableCollection is O(n) per event (element shift, plus a
+    // CollectionChanged.Remove the ItemsRepeater has to re-index for), and
+    // at sustained event load the buffers sit at cap permanently. Instead
+    // both collections may overshoot MaxRows by up to this many rows before
+    // one pass cuts them back to the cap — a single RemoveRange shift for
+    // _buffer, a single Reset + refill for Rows. Row count between trims
+    // varies within [MaxRows, MaxRows + OverflowTrimBatch]; still bounded.
+    // Mirrors SystemLogViewModel.OverflowTrimBatch.
+    private const int OverflowTrimBatch = 128;
+
     private readonly ILiveFeedSource _source;
     // per-VM dispatcher pump, ctor-injected by PanelFactory.
     private readonly UiDispatcherPump _ui;
@@ -122,10 +133,9 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
         {
             var row = new LiveFeedRowVm(entry);
             _buffer.Add(row);
-            if (_buffer.Count > MaxRows) _buffer.RemoveAt(0);
             if (RowMatchesFilter(row)) Rows.Add(row);
-            while (Rows.Count > MaxRows) Rows.RemoveAt(0);
         }
+        TrimToCaps();
     }
 
     /// <summary>
@@ -138,9 +148,8 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     {
         bool wasEmpty = _buffer.Count == 0;
         _buffer.Add(row);
-        if (_buffer.Count > MaxRows) _buffer.RemoveAt(0);
         if (RowMatchesFilter(row)) Rows.Add(row);
-        while (Rows.Count > MaxRows) Rows.RemoveAt(0);
+        TrimToCaps();
         if (wasEmpty && _buffer.Count > 0)
         {
             Raise(nameof(IsEmpty));
@@ -309,7 +318,11 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
                 ? "Errors"
                 : _selectedFilter.ToString();
             cfg.LiveFeedActiveChips = new List<string> { name };
-            ConfigManager.Save(Phoenix.Controls.Shared.Core.Paths.AppConfigJson);
+            // Deferred save — the chip toggle runs on the UI thread and a
+            // synchronous config write (DPAPI wrap + File.Replace) can stall
+            // for hundreds of ms on AV/OneDrive-backed %AppData%. Shutdown
+            // paths still use the synchronous Save per ConfigManager's doc.
+            ConfigManager.SaveDeferred(Phoenix.Controls.Shared.Core.Paths.AppConfigJson);
         }
         catch (Exception ex)
         {
@@ -367,16 +380,41 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
         foreach (var row in batch)
         {
             _buffer.Add(row);
-            // Trim oldest to bound memory under sustained event load.
-            if (_buffer.Count > MaxRows) _buffer.RemoveAt(0);
             if (RowMatchesFilter(row)) Rows.Add(row);
-            while (Rows.Count > MaxRows) Rows.RemoveAt(0);
         }
+        // Trim oldest once per batch to bound memory under sustained load.
+        TrimToCaps();
         if (wasEmpty && _buffer.Count > 0)
         {
             // First row(s) just landed — collapse the empty-state placeholder.
             Raise(nameof(IsEmpty));
             Raise(nameof(EmptyStateVisibility));
+        }
+    }
+
+    /// <summary>
+    /// Drops the oldest rows from <c>_buffer</c> and <see cref="Rows"/> once
+    /// either has overshot <see cref="MaxRows"/> by more than
+    /// <see cref="OverflowTrimBatch"/>, cutting back to exactly the cap in
+    /// one pass. Display order is preserved — only head (oldest) entries go.
+    /// </summary>
+    private void TrimToCaps()
+    {
+        int bufferOver = _buffer.Count - MaxRows;
+        if (bufferOver > OverflowTrimBatch)
+        {
+            _buffer.RemoveRange(0, bufferOver);
+        }
+
+        int rowsOver = Rows.Count - MaxRows;
+        if (rowsOver > OverflowTrimBatch)
+        {
+            // Head-first per-index removal — NOT Clear+refill: a Reset drops
+            // the ListView scroll anchor, yanking a reader who scrolled up
+            // off their position on every trim. Per-index head removals stay
+            // cheap under UI virtualization and keep the viewport continuous,
+            // exactly like the pre-batching per-event eviction.
+            for (int i = 0; i < rowsOver; i++) Rows.RemoveAt(0);
         }
     }
 

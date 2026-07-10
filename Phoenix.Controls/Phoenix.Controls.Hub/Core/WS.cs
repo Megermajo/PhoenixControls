@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Net.WebSockets;
 using Websocket.Client;
@@ -59,6 +60,44 @@ namespace Phoenix.Controls.Hub.Core
         private const int RecentChatCapacity = 50;
         private readonly System.Collections.Generic.LinkedList<ChatMessage> _recentChatBuffer = new();
         private readonly object _recentChatLock = new();
+
+        // EventLog audit coalescing. ParseBotMessage audit-logs every
+        // non-chat, non-heartbeat SB event; firing one fire-and-forget
+        // autocommit INSERT per event serialized an unbounded number of tasks
+        // on the shared DB semaphore — during poll/hype-train bursts that is
+        // many commits/sec contending with script-engine writes. Producers
+        // TryWrite into this bounded channel and a single consumer flushes
+        // batches (AuditBatchSize rows or AuditFlushMs, whichever first) in
+        // ONE transaction via DB.LogEventsBatchAsync — identical rows/values,
+        // only commit granularity changes. DropOldest bounds memory if the DB
+        // stalls; EventLog is a diagnostic audit surface, not a durability
+        // contract. StopAsync completes the writer and drains the pump so the
+        // in-flight batch flushes on shutdown.
+        private const int AuditBatchSize = 50;
+        private const int AuditFlushMs = 250;
+        private const int AuditQueueCapacity = 20_000;
+        private Channel<AuditRow> _auditChannel = CreateAuditChannel();
+        private Task? _auditPumpTask;
+        private int _auditPumpStarted;   // 0 = not running, 1 = running (CAS-gated one-shot)
+        private int _auditChannelCompleted; // 1 after StopAsync completed the writer
+        private long _auditEnqueueSeq;   // monotonic writer stamp — see AuditRow
+        private long _auditEvictedTotal; // running count of evicted audit rows (logged coalesced)
+
+        // Seq rides along so the single reader can detect DropOldest
+        // evictions: the channel evicts silently, but a gap between
+        // consecutive Seq values is exactly the number of rows it dropped —
+        // no silent cap.
+        private readonly record struct AuditRow(
+            long Seq, string Source, string Type, string User, string Payload);
+
+        private static Channel<AuditRow> CreateAuditChannel() =>
+            Channel.CreateBounded<AuditRow>(
+                new BoundedChannelOptions(AuditQueueCapacity)
+                {
+                    FullMode = BoundedChannelFullMode.DropOldest,
+                    SingleReader = true,
+                    SingleWriter = false,
+                });
 
         // SB authentication state. When the configured Streamer.bot password
         // is non-empty we send the v0.2 Authenticate handshake on first connect.
@@ -334,6 +373,18 @@ namespace Phoenix.Controls.Hub.Core
                 }
             });
 
+            // Replace the audit channel if a previous Stop() completed its
+            // writer — a completed Channel cannot accept writes again. Gated
+            // on the completion flag (NOT run unconditionally) so a repeat
+            // Initialize without an intervening Stop leaves the live channel
+            // and its pump alone.
+            if (Interlocked.Exchange(ref _auditChannelCompleted, 0) == 1)
+            {
+                _auditChannel = CreateAuditChannel();
+                _auditPumpTask = null;
+                Interlocked.Exchange(ref _auditPumpStarted, 0);
+            }
+
             // Replace the script queue if a previous Stop() disposed it.
             // BlockingCollection cannot be revived after Dispose; the
             // GetConsumingEnumerable loop in ProcessScriptQueueAsync also returns
@@ -520,24 +571,50 @@ namespace Phoenix.Controls.Hub.Core
                     {
                         string eventSource = src.GetString() ?? string.Empty;
                         string eventType = type.GetString() ?? string.Empty;
+                        // Kick's "Kicks Gifted" event arrives with the wire name
+                        // "sGifted" (Streamer.bot strips the "Kick" prefix off its
+                        // internal KicksGifted id when exporting the event name).
+                        // Normalize it once, here, so scripts, nodes, and monitors
+                        // all see the readable Kick.KicksGifted.
+                        if (eventSource.Equals("Kick", StringComparison.OrdinalIgnoreCase) &&
+                            eventType.Equals("sGifted", StringComparison.OrdinalIgnoreCase))
+                            eventType = "KicksGifted";
                         string fullEventType = $"{eventSource}.{eventType}";
 
+                        // Chat is multi-platform: Twitch.ChatMessage, YouTube.Message and
+                        // Kick.ChatMessage all flow through the SAME pipeline (Chat panel,
+                        // bot self-trigger guard, bounded script queue, on_chat dispatch).
+                        // ChatMessage.Platform carries which platform the line came from;
+                        // ExecuteOnChatScriptsAsync sets the engine EventType from it so
+                        // on_chat(platform, ...) headers can gate per platform. Resolved
+                        // BEFORE the audit block so the chat firehose exclusion below
+                        // covers every platform's chat, not just Twitch's.
+                        string? chatPlatform =
+                            eventSource == "Twitch"  && eventType == "ChatMessage" ? ChatPlatforms.Twitch :
+                            eventSource == "YouTube" && eventType == "Message"     ? ChatPlatforms.YouTube :
+                            eventSource == "Kick"    && eventType == "ChatMessage" ? ChatPlatforms.Kick : null;
+
                         // ── AUDIT LOG ──
-                        // privacy + DB-load: chat messages are firehose, audited separately via chat history.
-                        if (!(eventSource == "Twitch" && eventType == "ChatMessage"))
+                        // privacy + DB-load: chat messages (all platforms) are firehose,
+                        // audited separately via chat history. The periodic viewer-count
+                        // heartbeats are excluded for the same DB-load reason — they fire
+                        // on a timer, carry no user action, and would grow EventLog by
+                        // one full-payload row per tick 24/7.
+                        bool isHeartbeatEvent =
+                            (eventSource == "YouTube" && (eventType == "StatisticsUpdated" || eventType == "PresentViewers")) ||
+                            (eventSource == "Kick"    && (eventType == "ViewerCountUpdate" || eventType == "PresentViewers"));
+                        if (chatPlatform is null && !isHeartbeatEvent)
                         {
-                            _ = AsyncErrorBoundary.SafeRunAsync(
-                                () => DB.Instance.LogEventAsync(eventSource, eventType, "System", json),
-                                "WS", "audit log write");
+                            EnqueueAuditEvent(eventSource, eventType, "System", json);
                         }
 
                         // 1. Route to Process Interceptors (Dynamic Caching)
                         ProcessManager.Instance.RouteEventToInterceptors(fullEventType, json);
 
-                        // 2. Handle specific ChatMessage logic for the UI and Script Queue
-                        if (eventSource == "Twitch" && eventType == "ChatMessage")
+                        // 2. Handle chat-message logic for the UI and Script Queue.
+                        if (chatPlatform is not null)
                         {
-                            // Twitch.ChatMessage with no `data.message` was previously
+                            // A chat event with no usable payload was previously
                             // returned-early silently, which made it look like the message had
                             // been processed when in fact the chat handler never saw it. The
                             // safer behavior is to log + drop with an explicit reason so the
@@ -545,76 +622,116 @@ namespace Phoenix.Controls.Hub.Core
                             // synthesize an empty message because downstream `!command` parsing
                             // and OnChatMessage subscribers would treat an empty body as a
                             // legitimate (but malformed) chat line.
-                            if (!root.TryGetProperty("data", out var dataRoot) ||
-                                !dataRoot.TryGetProperty("message", out var data))
+                            if (!root.TryGetProperty("data", out var chatDataRoot))
                             {
                                 GlobalLogger.Log(
-                                    "Twitch.ChatMessage missing data.message — dropped",
+                                    $"{fullEventType} missing data — dropped",
                                     "WS", LogLevel.Communication);
                                 return;
                             }
 
-                            // Role-prefix-badge reliability fix.
-                            // Streamer.bot inconsistently populates `data.moderator` / `data.subscriber`
-                            // / `data.vip` vs the integer `data.role` (broadcaster=4, mod=3, vip=2,
-                            // sub=1, viewer=0). Pre-fix, mods/VIPs whose SB payload used `role:3`
-                            // without the booleans collapsed to "Viewer" in `ChatMessage.RoleBadge`
-                            // and through the role-color resolver. The reliable behavior is the
-                            // UNION: derive each flag from (role-int >= threshold) OR (legacy
-                            // boolean field) so either schema variant produces the right badge.
-                            // The correct badge for either payload shape is a load-bearing requirement.
-                            var roleFlags = ResolveChatRoleFlags(data);
-                            var msg = new ChatMessage
+                            ChatMessage msg;
+                            string chatLogin;
+                            string chatUserId;
+                            // Twitch's payload nests the line under data.message; kept for the
+                            // Twitch-only broadcaster-actor check further down.
+                            System.Text.Json.JsonElement twitchMsgEl = default;
+
+                            if (chatPlatform == ChatPlatforms.Twitch)
                             {
-                                Username      = data.TryGetProperty("displayName",  out var dn)  ? dn.GetString()  ?? "" : "",
-                                Message       = data.TryGetProperty("message",      out var txt) ? txt.GetString() ?? "" : "",
-                                ColorHex      = data.TryGetProperty("color",        out var col) ? (col.GetString() is { Length: > 0 } c ? c : "#FFFFFF") : "#FFFFFF",
-                                IsBroadcaster = roleFlags.IsBroadcaster,
-                                IsMod         = roleFlags.IsMod,
-                                IsSub         = roleFlags.IsSub,
-                                IsVip         = roleFlags.IsVip,
-                                // Streamer.bot has used at least three field names for the
-                                // cumulative subscription-months counter across releases:
-                                //   `cumMonths` (current SB schema)
-                                //   `cumulativeMonths` (older SB)
-                                //   `cumulative_months` (snake_case payloads from some forks)
-                                // First non-null integer wins. ResolveSubMonths logs a one-time
-                                // Debug warning if all three are missing on a sub gift event so
-                                // we notice payload-shape drift without spamming the log.
-                                SubMonths     = ResolveSubMonths(data, eventType),
-                            };
-                            // Per-chat [RoleDebug] log was retired. Under busy chat
-                            // it burned every slot in the 2000-entry log ring within seconds,
-                            // crowding out the System / Critical events Majo actually needs to
-                            // see. The role-flag resolution is now exercised by
-                            // BugFixSweep7_SovereignWS_Tests; for live diagnosis, log a single
-                            // role-tag-map sample on connect (see EmitRoleTagMapDiagnosticOnce).
+                                if (!chatDataRoot.TryGetProperty("message", out var data))
+                                {
+                                    GlobalLogger.Log(
+                                        "Twitch.ChatMessage missing data.message — dropped",
+                                        "WS", LogLevel.Communication);
+                                    return;
+                                }
+                                twitchMsgEl = data;
+
+                                // Role-prefix-badge reliability fix.
+                                // Streamer.bot inconsistently populates `data.moderator` / `data.subscriber`
+                                // / `data.vip` vs the integer `data.role` (broadcaster=4, mod=3, vip=2,
+                                // sub=1, viewer=0). Pre-fix, mods/VIPs whose SB payload used `role:3`
+                                // without the booleans collapsed to "Viewer" in `ChatMessage.RoleBadge`
+                                // and through the role-color resolver. The reliable behavior is the
+                                // UNION: derive each flag from (role-int >= threshold) OR (legacy
+                                // boolean field) so either schema variant produces the right badge.
+                                // The correct badge for either payload shape is a load-bearing requirement.
+                                var roleFlags = ResolveChatRoleFlags(data);
+                                msg = new ChatMessage
+                                {
+                                    Platform      = ChatPlatforms.Twitch,
+                                    Username      = data.TryGetProperty("displayName",  out var dn)  ? dn.GetString()  ?? "" : "",
+                                    Message       = data.TryGetProperty("message",      out var txt) ? txt.GetString() ?? "" : "",
+                                    ColorHex      = data.TryGetProperty("color",        out var col) ? (col.GetString() is { Length: > 0 } c ? c : "#FFFFFF") : "#FFFFFF",
+                                    IsBroadcaster = roleFlags.IsBroadcaster,
+                                    IsMod         = roleFlags.IsMod,
+                                    IsSub         = roleFlags.IsSub,
+                                    IsVip         = roleFlags.IsVip,
+                                    // Streamer.bot has used at least three field names for the
+                                    // cumulative subscription-months counter across releases:
+                                    //   `cumMonths` (current SB schema)
+                                    //   `cumulativeMonths` (older SB)
+                                    //   `cumulative_months` (snake_case payloads from some forks)
+                                    // First non-null integer wins. ResolveSubMonths logs a one-time
+                                    // Debug warning if all three are missing on a sub gift event so
+                                    // we notice payload-shape drift without spamming the log.
+                                    SubMonths     = ResolveSubMonths(data, eventType),
+                                };
+                                // Per-chat [RoleDebug] log was retired. Under busy chat
+                                // it burned every slot in the 2000-entry log ring within seconds,
+                                // crowding out the System / Critical events Majo actually needs to
+                                // see. The role-flag resolution is now exercised by
+                                // BugFixSweep7_SovereignWS_Tests; for live diagnosis, log a single
+                                // role-tag-map sample on connect (see EmitRoleTagMapDiagnosticOnce).
+
+                                // Match on Twitch `login` + `userId` (immutable) instead
+                                // of `displayName` alone. Twitch display names can be stylized or
+                                // non-ASCII (e.g. uppercase, Japanese characters) while the login
+                                // is always the lowercase ASCII handle. Comparing only displayName
+                                // missed every non-ASCII bot account; the guard checks all
+                                // three identifiers against the configured BotUsername list.
+                                chatLogin = data.TryGetProperty("login", out var loginEl) && loginEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                    ? (loginEl.GetString() ?? "")
+                                    : (data.TryGetProperty("userLogin", out var ulEl) && ulEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                        ? (ulEl.GetString() ?? "")
+                                        : "");
+                                chatUserId = data.TryGetProperty("userId", out var uidEl) && uidEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                    ? (uidEl.GetString() ?? "")
+                                    : (data.TryGetProperty("user_id", out var uid2El) && uid2El.ValueKind == System.Text.Json.JsonValueKind.String
+                                        ? (uid2El.GetString() ?? "")
+                                        : "");
+                            }
+                            else if (chatPlatform == ChatPlatforms.YouTube)
+                            {
+                                if (!TryBuildYouTubeChatMessage(chatDataRoot, out msg, out chatLogin, out chatUserId))
+                                {
+                                    GlobalLogger.Log(
+                                        "YouTube.Message carried no usable user/message fields — dropped",
+                                        "WS", LogLevel.Communication);
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                if (!TryBuildKickChatMessage(chatDataRoot, out msg, out chatLogin, out chatUserId))
+                                {
+                                    GlobalLogger.Log(
+                                        "Kick.ChatMessage carried no usable user/message fields — dropped",
+                                        "WS", LogLevel.Communication);
+                                    return;
+                                }
+                            }
 
                             // Bot self-trigger guard runs BEFORE OnChatMessage fires so
-                            // ChatViewWindow doesn't render the bot's own line. Previously
-                            // the chat panel still flashed the message before the engine
-                            // dropped it.
-                            //
-                            // Match on Twitch `login` + `userId` (immutable) instead
-                            // of `displayName` alone. Twitch display names can be stylized or
-                            // non-ASCII (e.g. uppercase, Japanese characters) while the login
-                            // is always the lowercase ASCII handle. Comparing only displayName
-                            // missed every non-ASCII bot account; the new helper checks all
-                            // three identifiers against the configured BotUsername list.
-                            string chatLogin = data.TryGetProperty("login", out var loginEl) && loginEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                ? (loginEl.GetString() ?? "")
-                                : (data.TryGetProperty("userLogin", out var ulEl) && ulEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                    ? (ulEl.GetString() ?? "")
-                                    : "");
-                            string chatUserId = data.TryGetProperty("userId", out var uidEl) && uidEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                ? (uidEl.GetString() ?? "")
-                                : (data.TryGetProperty("user_id", out var uid2El) && uid2El.ValueKind == System.Text.Json.JsonValueKind.String
-                                    ? (uid2El.GetString() ?? "")
-                                    : "");
+                            // the Chat panel doesn't render the bot's own line. The name
+                            // list (AppConfig.BotUsername, comma-separated) is platform-
+                            // agnostic; the numeric-id checks inside the guard only bind
+                            // for platforms whose payload carried an id.
                             if (IsBlockedChatActor(msg.Username, chatLogin, chatUserId))
                             {
                                 GlobalLogger.Log(
-                                    $"Ignored self-message from bot account (user='{msg.Username}' login='{chatLogin}' userId='{chatUserId}')",
+                                    $"Ignored self-message from bot account (user='{msg.Username}' login='{chatLogin}' userId='{chatUserId}' platform='{msg.Platform}')",
                                     "WS", LogLevel.Debug);
                                 return;
                             }
@@ -629,11 +746,19 @@ namespace Phoenix.Controls.Hub.Core
                             // actor was silently accepted, which is the right default but
                             // gave users no opt-in to mute it. Mirrors the non-chat
                             // guard's per-event-type toggle pattern.
+                            // Twitch keeps the config-identity actor check (BroadcasterUsername /
+                            // BroadcasterUserId); YouTube/Kick derive broadcaster-ness from the
+                            // payload itself (isOwner / userId==broadcastUserId), set by their mapper.
+                            // Config gate FIRST — IsBroadcasterActor allocates per call, and the
+                            // feature is off by default, so the actor check must not run per chat
+                            // line unless the operator opted in.
                             if (ConfigManager.Current?.SuppressBroadcasterChat == true
-                                && IsBroadcasterActor(data))
+                                && (chatPlatform == ChatPlatforms.Twitch
+                                        ? IsBroadcasterActor(twitchMsgEl)
+                                        : msg.IsBroadcaster))
                             {
                                 GlobalLogger.Log(
-                                    $"QC36-07 — dropped self-fired Twitch.ChatMessage from broadcaster (user='{msg.Username}' login='{chatLogin}' userId='{chatUserId}')",
+                                    $"QC36-07 — dropped self-fired {fullEventType} from broadcaster (user='{msg.Username}' login='{chatLogin}' userId='{chatUserId}')",
                                     "WS", LogLevel.Debug);
                                 return;
                             }
@@ -799,6 +924,8 @@ namespace Phoenix.Controls.Hub.Core
                         string reqId = respId.GetString() ?? "";
                         if (reqId == AuthRequestId)
                             HandleAuthenticateResponse(root);
+                        else if (reqId == GetEventsRequestId)
+                            HandleGetEventsResponse(root);
                         else if (_pendingRequests.TryRemove(reqId, out var tcs))
                             tcs.TrySetResult(json);
                     }
@@ -885,6 +1012,146 @@ namespace Phoenix.Controls.Hub.Core
             }
 
             return false;
+        }
+
+        // ── Multi-platform chat mappers ─────────────────────────────────────
+        // Streamer.bot's WS payload schemas for YouTube/Kick are unpublished, so
+        // both mappers probe defensively — nested actor objects first (YouTube
+        // nests the author under data.user; Kick has been observed flat), then
+        // flat fallbacks — and return false only when neither a user nor a
+        // message could be extracted. internal static for unit tests.
+
+        /// <summary>
+        /// YouTube.Message → ChatMessage. Official Streamer.bot client typing:
+        /// { eventId, message, publishedAt, user: { id, name, profileImageUrl,
+        ///   isModerator, isOwner, isSponsor, isVerified } }.
+        /// </summary>
+        internal static bool TryBuildYouTubeChatMessage(System.Text.Json.JsonElement data, out ChatMessage msg, out string login, out string userId)
+        {
+            msg = new ChatMessage { Platform = ChatPlatforms.YouTube };
+            login = string.Empty;
+            userId = string.Empty;
+            if (data.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+
+            bool hasUser = data.TryGetProperty("user", out var user)
+                && user.ValueKind == System.Text.Json.JsonValueKind.Object;
+
+            string name = hasUser ? JsonStringField(user, "name") : string.Empty;
+            if (name.Length == 0)
+                name = FirstNonEmpty(JsonStringField(data, "displayName"), JsonStringField(data, "user"), JsonStringField(data, "userName"));
+
+            string text = JsonStringField(data, "message");
+            if (name.Length == 0 && text.Length == 0) return false;
+
+            msg.Username = name;
+            msg.Message  = text;
+            if (hasUser)
+            {
+                msg.IsMod         = JsonBoolField(user, "isModerator");
+                msg.IsBroadcaster = JsonBoolField(user, "isOwner");
+                msg.IsSub         = JsonBoolField(user, "isSponsor");
+                userId            = JsonStringField(user, "id");
+            }
+            else
+            {
+                msg.IsMod         = JsonBoolField(data, "isModerator");
+                msg.IsBroadcaster = JsonBoolField(data, "isOwner");
+                msg.IsSub         = JsonBoolField(data, "isSponsor") || JsonBoolField(data, "userIsSponsor");
+                userId            = JsonStringField(data, "userId");
+            }
+            // YouTube has no separate lowercase handle — the display name doubles
+            // as the bot-guard login key.
+            login = name;
+            return true;
+        }
+
+        /// <summary>
+        /// Kick.ChatMessage → ChatMessage. Documented trigger-variable surface is
+        /// flat (user / userName / userId, message, color, isSubscribed,
+        /// isModerator, broadcastUserId); a Twitch-style nested data.message
+        /// object and a nested data.user object are tolerated as fallbacks.
+        /// </summary>
+        internal static bool TryBuildKickChatMessage(System.Text.Json.JsonElement data, out ChatMessage msg, out string login, out string userId)
+        {
+            msg = new ChatMessage { Platform = ChatPlatforms.Kick };
+            login = string.Empty;
+            userId = string.Empty;
+            if (data.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+
+            var body = data;
+            string text = string.Empty;
+            if (data.TryGetProperty("message", out var msgEl))
+            {
+                if (msgEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    body = msgEl;
+                    text = FirstNonEmpty(JsonStringField(body, "message"), JsonStringField(body, "content"));
+                }
+                else if (msgEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    text = msgEl.GetString() ?? string.Empty;
+                }
+            }
+
+            bool hasUser = (body.TryGetProperty("user", out var user)
+                            && user.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        || (data.TryGetProperty("user", out user)
+                            && user.ValueKind == System.Text.Json.JsonValueKind.Object);
+
+            string name = hasUser
+                ? FirstNonEmpty(JsonStringField(user, "name"), JsonStringField(user, "username"), JsonStringField(user, "displayName"))
+                : string.Empty;
+            if (name.Length == 0)
+                name = FirstNonEmpty(
+                    JsonStringField(body, "user"), JsonStringField(body, "userName"), JsonStringField(body, "displayName"),
+                    JsonStringField(data, "user"), JsonStringField(data, "userName"), JsonStringField(data, "displayName"));
+            if (name.Length == 0 && text.Length == 0) return false;
+
+            login = FirstNonEmpty(
+                hasUser ? JsonStringField(user, "login") : string.Empty,
+                JsonStringField(body, "userName"), JsonStringField(data, "userName"), name);
+            userId = FirstNonEmpty(
+                hasUser ? JsonStringField(user, "id") : string.Empty,
+                JsonStringField(body, "userId"), JsonStringField(data, "userId"));
+
+            msg.Username = name;
+            msg.Message  = text;
+            msg.IsMod = JsonBoolField(body, "isModerator") || JsonBoolField(data, "isModerator")
+                     || (hasUser && JsonBoolField(user, "isModerator"));
+            msg.IsSub = JsonBoolField(body, "isSubscribed") || JsonBoolField(data, "isSubscribed")
+                     || (hasUser && JsonBoolField(user, "isSubscribed"));
+            string broadcasterId = FirstNonEmpty(JsonStringField(body, "broadcastUserId"), JsonStringField(data, "broadcastUserId"));
+            msg.IsBroadcaster = userId.Length > 0 && string.Equals(userId, broadcasterId, StringComparison.Ordinal);
+            string color = FirstNonEmpty(JsonStringField(body, "color"), JsonStringField(data, "color"));
+            if (color.Length > 0) msg.ColorHex = color;
+            return true;
+        }
+
+        private static string JsonStringField(System.Text.Json.JsonElement obj, string name)
+        {
+            if (obj.ValueKind != System.Text.Json.JsonValueKind.Object) return string.Empty;
+            if (!obj.TryGetProperty(name, out var el)) return string.Empty;
+            return el.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => el.GetString() ?? string.Empty,
+                System.Text.Json.JsonValueKind.Number => el.GetRawText(),
+                _ => string.Empty,
+            };
+        }
+
+        private static bool JsonBoolField(System.Text.Json.JsonElement obj, string name)
+        {
+            if (obj.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+            if (!obj.TryGetProperty(name, out var el)) return false;
+            return el.ValueKind == System.Text.Json.JsonValueKind.True
+                || (el.ValueKind == System.Text.Json.JsonValueKind.String && bool.TryParse(el.GetString(), out var b) && b);
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var v in values)
+                if (!string.IsNullOrEmpty(v)) return v;
+            return string.Empty;
         }
 
         // Actor-vs-broadcaster check for non-chat events.
@@ -1176,6 +1443,130 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
+        // Producer side of the audit coalescer (see the field block for the
+        // full rationale). TryWrite never blocks: on a full channel DropOldest
+        // evicts the oldest pending row, on a completed channel (post-Stop)
+        // the write is dropped — matching the old fire-and-forget semantics
+        // where a shutdown-window write could vanish. The pump is started
+        // lazily on first write, CAS-gated so exactly one runs per channel.
+        private void EnqueueAuditEvent(string source, string type, string user, string payload)
+        {
+            var channel = _auditChannel;
+            var row = new AuditRow(
+                Interlocked.Increment(ref _auditEnqueueSeq), source, type, user, payload);
+            if (!channel.Writer.TryWrite(row))
+                return;
+
+            if (Interlocked.CompareExchange(ref _auditPumpStarted, 1, 0) == 0)
+            {
+                // Capture the channel instance so a Stop→Initialize swap can't
+                // leave the pump draining a different channel than it was
+                // started for.
+                _auditPumpTask = AsyncErrorBoundary.SafeRunAsync(
+                    () => PumpAuditEventsAsync(channel),
+                    "WS", "audit log batch pump");
+            }
+        }
+
+        // Single consumer: waits for the first row, then lingers up to
+        // AuditFlushMs so a burst coalesces, then flushes everything gathered
+        // (capped at AuditBatchSize per transaction). WaitToReadAsync returns
+        // false only when the writer completes (StopAsync), after which the
+        // trailing drain flushes whatever queued between the last read and
+        // completion.
+        private async Task PumpAuditEventsAsync(Channel<AuditRow> channel)
+        {
+            var reader = channel.Reader;
+            var batch = new List<(string Source, string Type, string User, string Payload)>(AuditBatchSize);
+            // Eviction accounting: consecutive Seq values gap exactly by the
+            // number of rows DropOldest discarded. -1 = first read initializes
+            // (the counter is process-wide, so a pump on a fresh channel after
+            // Stop→Initialize must not count the seam as a gap).
+            long expectedSeq = -1;
+            long evictedThisFlush = 0;
+
+            bool Take(AuditRow row)
+            {
+                if (expectedSeq >= 0 && row.Seq != expectedSeq)
+                    evictedThisFlush += row.Seq - expectedSeq;
+                expectedSeq = row.Seq + 1;
+                batch.Add((row.Source, row.Type, row.User, row.Payload));
+                return true;
+            }
+
+            async Task FlushAsync()
+            {
+                if (evictedThisFlush > 0)
+                {
+                    long total = Interlocked.Add(ref _auditEvictedTotal, evictedThisFlush);
+                    GlobalLogger.Log(
+                        $"EventLog audit backlog overflowed — {evictedThisFlush} oldest rows evicted " +
+                        $"before persistence ({total} total this session). The DB is not keeping up.",
+                        "WS", LogLevel.CriticalError);
+                    evictedThisFlush = 0;
+                }
+                await FlushAuditBatchAsync(batch).ConfigureAwait(false);
+                batch.Clear();
+            }
+
+            while (await reader.WaitToReadAsync().ConfigureAwait(false))
+            {
+                while (batch.Count < AuditBatchSize && reader.TryRead(out var row))
+                    Take(row);
+
+                if (batch.Count < AuditBatchSize)
+                {
+                    // Below the size trigger — wait out the flush interval so
+                    // trailing burst rows ride the same transaction. The delay
+                    // bounds row visibility at ~AuditFlushMs, well under the
+                    // EventLog panel's 2 Hz poll.
+                    await Task.Delay(AuditFlushMs).ConfigureAwait(false);
+                    while (batch.Count < AuditBatchSize && reader.TryRead(out var row))
+                        Take(row);
+                }
+
+                await FlushAsync().ConfigureAwait(false);
+            }
+
+            // Writer completed — shutdown drain.
+            while (reader.TryRead(out var row))
+            {
+                Take(row);
+                if (batch.Count >= AuditBatchSize)
+                    await FlushAsync().ConfigureAwait(false);
+            }
+            await FlushAsync().ConfigureAwait(false);
+        }
+
+        private static async Task FlushAuditBatchAsync(
+            List<(string Source, string Type, string User, string Payload)> batch)
+        {
+            if (batch.Count == 0) return;
+            try
+            {
+                await DB.Instance.LogEventsBatchAsync(batch).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // A single poison row faults the whole transaction — retry the
+                // rows individually so the healthy ones still land, restoring
+                // the per-row loss granularity of the old per-event writes. A
+                // row that fails again is dropped silently (best-effort audit
+                // surface; per-row logging would amplify a wedged DB).
+                GlobalLogger.Error("WS", "audit log batch write failed", ex);
+                foreach (var (source, type, user, payload) in batch)
+                {
+                    try
+                    {
+                        await DB.Instance.LogEventAsync(source, type, user, payload).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+        }
+
         public async Task StartAsync()
         {
             if (_client == null)
@@ -1274,6 +1665,34 @@ namespace Phoenix.Controls.Hub.Core
                 // is safe.
                 try { _scriptQueue.Dispose(); } catch { }
             }).ConfigureAwait(false);
+
+            // Flush the audit coalescer LAST — after the client dispose — so
+            // frames received right up to the socket teardown still get their
+            // audit rows enqueued before the writer completes. Completing the
+            // writer wakes the pump out of WaitToReadAsync/its flush linger;
+            // it drains the remainder and exits. Bounded wait mirrors the
+            // script-queue drain above so a stalled DB can't pin shutdown.
+            Interlocked.Exchange(ref _auditChannelCompleted, 1);
+            try { _auditChannel.Writer.TryComplete(); } catch { }
+            var auditPump = _auditPumpTask;
+            if (auditPump is not null)
+            {
+                try
+                {
+                    var flushTimeout = Task.Delay(TimeSpan.FromSeconds(3));
+                    await Task.WhenAny(auditPump, flushTimeout).ConfigureAwait(false);
+                    if (!auditPump.IsCompleted)
+                    {
+                        GlobalLogger.Log(
+                            "WS.Stop: audit-log pump did not flush within 3s — unflushed audit rows may be lost.",
+                            "WS", LogLevel.Communication);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("WS", "audit pump drain in Stop() faulted", ex);
+                }
+            }
         }
 
         /// <summary>
@@ -1486,27 +1905,28 @@ namespace Phoenix.Controls.Hub.Core
             return 0;
         }
 
-        // Twitch / YouTube / OBS / General event subscription set.
+        // Twitch / YouTube / Kick / OBS / General event subscription set.
         //
         // Single source of truth so Subscribe and UnSubscribe stay in lockstep
         // (a drift here used to leak subscriptions on the Streamer.bot side
-        // every Hub restart). Names use Streamer.bot v0.2 WebSocket Server
-        // event identifiers — the well-documented subset:
+        // every Hub restart).
         //
-        //   Twitch:
-        //     ChatMessage, Cheer (= bits), Sub, Resub, GiftSub, GiftBomb,
-        //     Follow, RewardRedemption, Raid,
-        //     PollCreated / PollUpdated / PollCompleted,
-        //     PredictionCreated / PredictionUpdated / PredictionLocked / PredictionEnded,
-        //     HypeTrainStart / HypeTrainUpdate / HypeTrainEnd,
-        //     AdRun, StreamOnline, StreamOffline.
-        //
-        //   YouTube: Message, SuperChat, SuperSticker.
+        //   Twitch:  the well-documented v0.2-era subset (unchanged).
+        //   YouTube: the full Streamer.bot 1.0.x event source (31 names;
+        //            UserTimedout + JewelsGifted need SB ≥ 1.0.5).
+        //   Kick:    the full Streamer.bot 1.0.x event source (21 names;
+        //            native Kick support needs SB ≥ 1.0.0, RewardRedemption +
+        //            sGifted ≥ 1.0.2). "sGifted" is the literal wire name for
+        //            Kicks Gifted — normalized to KicksGifted on receive.
         //   General: Custom.
         //   OBS:     SceneChanged.
         //
-        // Per-reward redemptions, Charity, Goals, Shoutouts, Bans, Timeouts,
-        // and Channel.Update are intentionally NOT added here — the
+        // An SB build that doesn't know a name simply never delivers it; the
+        // GetEvents probe (HandleGetEventsResponse) reports what the connected
+        // build actually offers so missing platforms are loudly visible.
+        //
+        // Twitch per-reward redemptions, Charity, Goals, Shoutouts, Bans,
+        // Timeouts, and Channel.Update are intentionally NOT added here — the
         // exact-event-name ambiguity kept them out of this pass.
         private static readonly string[] TwitchEvents = new[]
         {
@@ -1517,9 +1937,33 @@ namespace Phoenix.Controls.Hub.Core
             "HypeTrainStart", "HypeTrainUpdate", "HypeTrainEnd",
             "AdRun", "StreamOnline", "StreamOffline",
         };
-        private static readonly string[] YouTubeEvents = new[] { "Message", "SuperChat", "SuperSticker" };
+        private static readonly string[] YouTubeEvents = new[]
+        {
+            "Message", "SuperChat", "SuperSticker",
+            "NewSponsor", "MemberMileStone", "MembershipGift", "GiftMembershipReceived",
+            "FirstWords", "NewSubscriber", "UserBanned", "UserTimedout",
+            "MessageDeleted", "JewelsGifted", "StatisticsUpdated", "PresentViewers",
+            "BroadcastStarted", "BroadcastEnded", "BroadcastAdded", "BroadcastRemoved",
+            "BroadcastUpdated", "BroadcastMonitoringStarted", "BroadcastMonitoringEnded",
+            "NewSponsorOnlyStarted", "NewSponsorOnlyEnded",
+            "PollStarted", "PollUpdated", "PollClosed",
+            "SevenTVEmoteAdded", "SevenTVEmoteRemoved",
+            "BetterTTVEmoteAdded", "BetterTTVEmoteRemoved",
+        };
+        private static readonly string[] KickEvents = new[]
+        {
+            "ChatMessage", "FirstWords", "Follow",
+            "Subscription", "Resubscription", "GiftSubscription", "MassGiftSubscription",
+            "RewardRedemption", "sGifted",
+            "StreamOnline", "StreamOffline", "ViewerCountUpdate", "ChannelUpdate",
+            "UserBanned", "UserTimedOut", "PresentViewers",
+            "BroadcasterAuthenticated", "BroadcasterChatConnected", "BroadcasterChatDisconnected",
+            "SevenTVEmoteAdded", "SevenTVEmoteRemoved",
+        };
         private static readonly string[] GeneralEvents = new[] { "Custom" };
         private static readonly string[] ObsEvents     = new[] { "SceneChanged" };
+
+        private const string GetEventsRequestId = "phoenix-getevents";
 
         private static string BuildSubscriptionEnvelope(string request, string requestId)
         {
@@ -1534,6 +1978,7 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     Twitch  = TwitchEvents,
                     YouTube = YouTubeEvents,
+                    Kick    = KickEvents,
                     General = GeneralEvents,
                     OBS     = ObsEvents,
                 },
@@ -1547,7 +1992,69 @@ namespace Phoenix.Controls.Hub.Core
             // that Streamer.bot hasn't cleaned up yet. Safe to call even when not subscribed.
             Send(BuildSubscriptionEnvelope("UnSubscribe", "phoenix-hub-unsub"));
             Send(BuildSubscriptionEnvelope("Subscribe",   "phoenix-hub-sub"));
-            GlobalLogger.Log($"Subscriptions requested for Twitch/YouTube/OBS events to {_url}", "WS", LogLevel.Communication);
+            // Feature probe: ask the connected build what it can actually deliver,
+            // so a too-old Streamer.bot (no Kick, partial YouTube) is loudly
+            // visible in the log instead of silently never firing nodes.
+            Send(System.Text.Json.JsonSerializer.Serialize(new { request = "GetEvents", id = GetEventsRequestId }));
+            GlobalLogger.Log($"Subscriptions requested for Twitch/YouTube/Kick/OBS events to {_url}", "WS", LogLevel.Communication);
+        }
+
+        // GetEvents response: { id, events: { Twitch: [...], YouTube: [...], ... } }.
+        // Purely diagnostic — subscription is already sent with the full list; SB
+        // ignores names it doesn't know. One log line per platform, only when
+        // something is missing.
+        private static void HandleGetEventsResponse(System.Text.Json.JsonElement root)
+        {
+            try
+            {
+                if (!root.TryGetProperty("events", out var events) ||
+                    events.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    return;
+
+                WarnIfPlatformEventsMissing(events, "YouTube", YouTubeEvents,
+                    "YouTube events/nodes will not fire — connect the YouTube platform in Streamer.bot (SB ≥ 1.0 recommended; UserTimedout/JewelsGifted need ≥ 1.0.5).");
+                WarnIfPlatformEventsMissing(events, "Kick", KickEvents,
+                    "Kick events/nodes will not fire — Streamer.bot ≥ 1.0.2 with the Kick platform connected (app login + streamer.bot website account link) is required.");
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("WS", "GetEvents probe parse failed", ex);
+            }
+        }
+
+        private static void WarnIfPlatformEventsMissing(System.Text.Json.JsonElement events, string source, string[] wanted, string hint)
+        {
+            var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Case-insensitive property scan — TryGetProperty is case-SENSITIVE
+            // and the probe must not report "NO events" just because an SB build
+            // keys the bucket "youtube" instead of "YouTube".
+            foreach (var prop in events.EnumerateObject())
+            {
+                if (!prop.Name.Equals(source, StringComparison.OrdinalIgnoreCase) ||
+                    prop.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    continue;
+                foreach (var e in prop.Value.EnumerateArray())
+                    if (e.ValueKind == System.Text.Json.JsonValueKind.String)
+                        available.Add(e.GetString() ?? string.Empty);
+            }
+
+            if (available.Count == 0)
+            {
+                GlobalLogger.Log(
+                    $"Connected Streamer.bot exposes NO {source} events — {hint}",
+                    "WS", LogLevel.Communication);
+                return;
+            }
+
+            var missing = new List<string>();
+            foreach (var w in wanted)
+                if (!available.Contains(w)) missing.Add(w);
+            if (missing.Count > 0)
+            {
+                GlobalLogger.Log(
+                    $"Connected Streamer.bot lacks {missing.Count} {source} event(s): {string.Join(", ", missing)} — those nodes will not fire (older SB build?).",
+                    "WS", LogLevel.Communication);
+            }
         }
     }
 }

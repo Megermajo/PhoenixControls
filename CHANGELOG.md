@@ -7,6 +7,29 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607101 - 2026.07.10
+
+**New**
+- YouTube Live support: chat messages, stream events, and viewer data now work alongside Twitch.
+- Kick support: chat messages, stream events, and viewer data now work alongside Twitch.
+- Architect: new YouTube and Kick action nodes — send chat, moderate, and update the stream from a script.
+- Architect: new nodes to look up YouTube and Kick user details in a script.
+- Architect: one unified "Chat Message" trigger node with a checkmark per platform — choose which platforms a script listens to.
+- Hub: the Chat panel shows which platform each message came from.
+- Existing graphs update to the new Chat Message node automatically — Twitch-only scripts behave exactly as before.
+
+**Fixed**
+- Hub, Architect, and Visualist all run noticeably smoother after a broad performance pass.
+- Architect: the canvas goes quiet when you are not interacting — no more constant background work.
+- Architect: editing values and titles on large graphs responds faster.
+- Architect: holding an arrow key to nudge nodes counts as one undo step instead of many.
+- Visualist: dragging a slider counts as one undo step instead of one per movement.
+- Databank: large tables scroll smoothly and the column headers stay aligned with the rows.
+- Hub: Chat and Live Feed keep your reading position when old rows are trimmed.
+- Overlays reconnect cleanly when an OBS browser source reloads — stale connections no longer pile up.
+- The "Open Recent" list shows newly saved files right away.
+- Old log entries are cleaned up in the background in small steps, without causing pauses.
+
 ## Hotfix - 1.0.2607051 - 2026.07.05
 
 **Fixed**

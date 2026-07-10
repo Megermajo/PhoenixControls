@@ -17,6 +17,15 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
     private const int DefaultMaxRows = 2000;
     private readonly int _maxRows;
 
+    // Amortised at-cap eviction. RemoveAt(0) on a full 2000-row
+    // ObservableCollection is O(n) per chat message (element shift, plus a
+    // CollectionChanged.Remove the view has to re-index for), and during an
+    // active stream the buffer sits at cap permanently. Rows may overshoot
+    // _maxRows by up to this many rows before one Reset + refill cuts it
+    // back to the cap — CountText can briefly read above the cap between
+    // trims, still bounded. Mirrors SystemLogViewModel.OverflowTrimBatch.
+    private const int OverflowTrimBatch = 128;
+
     private readonly IChatSource _source;
     // Per-VM dispatcher pump, ctor-injected by PanelFactory.
     // Replaces the prior static DispatcherQueueOwner slot.
@@ -67,8 +76,8 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
         foreach (var m in _source.Snapshot())
         {
             Rows.Add(new ChatRowVm(m));
-            if (Rows.Count > _maxRows) Rows.RemoveAt(0);
         }
+        TrimRowsToCap();
     }
 
     public void Dispose()
@@ -199,15 +208,33 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
         {
             Rows.Add(row);
         }
-        while (Rows.Count > _maxRows) Rows.RemoveAt(0);
+        TrimRowsToCap();
         // Only raise CountText when the string actually
-        // changed. Once Rows.Count hits the cap, CountText is constant; the
-        // prior code re-fired the property change on every append forever.
+        // changed. Whenever a trim lands Rows back on the cap, CountText is
+        // constant across appends; the prior code re-fired the property
+        // change on every append forever.
         string next = CountText;
         if (!string.Equals(_lastEmittedCountText, next, StringComparison.Ordinal))
         {
             _lastEmittedCountText = next;
             Raise(nameof(CountText));
         }
+    }
+
+    /// <summary>
+    /// Drops the oldest rows once <see cref="Rows"/> has overshot
+    /// <c>_maxRows</c> by more than <see cref="OverflowTrimBatch"/>, cutting
+    /// back to exactly the cap in one pass. Removal is head-first per index —
+    /// NOT Clear+refill — because a Reset drops the ListView's scroll anchor,
+    /// and a viewer scrolled up reading history would be yanked off their
+    /// position every trim; per-index head removals are cheap under UI
+    /// virtualization (off-screen index adjustments) and keep the viewport
+    /// continuous, exactly like the pre-batching per-message eviction.
+    /// </summary>
+    private void TrimRowsToCap()
+    {
+        int over = Rows.Count - _maxRows;
+        if (over <= OverflowTrimBatch) return;
+        for (int i = 0; i < over; i++) Rows.RemoveAt(0);
     }
 }

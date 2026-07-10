@@ -10,7 +10,9 @@
 //    file — go through AcquireLockAsync/ReleaseLock to keep the guard intact.
 // 2. `EventLog` / `SystemHistory` are append-only and grow unbounded; the
 //    Initialize sweep deletes rows older than AppConfig.LogRetentionDays
-//    once per process start. Set the cap to 0 to disable.
+//    once per process start, and EventLog is additionally capped to the
+//    newest AppConfig.EventLogRetentionRows rows by a startup + daily
+//    sweep (_eventLogRowCapTimer). Set either cap to 0 to disable.
 // 3. WAL on disk grows between Hub restarts; `_walCheckpointTimer` (30 min
 //    cadence, started in Initialize) runs `PRAGMA wal_checkpoint(RESTART)`
 //    via the AsyncErrorBoundary so the .wal file size stays bounded.
@@ -85,6 +87,15 @@ namespace Phoenix.Controls.Shared.Services
         // writers can recycle WAL frames from the start of the file.
         private System.Threading.Timer? _walCheckpointTimer;
         private static readonly TimeSpan WalCheckpointInterval = TimeSpan.FromMinutes(30);
+
+        // EventLog row-cap sweep. The day-based retention sweep bounds age,
+        // but a busy 24/7 stream writes multi-KB raw-JSON audit rows fast
+        // enough to outgrow the day window long before it expires. This timer
+        // (plus a startup pass in Initialize) keeps only the newest
+        // AppConfig.EventLogRetentionRows rows; the config value is re-read
+        // on every tick so a settings change applies without a restart.
+        private System.Threading.Timer? _eventLogRowCapTimer;
+        private static readonly TimeSpan EventLogRowCapInterval = TimeSpan.FromHours(24);
 
         // Initialize is sync (callers don't await), so racing threads
         // could each pass the early-out check and double-Open a SqliteConnection.
@@ -235,6 +246,23 @@ namespace Phoenix.Controls.Shared.Services
                     command.ExecuteNonQuery();
                 }
 
+                // NORMAL is the documented safe pairing with WAL: commits
+                // stop fsync-ing individually and the WAL is synced only at
+                // checkpoint, cutting per-commit fsync cost dramatically for
+                // every write on this connection (vars, events, upserts).
+                // A hard power/OS crash can lose the transactions since the
+                // last checkpoint but can never corrupt the file — distinct
+                // from the 2026-05-08 "malformed image" class, which was a
+                // stale wal-index issue unrelated to the synchronous level.
+                // synchronous is per-connection state (unlike journal_mode,
+                // which persists in the file), so the dedicated log/read
+                // connections set it for themselves on open.
+                using (var command = new SqliteCommand("PRAGMA synchronous=NORMAL;", _connection))
+                {
+                    command.CommandTimeout = CommandTimeoutSeconds;
+                    command.ExecuteNonQuery();
+                }
+
                 // Flush pending WAL data so external tools
                 // (e.g. the VS Code SQLite viewer) see recent state. PASSIVE, not
                 // TRUNCATE: TRUNCATE takes an exclusive lock and waits for every
@@ -332,6 +360,21 @@ namespace Phoenix.Controls.Shared.Services
                         "System.DB", "RetentionSweep");
                 }
 
+                // EventLog row cap: startup pass + daily timer. The sweep
+                // itself reads AppConfig.EventLogRetentionRows per run (and
+                // no-ops at <= 0), so the timer is always armed — a config
+                // change flips behavior on the next tick without re-Init.
+                _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
+                    RunEventLogRowCapSweepAsync,
+                    "System.DB", "EventLogRowCapSweep");
+                _eventLogRowCapTimer?.Dispose();
+                _eventLogRowCapTimer = new System.Threading.Timer(
+                    _ => _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
+                        RunEventLogRowCapSweepAsync, "System.DB", "EventLogRowCapSweep"),
+                    null,
+                    EventLogRowCapInterval,
+                    EventLogRowCapInterval);
+
                 // Periodic WAL checkpoint. The TRUNCATE
                 // above only runs once per process; without this timer the
                 // .wal file grows unbounded between Hub restarts as writes
@@ -404,6 +447,84 @@ namespace Phoenix.Controls.Shared.Services
             {
                 ReleaseLock(taken);
             }
+        }
+
+        // EventLog row-cap sweep body — keeps the newest
+        // AppConfig.EventLogRetentionRows rows, deleting by rowid range so
+        // the DELETE is a primary-key range scan (Id aliases the rowid), not
+        // a table scan. Reads the config per run so Settings changes apply on
+        // the next tick; <= 0 disables (keep forever). Failures are logged
+        // and swallowed like the day-based sweep — the next run retries.
+        //
+        // Deletes are CHUNKED with the shared lock released between chunks:
+        // the very first sweep on a long-lived databank can face millions of
+        // backlog rows, and one monolithic DELETE would hold `_lock` (the
+        // serializer for every live script-engine DB call) for its whole
+        // duration. Each chunk is its own short autocommit transaction, so
+        // live writes interleave between chunks and a mid-sweep failure keeps
+        // all prior chunks (the next run finishes the remainder).
+        private const int EventLogSweepChunkRows = 10_000;
+
+        private async Task RunEventLogRowCapSweepAsync()
+        {
+            int cap = ConfigManager.Current?.EventLogRetentionRows ?? 10_000;
+            if (cap <= 0) return;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            long totalDeleted = 0;
+            while (true)
+            {
+                if (_disposed) return;
+                if (_connection is not { State: ConnectionState.Open }) return;
+
+                int deletedThisChunk;
+                bool taken = await AcquireLockAsync().ConfigureAwait(false);
+                try
+                {
+                    if (_disposed) return;
+                    // max(rowid) - cap keeps the newest cap rows exactly when
+                    // the rowid sequence is contiguous, and at most cap when
+                    // deletes have left gaps — either way the table stays
+                    // bounded. Empty table: max(rowid) is NULL, the comparison
+                    // is NULL, no rows match — a benign no-op. The inner
+                    // SELECT re-evaluates per chunk so rows logged mid-sweep
+                    // move the threshold instead of being over-deleted.
+                    using var sweep = new SqliteCommand(
+                        "DELETE FROM EventLog WHERE rowid IN (" +
+                        "  SELECT rowid FROM EventLog" +
+                        "  WHERE rowid < (SELECT max(rowid) FROM EventLog) - @cap" +
+                        "  ORDER BY rowid LIMIT @chunk)",
+                        _connection);
+                    sweep.Parameters.AddWithValue("@cap", cap);
+                    sweep.Parameters.AddWithValue("@chunk", EventLogSweepChunkRows);
+                    sweep.CommandTimeout = CommandTimeoutSeconds;
+                    deletedThisChunk = await sweep.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    totalDeleted += deletedThisChunk;
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Log(
+                        $"EventLog row-cap sweep failed after {totalDeleted} rows: {ex.Message}. " +
+                        "Next scheduled sweep finishes the remainder.",
+                        "System.DB", LogLevel.CriticalError);
+                    return;
+                }
+                finally
+                {
+                    ReleaseLock(taken);
+                }
+
+                if (deletedThisChunk < EventLogSweepChunkRows) break;
+                // Off-lock breather between full chunks so queued script-engine
+                // calls drain ahead of the next chunk.
+                await Task.Delay(50).ConfigureAwait(false);
+            }
+            sw.Stop();
+            if (totalDeleted > 0)
+                GlobalLogger.Log(
+                    $"EventLog row-cap sweep deleted {totalDeleted} rows beyond the newest {cap} " +
+                    $"(elapsed {sw.ElapsedMilliseconds}ms).",
+                    "System.DB", LogLevel.System);
         }
 
         // Periodic WAL checkpoint body. Routed through the
@@ -756,6 +877,55 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
+        /// <summary>
+        /// Batch variant of <see cref="WriteLogDedicatedAsync"/> — inserts all
+        /// of <paramref name="entries"/> under ONE transaction with a single
+        /// reused parameterized command, so a drained log burst pays one commit
+        /// (one WAL sync boundary) instead of one per entry. A failure mid-batch
+        /// rolls the whole batch back (transaction dispose) and throws, so the
+        /// caller (GlobalLogger's writer pump) can surface the fault; losing a
+        /// full in-flight batch rather than a partial prefix is acceptable for
+        /// the log sink. Same dedicated connection + lock as the per-entry path.
+        /// </summary>
+        public static async Task WriteLogBatchDedicatedAsync(IReadOnlyList<Log> entries)
+        {
+            if (entries == null || entries.Count == 0) return;
+            await _logDbLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                // Steady state the connection is already open; only the first
+                // write (or a post-quarantine reopen) needs the blocking slow
+                // path, which is offloaded so its nested locks can't pin the
+                // caller's thread (see WriteLogDedicatedAsync).
+                if (_logDbConnection is not { State: System.Data.ConnectionState.Open })
+                    await Task.Run(EnsureLogDbConnection).ConfigureAwait(false);
+
+                using var tx = _logDbConnection!.BeginTransaction();
+                using var cmd = new SqliteCommand(
+                    "INSERT INTO SystemHistory (Level, Source, Message, RawData) VALUES (@lvl, @src, @msg, @raw)",
+                    _logDbConnection, tx);
+                cmd.CommandTimeout = CommandTimeoutSeconds;
+                var pLvl = cmd.Parameters.Add("@lvl", SqliteType.Text);
+                var pSrc = cmd.Parameters.Add("@src", SqliteType.Text);
+                var pMsg = cmd.Parameters.Add("@msg", SqliteType.Text);
+                var pRaw = cmd.Parameters.Add("@raw", SqliteType.Text);
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    var entry = entries[i];
+                    pLvl.Value = entry.Level.ToString();
+                    pSrc.Value = entry.Source;
+                    pMsg.Value = entry.Message;
+                    pRaw.Value = (object?)entry.RawData ?? DBNull.Value;
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+                tx.Commit();
+            }
+            finally
+            {
+                try { _logDbLock.Release(); } catch (ObjectDisposedException) { }
+            }
+        }
+
         private static void EnsureLogDbConnection()
         {
             // Fast path — already open. State check tolerates a future "auto-
@@ -803,6 +973,14 @@ namespace Phoenix.Controls.Shared.Services
                     try { _logDbConnection?.Dispose(); } catch { /* best effort */ }
                     _logDbConnection = new SqliteConnection(cs);
                     _logDbConnection.Open();
+
+                    // synchronous is per-connection, so the NORMAL pairing
+                    // set in Initialize doesn't carry over — without this the
+                    // log writer's commits stay at the compiled FULL default
+                    // and every log INSERT pays an fsync.
+                    using var sync = new SqliteCommand("PRAGMA synchronous=NORMAL;", _logDbConnection);
+                    sync.CommandTimeout = CommandTimeoutSeconds;
+                    sync.ExecuteNonQuery();
                 }
             }
         }
@@ -953,6 +1131,48 @@ namespace Phoenix.Controls.Shared.Services
                     cmd.Parameters.AddWithValue("@user",    user);
                     cmd.Parameters.AddWithValue("@payload", payload);
                 }).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Batch variant of <see cref="LogEventAsync"/> — identical rows,
+        /// columns and values, but all of <paramref name="events"/> land under
+        /// ONE transaction with a single reused parameterized command. Backs
+        /// the Hub's coalesced Streamer.bot audit-log writer so event bursts
+        /// (hype trains, polls, gift bombs) pay one commit instead of one per
+        /// event on the shared connection.
+        /// </summary>
+        public async Task LogEventsBatchAsync(
+            IReadOnlyList<(string Source, string Type, string User, string Payload)> events)
+        {
+            if (events == null || events.Count == 0) return;
+            bool taken = await AcquireLockAsync().ConfigureAwait(false);
+            try
+            {
+                EnsureConnected();
+                using var tx = _connection!.BeginTransaction();
+                using var cmd = new SqliteCommand(
+                    "INSERT INTO EventLog (EventSource, EventType, User, Payload) VALUES (@src, @type, @user, @payload)",
+                    _connection, tx);
+                cmd.CommandTimeout = CommandTimeoutSeconds;
+                var pSrc     = cmd.Parameters.Add("@src",     SqliteType.Text);
+                var pType    = cmd.Parameters.Add("@type",    SqliteType.Text);
+                var pUser    = cmd.Parameters.Add("@user",    SqliteType.Text);
+                var pPayload = cmd.Parameters.Add("@payload", SqliteType.Text);
+                for (int i = 0; i < events.Count; i++)
+                {
+                    var (source, type, user, payload) = events[i];
+                    pSrc.Value     = source;
+                    pType.Value    = type;
+                    pUser.Value    = user;
+                    pPayload.Value = payload;
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+                tx.Commit();
+            }
+            finally
+            {
+                ReleaseLock(taken);
+            }
         }
 
         /// <summary>
@@ -1157,6 +1377,52 @@ namespace Phoenix.Controls.Shared.Services
             finally { ReleaseLock(taken); }
         }
 
+        // Dedicated bulk-read connection, used only by GetTableDataAsync.
+        //
+        // That method streams an ENTIRE table (no LIMIT — RemoteBridgeServer
+        // expects full tables) into a DataTable; doing it on the shared
+        // connection held `_lock` for the whole load, so the live script
+        // engine's DB access queued behind a remote-device table fetch. WAL
+        // supports concurrent readers alongside the single writer, so a
+        // second connection — same lazy-open + _initLock coordination as the
+        // dedicated log connection above — lets the bulk read run without
+        // seizing the write serializer. _bulkReadLock keeps one bulk read in
+        // flight at a time (defensive, mirrors _logDbLock); it never contends
+        // with `_lock`.
+        private static SqliteConnection? _bulkReadConnection;
+        private static readonly SemaphoreSlim _bulkReadLock = new SemaphoreSlim(1, 1);
+        private static readonly object _bulkReadInitLock = new();
+
+        private static void EnsureBulkReadConnection()
+        {
+            if (_bulkReadConnection is { State: System.Data.ConnectionState.Open }) return;
+
+            lock (_bulkReadInitLock)
+            {
+                if (_bulkReadConnection is { State: System.Data.ConnectionState.Open }) return;
+
+                // Same Initialize-coordination story as EnsureLogDbConnection:
+                // take the singleton's _initLock so this connection can't open
+                // against a file mid-quarantine, and read _dbPath under it so a
+                // half-completed Initialize(customPath) swap is unobservable.
+                var inst = Instance;
+                lock (inst._initLock)
+                {
+                    if (inst._disposed)
+                        throw new ObjectDisposedException(nameof(DB));
+
+                    if (_bulkReadConnection is { State: System.Data.ConnectionState.Open }) return;
+
+                    string path = inst._dbPath;
+                    string cs = $"Data Source={path};";
+
+                    try { _bulkReadConnection?.Dispose(); } catch { /* best effort */ }
+                    _bulkReadConnection = new SqliteConnection(cs);
+                    _bulkReadConnection.Open();
+                }
+            }
+        }
+
         public async Task<DataTable> GetTableDataAsync(string tableName)
         {
             if (!IsValidIdentifier(tableName))
@@ -1168,22 +1434,30 @@ namespace Phoenix.Controls.Shared.Services
             }
 
             var dt = new DataTable();
-            bool taken = await AcquireLockAsync().ConfigureAwait(false);
+            await _bulkReadLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                EnsureConnected();
+                // Slow path (first call / post-dispose) takes nested blocking
+                // locks — hop to the pool so they can't pin this async caller,
+                // mirroring WriteLogDedicatedAsync's rationale.
+                if (_bulkReadConnection is not { State: ConnectionState.Open })
+                    await Task.Run(EnsureBulkReadConnection).ConfigureAwait(false);
+
                 using var checkCmd = new SqliteCommand(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=@name", _connection);
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=@name", _bulkReadConnection);
                 checkCmd.Parameters.AddWithValue("@name", tableName);
                 long exists = Convert.ToInt64(await checkCmd.ExecuteScalarAsync().ConfigureAwait(false)!);
                 if (exists == 0)
                     throw new InvalidOperationException($"Table '{tableName}' does not exist.");
 
-                using var cmd = new SqliteCommand($"SELECT * FROM [{tableName}]", _connection);
+                using var cmd = new SqliteCommand($"SELECT * FROM [{tableName}]", _bulkReadConnection);
                 using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
                 dt.Load(reader);
             }
-            finally { ReleaseLock(taken); }
+            finally
+            {
+                try { _bulkReadLock.Release(); } catch (ObjectDisposedException) { }
+            }
             return dt;
         }
 
@@ -1374,6 +1648,78 @@ namespace Phoenix.Controls.Shared.Services
                 .ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Batch variant of <see cref="DeleteRowAsync"/> — identical guards and
+        /// row selection, but all of <paramref name="rowIds"/> are deleted via
+        /// chunked parameterized IN-lists under ONE transaction, so a
+        /// multi-select delete in the Databank Browser pays one commit instead
+        /// of one per row on the shared connection. Atomic: any failure rolls
+        /// the whole batch back and rethrows.
+        /// </summary>
+        public async Task DeleteRowsAsync(string tableName, IReadOnlyList<long> rowIds)
+        {
+            if (rowIds == null || rowIds.Count == 0) return;
+
+            if (!IsValidIdentifier(tableName))
+            {
+                GlobalLogger.Log(
+                    $"DB.DeleteRows rejected: invalid table identifier '{tableName}'.",
+                    "DB", LogLevel.CriticalError);
+                throw new ArgumentException($"Invalid table name: {tableName}");
+            }
+
+            if (IsSystemTable(tableName))
+            {
+                GlobalLogger.Log(
+                    $"DB.DeleteRows BLOCKED: '{tableName}' is a protected system table. " +
+                    "Script-driven destructive operations on system tables are denied.",
+                    "DB", LogLevel.CriticalError);
+                return;
+            }
+
+            // SQLite's default host-parameter ceiling is 999; 500 per statement
+            // keeps a comfortable margin while still collapsing a large batch
+            // into a handful of statements.
+            const int ChunkSize = 500;
+
+            bool taken = await AcquireLockAsync().ConfigureAwait(false);
+            try
+            {
+                EnsureConnected();
+                using var tx = _connection!.BeginTransaction();
+                try
+                {
+                    for (int offset = 0; offset < rowIds.Count; offset += ChunkSize)
+                    {
+                        int count = Math.Min(ChunkSize, rowIds.Count - offset);
+                        var sql = new StringBuilder("DELETE FROM [")
+                            .Append(tableName).Append("] WHERE rowid IN (");
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (i > 0) sql.Append(", ");
+                            sql.Append("@r").Append(i);
+                        }
+                        sql.Append(')');
+                        using var cmd = new SqliteCommand(sql.ToString(), _connection, tx);
+                        cmd.CommandTimeout = CommandTimeoutSeconds;
+                        for (int i = 0; i < count; i++)
+                            cmd.Parameters.AddWithValue($"@r{i}", rowIds[offset + i]);
+                        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    }
+                    tx.Commit();
+                }
+                catch
+                {
+                    try { tx.Rollback(); } catch { /* best effort */ }
+                    throw;
+                }
+            }
+            finally
+            {
+                ReleaseLock(taken);
+            }
+        }
+
         public async Task ClearTableAsync(string tableName)
         {
             if (!IsValidIdentifier(tableName))
@@ -1413,6 +1759,29 @@ namespace Phoenix.Controls.Shared.Services
             }
             return await QueryScalarAsync<int>(
                 $"SELECT COUNT(*) FROM [{tableName}]", _ => { }).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Cheap change-detection probe: highest rowid in
+        /// <paramref name="tableName"/>, or -1 when the table is empty (or the
+        /// query fails — <see cref="QueryScalarAsync{T}"/> logs and degrades).
+        /// <c>max(rowid)</c> is a rightmost-B-tree-leaf seek that materializes
+        /// no row payload, so pollers (the EventLog panel's 2 Hz tail) can ask
+        /// "did anything land?" without pulling a full row's multi-KB Payload
+        /// through the shared connection.
+        /// </summary>
+        public async Task<long> GetMaxRowIdAsync(string tableName)
+        {
+            if (!IsValidIdentifier(tableName))
+            {
+                GlobalLogger.Log(
+                    $"Invalid identifier '{tableName}' rejected on GetMaxRowIdAsync",
+                    "DB", LogLevel.Communication);
+                return -1;
+            }
+            long? max = await QueryScalarAsync<long?>(
+                $"SELECT max(rowid) FROM [{tableName}]", _ => { }).ConfigureAwait(false);
+            return max ?? -1;
         }
 
         public async Task<List<string>> GetColumnValuesAsync(string tableName, string columnName)
@@ -2282,6 +2651,11 @@ namespace Phoenix.Controls.Shared.Services
             catch { /* best effort */ }
             _walCheckpointTimer = null;
 
+            // Same reasoning for the EventLog row-cap sweep timer.
+            try { _eventLogRowCapTimer?.Dispose(); }
+            catch { /* best effort */ }
+            _eventLogRowCapTimer = null;
+
             // Drain in-flight callers before closing the connection / disposing
             // the semaphore. A bare Close+Dispose races with any caller currently
             // awaiting _lock.WaitAsync(): they'd resume after Dispose() and hit a
@@ -2350,6 +2724,25 @@ namespace Phoenix.Controls.Shared.Services
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[DB] log connection dispose failed: {ex}");
+                }
+
+                // Same teardown for the dedicated bulk-read connection
+                // (GetTableDataAsync) — close under its own init lock so a
+                // concurrent EnsureBulkReadConnection can't race the dispose,
+                // and null it so a fresh singleton re-opens against the
+                // (possibly re-targeted) _dbPath.
+                try
+                {
+                    lock (_bulkReadInitLock)
+                    {
+                        _bulkReadConnection?.Close();
+                        _bulkReadConnection?.Dispose();
+                        _bulkReadConnection = null;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DB] bulk-read connection dispose failed: {ex}");
                 }
             }
             finally

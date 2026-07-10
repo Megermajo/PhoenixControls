@@ -478,19 +478,27 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <ScrollViewer Grid.Row="1"
-                              x:Name="RowScroll"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollMode="Enabled"
-                              VerticalScrollMode="Enabled"
-                              ViewChanged="OnRowScrollViewChanged">
-                    <ListView x:Name="RowList"
+                <!-- The row grid scrolls via the ListView's OWN template
+                     ScrollViewer (horizontal scrolling re-enabled through the
+                     attached properties) — wrapping it in an outer vertically-
+                     scrolling ScrollViewer hands the ItemsStackPanel infinite
+                     height and defeats UI virtualization, realizing all 500
+                     page rows per rebuild. The header strip mirrors this
+                     viewer's HorizontalOffset via OnRowScrollViewChanged,
+                     hooked in code-behind from OnRowListLoaded. -->
+                    <ListView Grid.Row="1"
+                              x:Name="RowList"
                               Background="Transparent"
                               BorderThickness="0"
                               SelectionMode="Extended"
                               SelectionChanged="OnRowSelectionChanged"
-                              ItemsSource="{Binding VisibleRows}">
+                              ItemsSource="{Binding VisibleRows}"
+                              Loaded="OnRowListLoaded"
+                              ScrollViewer.HorizontalScrollMode="Enabled"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.IsHorizontalRailEnabled="True"
+                              ScrollViewer.VerticalScrollMode="Enabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem">
                                 <Setter Property="Padding" Value="0" />
@@ -589,7 +597,6 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
-                </ScrollViewer>
 
                 <!--  No-matches message — overlays the rows
                      area (same grid cell) when a filter is active but the page

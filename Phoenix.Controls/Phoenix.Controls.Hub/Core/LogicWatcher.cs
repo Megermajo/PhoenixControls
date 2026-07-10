@@ -16,9 +16,11 @@ namespace Phoenix.Controls.Hub.Core
 
         // Debounce: editor saves typically produce Created + Changed (and
         // sometimes Renamed) events for one logical save. We coalesce them via
-        // the shared PathDebouncer using a single global key — LogicWatcher
-        // refreshes the whole ScriptRegistry rather than per-file, so one
-        // debounce slot is sufficient.
+        // the shared PathDebouncer on two kinds of key: a single global key
+        // for the registry refresh (LogicWatcher refreshes the whole
+        // ScriptRegistry rather than per-file, so one slot suffices) and a
+        // per-path "backup:<file>" key so the .bak-ladder rotation runs once
+        // per logical save instead of once per raw Changed event.
         private const int DebounceMs = 250;
         private const string DebounceKey = "logic-refresh";
         private readonly PathDebouncer _debouncer = new();
@@ -146,22 +148,25 @@ namespace Phoenix.Controls.Hub.Core
             };
             watcher.Changed += (s, e) =>
             {
-                // WaitForFileStable + RotateBackup do up to ~3s of
-                // Thread.Sleep + sync File.Copy. Running them on the FSW
-                // callback thread blocks ALL further FileSystemWatcher
-                // notifications on this folder for the duration. Offload to a
-                // task-pool worker so saves under load still get debounced
-                // correctly. We still schedule the refresh via the debouncer
-                // so multiple Changed events for one logical save coalesce.
+                // FSW emits several Changed events per logical save. A
+                // per-path debounce slot collapses that burst so one save
+                // rotates the .bak ladder exactly once; a genuinely later
+                // save re-arms the timer and rotates again. The debounced
+                // callback offloads via Task.Run — WaitForFileStable +
+                // RotateBackup do up to ~3s of Thread.Sleep + sync File.Copy,
+                // which must not pin the debounce timer's callback thread —
+                // and routes through AsyncErrorBoundary so a fault inside
+                // BackupAndScheduleRefresh lands in GlobalLogger.Error like
+                // every other fire-and-forget in Hub, instead of escaping as
+                // an unobserved Task exception.
                 string capturedPath = e.FullPath;
-                // Route the offloaded backup+refresh
-                // through AsyncErrorBoundary so a fault inside BackupAndScheduleRefresh
-                // lands in GlobalLogger.Error like every other fire-and-forget in Hub,
-                // instead of escaping as an unobserved Task exception.
-                _ = AsyncErrorBoundary.SafeRunAsync(
-                    () => { BackupAndScheduleRefresh(capturedPath); return Task.CompletedTask; },
-                    "LogicWatcher",
-                    $"backup+refresh for '{Path.GetFileName(capturedPath)}'");
+                _debouncer.Schedule("backup:" + capturedPath, DebounceMs, () =>
+                {
+                    _ = AsyncErrorBoundary.SafeRunAsync(
+                        () => Task.Run(() => BackupAndScheduleRefresh(capturedPath)),
+                        "LogicWatcher",
+                        $"backup+refresh for '{Path.GetFileName(capturedPath)}'");
+                });
             };
             watcher.Deleted += (s, e) =>
             {
@@ -358,16 +363,14 @@ namespace Phoenix.Controls.Hub.Core
         {
             try
             {
-                // Block briefly until the writer (if any) has released the file,
-                // so the snapshot we copy into bak1 is complete rather than
-                // partial. WaitForFileStable bounds the wait so a permanent
-                // locker can't hang the watcher thread. The caller
-                // (BackupAndScheduleRefresh) already gates us behind the same
-                // stability check, so this is a fast-path re-confirm — if it
-                // still times out the SafeReadAllBytes snapshots below simply
-                // capture whatever is readable rather than blocking further.
-                _ = WaitForFileStable(path);
-
+                // The sole caller (BackupAndScheduleRefresh) only reaches here
+                // after WaitForFileStable confirmed the writer released the
+                // file, so the ladder never snapshots a half-written script.
+                // No re-confirm needed — a writer that grabs the file between
+                // the gate and this copy is a fresh save, which raises its own
+                // Changed burst and rotates again once IT stabilises; the
+                // SafeReadAllBytes snapshots below tolerate any transient
+                // lock by capturing whatever is readable.
                 string bak1 = path + ".bak1";
                 string bak2 = path + ".bak2";
                 string bak3 = path + ".bak3";

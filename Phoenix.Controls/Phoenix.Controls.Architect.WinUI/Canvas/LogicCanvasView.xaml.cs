@@ -1364,12 +1364,26 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     {
         if (_vm is null) return;
 
-        // When the immediate-mode GPU canvas is
-        // active, request a repaint at frame cadence (covers pan / zoom / drag /
-        // edit). CanvasControl.Invalidate coalesces to one Draw per frame, and
-        // this is a cheap no-op when immediate mode is off. Placed before the pan
-        // fast-path return so the GPU canvas keeps repainting mid-pan.
-        InvalidateImmediate();
+        // When the immediate-mode GPU canvas is active, request a repaint —
+        // but only while something actually changed. MarkSceneDirty sources
+        // (view transform, node/frame/link property changes, graph mutation /
+        // load, selection, theme, resize, flash) keep the grace window live;
+        // the union below adds the in-flight gesture state and the coalescer
+        // flags whose apply runs LATER in this same tick, so their first
+        // frame paints without a one-tick lag. A fully idle canvas skips the
+        // whole Draw pass instead of re-rendering at frame cadence. Placed
+        // before the pan fast-path return so the GPU canvas keeps repainting
+        // mid-pan. _cullDirty is deliberately NOT in the union — the retained
+        // cull never drains it in immediate mode, so it would pin the scene
+        // permanently dirty.
+        if (_drag != DragState.Idle
+            || _panDirty || _wheelPanDirty || _wheelZoomDirty
+            || _snapGuidesDirty || _frameContentDragDirty || _groupDragDirty
+            || _frameOverlapTintsDirty || _marqueeApplyDirty || _wireDropHitTestDirty
+            || _vm.AnyLinkDirty || _pendingFlashNodeIds.Count > 0)
+            MarkSceneDirty();
+        if (ConsumeSceneDirtyFrame())
+            InvalidateImmediate();
 
         // 0.11.x polish — trace the per-frame drain. The render tick runs at
         // displayed-frame cadence on the UI thread and drains several
@@ -1783,10 +1797,17 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     /// coverage. RefreshDotGrid early-returns when the existing field still
     /// covers the new viewport.
     /// </summary>
-    private void OnCanvasSizeChangedForGrid(object sender, SizeChangedEventArgs e) => MarkDotGridDirty();
+    private void OnCanvasSizeChangedForGrid(object sender, SizeChangedEventArgs e)
+    {
+        MarkDotGridDirty();
+        // Resize reshapes the visible rect — repaint the GPU canvas so wires /
+        // nodes straddling the new edges re-render without waiting on a gesture.
+        MarkSceneDirty();
+    }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        MarkSceneDirty();   // VM-level state feeds the GPU draw; changes are rare
         if (e.PropertyName == nameof(LogicCanvasViewModel.ShowGrid))
             UpdateGridVisibility();
         // 0.10.0 — re-fire Welcome-card / EmptyHint cascade when the file
@@ -1822,6 +1843,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
             _vm.Links .CollectionChanged -= OnLinksChanged;
             _vm.Frames.CollectionChanged -= OnFramesChanged;
             _vm.GraphLoaded              -= OnVmGraphLoaded;
+            _vm.GraphMutatedAny          -= OnVmGraphMutatedForRender;
             _vm.PropertyChanged          -= OnVmPropertyChanged;
             _vm.SelectionChanged         -= OnVmSelectionChangedForHotkeys;
             _vm.RequestRevealNode         = null;
@@ -1862,6 +1884,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
             _vm.Links .CollectionChanged += OnLinksChanged;
             _vm.Frames.CollectionChanged += OnFramesChanged;
             _vm.GraphLoaded              += OnVmGraphLoaded;
+            _vm.GraphMutatedAny          += OnVmGraphMutatedForRender;
             _vm.PropertyChanged          += OnVmPropertyChanged;
             _vm.SelectionChanged         += OnVmSelectionChangedForHotkeys;
             // Seed the cheatsheet context from the fresh VM's selection
@@ -1932,6 +1955,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
 
     private void OnNodesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        MarkSceneDirty();
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add:
@@ -1961,7 +1985,20 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         UpdateEmptyHint();
     }
 
-    private void OnLinksChanged(object? sender, NotifyCollectionChangedEventArgs e) { /* LinkLayer is ItemsControl-bound — no manual sync needed. */ }
+    private void OnLinksChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        => MarkSceneDirty();   // LinkLayer is ItemsControl-bound — no manual sync needed; the GPU canvas still repaints.
+
+    // Catch-all repaint + row-cache drop on every committed graph mutation
+    // (pill commits, socket activation, wire create/delete, undo restore …).
+    // OnGraphMutated fires at commit granularity — never per pointer-move —
+    // so the blanket cache clear is cheap and guarantees the GPU row layout
+    // can never go stale against an edit that reshaped a node's rows.
+    private void OnVmGraphMutatedForRender(object? sender, System.EventArgs e)
+    {
+        MarkSceneDirty();
+        _nodeRowHeightsCache.Clear();
+        NodeGeometry.MarkAllGeometryDirty(); // static geometry gate — same commit-granularity invalidation
+    }
 
     /// <summary>
     /// Reset the per-VM undo history when LoadGraph swaps the underlying
@@ -1973,6 +2010,8 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     /// </summary>
     private void OnVmGraphLoaded(object? sender, System.EventArgs e)
     {
+        MarkSceneDirty();
+        _nodeRowHeightsCache.Clear();
         // Only reset when WE own the history (standalone canvas, no AVM).
         // The shared-AVM path owns the reset lifecycle itself (Open() /
         // NewGraph()) so the canvas-side reset would just race the AVM —
@@ -2074,6 +2113,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
 
     private void OnFramesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        MarkSceneDirty();
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add:
@@ -2147,6 +2187,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         // its presence is tracked by _subscribedNodes, not _nodeViews.
         if (!_subscribedNodes.Remove(vm)) return;
         vm.PropertyChanged -= OnNodeVmPropChanged;
+        _nodeRowHeightsCache.Remove(vm);
 
         // Full view (if one was ever lazily built).
         if (_nodeViews.Remove(vm, out var view))
@@ -2172,6 +2213,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         foreach (var vm in _subscribedNodes)
             vm.PropertyChanged -= OnNodeVmPropChanged;
         _subscribedNodes.Clear();
+        _nodeRowHeightsCache.Clear();
 
         foreach (var (vm, view) in _nodeViews)
         {
@@ -2191,6 +2233,13 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     private void OnNodeVmPropChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender is not NodeViewModel vm) return;
+        // Any node-VM property can affect the GPU-drawn body (position, size,
+        // selection, flash, error, title, …) — repaint, and drop the row-height
+        // cache entry since socket/attribute-shape changes surface here too
+        // (RebuildSockets raises Width/Height).
+        MarkSceneDirty();
+        _nodeRowHeightsCache.Remove(vm);
+        NodeGeometry.MarkGeometryDirty(vm.Id); // static geometry gate — mirror the per-VM row-cache drop
         // Reposition whichever representation is mounted — the
         // full NodeView and/or the proxy Border. A node may have only a proxy
         // (zoomed out), only a full view, neither (off-screen), and a full view
@@ -2215,9 +2264,9 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
                     ApplyProxySelection(ps, vm);
                 break;
             // A node that grew / shrank to fit its content moved
-            // its pins to new edge coordinates. The GPU canvas already repaints
-            // every render tick (InvalidateImmediate in OnRenderingTick), so the
-            // node body + pins follow automatically — but the incident wires render
+            // its pins to new edge coordinates. The GPU canvas repaints on the
+            // MarkSceneDirty above, so the node body + pins follow automatically
+            // — but the incident wires render
             // from cached anchors that only recompute when a link is flagged dirty.
             // TranslateNode flags them on MOVE; resize had no equivalent, so wires
             // detached from resized pins ("bubbles outside the node") until the next
@@ -2406,6 +2455,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     private void OnFrameVmPropChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (sender is not FrameViewModel vm) return;
+        MarkSceneDirty();   // frames render on the GPU canvas too
         if (!_frameViews.TryGetValue(vm, out var view) || view is not Border border) return;
         switch (e.PropertyName)
         {
@@ -3089,6 +3139,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     private void ApplyViewTransform()
     {
         if (_vm is null) return;
+        MarkSceneDirty();   // the GPU draw bakes this pose into every frame
         ViewTransform.ScaleX     = _vm.Zoom;
         ViewTransform.ScaleY     = _vm.Zoom;
         ViewTransform.TranslateX = _vm.PanX;
@@ -3695,6 +3746,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         // Coalesce: just record the request; the render tick drains it. Multiple
         // calls for the same id within a frame dedupe to one flash.
         _pendingFlashNodeIds.Add(nodeId);
+        MarkSceneDirty();   // paint the pulse on the same tick the drain runs
     }
 
     // Flash pulse window — matches the ~420ms FlashOverlay storyboard in

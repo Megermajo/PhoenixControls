@@ -171,7 +171,18 @@ namespace Phoenix.Controls.Hub.Core
             return deviceId;
         }
 
-        public Task RevokeDeviceAsync(string deviceId) => _db.RevokePairedDeviceAsync(deviceId);
+        /// <summary>
+        /// Raised with the deviceId after a revocation has been persisted to the
+        /// DB. RemoteBridgeServer subscribes so its verified-bearer cache drops
+        /// the device immediately instead of waiting out the cache TTL.
+        /// </summary>
+        public event Action<string>? DeviceRevoked;
+
+        public async Task RevokeDeviceAsync(string deviceId)
+        {
+            await _db.RevokePairedDeviceAsync(deviceId).ConfigureAwait(false);
+            DeviceRevoked?.Invoke(deviceId);
+        }
 
         public Task EnsureSchemaAsync() =>
             Task.WhenAll(_db.EnsurePairedDevicesTableAsync(), _db.EnsureRemoteAuditLogTableAsync());

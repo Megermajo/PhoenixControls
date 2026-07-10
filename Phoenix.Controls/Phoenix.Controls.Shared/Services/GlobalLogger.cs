@@ -447,7 +447,7 @@ namespace Phoenix.Controls.Shared.Services
         // captured ErrorEvents immediately after the producing call returns,
         // and production listeners (HubChrome status strip, etc.) need the
         // visible bar to flip before downstream code can observe the new
-        // state. See WriteEntryAsync for the writer-pump fire-and-forget
+        // state. See WriteBatchAsync for the writer-pump fire-and-forget
         // variant introduced by .
         private static void DispatchOnError(ErrorEvent ev)
         {
@@ -484,7 +484,7 @@ namespace Phoenix.Controls.Shared.Services
 
         // Writer-pump variant of DispatchOnError. The pump runs
         // single-reader: a slow OnError handler invoked from
-        // WriteEntryAsync's catch would block the next dequeue, which is
+        // WriteBatchAsync's catch would block the next dequeue, which is
         // exactly the failure mode the persistent-DB fault path was
         // supposed to surface (NOT cause). Hand the dispatch off to a
         // ThreadPool work item so the pump returns to draining
@@ -599,6 +599,12 @@ namespace Phoenix.Controls.Shared.Services
             _logChannel.Writer.TryComplete();
         }
 
+        // Upper bound on entries folded into one SQLite transaction by the
+        // writer pump. Bounds both the local accumulation list and the size
+        // of a single transaction so a deep backlog flushes as several
+        // moderate commits instead of one giant one.
+        private const int MaxWriteBatch = 200;
+
         public static async Task StartLogWriterAsync(CancellationToken ct = default)
         {
             // The outer catch must be Exception, not just OperationCanceledException —
@@ -608,6 +614,13 @@ namespace Phoenix.Controls.Shared.Services
             try
             {
                 var reader = _logChannel.Reader;
+                // Batch accumulator reused across iterations — the inner
+                // TryRead drain already defines the natural batch boundary
+                // (everything available right now); folding that burst into
+                // one transaction via WriteBatchAsync replaces the previous
+                // commit-per-entry cost. TrackEvictionGap still runs per
+                // dequeue, in order, so eviction accounting is unchanged.
+                var batch = new List<Log>(capacity: 64);
 
                 // L71 — main loop driven by Channel.WaitToReadAsync, which wakes
                 // exactly when an item is produced. No drain-then-finally gap:
@@ -631,7 +644,17 @@ namespace Phoenix.Controls.Shared.Services
                     {
                         TrackEvictionGap(queued.Sequence);
                         if (queued.Entry != null)
-                            await WriteEntryAsync(queued.Entry).ConfigureAwait(false);
+                            batch.Add(queued.Entry);
+                        if (batch.Count >= MaxWriteBatch)
+                        {
+                            await WriteBatchAsync(batch).ConfigureAwait(false);
+                            batch.Clear();
+                        }
+                    }
+                    if (batch.Count > 0)
+                    {
+                        await WriteBatchAsync(batch).ConfigureAwait(false);
+                        batch.Clear();
                     }
                 }
 
@@ -643,7 +666,17 @@ namespace Phoenix.Controls.Shared.Services
                 {
                     TrackEvictionGap(queued.Sequence);
                     if (queued.Entry != null)
-                        await WriteEntryAsync(queued.Entry).ConfigureAwait(false);
+                        batch.Add(queued.Entry);
+                    if (batch.Count >= MaxWriteBatch)
+                    {
+                        await WriteBatchAsync(batch).ConfigureAwait(false);
+                        batch.Clear();
+                    }
+                }
+                if (batch.Count > 0)
+                {
+                    await WriteBatchAsync(batch).ConfigureAwait(false);
+                    batch.Clear();
                 }
             }
             catch (Exception ex)
@@ -669,16 +702,19 @@ namespace Phoenix.Controls.Shared.Services
         // that *calls Error()* won't reach OnError again because the inner
         // dispatch will trip the guard.
         //
-        // Routes through DB.WriteLogDedicatedAsync (dedicated SqliteConnection
-        // owned by the logger), so a long-running script-driven SELECT on
-        // DB.Instance's shared semaphore can no longer stall log persistence.
-        // SQLite WAL allows the second connection to write while the shared
-        // one reads.
-        private static async Task WriteEntryAsync(Log entry)
+        // Routes through DB.WriteLogBatchDedicatedAsync (dedicated
+        // SqliteConnection owned by the logger), so a long-running
+        // script-driven SELECT on DB.Instance's shared semaphore can no longer
+        // stall log persistence. SQLite WAL allows the second connection to
+        // write while the shared one reads. One transaction per drained batch;
+        // a failure loses the in-flight batch (bounded at MaxWriteBatch), and
+        // is published exactly like the old per-entry failure.
+        private static async Task WriteBatchAsync(IReadOnlyList<Log> entries)
         {
+            if (entries.Count == 0) return;
             try
             {
-                await DB.WriteLogDedicatedAsync(entry).ConfigureAwait(false);
+                await DB.WriteLogBatchDedicatedAsync(entries).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

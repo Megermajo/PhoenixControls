@@ -568,7 +568,7 @@ public sealed class ViewerServer : IAsyncDisposable
             return;
         }
 
-        var session = new WebSocketSession(wsCtx.WebSocket, device);
+        var session = new WebSocketSession(wsCtx.WebSocket, device, ct);
         _sessions[session.Id] = session;
         GlobalLogger.Log($"ViewerServer WS open: device='{device.Label}' ({device.DeviceId})", "ViewerServer", LogLevel.System);
 
@@ -581,8 +581,8 @@ public sealed class ViewerServer : IAsyncDisposable
             if (_sessions.TryRemove(session.Id, out _))
                 SafeEvent.Raise(DeviceDisconnected, this, device, "ViewerServer", "DeviceDisconnected");
             try { session.WebSocket.Dispose(); } catch { }
-            // dispose the session itself so its
-            // SemaphoreSlim _sendLock is released — previously leaked on every
+            // dispose the session itself so its send pump
+            // (channel + drain task) shuts down instead of leaking per
             // session teardown.
             try { session.Dispose(); } catch { }
         }
@@ -681,7 +681,7 @@ public sealed class ViewerServer : IAsyncDisposable
 
                     foreach (var session in _sessions.Values.ToArray())
                     {
-                        _ = session.SendAsync(frame);
+                        session.Send(frame);
                     }
                 }
             }
@@ -739,37 +739,141 @@ public sealed class ViewerServer : IAsyncDisposable
         WriteIndented = false,
     };
 
-    // IDisposable so the per-session SemaphoreSlim
-    // is released when a session is removed (HandleWebSocketAsync finally /
-    // RevokeDevice). Without it, _sendLock leaked one SemaphoreSlim per
-    // accepted-then-closed WS connection for the lifetime of the server.
+    // IDisposable so the per-session send pump (bounded channel + drain
+    // task) shuts down when a session is removed (HandleWebSocketAsync
+    // finally / server StopAsync).
     private sealed class WebSocketSession : IDisposable
     {
-        private readonly SemaphoreSlim _sendLock = new(1, 1);
+        // A stalled viewer (locked phone, suspended tab, half-open Wi-Fi)
+        // stops reading; its TCP send buffer fills and WebSocket.SendAsync
+        // never completes. Serialising sends behind a semaphore parked one
+        // Task + pinned byte[] per event for the life of the stall —
+        // unbounded growth. A bounded DropOldest channel drained by one
+        // pump caps memory instead: producers return immediately and stale
+        // frames drop (the viewer feed is latest-wins), mirroring
+        // HUDServer.PerSocketSender.
+        private const int MaxBufferedFrames  = 256;
+        private const int DropReportInterval = 100;
+        // The viewer stream is append-style (chat/feed/log entries), so an
+        // evicted frame is a permanent gap for this connection. A session
+        // that accumulates this many drops without ever draining to empty is
+        // pathologically behind: abort it so the client reconnects and
+        // re-bootstraps from a fresh ViewerSnapshot, healing every gap
+        // (mirrors RemoteBridgeServer's abort-on-slowness precedent).
+        private const int MaxDropsBeforeAbort = 256;
+
+        private readonly Channel<byte[]> _sendQueue;
+        private readonly CancellationTokenSource _cts;
+        private readonly Task _sendPump;
+        private long _droppedFrames;
+        private long _lastReportedDrops;
+        private int _abortedForBacklog;
+        private int _disposed;
 
         public Guid Id { get; } = Guid.NewGuid();
         public WebSocket WebSocket { get; }
         public PairedDevice Device { get; }
         public string DeviceId => Device.DeviceId;
 
-        public WebSocketSession(WebSocket ws, PairedDevice device)
+        public WebSocketSession(WebSocket ws, PairedDevice device, CancellationToken serverCt)
         {
             WebSocket = ws;
             Device = device;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(serverCt);
+            _sendQueue = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(MaxBufferedFrames)
+            {
+                FullMode     = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false,
+            });
+            _sendPump = Task.Run(() => SendPumpAsync(_cts.Token));
         }
 
-        public async Task SendAsync(byte[] frame)
+        // Non-blocking enqueue. A full queue evicts its oldest frame
+        // (DropOldest) rather than stalling the fanout loop; TryWrite only
+        // fails once the writer is completed (post-Dispose), at which point
+        // the frame has nowhere to land anyway.
+        public void Send(byte[] frame)
         {
-            await _sendLock.WaitAsync().ConfigureAwait(false);
+            if (!_sendQueue.Writer.TryWrite(frame)) return;
+            // Depth == cap after a write means either an exact fill or an
+            // eviction — indistinguishable from a depth check alone, but
+            // sustained over-cap pressure shows as repeated max-depth
+            // observations, which is good enough for a telemetry counter.
+            if (_sendQueue.Reader.Count >= MaxBufferedFrames)
+            {
+                long total = Interlocked.Increment(ref _droppedFrames);
+                ReportDropIfNeeded(total);
+                if (total >= MaxDropsBeforeAbort)
+                    AbortForBacklog(total);
+            }
+        }
+
+        // One-shot per session. Abort (not CloseAsync) because the peer's TCP
+        // send buffer is already full — a graceful close handshake could stall
+        // the same way the data frames did. Abort faults the pending
+        // ReceiveAsync in the server's receive pump, whose handler finally
+        // runs the existing removal/dispose cleanup.
+        private void AbortForBacklog(long totalDrops)
+        {
+            if (Interlocked.CompareExchange(ref _abortedForBacklog, 1, 0) != 0) return;
+            GlobalLogger.Log(
+                $"ViewerServer: device '{Device.Label}' ({DeviceId}) fell {totalDrops} frames behind without recovering; " +
+                "aborting the connection so the client reconnects and re-snapshots.",
+                "ViewerServer", LogLevel.System);
+            try { WebSocket.Abort(); } catch { }
+        }
+
+        private void ReportDropIfNeeded(long currentDropCount)
+        {
+            long last = Interlocked.Read(ref _lastReportedDrops);
+            if (currentDropCount - last < DropReportInterval) return;
+            // CompareExchange so a concurrent producer doesn't double-log
+            // around the threshold crossing.
+            if (Interlocked.CompareExchange(ref _lastReportedDrops, currentDropCount, last) != last)
+                return;
+            GlobalLogger.Log(
+                $"ViewerServer: send buffer for device '{Device.Label}' dropped ~{currentDropCount} frames (cap={MaxBufferedFrames}). " +
+                "Viewer is consuming slower than the event stream; oldest frames are evicted.",
+                "ViewerServer", LogLevel.Communication);
+        }
+
+        // Single reader of the channel and the only caller of SendAsync on
+        // this socket — WebSocket.SendAsync is not thread-safe, so the pump
+        // preserves the send-serialisation contract the semaphore provided.
+        private async Task SendPumpAsync(CancellationToken ct)
+        {
             try
             {
-                if (WebSocket.State != WebSocketState.Open) return;
-                await WebSocket.SendAsync(new ArraySegment<byte>(frame),
-                    WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+                var reader = _sendQueue.Reader;
+                while (await reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                {
+                    while (reader.TryRead(out var frame))
+                    {
+                        if (WebSocket.State != WebSocketState.Open) continue;
+                        try
+                        {
+                            await WebSocket.SendAsync(new ArraySegment<byte>(frame),
+                                WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+                        }
+                        catch (WebSocketException) { /* peer gone — drop quietly */ }
+                        catch (OperationCanceledException) { return; }
+                        catch (Exception ex) { GlobalLogger.Error("ViewerServer", "WS send", ex); }
+                    }
+
+                    // Queue fully drained — the viewer caught up, so the
+                    // eviction streak (if any) is over. Reset the counters:
+                    // only MaxDropsBeforeAbort drops without a single full
+                    // drain force the reconnect.
+                    Interlocked.Exchange(ref _droppedFrames, 0);
+                    Interlocked.Exchange(ref _lastReportedDrops, 0);
+                }
             }
-            catch (WebSocketException) { /* peer gone — drop quietly */ }
-            catch (Exception ex) { GlobalLogger.Error("ViewerServer", "WS send", ex); }
-            finally { _sendLock.Release(); }
+            catch (OperationCanceledException) { /* session teardown */ }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("ViewerServer", "WS send pump", ex);
+            }
         }
 
         public Task CloseAsync() => CloseAsync(WebSocketCloseStatus.NormalClosure, "bye");
@@ -784,11 +888,17 @@ public sealed class ViewerServer : IAsyncDisposable
             catch { /* swallow — half-closed sockets are fine to abandon */ }
         }
 
-        // releases the send-serialisation
-        // SemaphoreSlim. Idempotent / safe to call after the socket is gone.
+        // Completes the send queue and cancels the pump. Idempotent / safe
+        // to call after the socket is gone. Deliberately does NOT await
+        // _sendPump — Dispose runs from the WS handler finally; the pump
+        // observes the cancelled CT (or the completed writer) and exits, and
+        // any fault is already logged inside SendPumpAsync.
         public void Dispose()
         {
-            try { _sendLock.Dispose(); } catch { }
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            try { _sendQueue.Writer.TryComplete(); } catch { }
+            try { _cts.Cancel(); } catch { }
+            try { _cts.Dispose(); } catch { }
         }
     }
 }

@@ -15,9 +15,13 @@ namespace Phoenix.Controls.Architect.Core
     // Bands moved here (in source order):
     //   * TWITCH DATA       — Twitch.GetUser / GetStream / CheckRole /
     //     GetFollowAge / LastActive / GetViewers.
+    //   * PLATFORM DATA     — YouTube.GetUser / Kick.GetUser (result-var
+    //     mapping in ScriptExporter.ResolveOutputFromNode's "Platform
+    //     Data" arm).
     //   * VISUALS           — Visual.Trigger, Chat.Overlay.Push / Clear.
     //   * PLATFORM ACTIONS  — Twitch.SendChat / Timeout / Ban /
-    //     CreateClip / Shoutout / Announcement.
+    //     CreateClip / Shoutout / Announcement; plus the YouTube.* / Kick.*
+    //     action sub-bands.
     //   * Twitch moderation — Unban / Mod / Unmod / Vip / Unvip /
     //     DeleteMessage / SlowMode / FollowerMode / SubOnlyMode /
     //     Marker / Whisper / UpdateChannel.
@@ -113,6 +117,36 @@ namespace Phoenix.Controls.Architect.Core
                 Localizer.T("architect.node.bubble.twitch_getviewers"),
                 new[] { ("Flow", ColExec) },
                 new[] { ("Done", ColExec), ("Viewers", ColList) });
+
+            // ─────────────────────────────────────────────────────────────
+            // PLATFORM DATA (YouTube / Kick lookups)
+            // ─────────────────────────────────────────────────────────────
+            // Category for the YouTube / Kick lookups. Same
+            // purple as "Twitch Data" so all data-lookup bands read as one
+            // family. Both nodes follow the Twitch.GetUser round-trip shape:
+            // DoAction → poll GetGlobals (ScriptManager.FetchActionGlobalsAsync,
+            // phx_yt_* / phx_kick_* prefixes). Username carries the same
+            // fallback-pill semantics as the Twitch lookups (seeded "{user}").
+            //
+            // NOTE: the output sockets' result-var mapping (Id → {user.id},
+            // DisplayName → {user.display_name}, etc.) lives in
+            // ScriptExporter.ResolveOutputFromNode ("Platform Data" arm,
+            // alongside the ScriptExporter._pureDataCategories entry).
+            AddTemplate("YouTube.GetUser",      "Platform Data", Color.FromArgb(100, 65, 165),
+                Localizer.T("architect.node.bubble.youtube_getuser"),
+                new[] { ("Flow", ColExec), ("Username", ColString) },
+                new[] { ("Flow", ColExec), ("Id", ColString), ("DisplayName", ColString),
+                        ("ProfileImage", ColString), ("IsMod", ColBool),
+                        ("IsSub", ColBool), ("IsBroadcaster", ColBool) },
+                new Dictionary<string, string> { { "Username", "{user}" } });
+
+            AddTemplate("Kick.GetUser",         "Platform Data", Color.FromArgb(100, 65, 165),
+                Localizer.T("architect.node.bubble.kick_getuser"),
+                new[] { ("Flow", ColExec), ("Username", ColString) },
+                new[] { ("Flow", ColExec), ("Id", ColString), ("Login", ColString),
+                        ("DisplayName", ColString), ("ProfileImage", ColString),
+                        ("IsMod", ColBool), ("IsSub", ColBool) },
+                new Dictionary<string, string> { { "Username", "{user}" } });
 
             // ─────────────────────────────────────────────────────────────
             // VISUALS
@@ -304,6 +338,116 @@ namespace Phoenix.Controls.Architect.Core
                 Localizer.T("architect.node.bubble.twitch_updatechannel"),
                 new[] { ("Flow", ColExec), ("Title", ColString), ("GameId", ColString) },
                 new[] { ("Done", ColExec) });
+
+            // ── YouTube platform actions ───────────────────────────────────
+            // Outbound actions proxied through the
+            // Streamer.bot "Phoenix: YT *" DoAction pack (see
+            // ScriptManager.YouTube.cs). Same category + color
+            // as the Twitch action band so all platform actions read as one
+            // family. All are fire-and-forget flow nodes (in Flow → out Done);
+            // they carry no data outputs, so nothing here needs a
+            // ScriptExporter.ResolveOutputFromNode arm (that mapping only
+            // exists for the "Platform Data" lookup nodes above).
+            AddTemplate("YouTube.SendChat",      "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_sendchat"),
+                new[] { ("Flow", ColExec), ("Message", ColString) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string> { { "Message", "Hello chat!" } });
+
+            AddTemplate("YouTube.SetTitle",      "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_settitle"),
+                new[] { ("Flow", ColExec), ("Title", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("YouTube.SetDescription", "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_setdescription"),
+                new[] { ("Flow", ColExec), ("Description", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("YouTube.Timeout",       "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_timeout"),
+                new[] { ("Flow", ColExec), ("User", ColString), ("Sec", ColNumber) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string> { { "Sec", "300" } });
+
+            AddTemplate("YouTube.Ban",           "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_ban"),
+                new[] { ("Flow", ColExec), ("User", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("YouTube.CreatePoll",    "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_createpoll"),
+                new[] { ("Flow", ColExec), ("Title", ColString), ("Choices", ColString), ("DurationSec", ColNumber) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string> { { "DurationSec", "60" } });
+
+            AddTemplate("YouTube.EndPoll",       "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.youtube_endpoll"),
+                new[] { ("Flow", ColExec) },
+                new[] { ("Done", ColExec) });
+
+            // ── Kick platform actions ──────────────────────────────────────
+            // Proxied through the "Phoenix: Kick *" DoAction pack
+            // (ScriptManager.Kick.cs). Fire-and-forget flow
+            // nodes — no data outputs, no ResolveOutputFromNode involvement
+            // (Kick.GetUser in the "Platform Data" band is the lookup node).
+            AddTemplate("Kick.SendChat",         "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_sendchat"),
+                new[] { ("Flow", ColExec), ("Message", ColString) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string> { { "Message", "Hello chat!" } });
+
+            AddTemplate("Kick.Reply",            "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_reply"),
+                new[] { ("Flow", ColExec), ("MessageId", ColString), ("Message", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.Timeout",          "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_timeout"),
+                new[] { ("Flow", ColExec), ("User", ColString), ("Sec", ColNumber) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string> { { "Sec", "300" } });
+
+            AddTemplate("Kick.Ban",              "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_ban"),
+                new[] { ("Flow", ColExec), ("User", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.Unban",            "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_unban"),
+                new[] { ("Flow", ColExec), ("User", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.Untimeout",        "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_untimeout"),
+                new[] { ("Flow", ColExec), ("User", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.SetTitle",         "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_settitle"),
+                new[] { ("Flow", ColExec), ("Title", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.SetCategory",      "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_setcategory"),
+                new[] { ("Flow", ColExec), ("Category", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.DeleteMessage",    "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_deletemessage"),
+                new[] { ("Flow", ColExec), ("MessageId", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.SetRewardCost",    "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_setrewardcost"),
+                new[] { ("Flow", ColExec), ("RewardId", ColString), ("Cost", ColNumber) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Kick.SetRewardEnabled", "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.kick_setrewardenabled"),
+                new[] { ("Flow", ColExec), ("RewardId", ColString), ("Enabled", ColBool) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string> { { "Enabled", "true" } });
 
             // ── OBS (proxy via Streamer.bot DoAction) ─────────────────────
             // First-pass OBS control surface. Each node is a flow-bearing

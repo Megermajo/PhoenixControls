@@ -231,13 +231,22 @@ public static class NodeGeometry
         // invalidation — when the inputs are unchanged the hash matches and we
         // return the cached width without re-walking. The cache stores Width +
         // Height together (NaN = "this dimension not computed for the current
-        // hash yet") so IntrinsicHeight reuses the same entry.
+        // hash yet") so IntrinsicHeight reuses the same entry. The per-node
+        // GeometryGate additionally skips the hash walk itself for settled
+        // nodes (see the gate's comment block) so per-frame wire-path probes
+        // are O(1) between mutations.
         if (node is not null && !string.IsNullOrEmpty(node.Id))
         {
+            var gate = GetGeometryGate(node.Id);
+            bool hasCached = s_nodeSizeCache.TryGetValue(node.Id, out var cached);
+            // Settled fast path — no mutation flagged since the last
+            // verified probe, so skip the O(sockets+attrs) hash walk entirely.
+            if (hasCached && !double.IsNaN(cached.Width) && TryFastGeometryProbe(gate, cached.Hash))
+                return cached.Width;
+            gate.Dirty = false; // clear BEFORE hashing — a concurrent mutation re-marks
             int hash = ComputeNodeContentHash(node);
-            if (s_nodeSizeCache.TryGetValue(node.Id, out var cached)
-                && cached.Hash == hash
-                && !double.IsNaN(cached.Width))
+            MarkGeometryVerified(gate, hash);
+            if (hasCached && cached.Hash == hash && !double.IsNaN(cached.Width))
                 return cached.Width;
             double w = ComputeIntrinsicWidth(node);
             StoreNodeSize(node.Id, hash, width: w, height: double.NaN);
@@ -328,37 +337,46 @@ public static class NodeGeometry
                     var effective = liveValue ?? kv.Value;
 
                     double keyW   = EstimateTextWidth(kv.Key, 12.0) + 12.0; // 6px L + 6px R padding
-                    double pillW  = 0;
                     bool isBool   = string.Equals(kv.Value, "true",  System.StringComparison.OrdinalIgnoreCase)
                                  || string.Equals(kv.Value, "false", System.StringComparison.OrdinalIgnoreCase);
+                    double rowW;
                     if (isBool)
                     {
-                        // ☑ / ☐ glyph footprint — ~14px at 12pt.
-                        pillW = 18.0;
-                    }
-                    else if (!string.IsNullOrEmpty(effective))
-                    {
-                        // Middle-attribute pill renders in MonoFont like socket-row
-                        // pills (NodeView.xaml MiddleAttributeRowTemplate pill TextBlock).
-                        // Non-DB by construction, so the plain-pill cap (WrapPillCap)
-                        // applies: widen the body to WrapPillCap, then the pill wraps
-                        // (matching MiddleAttributeViewModel.PillMaxWidth).
-                        double rawPillW = EstimateTextWidth(effective, 11.0, mono: true) + 12.0;
-                        pillW = IsMultilinePill(kv.Key, effective)
-                              ? Math.Min(rawPillW, MultilinePillCap)
-                              : Math.Min(rawPillW, WrapPillCap);
+                        // Bool checkmark row renders LEFT-aligned `☑ Key`
+                        // (18px glyph + 6px gap + key label) with NO dotted
+                        // spacer or pill column — keep in lockstep with
+                        // NodeView.xaml's bool StackPanel and the Win2D
+                        // DrawMiddleAttributes / toggle hit-test bool branch.
+                        // + 16 row padding (8L+8R).
+                        rowW = 18.0 + 6.0 + keyW + 16.0;
                     }
                     else
                     {
-                        // Empty pill still reserves "—" placeholder width.
-                        pillW = 16.0;
-                    }
+                        double pillW;
+                        if (!string.IsNullOrEmpty(effective))
+                        {
+                            // Middle-attribute pill renders in MonoFont like socket-row
+                            // pills (NodeView.xaml MiddleAttributeRowTemplate pill TextBlock).
+                            // Non-DB by construction, so the plain-pill cap (WrapPillCap)
+                            // applies: widen the body to WrapPillCap, then the pill wraps
+                            // (matching MiddleAttributeViewModel.PillMaxWidth).
+                            double rawPillW = EstimateTextWidth(effective, 11.0, mono: true) + 12.0;
+                            pillW = IsMultilinePill(kv.Key, effective)
+                                  ? Math.Min(rawPillW, MultilinePillCap)
+                                  : Math.Min(rawPillW, WrapPillCap);
+                        }
+                        else
+                        {
+                            // Empty pill still reserves "—" placeholder width.
+                            pillW = 16.0;
+                        }
 
-                    // + 16 row padding (8L+8R) so the body grows
-                    // wide enough to hold the pill + its row chrome; mirrors
-                    // MiddleAttrPillLead so width-grow and PillWrapWidth agree.
-                    double rowW = keyW + 16.0 + pillW + 16.0 // 16px dotted-spacer + 16px row padding
-                                + (IsOptionsPickerAttr(node, kv.Key) ? MiddleAttrPickerChevronWidth : 0.0);
+                        // + 16 row padding (8L+8R) so the body grows
+                        // wide enough to hold the pill + its row chrome; mirrors
+                        // MiddleAttrPillLead so width-grow and PillWrapWidth agree.
+                        rowW = keyW + 16.0 + pillW + 16.0 // 16px dotted-spacer + 16px row padding
+                             + (IsOptionsPickerAttr(node, kv.Key) ? MiddleAttrPickerChevronWidth : 0.0);
+                    }
                     if (rowW > middleW) middleW = rowW;
                 }
             }
@@ -703,6 +721,77 @@ public static class NodeGeometry
         s_nodeSizeCache[id] = (hash, width, height);
     }
 
+    // ─── Per-node geometry dirty gate ──────────────────────────
+    // The content hash stays the STORE key of s_nodeSizeCache / s_rowHeightsCache,
+    // but recomputing it on every probe made each cache hit O(sockets+attrs) —
+    // and SocketAnchor probes both caches per wire endpoint on the per-frame
+    // CompositionTarget.Rendering wire path. The gate makes a SETTLED node's
+    // probe O(1): mutation sites (NodeViewModel.InvalidateGeometryCache, the
+    // socket / middle-attr PropertyChanged handlers, the canvas's node-VM
+    // PropertyChanged hook, OnGraphMutated, edit-mode exit) mark the node
+    // dirty; a probe only re-runs the hash walk when the gate is dirty, when
+    // the cache entry's stored hash isn't the last VERIFIED hash (so a sibling
+    // cache can never serve rows/size computed for older content), or when the
+    // probe budget runs out. The budget is the conservative fallback for any
+    // mutation path that bypasses every hook (silent model writes): a stale
+    // value self-heals within GeometryVerifyBudget probes.
+    private sealed class GeometryGate
+    {
+        public volatile bool Dirty = true;   // default-dirty — first probe always verifies
+        public int VerifiedHash;
+        public int Budget;
+    }
+
+    private static readonly ConcurrentDictionary<string, GeometryGate> s_geometryGates = new();
+
+    // Clean probes allowed between forced hash re-verifications. On the wire
+    // path a dragged node is probed several times per frame, so a missed
+    // mutation site heals within a few frames while settled probes stay ~O(1)
+    // (1 hash walk per 64 probes ≈ 1.5% residual cost).
+    private const int GeometryVerifyBudget = 64;
+
+    /// <summary>
+    /// Mark a node's geometry inputs as possibly changed so the next
+    /// <see cref="IntrinsicWidth"/> / <see cref="IntrinsicHeight"/> /
+    /// <see cref="SocketRowHeights"/> probe re-verifies the content hash.
+    /// Cheap (one flag store) — call liberally from any mutation path;
+    /// a spurious mark costs one hash walk, a missed mark risks stale wires.
+    /// </summary>
+    public static void MarkGeometryDirty(string? nodeId)
+    {
+        if (string.IsNullOrEmpty(nodeId)) return;
+        s_geometryGates.GetOrAdd(nodeId!, static _ => new GeometryGate()).Dirty = true;
+    }
+
+    /// <summary>
+    /// Mark every known node dirty — the commit-granularity catch-all wired
+    /// to <c>LogicCanvasViewModel.OnGraphMutated</c> (mirrors the Win2D
+    /// per-canvas row-height cache clear on the same event).
+    /// </summary>
+    public static void MarkAllGeometryDirty()
+    {
+        foreach (var gate in s_geometryGates.Values) gate.Dirty = true;
+    }
+
+    private static GeometryGate GetGeometryGate(string nodeId)
+        => s_geometryGates.GetOrAdd(nodeId, static _ => new GeometryGate());
+
+    // True when the cached entry may be returned WITHOUT re-hashing: gate is
+    // clean, the entry was stored under the last verified hash, and the
+    // self-heal budget hasn't run out. Interlocked keeps the budget sane under
+    // the (rare) off-UI-thread probes; a lost decrement only delays a re-verify.
+    private static bool TryFastGeometryProbe(GeometryGate gate, int entryHash)
+    {
+        if (gate.Dirty || entryHash != gate.VerifiedHash) return false;
+        return System.Threading.Interlocked.Decrement(ref gate.Budget) > 0;
+    }
+
+    private static void MarkGeometryVerified(GeometryGate gate, int hash)
+    {
+        gate.VerifiedHash = hash;
+        gate.Budget = GeometryVerifyBudget;
+    }
+
     /// <summary>
     /// Content hash over the inputs that drive a node's intrinsic
     /// geometry — Title, each socket's Name/Type/DataType/IsPlaceholder, and each
@@ -867,6 +956,9 @@ public static class NodeGeometry
         s_nodeSizeCache.Clear();
         // Per-row height cache is also Node.Id-keyed — clear in lockstep.
         s_rowHeightsCache.Clear();
+        // Dirty gates are Node.Id-keyed too; a fresh gate is default-dirty so
+        // the new graph's first probes always verify.
+        s_geometryGates.Clear();
     }
 
     /// <summary>
@@ -880,10 +972,15 @@ public static class NodeGeometry
         // shares the s_nodeSizeCache entry keyed on node.Id + content hash.
         if (node is not null && !string.IsNullOrEmpty(node.Id))
         {
+            var gate = GetGeometryGate(node.Id);
+            bool hasCached = s_nodeSizeCache.TryGetValue(node.Id, out var cached);
+            // Settled fast path — see IntrinsicWidth.
+            if (hasCached && !double.IsNaN(cached.Height) && TryFastGeometryProbe(gate, cached.Hash))
+                return cached.Height;
+            gate.Dirty = false; // clear BEFORE hashing — a concurrent mutation re-marks
             int hash = ComputeNodeContentHash(node);
-            if (s_nodeSizeCache.TryGetValue(node.Id, out var cached)
-                && cached.Hash == hash
-                && !double.IsNaN(cached.Height))
+            MarkGeometryVerified(gate, hash);
+            if (hasCached && cached.Hash == hash && !double.IsNaN(cached.Height))
                 return cached.Height;
             double h = ComputeIntrinsicHeight(node);
             // Preserve any already-cached width for this same hash so the two
@@ -982,8 +1079,17 @@ public static class NodeGeometry
         if (rows == 0) return System.Array.Empty<double>();
         if (!string.IsNullOrEmpty(node.Id))
         {
+            var gate = GetGeometryGate(node.Id);
+            bool hasCached = s_rowHeightsCache.TryGetValue(node.Id, out var cached);
+            // Settled fast path — see IntrinsicWidth. The verified-hash
+            // comparison also protects against a sibling cache having advanced
+            // the gate to newer content while this entry still holds old rows.
+            if (hasCached && TryFastGeometryProbe(gate, cached.Hash))
+                return cached.Rows;
+            gate.Dirty = false; // clear BEFORE hashing — a concurrent mutation re-marks
             int hash = ComputeNodeContentHash(node);
-            if (s_rowHeightsCache.TryGetValue(node.Id, out var cached) && cached.Hash == hash)
+            MarkGeometryVerified(gate, hash);
+            if (hasCached && cached.Hash == hash)
                 return cached.Rows;
             var arr = ComputeSocketRowHeightsArray(node, rows);
             s_rowHeightsCache[node.Id] = (hash, arr);
@@ -1270,7 +1376,8 @@ public static class NodeGeometry
             case "Public.Get":
             case "Public.Set":
                 node.Attributes.TryGetValue("KeyName", out v); break;
-            case "Twitch.ChatMessage":
+            case "Twitch.ChatMessage": // legacy title — retitled to Chat.Message on load, kept for pre-migration renders
+            case "Chat.Message":
                 node.Attributes.TryGetValue("Commands", out v); break;
             case "Macro.Call":
                 node.Attributes.TryGetValue("MacroName", out v); break;

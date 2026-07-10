@@ -2555,9 +2555,31 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             _autosave.Start();
         }
 
+        // Run the survivor scan (recursive logic-folder enumeration +
+        // per-file metadata reads) on the thread pool and marshal only the
+        // result back — synchronous, it blocked the first Loaded tick,
+        // scaling with the logic-folder size.
+        int dismissGen = _autosaveDismissGen;
+        _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
+            () => System.Threading.Tasks.Task.Run(() =>
+            {
+                var survivors = Phoenix.Controls.Architect.WinUI.Services.AutosaveScout.Scan();
+                DispatcherQueue?.TryEnqueue(() => ApplyAutosaveSurvivorScan(survivors, dismissGen));
+            }),
+            "Architect.Recovery", "Survivor scan");
+    }
+
+    /// <summary>
+    /// UI-thread half of the survivor scan — surfaces the InfoBar /
+    /// Recover… button from the pre-scanned list.
+    /// </summary>
+    private void ApplyAutosaveSurvivorScan(
+        System.Collections.Generic.IReadOnlyList<Phoenix.Controls.Architect.WinUI.Services.AutosaveScout.Survivor> survivors,
+        int dismissGen)
+    {
         try
         {
-            var survivors = Phoenix.Controls.Architect.WinUI.Services.AutosaveScout.Scan();
+            if (_unloadedOnceRan) return;
             if (survivors.Count == 0)
             {
                 _autosaveSurvivors = null;
@@ -2580,6 +2602,13 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // Explorer; now the in-app dialog renames + reopens for them.
             _autosaveSurvivors = survivors;
 
+            // A .phxg load can finish before this deferred scan result lands
+            // (CLI --open in InitializeAsync); its DismissAutosaveInfoBar
+            // wins, matching the pre-deferral order where the load's
+            // dismissal ran after the scan. Survivors stay stashed above so
+            // the recovery dialog still works if re-invoked.
+            if (dismissGen != _autosaveDismissGen) return;
+
             if (LoadErrorInfoBar is not null)
             {
                 LoadErrorInfoBar.Severity = Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning;
@@ -2601,6 +2630,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 "Architect.Recovery", "Survivor scan failed", ex);
         }
     }
+
+    // Bumped by DismissAutosaveInfoBar (UI thread) so a deferred scan result
+    // can tell whether a dismissal happened after it was scheduled.
+    private int _autosaveDismissGen;
 
     // Survivors found at boot, surfaced through the recovery dialog.
     private System.Collections.Generic.IReadOnlyList<Phoenix.Controls.Architect.WinUI.Services.AutosaveScout.Survivor>? _autosaveSurvivors;
@@ -2834,6 +2867,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     private void DismissAutosaveInfoBar()
     {
+        _autosaveDismissGen++;
         _autosaveInfoBarTimer?.Stop();
         if (LoadErrorInfoBar is not null) LoadErrorInfoBar.IsOpen = false;
         if (AutosaveRecoverButton is not null) AutosaveRecoverButton.Visibility = Visibility.Collapsed;
@@ -3186,22 +3220,67 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// </summary>
     private void RebuildChromeRecentMenu()
     {
+        if (Chrome.MenuFileOpenRecent is null) return;
+        // Off-thread scan (MRU JSON read + per-entry File.Exists, which
+        // stalls on networked / OneDrive-backed paths), then marshal only
+        // the surviving path list back for menu construction.
+        int gen = System.Threading.Interlocked.Increment(ref _recentMenuBuildGen);
+        _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
+            () => System.Threading.Tasks.Task.Run(() =>
+            {
+                var entries = CollectRecentMenuEntries();
+                DispatcherQueue?.TryEnqueue(() =>
+                {
+                    // Only the newest scheduled rebuild may repaint — an
+                    // older scan landing late must not roll the menu back.
+                    if (gen != _recentMenuBuildGen) return;
+                    ApplyChromeRecentMenu(entries);
+                });
+            }),
+            "Architect.MainView", "RebuildChromeRecentMenu");
+    }
+
+    // Monotonic rebuild stamp; incremented on the UI thread per scheduled
+    // rebuild, compared on the UI thread before repainting.
+    private int _recentMenuBuildGen;
+
+    /// <summary>
+    /// Thread-pool half of <see cref="RebuildChromeRecentMenu"/> — all the
+    /// disk work (MRU load, existence checks, dead-entry pruning) with no
+    /// UI access.
+    /// </summary>
+    private List<string> CollectRecentMenuEntries()
+    {
+        var kept = new List<string>();
+        var recents = Phoenix.Controls.Architect.WinUI.Services.RecentFiles.LoadMerged();
+        foreach (var path in recents)
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            if (!System.IO.File.Exists(path))
+            {
+                // Drop dead entries so the list self-heals.
+                Phoenix.Controls.Architect.WinUI.Services.RecentFiles.Remove(path);
+                continue;
+            }
+            kept.Add(path);
+            if (kept.Count >= 12) break; // cap the dropdown length
+        }
+        return kept;
+    }
+
+    /// <summary>
+    /// UI-thread half of <see cref="RebuildChromeRecentMenu"/> — builds the
+    /// submenu items from the pre-scanned path list.
+    /// </summary>
+    private void ApplyChromeRecentMenu(List<string> paths)
+    {
         var sub = Chrome.MenuFileOpenRecent;
         if (sub is null) return;
         try
         {
             sub.Items.Clear();
-            var recents = Phoenix.Controls.Architect.WinUI.Services.RecentFiles.LoadMerged();
-            int added = 0;
-            foreach (var path in recents)
+            foreach (var path in paths)
             {
-                if (string.IsNullOrWhiteSpace(path)) continue;
-                if (!System.IO.File.Exists(path))
-                {
-                    // Drop dead entries so the list self-heals.
-                    Phoenix.Controls.Architect.WinUI.Services.RecentFiles.Remove(path);
-                    continue;
-                }
                 string captured = path;
                 var item = new MenuFlyoutItem
                 {
@@ -3210,9 +3289,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 ToolTipService.SetToolTip(item, path);
                 item.Click += (_, _) => OpenRecentPathFromChrome(captured);
                 sub.Items.Add(item);
-                if (++added >= 12) break; // cap the dropdown length
             }
-            if (added == 0)
+            if (sub.Items.Count == 0)
             {
                 sub.Items.Add(new MenuFlyoutItem { Text = "(no recent files)", IsEnabled = false });
             }

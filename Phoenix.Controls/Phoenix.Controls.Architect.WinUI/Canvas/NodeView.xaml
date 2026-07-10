@@ -274,9 +274,11 @@
              feedback_node_ui_inline_sockets.md exists to close. 
 
              Layout: 3-column Grid — key label (Auto) | dotted spacer (*) |
-             pill/glyph (Auto, right-aligned). MinHeight matches the
-             NodeGeometry.MiddleAttrRowHeight constant so the painted body
-             and the intrinsic-height budget agree. -->
+             pill (Auto, right-aligned) for TEXT rows; BOOL rows render as a
+             single left-aligned `☑ Key` checkmark unit in column 0 (glyph +
+             label, one tap toggles) with spacer + pill collapsed. MinHeight
+             matches the NodeGeometry.MiddleAttrRowHeight constant so the
+             painted body and the intrinsic-height budget agree. -->
         <DataTemplate x:Key="MiddleAttributeRowTemplate">
             <!-- B16 (audit 2026-05-24) — row-level hover tooltip surfaces
                  "{Key}: {DisplayText}" so middle-attribute rows aren't
@@ -306,19 +308,55 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- Key label — 12pt sans, same family/size as socket labels so
-                     the two row types read as siblings, not as competing widgets. -->
+                     the two row types read as siblings, not as competing widgets.
+                     Pill rows only — bool rows carry their key inside the
+                     left-aligned checkmark unit below. -->
                 <TextBlock Grid.Column="0"
                            Text="{Binding Key}"
                            FontFamily="{StaticResource SansFont}"
                            FontSize="12"
                            Foreground="{StaticResource TextLabelBrush}"
-                           VerticalAlignment="Center" />
+                           VerticalAlignment="Center"
+                           Visibility="{Binding IsPillRow, Converter={StaticResource BoolVis}}" />
+
+                <!-- Boolean checkmark row — LEFT-aligned `☑ Key` toggle unit
+                     (UE-Blueprints checkbox-list style;
+                     Chat.Message renders Twitch / YouTube / Kick this way).
+                     One tap ANYWHERE on glyph+label toggles the value through
+                     MiddleAttributeViewModel.ToggleBool — the whole unit is the
+                     hit target, not just the 14px glyph. Background=Transparent
+                     is LOAD-BEARING: a null-background panel is not
+                     hit-testable in WinUI.
+                     Keep geometry in lockstep with the bool-row width budget in
+                     NodeGeometry.ComputeIntrinsicWidth and the Win2D
+                     DrawMiddleAttributes bool branch. -->
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal"
+                            Background="Transparent"
+                            VerticalAlignment="Center"
+                            canvas:CanvasInteraction.IsEditAffordance="True"
+                            Tapped="OnMiddleAttrBoolTapped"
+                            Visibility="{Binding IsBool, Converter={StaticResource BoolVis}}">
+                    <TextBlock Text="{Binding BoolGlyph}"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="14"
+                               Foreground="{StaticResource AccentValueBrush}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Key}"
+                               Margin="6,0,0,0"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               Foreground="{StaticResource TextLabelBrush}"
+                               Opacity="{Binding BoolLabelOpacity}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
 
                 <!-- Dotted spacer between key and pill — Design_Orders §5.1
                      shows the row as `Key …… [pill]`. A TextBlock with a
                      dotted run mimics the ASCII art without a custom geometry,
                      and trimming with CharacterEllipsis lets it shrink under
-                     pressure rather than fight the pill for width. -->
+                     pressure rather than fight the pill for width. Pill rows
+                     only — bool checkmark rows are left-aligned with no leader. -->
                 <TextBlock Grid.Column="1"
                            Text="·············································"
                            Margin="6,0,6,0"
@@ -327,23 +365,8 @@
                            FontSize="11"
                            VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"
-                           IsHitTestVisible="False" />
-
-                <!-- Boolean toggle glyph — ☑ / ☐ — clickable, no pill chrome.
-                     Mirrors InspectorField.OnBoolHitTapped pattern (consumed
-                     shape, not lifted file: a parallel agent owns
-                     InspectorField.xaml.cs per QC19 sweep). Tapping toggles
-                     MiddleAttributeViewModel.Value via ToggleBool. -->
-                <TextBlock Grid.Column="2"
-                           Text="{Binding BoolGlyph}"
-                           FontFamily="{StaticResource SansFont}"
-                           FontSize="14"
-                           Foreground="{StaticResource AccentValueBrush}"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Right"
-                           canvas:CanvasInteraction.IsEditAffordance="True"
-                           Tapped="OnMiddleAttrBoolTapped"
-                           Visibility="{Binding IsBool, Converter={StaticResource BoolVis}}" />
+                           IsHitTestVisible="False"
+                           Visibility="{Binding IsPillRow, Converter={StaticResource BoolVis}}" />
 
                 <!-- Pill row (non-bool case) — mirrors the SocketRow pill chrome
                      so the affordance reads identically: click to edit, "—" for

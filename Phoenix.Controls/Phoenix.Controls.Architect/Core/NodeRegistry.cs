@@ -66,6 +66,49 @@ namespace Phoenix.Controls.Architect.Core
         // socket on this template is marked required.
         public HashSet<string> RequiredInputs { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
+
+        // Registration-time lookup caches over Inputs/Outputs. The socket lists
+        // are only populated inside AddTemplate and templates are immutable
+        // post-RegisterDefaults, so these are computed once there instead of per
+        // node on every graph load: MigrateNodes reads the name sets for the
+        // stale-socket sweep and ReorderSocketsToTemplate reads the
+        // first-occurrence index maps for template-order comparisons.
+        public IReadOnlySet<string> InputNames  { get; private set; } =
+            new HashSet<string>(StringComparer.Ordinal);
+        public IReadOnlySet<string> OutputNames { get; private set; } =
+            new HashSet<string>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, int> InputOrder  { get; private set; } =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+        public IReadOnlyDictionary<string, int> OutputOrder { get; private set; } =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Rebuild the derived name/order caches from the current Inputs/Outputs.
+        /// Called by AddTemplate after the socket lists are populated — must be
+        /// re-invoked if a template's socket lists are ever mutated later (none
+        /// are today; templates freeze after RegisterDefaults).
+        /// </summary>
+        internal void RebuildSocketLookups()
+        {
+            (InputNames,  InputOrder)  = BuildSocketLookups(Inputs);
+            (OutputNames, OutputOrder) = BuildSocketLookups(Outputs);
+        }
+
+        private static (IReadOnlySet<string> Names, IReadOnlyDictionary<string, int> Order)
+            BuildSocketLookups(List<(string Name, Color Color)> sockets)
+        {
+            var names = new HashSet<string>(sockets.Count, StringComparer.Ordinal);
+            var order = new Dictionary<string, int>(sockets.Count, StringComparer.Ordinal);
+            for (int i = 0; i < sockets.Count; i++)
+            {
+                string name = sockets[i].Name;
+                names.Add(name);
+                // First occurrence wins — matches the reorder comparer's
+                // duplicate-name handling in ReorderSocketsToTemplate.
+                if (!order.ContainsKey(name)) order[name] = i;
+            }
+            return (names, order);
+        }
     }
 
     public static partial class NodeRegistry
@@ -82,6 +125,18 @@ namespace Phoenix.Controls.Architect.Core
         public static readonly Color ColReturn  = Color.FromArgb(255, 165, 0);
         public static readonly Color ColList    = Color.FromArgb(255, 170, 100);
 
+        // Precomputed ARGB forms of the palette constants above (declared after
+        // them so static-field init order stays valid). DataTypeFromColor runs
+        // per socket on every graph load/migration; Color.ToArgb() re-derives
+        // the value from the struct's name/state flags each call, so the six
+        // constant conversions are hoisted out of the per-call path.
+        private static readonly int _argbExec   = ColExec.ToArgb();
+        private static readonly int _argbString = ColString.ToArgb();
+        private static readonly int _argbNumber = ColNumber.ToArgb();
+        private static readonly int _argbFloat  = ColFloat.ToArgb();
+        private static readonly int _argbBool   = ColBool.ToArgb();
+        private static readonly int _argbList   = ColList.ToArgb();
+
         static NodeRegistry()
         {
             RegisterDefaults();
@@ -97,12 +152,12 @@ namespace Phoenix.Controls.Architect.Core
             // ToArgb-based compare makes ColExec (named) and the FromArgb
             // constants behave uniformly across save/load round-trips.
             int argb = c.ToArgb();
-            if (argb == ColExec.ToArgb())   return SocketDataType.Flow;
-            if (argb == ColString.ToArgb()) return SocketDataType.String;
-            if (argb == ColNumber.ToArgb()) return SocketDataType.Int;
-            if (argb == ColFloat.ToArgb())  return SocketDataType.Float;
-            if (argb == ColBool.ToArgb())   return SocketDataType.Bool;
-            if (argb == ColList.ToArgb())   return SocketDataType.Collection;
+            if (argb == _argbExec)   return SocketDataType.Flow;
+            if (argb == _argbString) return SocketDataType.String;
+            if (argb == _argbNumber) return SocketDataType.Int;
+            if (argb == _argbFloat)  return SocketDataType.Float;
+            if (argb == _argbBool)   return SocketDataType.Bool;
+            if (argb == _argbList)   return SocketDataType.Collection;
             return SocketDataType.Any;
         }
 

@@ -51,6 +51,17 @@ public sealed partial class LeftRail : UserControl
         new(StringComparer.OrdinalIgnoreCase);
     private Action<string, string, string>? _onVariableSetHandler;
 
+    // DEBUG_VAR_SET flood guard. A value message never changes the set of
+    // discovered NAMES (that's graph-derived), so instead of re-running the
+    // full-graph DiscoverReferencedVars walk per message, changed names are
+    // pended here (bus thread) and drained on the UI thread by a ~120 ms
+    // one-shot timer that swaps only the affected rows' value tags in place.
+    // _liveFlushQueued gates the dispatcher enqueue to one per burst.
+    private readonly HashSet<string> _pendingLiveVarNames =
+        new(StringComparer.OrdinalIgnoreCase);
+    private int _liveFlushQueued;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _liveValueFlushTimer;
+
     // Architect VM held weakly so a rename in the rail can fire MacroRenamed /
     // ProcessRenamed without LeftRail having to re-resolve it. Optional: when
     // null (e.g. designer / boot stub) the rename still mutates the model and
@@ -174,21 +185,138 @@ public sealed partial class LeftRail : UserControl
                 -= _onVariableSetHandler;
             _onVariableSetHandler = null;
         }
+        // Stop the live-value debounce so a torn-down rail doesn't tick.
+        _liveValueFlushTimer?.Stop();
     }
 
-    // Cache the live value and refresh if we're showing a
-    // discovered scope. The bus fires on a background thread, so marshal the
-    // refresh onto the rail's dispatcher.
+    // Cache the live value and schedule a debounced value-tag
+    // update. A DEBUG_VAR_SET changes a variable VALUE, never the set of
+    // referenced names, so no re-discovery runs here — the flush swaps only
+    // the affected rows' value tags (falling back to a full rebuild when the
+    // graph changed underneath, stamp-gated in GetDiscoveredVars). The bus
+    // fires on a background thread, so UI work is marshalled to the dispatcher.
     private void OnBusVariableSet(string varName, string value, string scriptFile)
     {
         if (string.IsNullOrEmpty(varName)) return;
-        lock (_liveVarValues) _liveVarValues[varName.Trim()] = value ?? string.Empty;
+        var name = varName.Trim();
+        lock (_liveVarValues) _liveVarValues[name] = value ?? string.Empty;
         if (_variableScope == 2) return; // Graph view doesn't show live values.
+        lock (_pendingLiveVarNames) _pendingLiveVarNames.Add(name);
+        ScheduleLiveValueFlush();
+    }
+
+    // Bus thread. One dispatcher enqueue per burst — the gate resets when the
+    // flush drains (or when the enqueue fails, so a later message can retry).
+    private void ScheduleLiveValueFlush()
+    {
+        if (System.Threading.Interlocked.CompareExchange(ref _liveFlushQueued, 1, 0) != 0) return;
+        bool queued = false;
         try
         {
-            DispatcherQueue?.TryEnqueue(RebuildVariablesForScope);
+            queued = DispatcherQueue?.TryEnqueue(ArmLiveValueFlushTimer) ?? false;
         }
         catch { /* dispatcher torn down during shutdown — ignore */ }
+        if (!queued) System.Threading.Interlocked.Exchange(ref _liveFlushQueued, 0);
+    }
+
+    // UI thread. Lazily build + arm the one-shot ~120 ms debounce timer that
+    // coalesces a value flood into one rail update.
+    private void ArmLiveValueFlushTimer()
+    {
+        if (_liveValueFlushTimer is null)
+        {
+            var dq = DispatcherQueue;
+            if (dq is null)
+            {
+                System.Threading.Interlocked.Exchange(ref _liveFlushQueued, 0);
+                return;
+            }
+            _liveValueFlushTimer = dq.CreateTimer();
+            _liveValueFlushTimer.Interval = TimeSpan.FromMilliseconds(120);
+            _liveValueFlushTimer.IsRepeating = false;
+            _liveValueFlushTimer.Tick += (_, _) => FlushPendingLiveVarValues();
+        }
+        if (!_liveValueFlushTimer.IsRunning) _liveValueFlushTimer.Start();
+    }
+
+    // UI thread (timer tick). Apply the pended live-value changes to the
+    // showing discovery scope. When the graph changed since the rows were
+    // built (a fresh edit may have added/removed a {token} reference), fall
+    // back to the full RebuildVariablesForScope so re-discovery runs; the
+    // steady-state path touches only the rows whose value actually changed.
+    private void FlushPendingLiveVarValues()
+    {
+        System.Threading.Interlocked.Exchange(ref _liveFlushQueued, 0);
+        if (_vm is null) return;
+        if (_variableScope == 2)
+        {
+            lock (_pendingLiveVarNames) _pendingLiveVarNames.Clear();
+            return;
+        }
+
+        List<string>? pending = null;
+        lock (_pendingLiveVarNames)
+        {
+            if (_pendingLiveVarNames.Count > 0)
+            {
+                pending = new List<string>(_pendingLiveVarNames);
+                _pendingLiveVarNames.Clear();
+            }
+        }
+        if (pending is null) return;
+
+        bool globalScope = _variableScope == 1;
+        var discovered = _discoveredVarsCache;
+        if (discovered is null
+            || _discoveredVarsCacheGlobalScope != globalScope
+            || _discoveredVarsCacheStamp != LogicCanvasViewModel.GraphEditStamp
+            || !ReferenceEquals(_discoveredVarsCacheGraph, _vm.Graph)
+            || VariablesSection.Items is not ObservableCollection<RailItemViewModel> items)
+        {
+            RebuildVariablesForScope();
+            return;
+        }
+
+        // Value-only path: RailItemViewModel's fields are init-only, so a
+        // changed row is REPLACED at its index (the ItemsRepeater re-realizes
+        // just that element); selection is carried over so the swap is
+        // invisible beyond the tag text.
+        foreach (var name in pending)
+        {
+            int idx = -1;
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (items[i].Kind == "variable"
+                    && string.Equals(items[i].Id, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0) continue; // not a var this scope discovered — nothing to show
+
+            var old = items[idx];
+            string tag;
+            lock (_liveVarValues)
+                tag = _liveVarValues.TryGetValue(name, out var v) ? v : string.Empty;
+            if (string.Equals(old.Type, tag, StringComparison.Ordinal)) continue;
+
+            var replacement = new RailItemViewModel
+            {
+                Name  = old.Name,
+                Type  = tag,
+                Color = old.Color,
+                Kind  = old.Kind,
+                Id    = old.Id,
+            };
+            bool wasSelected = ReferenceEquals(VariablesSection.SelectedItem, old);
+            items[idx] = replacement;
+            if (wasSelected) VariablesSection.SelectItem(replacement);
+        }
+
+        // Keep the signature gate coherent with the rows now showing the new
+        // values so the next Refresh() doesn't force a redundant full rebuild.
+        _varsSig = (globalScope ? "X:" : "L:") + BuildDiscoverySignature(discovered);
     }
 
     private void OnVariableScopeChanged(object? sender, int scopeIndex)
@@ -559,7 +687,7 @@ public sealed partial class LeftRail : UserControl
     private void RefreshLocalVarsList()
     {
         if (_vm is null) return;
-        var discovered = DiscoverReferencedVars(globalScope: false);
+        var discovered = GetDiscoveredVars(globalScope: false);
         var newVarsSig = "L:" + BuildDiscoverySignature(discovered);
         if (newVarsSig == _varsSig) return; // names + live values unchanged
         VariablesSection.Items = BuildDiscoveredItems(discovered);
@@ -576,12 +704,41 @@ public sealed partial class LeftRail : UserControl
     private void RefreshGlobalVarsList()
     {
         if (_vm is null) return;
-        var discovered = DiscoverReferencedVars(globalScope: true);
+        var discovered = GetDiscoveredVars(globalScope: true);
         var newVarsSig = "X:" + BuildDiscoverySignature(discovered);
         if (newVarsSig == _varsSig) return;
         VariablesSection.Items = BuildDiscoveredItems(discovered);
         WireItemContextMenus(VariablesSection);
         _varsSig = newVarsSig;
+    }
+
+    // Cached DiscoverReferencedVars result. The walk is O(nodes) with a regex
+    // per attribute, and pre-fix it re-ran on EVERY DEBUG_VAR_SET bus message
+    // — although a value write can never change which names the GRAPH
+    // references. Keyed on (scope, graph reference, graph-edit stamp): any
+    // graph edit — including inline pill commits, via the shared-history hook
+    // that bumps LogicCanvasViewModel.GraphEditStamp — invalidates it, so a
+    // newly-authored {token} still appears on the next rebuild.
+    private List<string>? _discoveredVarsCache;
+    private bool _discoveredVarsCacheGlobalScope;
+    private int _discoveredVarsCacheStamp = -1;
+    private Graph? _discoveredVarsCacheGraph;
+
+    private List<string> GetDiscoveredVars(bool globalScope)
+    {
+        int stamp = LogicCanvasViewModel.GraphEditStamp;
+        var graph = _vm?.Graph;
+        if (_discoveredVarsCache is null
+            || _discoveredVarsCacheGlobalScope != globalScope
+            || _discoveredVarsCacheStamp != stamp
+            || !ReferenceEquals(_discoveredVarsCacheGraph, graph))
+        {
+            _discoveredVarsCache = DiscoverReferencedVars(globalScope);
+            _discoveredVarsCacheGlobalScope = globalScope;
+            _discoveredVarsCacheStamp = stamp;
+            _discoveredVarsCacheGraph = graph;
+        }
+        return _discoveredVarsCache;
     }
 
     // {token} matcher — same shape ScriptEngine.SubstituteVars / the

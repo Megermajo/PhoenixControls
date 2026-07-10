@@ -13,6 +13,20 @@ namespace Phoenix.Controls.Architect.Core
         private readonly StringBuilder _sb = new StringBuilder();
         private readonly HashSet<string> _visitedNodes = new HashSet<string>();
 
+        // Insertion-order companion to _visitedNodes, kept in lock-step (adds go
+        // through MarkVisited; the per-event reset clears both). Traversal only
+        // ever ADDS to the visited set (handlers never remove through
+        // CtxVisited), so EmitBranch can capture a branch arm's visited-delta as
+        // a list segment and undo exactly those entries — O(delta) instead of
+        // snapshotting the whole set per conditional. EmitBranch is the sole
+        // remover and keeps both containers in sync.
+        private readonly List<string> _visitedOrder = new();
+
+        private void MarkVisited(string nodeId)
+        {
+            if (_visitedNodes.Add(nodeId)) _visitedOrder.Add(nodeId);
+        }
+
         // Tracks the indent level of the currently executing ProcessNode call so that
         // ResolveOutputFromNode can emit on-demand pre-statements for pure data nodes.
         private int _currentIndent = 1;
@@ -135,7 +149,8 @@ namespace Phoenix.Controls.Architect.Core
             = new(StringComparer.OrdinalIgnoreCase)
         {
             "Math", "Text", "Convert", "Logic", "Values",
-            "Collections", "Databank", "Variables", "State", "System", "Twitch Data"
+            "Collections", "Databank", "Variables", "State", "System", "Twitch Data",
+            "Platform Data"
         };
 
         /// <summary>
@@ -193,6 +208,16 @@ namespace Phoenix.Controls.Architect.Core
         // the in-flight macro stack (nesting context). See CtxExportMacroSubGraph.
         private readonly Dictionary<string, string> _macroExportCache;
 
+        // Validation memo — shared across the nested-exporter tree (threaded
+        // through the private ctor like _macroExportCache) so a macro/process
+        // body graph reached from N call sites is validated once per export run
+        // instead of once per call site. Keyed on graph object identity; graphs
+        // are immutable during an export pass, so the memoized warning list is
+        // exactly what a re-run would produce. Cleared at the top of each
+        // TOP-LEVEL Export() so a re-export of the same instance re-validates
+        // against the current graph state.
+        private readonly Dictionary<Graph, List<ValidationWarning>> _validationCache;
+
         // Live-processes — when true, this exporter is producing a process
         // TEMPLATE (a standalone mini-script): Process.Entry → on_process_start:,
         // Process.Exit → on_process_stop:, and Process.Entry param outputs resolve
@@ -201,24 +226,29 @@ namespace Phoenix.Controls.Architect.Core
         private readonly bool _processTemplateMode;
 
         public ScriptExporter(Graph graph, string macroContextId = "")
-            : this(graph, macroContextId, new Stack<string>(), new Dictionary<string, string>(StringComparer.Ordinal))
+            : this(graph, macroContextId, new Stack<string>(), new Dictionary<string, string>(StringComparer.Ordinal),
+                   new Dictionary<Graph, List<ValidationWarning>>(ReferenceEqualityComparer.Instance))
         {
         }
 
         /// <summary>Constructs an exporter that emits a process TEMPLATE (see
         /// <see cref="_processTemplateMode"/> / <see cref="ExportAll"/>).</summary>
         public ScriptExporter(Graph graph, bool processTemplateMode)
-            : this(graph, "", new Stack<string>(), new Dictionary<string, string>(StringComparer.Ordinal), processTemplateMode)
+            : this(graph, "", new Stack<string>(), new Dictionary<string, string>(StringComparer.Ordinal),
+                   new Dictionary<Graph, List<ValidationWarning>>(ReferenceEqualityComparer.Instance), processTemplateMode)
         {
         }
 
         private ScriptExporter(Graph graph, string macroContextId, Stack<string> macroStack,
-                               Dictionary<string, string> macroExportCache, bool processTemplateMode = false)
+                               Dictionary<string, string> macroExportCache,
+                               Dictionary<Graph, List<ValidationWarning>> validationCache,
+                               bool processTemplateMode = false)
         {
             _graph = graph;
             _macroContextId = macroContextId;
             _macroStack = macroStack;
             _macroExportCache = macroExportCache;
+            _validationCache = validationCache;
             _processTemplateMode = processTemplateMode;
             // Seed the O(1) cycle-check companion from whatever is already on the
             // shared stack (a sub-exporter inherits the parent's in-flight chain).
@@ -260,6 +290,10 @@ namespace Phoenix.Controls.Architect.Core
             _linkByFromSocket = null;
             _linksByToNode = null;
             _outgoingCountByNode = null;
+            // Same staleness guard for the validation memo — but only at the top
+            // level: nested sub-exporters share the parent's per-run cache so a
+            // body graph reused from several call sites validates once per run.
+            if (_macroContextId.Length == 0) _validationCache.Clear();
             if (_processTemplateMode)
                 Emit($"# Process template — \"{_graph.Name}\" — generated, do not edit by hand");
             else
@@ -271,7 +305,7 @@ namespace Phoenix.Controls.Architect.Core
             // header so the user sees them. On any Error severity we refuse to
             // emit body content: a cyclic or fundamentally broken graph must
             // not produce a runnable script — the user has to fix it first.
-            var validation = GraphValidator.Validate(_graph);
+            var validation = ValidateOnce(_graph);
             foreach (var w in validation)
                 Emit($"# {w.Severity.ToString().ToUpperInvariant()}: {w.Message}");
 
@@ -314,6 +348,7 @@ namespace Phoenix.Controls.Architect.Core
             foreach (var evt in eventNodes)
             {
                 _visitedNodes.Clear();
+                _visitedOrder.Clear();
                 ProcessEventNode(evt);
                 _sb.AppendLine();
             }
@@ -357,16 +392,33 @@ namespace Phoenix.Controls.Architect.Core
             return new ProcessExportResult(main, templates, ids);
         }
 
+        // Per-run validation memo (see _validationCache). Callers only
+        // enumerate the returned list, so sharing one instance across cache
+        // hits is safe.
+        private List<ValidationWarning> ValidateOnce(Graph graph)
+        {
+            if (_validationCache.TryGetValue(graph, out var cached)) return cached;
+            var computed = GraphValidator.Validate(graph);
+            _validationCache[graph] = computed;
+            return computed;
+        }
+
         // ══════════════════════════════════════════════════════════════════
         // EVENT ENTRY POINTS
         // ══════════════════════════════════════════════════════════════════
+
+        // CamelCase→snake_case boundary. Hoisted + compiled like CallableRegex —
+        // CommandName runs per emitted command line, so the inline Regex.Replace
+        // re-parsed the pattern on every call.
+        private static readonly Regex CamelBoundaryRegex =
+            new(@"(?<=[a-z0-9])()", RegexOptions.Compiled);
 
         /// <summary>Converts "Twitch.SendChat" → "twitch.send_chat", "Math.Add" → "math.add".</summary>
         private static string CommandName(string title)
         {
             var parts = title.Split('.');
             return string.Join(".", parts.Select(p =>
-                System.Text.RegularExpressions.Regex.Replace(p, @"(?<=[a-z0-9])()", "_$1").ToLower()
+                CamelBoundaryRegex.Replace(p, "_$1").ToLower()
             ));
         }
 
@@ -435,8 +487,10 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 return;
             }
-            // Twitch.ChatMessage has special handling for Commands filtering
-            if (node.Title == "Twitch.ChatMessage")
+            // The unified Chat.Message node (and the legacy Twitch.ChatMessage
+            // title, still honored for graphs that predate the migration) has
+            // special handling for platform checkmarks + Commands filtering.
+            if (node.Title == "Chat.Message" || node.Title == "Twitch.ChatMessage")
             {
                 ProcessChatMessageEventNode(node);
                 return;
@@ -536,7 +590,40 @@ namespace Phoenix.Controls.Architect.Core
         {
             _nodeResultVars.Clear();
             _varNameCounters.Clear();
-            _sb.AppendLine("on_chat:");
+
+            // Platform checkmarks (unified Chat.Message). A legacy
+            // Twitch.ChatMessage title defaults YouTube/Kick to OFF; a fresh
+            // Chat.Message template seeds all three ON. A Twitch-only selection
+            // emits the bare legacy `on_chat:` header — engine-side that means
+            // Twitch chat only, which keeps every existing .phx and golden
+            // byte-identical. Any other selection emits the platform list the
+            // engine gate parses: on_chat(twitch, youtube, kick):
+            bool isLegacyTitle = node.Title == "Twitch.ChatMessage";
+            static bool ParseBoolAttr(string raw) =>
+                raw.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+            bool twitch  = ParseBoolAttr(node.GetAttr("Twitch",  "true"));
+            bool youtube = ParseBoolAttr(node.GetAttr("YouTube", isLegacyTitle ? "false" : "true"));
+            bool kick    = ParseBoolAttr(node.GetAttr("Kick",    isLegacyTitle ? "false" : "true"));
+
+            if (!twitch && !youtube && !kick)
+            {
+                _sb.AppendLine($"# WARNING: Chat node (id {IdPrefix(node, 8)}) has no platform enabled — block skipped");
+                return;
+            }
+
+            if (twitch && !youtube && !kick)
+            {
+                _sb.AppendLine("on_chat:");
+            }
+            else
+            {
+                var platforms = new List<string>(3);
+                if (twitch)  platforms.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch);
+                if (youtube) platforms.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube);
+                if (kick)    platforms.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Kick);
+                _sb.AppendLine($"on_chat({string.Join(", ", platforms)}):");
+            }
+
             string cmdsRaw = node.GetAttr("Commands", "");
             if (!string.IsNullOrWhiteSpace(cmdsRaw))
             {
@@ -581,7 +668,7 @@ namespace Phoenix.Controls.Architect.Core
         {
             if (_visitedNodes.Contains(node.Id)) return;
             if (_blockedForBranch.Contains(node.Id)) return;
-            _visitedNodes.Add(node.Id);
+            MarkVisited(node.Id);
 
             int savedIndent = _currentIndent;
             _currentIndent = indent;
@@ -706,23 +793,43 @@ namespace Phoenix.Controls.Architect.Core
             if (merge != null) _blockedForBranch.Add(merge.Id);
             try
             {
-                // Snapshot visited state AND resolved-result cache so the False branch can
+                // Isolate visited state AND resolved-result cache so the False branch can
                 // independently re-visit nodes that the True branch already processed.
                 // Without restoring _nodeResultVars too, ResolveInputValue's "prefer
                 // resolved-anywhere" rule reuses the True branch's cached upstream
                 // resolution on the False side, producing incorrect scripts.
-                var visitedBeforeBranch = new HashSet<string>(_visitedNodes);
-                var nodeResultVarsBeforeBranch = new Dictionary<string, string>(_nodeResultVars);
+                //
+                // Isolation is delta-based rather than full-snapshot: arms only ever
+                // ADD to _visitedNodes (tracked in insertion order via _visitedOrder)
+                // and add/overwrite in _nodeResultVars — nothing net-removes from
+                // either during an arm, so undoing exactly the True arm's delta is
+                // equivalent to rebuilding both containers from pre-branch copies.
+                int visitedMark = _visitedOrder.Count;
+                var resultsBefore = new Dictionary<string, string>(_nodeResultVars);
 
                 FollowNamedOutput(branchNode, trueOut, indent + 1);
 
-                // Capture True branch's visited set + result cache, then restore to pre-branch state for False.
-                var visitedAfterTrue = new HashSet<string>(_visitedNodes);
-                var nodeResultVarsAfterTrue = new Dictionary<string, string>(_nodeResultVars);
-                _visitedNodes.Clear();
-                _visitedNodes.UnionWith(visitedBeforeBranch);
-                _nodeResultVars.Clear();
-                foreach (var kv in nodeResultVarsBeforeBranch) _nodeResultVars[kv.Key] = kv.Value;
+                // Capture the True arm's visited additions + result-cache delta,
+                // then restore the pre-branch state for False.
+                var trueVisited = _visitedOrder.GetRange(visitedMark, _visitedOrder.Count - visitedMark);
+                Dictionary<string, string>? trueResults = null;
+                foreach (var kv in _nodeResultVars)
+                {
+                    if (!resultsBefore.TryGetValue(kv.Key, out var prev)
+                        || !string.Equals(prev, kv.Value, StringComparison.Ordinal))
+                        (trueResults ??= new Dictionary<string, string>())[kv.Key] = kv.Value;
+                }
+
+                foreach (var id in trueVisited) _visitedNodes.Remove(id);
+                _visitedOrder.RemoveRange(visitedMark, _visitedOrder.Count - visitedMark);
+                if (trueResults != null)
+                {
+                    foreach (var kv in trueResults)
+                    {
+                        if (resultsBefore.TryGetValue(kv.Key, out var prev)) _nodeResultVars[kv.Key] = prev;
+                        else _nodeResultVars.Remove(kv.Key);
+                    }
+                }
 
                 var falseTarget = GetNamedOutputTarget(branchNode, falseOut);
                 if (falseTarget != null)
@@ -731,9 +838,18 @@ namespace Phoenix.Controls.Architect.Core
                     ProcessNode(falseTarget, indent + 1);
                 }
 
-                // Union both visited sets + result caches so nothing runs again after the branch completes.
-                _visitedNodes.UnionWith(visitedAfterTrue);
-                foreach (var kv in nodeResultVarsAfterTrue) _nodeResultVars[kv.Key] = kv.Value;
+                // Union both arms' state so nothing runs again after the branch
+                // completes. Mirrors the historical "overwrite everything with the
+                // after-True map" union exactly: after-True == resultsBefore +
+                // trueResults, so re-applying both reproduces it key-for-key —
+                // including reverting a False-arm overwrite of a pre-branch entry
+                // (True-side state wins at the join) — while False-arm pure
+                // additions, absent from both, survive untouched.
+                foreach (var id in trueVisited)
+                    if (_visitedNodes.Add(id)) _visitedOrder.Add(id);
+                foreach (var kv in resultsBefore) _nodeResultVars[kv.Key] = kv.Value;
+                if (trueResults != null)
+                    foreach (var kv in trueResults) _nodeResultVars[kv.Key] = kv.Value;
             }
             finally
             {
@@ -891,7 +1007,7 @@ namespace Phoenix.Controls.Architect.Core
             int consumers = OutputConsumerCount(src);
             if (consumers <= 1)
             {
-                _visitedNodes.Add(src.Id);
+                MarkVisited(src.Id);
                 string inlineVal = ComputeInlineValue(src);
                 _nodeResultVars[src.Id] = inlineVal;
                 return inlineVal;
@@ -901,7 +1017,7 @@ namespace Phoenix.Controls.Architect.Core
             string indentSp = Indent(_currentIndent);
             Emit($"{indentSp}# [{src.Title}]");
             Emit($"{indentSp}{varName} = {hoistVal}");
-            _visitedNodes.Add(src.Id);
+            MarkVisited(src.Id);
             _nodeResultVars[src.Id] = $"{{{varName}}}";
             return $"{{{varName}}}";
         }
@@ -988,9 +1104,14 @@ namespace Phoenix.Controls.Architect.Core
                     && srcSocket.Name != "Flow" && !srcSocket.IsPlaceholder)
                     return $"{{event.arg.{srcSocket.Name}}}";
 
-                // ChatMessage-specific outputs map to runtime-provided standard vars
-                if (src.Title == "Twitch.ChatMessage")
+                // Chat-node outputs map to runtime-provided standard vars. Covers
+                // the unified Chat.Message node and the legacy Twitch.ChatMessage
+                // title. The $twitch_user_ cache-var NAME is deliberately kept as
+                // is — it doesn't depend on the title, so a migrated node's
+                // emission stays byte-identical to its pre-migration export.
+                if (src.Title == "Twitch.ChatMessage" || src.Title == "Chat.Message")
                 {
+                    if (srcSocket.Name == "Platform") return "{user.platform}";
                     if (srcSocket.Name == "Command") return "{user.command}";
                     if (srcSocket.Name == "Args")    return "{user.args}";
                     if (srcSocket.Name == "IsCommand") return "{event.iscommand}";
@@ -1183,7 +1304,7 @@ namespace Phoenix.Controls.Architect.Core
                     string indentSp = Indent(_currentIndent);
                     Emit($"{indentSp}# [{src.Title}]");
                     Emit($"{indentSp}{resultVar} = {inlineVal}");
-                    _visitedNodes.Add(src.Id);
+                    MarkVisited(src.Id);
                 }
                 return resultVar;
             }
@@ -1208,7 +1329,7 @@ namespace Phoenix.Controls.Architect.Core
                 Emit($"{indentSp}    {varName} = {aVal}");
                 Emit($"{indentSp}else:");
                 Emit($"{indentSp}    {varName} = {bVal}");
-                _visitedNodes.Add(src.Id);
+                MarkVisited(src.Id);
                 _nodeResultVars[src.Id] = $"{{{varName}}}";
                 return $"{{{varName}}}";
             }
@@ -1375,7 +1496,7 @@ namespace Phoenix.Controls.Architect.Core
                 Emit($"{indentSp}    {varName} = {cVal}");
                 Emit($"{indentSp}elif {idx} == 3:");
                 Emit($"{indentSp}    {varName} = {dVal}");
-                _visitedNodes.Add(src.Id);
+                MarkVisited(src.Id);
                 _nodeResultVars[src.Id] = $"{{{varName}}}";
                 return $"{{{varName}}}";
             }
@@ -1477,6 +1598,30 @@ namespace Phoenix.Controls.Architect.Core
                     ("Twitch.LastActive",   "MinutesAgo")    => _nodeResultVars.TryGetValue($"{src.Id}_MinutesAgo", out var minsVal) ? minsVal : "0",
                     ("Twitch.GetViewers",   "Viewers")       => _nodeResultVars.TryGetValue($"{src.Id}_Viewers",   out var vwrVal)  ? vwrVal  : "\"\"",
                     _ => $"twitch.{srcSocket.Name.ToLower()}"
+                };
+            }
+
+            // "Platform Data" — YouTube/Kick user lookups (youtube.get_user /
+            // kick.get_user data round-trips). Same bare-result-var convention
+            // as the Twitch Data arm above; the Hub handlers write these keys
+            // via SetLocalResultVar (ScriptManager.YouTube.cs / .Kick.cs).
+            if (src.Category == "Platform Data")
+            {
+                return (src.Title, srcSocket.Name) switch
+                {
+                    ("YouTube.GetUser", "Id")            => "user.id",
+                    ("YouTube.GetUser", "DisplayName")   => "user.display_name",
+                    ("YouTube.GetUser", "ProfileImage")  => "user.profile_image",
+                    ("YouTube.GetUser", "IsMod")         => "user.is_mod",
+                    ("YouTube.GetUser", "IsSub")         => "user.is_sub",
+                    ("YouTube.GetUser", "IsBroadcaster") => "user.is_broadcaster",
+                    ("Kick.GetUser",    "Id")            => "user.id",
+                    ("Kick.GetUser",    "Login")         => "user.login",
+                    ("Kick.GetUser",    "DisplayName")   => "user.display_name",
+                    ("Kick.GetUser",    "ProfileImage")  => "user.profile_image",
+                    ("Kick.GetUser",    "IsMod")         => "user.is_mod",
+                    ("Kick.GetUser",    "IsSub")         => "user.is_sub",
+                    _ => $"platform.{srcSocket.Name.ToLower()}"
                 };
             }
 
@@ -1891,7 +2036,7 @@ namespace Phoenix.Controls.Architect.Core
             _macroStackSet.Add(cycleKey);
             try
             {
-                string exported = new ScriptExporter(macroGraph, slotPrefix, _macroStack, _macroExportCache).Export();
+                string exported = new ScriptExporter(macroGraph, slotPrefix, _macroStack, _macroExportCache, _validationCache).Export();
                 _macroExportCache[cacheKey] = exported;
                 return exported;
             }
@@ -1949,11 +2094,18 @@ namespace Phoenix.Controls.Architect.Core
             var warnings = new List<ValidationWarning>();
             if (graph == null) return warnings;
 
-            CheckDisconnectedFlowNodes(graph, warnings);
+            // Node-id index shared by every pass below — populated first-wins so
+            // lookups preserve the graph.Nodes.FirstOrDefault(n => n.Id == …)
+            // selection semantics the passes previously re-ran per link.
+            var nodeById = new Dictionary<string, Node>(graph.Nodes.Count);
+            foreach (var n in graph.Nodes)
+                if (n.Id != null) nodeById.TryAdd(n.Id, n);
+
+            CheckDisconnectedFlowNodes(graph, nodeById, warnings);
             CheckUnmatchedEventPairs(graph, warnings);
-            CheckCircularFlow(graph, warnings);
-            CheckIncompatibleLinks(graph, warnings);
-            CheckDanglingLinks(graph, warnings);
+            CheckCircularFlow(graph, nodeById, warnings);
+            CheckIncompatibleLinks(graph, nodeById, warnings);
+            CheckDanglingLinks(graph, nodeById, warnings);
             CheckPlaceholderFrameContents(graph, warnings);
             CheckMacroCallOrphans(graph, warnings);
             // Required-input wiring guard. Catches the "saved a
@@ -1965,10 +2117,16 @@ namespace Phoenix.Controls.Architect.Core
             // only: Logic.If with both A and B materialised as compile-time
             // constants, and Flow.Select with a constant Index. See the
             // method header for the deferred-to-runtime cases.
-            CheckUnreachableConditionalCode(graph, warnings);
+            CheckUnreachableConditionalCode(graph, nodeById, warnings);
 
             return warnings;
         }
+
+        // O(1) node resolve against the index built in Validate. Null id (only
+        // possible on hand-edited/corrupt input) resolves to null, matching the
+        // linear-scan behaviour for ids no node carries.
+        private static Node? FindNode(Dictionary<string, Node> nodeById, string? id)
+            => id != null && nodeById.TryGetValue(id, out var node) ? node : null;
 
         // Required-input pre-export validation.
         //
@@ -2065,7 +2223,7 @@ namespace Phoenix.Controls.Architect.Core
         //     runtime (e.g. ">" on two string-formatted but non-numeric
         //     literals — current logic conservatively skips numeric-only
         //     ops in that case so we don't false-positive).
-        private static void CheckUnreachableConditionalCode(Graph graph, List<ValidationWarning> warnings)
+        private static void CheckUnreachableConditionalCode(Graph graph, Dictionary<string, Node> nodeById, List<ValidationWarning> warnings)
         {
             // Pre-index incoming-wired inputs so we can cheaply tell whether
             // a given (nodeId, socketName) has any upstream connection.
@@ -2073,7 +2231,7 @@ namespace Phoenix.Controls.Architect.Core
                 graph.Links
                      .Select(l =>
                      {
-                         var toNode   = graph.Nodes.FirstOrDefault(n => n.Id == l.ToNodeId);
+                         var toNode   = FindNode(nodeById, l.ToNodeId);
                          var toSocket = toNode?.Sockets.FirstOrDefault(s => s.Id == l.ToSocketId);
                          return (l.ToNodeId, toSocket?.Name ?? string.Empty);
                      })
@@ -2087,11 +2245,11 @@ namespace Phoenix.Controls.Architect.Core
             var downstream = new Dictionary<(string fromNodeId, string fromSocketName), List<Node>>();
             foreach (var link in graph.Links)
             {
-                var fromNode = graph.Nodes.FirstOrDefault(n => n.Id == link.FromNodeId);
+                var fromNode = FindNode(nodeById, link.FromNodeId);
                 if (fromNode == null) continue;
                 var fromSocket = fromNode.Sockets.FirstOrDefault(s => s.Id == link.FromSocketId);
                 if (fromSocket == null || string.IsNullOrEmpty(fromSocket.Name)) continue;
-                var toNode = graph.Nodes.FirstOrDefault(n => n.Id == link.ToNodeId);
+                var toNode = FindNode(nodeById, link.ToNodeId);
                 if (toNode == null) continue;
 
                 var key = (link.FromNodeId, fromSocket.Name);
@@ -2139,7 +2297,7 @@ namespace Phoenix.Controls.Architect.Core
             var inboundFlowLinks = new Dictionary<string, List<Link>>();
             foreach (var link in graph.Links)
             {
-                var toNode = graph.Nodes.FirstOrDefault(n => n.Id == link.ToNodeId);
+                var toNode = FindNode(nodeById, link.ToNodeId);
                 if (toNode == null) continue;
                 var toSocket = toNode.Sockets.FirstOrDefault(s => s.Id == link.ToSocketId);
                 if (toSocket == null) continue;
@@ -2171,14 +2329,14 @@ namespace Phoenix.Controls.Architect.Core
                     bool allDead = true;
                     foreach (var link in links)
                     {
-                        var fromNode = graph.Nodes.FirstOrDefault(n => n.Id == link.FromNodeId);
+                        var fromNode = FindNode(nodeById, link.FromNodeId);
                         var fromSocket = fromNode?.Sockets.FirstOrDefault(s => s.Id == link.FromSocketId);
                         var key = (link.FromNodeId, fromSocket?.Name ?? "");
                         if (!deadEdges.Contains(key)) { allDead = false; break; }
                     }
                     if (!allDead) continue;
 
-                    var n = graph.Nodes.FirstOrDefault(x => x.Id == nodeId);
+                    var n = FindNode(nodeById, nodeId);
                     if (n == null) continue;
                     // Don't re-warn nodes the head pass already flagged.
                     warnings.Add(new ValidationWarning
@@ -2347,12 +2505,12 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
 
-        private static void CheckDanglingLinks(Graph graph, List<ValidationWarning> warnings)
+        private static void CheckDanglingLinks(Graph graph, Dictionary<string, Node> nodeById, List<ValidationWarning> warnings)
         {
             foreach (var link in graph.Links)
             {
-                var fromNode = graph.Nodes.FirstOrDefault(n => n.Id == link.FromNodeId);
-                var toNode   = graph.Nodes.FirstOrDefault(n => n.Id == link.ToNodeId);
+                var fromNode = FindNode(nodeById, link.FromNodeId);
+                var toNode   = FindNode(nodeById, link.ToNodeId);
 
                 if (fromNode == null)
                 {
@@ -2401,12 +2559,27 @@ namespace Phoenix.Controls.Architect.Core
             // Placeholder frames are UI-only metadata; the exporter no longer skips
             // their contents. Surface a warning so the user notices any nodes that
             // are geometrically inside one but participating in live flow.
+            //
+            // The link-endpoint set hoists the per-node "any link touches this
+            // node" probe out of the frame×node loop — set membership is exactly
+            // the old graph.Links.Any(...) predicate. Built lazily so graphs
+            // without placeholder frames pay nothing.
+            HashSet<string>? linkedNodeIds = null;
             foreach (var frame in graph.Frames.Where(f => f.IsPlaceholder))
             {
+                if (linkedNodeIds == null)
+                {
+                    linkedNodeIds = new HashSet<string>();
+                    foreach (var l in graph.Links)
+                    {
+                        linkedNodeIds.Add(l.FromNodeId);
+                        linkedNodeIds.Add(l.ToNodeId);
+                    }
+                }
                 foreach (var node in graph.Nodes)
                 {
                     if (!frame.Bounds.Contains(node.Location)) continue;
-                    bool inFlow = graph.Links.Any(l => l.ToNodeId == node.Id || l.FromNodeId == node.Id);
+                    bool inFlow = linkedNodeIds.Contains(node.Id);
                     if (!inFlow) continue;
                     warnings.Add(new ValidationWarning
                     {
@@ -2418,12 +2591,12 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
 
-        private static void CheckDisconnectedFlowNodes(Graph graph, List<ValidationWarning> warnings)
+        private static void CheckDisconnectedFlowNodes(Graph graph, Dictionary<string, Node> nodeById, List<ValidationWarning> warnings)
         {
             // Find non-event, non-data nodes that have no inbound flow link
             var eventTitles = new HashSet<string>
             {
-                "Twitch.ChatMessage","Twitch.Subscription","Twitch.Resub","Twitch.GiftSub",
+                "Twitch.ChatMessage","Chat.Message","Twitch.Subscription","Twitch.Resub","Twitch.GiftSub",
                 "Twitch.GiftBomb","Twitch.Follow","Twitch.Raid","Twitch.Cheer","Twitch.PointRedeem",
                 "YouTube.Message","System.Startup","Bus.OnMessage",
                 "Event.Executor","HTTP.WebhookListener","Schedule.Cron",
@@ -2433,12 +2606,16 @@ namespace Phoenix.Controls.Architect.Core
                 "System.Clipboard",
                 "OBS.Event",
             };
+            // Every catalog-declared platform event (YouTube.*, Kick.*) is an
+            // event root too — one line instead of 50 hand-listed titles.
+            foreach (var def in Phoenix.Controls.Shared.Core.PlatformEventCatalog.Events)
+                eventTitles.Add(def.Title);
 
             var nodesWithInboundFlow = new HashSet<string>(
                 graph.Links
                     .Where(l =>
                     {
-                        var toNode = graph.Nodes.FirstOrDefault(n => n.Id == l.ToNodeId);
+                        var toNode = FindNode(nodeById, l.ToNodeId);
                         if (toNode == null) return false;
                         var toSocket = toNode.Sockets.FirstOrDefault(s => s.Id == l.ToSocketId);
                         return toSocket != null && SocketTypeHelper.IsFlowPin(toSocket);
@@ -2503,12 +2680,12 @@ namespace Phoenix.Controls.Architect.Core
                 });
         }
 
-        private static void CheckIncompatibleLinks(Graph graph, List<ValidationWarning> warnings)
+        private static void CheckIncompatibleLinks(Graph graph, Dictionary<string, Node> nodeById, List<ValidationWarning> warnings)
         {
             foreach (var link in graph.Links)
             {
-                var fromNode = graph.Nodes.FirstOrDefault(n => n.Id == link.FromNodeId);
-                var toNode   = graph.Nodes.FirstOrDefault(n => n.Id == link.ToNodeId);
+                var fromNode = FindNode(nodeById, link.FromNodeId);
+                var toNode   = FindNode(nodeById, link.ToNodeId);
                 if (fromNode == null || toNode == null) continue;
 
                 var fromSocket = fromNode.Sockets.FirstOrDefault(s => s.Id == link.FromSocketId);
@@ -2530,7 +2707,7 @@ namespace Phoenix.Controls.Architect.Core
             }
         }
 
-        private static void CheckCircularFlow(Graph graph, List<ValidationWarning> warnings)
+        private static void CheckCircularFlow(Graph graph, Dictionary<string, Node> nodeById, List<ValidationWarning> warnings)
         {
             var flowSocketNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -2544,7 +2721,7 @@ namespace Phoenix.Controls.Architect.Core
 
             foreach (var link in graph.Links)
             {
-                var fromNode = graph.Nodes.FirstOrDefault(n => n.Id == link.FromNodeId);
+                var fromNode = FindNode(nodeById, link.FromNodeId);
                 if (fromNode == null) continue;
                 var fromSocket = fromNode.Sockets.FirstOrDefault(s => s.Id == link.FromSocketId);
                 if (fromSocket == null || !flowSocketNames.Contains(fromSocket.Name)) continue;

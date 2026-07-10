@@ -189,6 +189,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
                 _pageIndex      = 0;
                 _sortColumn     = null;
                 _sortDescending = false;
+                // A table switch starts a new table session — drop the
+                // per-session column cache so the reloads below re-read the
+                // column shape from disk instead of serving a prior session's.
+                (_source as DbRelationalSource)?.InvalidateColumns();
                 // Wrap the reload so a faulted DB query (locked file, schema
                 // mismatch) lands in GlobalLogger instead of disappearing as
                 // an unobserved task exception.
@@ -754,11 +758,15 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     /// Delete a batch of rows by rowid (the multi-select Ctrl/Shift delete in the
     /// Databank Browser), then refresh once. Single-row delete routes here too
     /// with a one-element list. System tables are rejected at this layer (and
-    /// again in the persistence layer). A per-row failure is logged + surfaced
-    /// but does NOT abort the rest of the batch. The row grid is explicitly
-    /// reloaded after the deletes so the removed rows visibly disappear
-    /// regardless of which refresh path <see cref="RefreshAfterMutationAsync"/>
-    /// takes (its selective DbRelationalSource path only re-counts the sidebar).
+    /// again in the persistence layer). Against the live DB backing the whole
+    /// batch runs as ONE transaction (chunked IN-lists, single commit) — a
+    /// failure rolls back atomically. Other <see cref="IRelationalSource"/>
+    /// implementations (test fixtures) keep the per-row loop, where a per-row
+    /// failure is logged + surfaced but does NOT abort the rest of the batch.
+    /// The row grid is explicitly reloaded after the deletes so the removed
+    /// rows visibly disappear regardless of which refresh path
+    /// <see cref="RefreshAfterMutationAsync"/> takes (its selective
+    /// DbRelationalSource path only re-counts the sidebar).
     /// </summary>
     public async Task DeleteRowsAsync(IReadOnlyCollection<long> rowIds)
     {
@@ -772,18 +780,44 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         string table = _selectedTable.Name;
         int failed = 0;
         Exception? lastEx = null;
-        foreach (var rowId in rowIds)
+        if (_source is DbRelationalSource dbSource)
         {
+            // DbRelationalSource always wraps the DB singleton (its
+            // parameterless ctor is the only production construction site), so
+            // the batch API can be reached directly — the source contract has
+            // no batch member. One transaction instead of N autocommit deletes.
             try
             {
-                await _source.DeleteRowAsync(table, rowId).ConfigureAwait(false);
+                await DB.Instance.DeleteRowsAsync(
+                    table, rowIds as IReadOnlyList<long> ?? rowIds.ToList()).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                failed++;
+                // Atomic rollback — the whole batch failed together.
+                failed = rowIds.Count;
                 lastEx = ex;
                 Phoenix.Controls.Shared.Services.GlobalLogger.Error(
-                    "DatabankBrowserViewModel", $"Failed to delete row {rowId} from '{table}'", ex);
+                    "DatabankBrowserViewModel", $"Failed to delete {rowIds.Count} row(s) from '{table}'", ex);
+            }
+            // Mirror DbRelationalSource.DeleteRowAsync's cache invalidation so
+            // the next snapshot re-counts regardless of the refresh path.
+            dbSource.InvalidateRowCount(table);
+        }
+        else
+        {
+            foreach (var rowId in rowIds)
+            {
+                try
+                {
+                    await _source.DeleteRowAsync(table, rowId).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    lastEx = ex;
+                    Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                        "DatabankBrowserViewModel", $"Failed to delete row {rowId} from '{table}'", ex);
+                }
             }
         }
         // Sidebar row-count + the row grid both reflect the deletion.
@@ -1395,10 +1429,12 @@ public sealed class DatabankRowViewModel
         for (int i = 0; i < columns.Count; i++)
         {
             var col = columns[i];
-            pairs.Add(new DatabankCellViewModel(
+            var cell = new DatabankCellViewModel(
                 column:  col.Name,
                 value:   rawCells.Count > i ? rawCells[i] : null,
-                sqlType: col.SqlType));
+                sqlType: col.SqlType);
+            cell.Row = this;
+            pairs.Add(cell);
         }
         Cells = pairs;
     }
@@ -1466,6 +1502,14 @@ public sealed class DatabankCellViewModel : ObservableObject
 
     public string  Column  { get; }
     public string  SqlType { get; }
+
+    /// <summary>
+    /// Owning row — back-reference set by <see cref="DatabankRowViewModel"/>
+    /// when it materialises its cells, so cell-commit paths can resolve the
+    /// row in O(1) instead of scanning every visible row's cell list. Null
+    /// for cells constructed standalone (tests).
+    /// </summary>
+    internal DatabankRowViewModel? Row { get; set; }
 
     /// <summary>Which inline editor the cell template should show in IsEditing mode.</summary>
     public DatabankCellEditor Editor { get; }

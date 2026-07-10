@@ -393,6 +393,27 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private bool _redrawDirty;
     private bool _renderingHooked;
 
+    // Wire Paths from the last full RedrawLinks pass, keyed by the Link
+    // they render. Lets the per-frame tick during a node drag re-route just
+    // the wires incident to the moved node set (mutating each Path's Data in
+    // place via UpdateBezierWire) instead of rebuilding every wire — Path +
+    // geometry + brush + closures — for the whole graph on every frame.
+    // Rebuilt wholesale by RedrawLinks; cleared on Rebuild so no stale Path
+    // outlives its node views.
+    private readonly Dictionary<Link, Microsoft.UI.Xaml.Shapes.Path> _linkPaths = new();
+
+    // Reusable moved-node-id scratch set for the incident-wire reroute —
+    // cleared and refilled per frame rather than allocated per frame.
+    private readonly HashSet<string> _rerouteNodeIds = new(StringComparer.Ordinal);
+
+    // Pin centres snapshotted while a wire drag is live. Pins cannot move
+    // mid-wire-drag (the pointer is captured for the wire, so no node drag can
+    // run), which makes the per-move HitTestPinAt sweep a pure function of the
+    // drag-start layout — one TransformToVisual pass at first use replaces an
+    // O(nodes·pins) layout query per pointer-move. Dropped on drag end and on
+    // RedrawLinks/Rebuild so it can never outlive a layout change.
+    private List<(Node Node, Socket Socket, Point Center)>? _pinCenterCache;
+
     // Self-healing wire redraw. RedrawLinks skips any wire
     // whose pin centre can't be resolved yet (the node body hasn't finished its
     // measure/arrange, so the pin reports zero size / a stale transform). Before,
@@ -502,7 +523,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _redrawDirty = false;
         try
         {
-            RedrawLinks();
+            RerouteDraggedNodeWires();
         }
         catch (Exception ex)
         {
@@ -517,6 +538,60 @@ public sealed partial class WidgetGraphCanvas : UserControl
     /// next CompositionTarget.Rendering tick.
     /// </summary>
     private void QueueRedrawLinks() => _redrawDirty = true;
+
+    /// <summary>
+    /// Per-frame wire pass for the node-drag pipeline. While a node drag is
+    /// live only the wires incident to the moved node set can change shape, so
+    /// mutate just those Paths' Data in place (identical curve math via
+    /// UpdateBezierWire) and leave every other wire — plus the temp-wire
+    /// z-order and the selection highlight Path — untouched. Anything the fast
+    /// path can't vouch for (no live drag state, a link without a cached Path,
+    /// a pin mid-layout) falls back to the full RedrawLinks rebuild, which
+    /// remains the sole authority for structural changes.
+    /// </summary>
+    private void RerouteDraggedNodeWires()
+    {
+        var links = _trigger?.Graph?.Links;
+        if (links is null) { RedrawLinks(); return; }
+
+        _rerouteNodeIds.Clear();
+        if (_isGroupDragging)
+        {
+            foreach (var v in _groupDragOrigins.Keys) _rerouteNodeIds.Add(v.Node.Id);
+        }
+        else if (_dragNode is { } dragged)
+        {
+            _rerouteNodeIds.Add(dragged.Node.Id);
+        }
+
+        // The tick can land after the release cleared the drag state (or the
+        // full pass hasn't populated the Path map yet) — full rebuild then,
+        // exactly what every queued redraw did before the fast path existed.
+        if (_rerouteNodeIds.Count == 0 || _linkPaths.Count == 0)
+        {
+            RedrawLinks();
+            return;
+        }
+
+        foreach (Link link in links)
+        {
+            if (!_rerouteNodeIds.Contains(link.FromNodeId)
+                && !_rerouteNodeIds.Contains(link.ToNodeId))
+                continue;
+            // Links whose endpoint views don't exist are skipped by the full
+            // pass too — nothing to reroute.
+            if (!_nodeViews.TryGetValue(link.FromNodeId, out var fromView)) continue;
+            if (!_nodeViews.TryGetValue(link.ToNodeId,   out var toView))   continue;
+            if (!_linkPaths.TryGetValue(link, out var path)
+                || !TryGetPinCenter(fromView, link.FromSocketId, out var p1)
+                || !TryGetPinCenter(toView,   link.ToSocketId,   out var p2))
+            {
+                RedrawLinks();
+                return;
+            }
+            UpdateBezierWire(path, p1, p2, path.Stroke);
+        }
+    }
 
     private void OnHostKeyDown(object sender, KeyRoutedEventArgs e)
     {
@@ -912,6 +987,8 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         WorldCanvas.Children.Clear();
         LinkLayer.Children.Clear();
+        _linkPaths.Clear();       // Paths just left the tree — drop the reroute map
+        _pinCenterCache = null;   // node views are being replaced wholesale
         // unhook pin pointer / right-tap handlers from
         // the outgoing node views before dropping them, otherwise every Rebuild
         // (graph load / add / delete / paste) leaks the prior views via their live
@@ -1082,6 +1159,8 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // identity + z-order now both survive a mid-drag redraw.
         var keep = _tempWirePath;
         LinkLayer.Children.Clear();
+        _linkPaths.Clear();       // rebuilt below alongside the Paths themselves
+        _pinCenterCache = null;   // layout may shift under a mid-drag redraw
 
         var links = _trigger?.Graph?.Links;
         if (links is null) { _selectedLink = null; _selectedLinkPath = null; return; }
@@ -1136,6 +1215,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             var capturedLink = link;
             path.Tapped += (s, ev) => { SelectLink(capturedLink); ev.Handled = true; };
             LinkLayer.Children.Add(path);
+            _linkPaths[link] = path;   // feed the node-drag incident reroute
             if (selected) _selectedLinkPath = path;
         }
 
@@ -1215,17 +1295,32 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // default white). Slightly transparent so dense graphs don't drown the canvas.
     private static Brush WireBrushFor(Socket? srcSocket, bool isFlow, bool selected)
     {
-        if (selected)
-            return new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xD7, 0x00)); // SelectionBrush gold
-        if (isFlow)
-            return new SolidColorBrush(Color.FromArgb(0xE0, 0xEC, 0xE6, 0xDA)); // exec = bright neutral
+        if (selected) return s_wireSelected;
+        if (isFlow)   return s_wireExec;
         if (srcSocket is not null)
         {
+            // One brush per distinct type colour, minted on first use —
+            // brushes are shareable immutable-in-practice resources (same
+            // pattern as s_wireFallback), so per-wire allocation is waste.
             var c = WidgetSocketPalette.EffectiveColor(srcSocket);
-            return new SolidColorBrush(Color.FromArgb(0xCC, c.R, c.G, c.B));
+            uint key = 0xCC000000u | ((uint)c.R << 16) | ((uint)c.G << 8) | c.B;
+            if (!s_wireTypeBrushes.TryGetValue(key, out var brush))
+            {
+                brush = new SolidColorBrush(Color.FromArgb(0xCC, c.R, c.G, c.B));
+                s_wireTypeBrushes[key] = brush;
+            }
+            return brush;
         }
         return s_wireFallback;
     }
+
+    // Session-stable wire brushes (see WireBrushFor). Selected = §2 gold
+    // (SelectionBrush); exec = bright neutral white.
+    private static readonly Brush s_wireSelected =
+        new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xD7, 0x00));
+    private static readonly Brush s_wireExec =
+        new SolidColorBrush(Color.FromArgb(0xE0, 0xEC, 0xE6, 0xDA));
+    private static readonly Dictionary<uint, Brush> s_wireTypeBrushes = new();
 
     // Exec wires are heavier than data wires; selection thickens further.
     private static double WireThicknessFor(bool isFlow, bool selected)
@@ -2120,10 +2215,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         // Re-route wires that touch the moved node(s) so they trail in real
         // time. Frame-coalesced via QueueRedrawLinks; the next
-        // CompositionTarget.Rendering tick runs the rebuild exactly once per
-        // displayed frame. Previously this was a direct RedrawLinks() call
-        // per pointer-move event, which fired the full wire pass dozens of
-        // times per frame on a high-Hz mouse.
+        // CompositionTarget.Rendering tick runs RerouteDraggedNodeWires exactly
+        // once per displayed frame, mutating only the incident wires' Path.Data
+        // in place. Previously this was a direct RedrawLinks() call per
+        // pointer-move event, which fired the full wire pass dozens of times
+        // per frame on a high-Hz mouse.
         QueueRedrawLinks();
 
         e.Handled = true;
@@ -2442,6 +2538,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _pendingPinPress     = null;
         _pendingPinPressNode = null;
 
+        // Fresh drag → fresh pin-centre snapshot (built lazily on the
+        // first hover hit-test; see HitTestPinAt).
+        _pinCenterCache = null;
+
         _wireSourceNode    = sourceNode;
         _wireSourceSocket  = socket;
         _wireSourcePin     = pin;
@@ -2485,6 +2585,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _wireSourceSocket  = null;
         _wireSourcePin     = null;
         _wireSourceIsInput = false;
+        _pinCenterCache    = null;
         ClearTransientHotkeyContext();
     }
 
@@ -2590,6 +2691,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _wireSourceSocket  = null;
         _wireSourcePin     = null;
         _wireSourceIsInput = false;
+        _pinCenterCache    = null;
         ClearTransientHotkeyContext();
 
         if (src is null || srcNode is null) return;
@@ -2696,6 +2798,26 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
     private (Node Node, Socket Socket)? HitTestPinAt(Point worldPoint)
     {
+        // While a wire drag is live this fires on every pointer-move, and the
+        // pins cannot move for the whole drag (the pointer is captured for the
+        // wire) — so sweep the drag-start snapshot of pin centres instead of
+        // paying a TransformToVisual layout query per pin per move. The
+        // snapshot applies the same skip rules as the live sweep below, so the
+        // geometric result is identical. Non-drag callers (the press-time pin
+        // probe) fall through to the live sweep — a one-off per press.
+        if (_wireSourceNode is not null)
+        {
+            var cache = _pinCenterCache ??= BuildPinCenterCache();
+            foreach (var (node, socket, center) in cache)
+            {
+                double cdx = worldPoint.X - center.X;
+                double cdy = worldPoint.Y - center.Y;
+                if (cdx * cdx + cdy * cdy <= 256)
+                    return (node, socket);
+            }
+            return null;
+        }
+
         // Iterate every pin and test whether the world-coord point is inside
         // its on-canvas rectangle. With dozens of nodes this is cheap; sprint
         // D will revisit if larger graphs profile slow.
@@ -2735,6 +2857,39 @@ public sealed partial class WidgetGraphCanvas : UserControl
             }
         }
         return null;
+    }
+
+    // Snapshot every resolvable pin's WorldCanvas-space centre for the
+    // wire-drag fast path above. Mirrors the live sweep's skip rules exactly:
+    // unmeasured pins, pins without a Socket Tag, and pins whose transform
+    // throws are all excluded — a pin the live sweep could never return is
+    // never cached either. The transform failure is logged once per drag
+    // (here) instead of once per pointer-move.
+    private List<(Node Node, Socket Socket, Point Center)> BuildPinCenterCache()
+    {
+        var cache = new List<(Node Node, Socket Socket, Point Center)>();
+        foreach (var (nodeId, view) in _nodeViews)
+        {
+            foreach (var (socketId, pin) in view.PinElements)
+            {
+                if (pin.ActualWidth <= 0 || pin.ActualHeight <= 0) continue;
+                if (pin.Tag is not Socket s) continue;
+                Point center;
+                try
+                {
+                    var t = pin.TransformToVisual(WorldCanvas);
+                    center = t.TransformPoint(new Point(pin.ActualWidth / 2.0, pin.ActualHeight / 2.0));
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("WidgetGraphCanvas",
+                        $"HitTestPinAt.TransformToVisual (node '{view.Node.Title}', socket '{socketId}')", ex);
+                    continue;
+                }
+                cache.Add((view.Node, s, center));
+            }
+        }
+        return cache;
     }
 
     // Visualist-side type-compat (per the pillar-isolation rule — Architect's
@@ -3646,14 +3801,31 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // Per-wire right-click — Delete. Wires are Path elements in LinkLayer
     // tagged with the Link they render. We turn LinkLayer
     // hit-testing back on (it was off earlier) just for the right-click
-    // path.
+    // path. The flyout itself is built on demand inside the shared
+    // ContextRequested handler — only ever for the one wire actually
+    // right-clicked — instead of a MenuFlyout + item + Click closure being
+    // minted for every wire on every RedrawLinks pass.
     private void AttachWireContextFlyout(Microsoft.UI.Xaml.Shapes.Path path, Link link)
     {
+        path.Tag = link;
+        path.ContextRequested += OnWireContextRequested;
+    }
+
+    private void OnWireContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        if (sender is not Microsoft.UI.Xaml.Shapes.Path path) return;
+        if (path.Tag is not Link link) return;
+
         var flyout = new MenuFlyout();
         var del = new MenuFlyoutItem { Text = Localizer.T("visualist.canvas.context.delete_wire", "Delete Wire") };
         del.Click += (_, _) => DeleteLink(link);
         flyout.Items.Add(del);
-        path.ContextFlyout = flyout;
+
+        // Anchor at the request position (mouse right-click); the
+        // positionless overload covers a keyboard-invoked context request.
+        if (args.TryGetPosition(path, out var pos)) flyout.ShowAt(path, pos);
+        else                                        flyout.ShowAt(path);
+        args.Handled = true;
     }
 
     private void DeleteLink(Link link)

@@ -140,12 +140,25 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
         int firstSpace = m.IndexOf(' ');
         if (firstSpace > 0) who = m[..firstSpace];
 
-        if (m.Contains("sub", StringComparison.OrdinalIgnoreCase))    return (LiveFeedKind.Sub,    who);
+        // YouTube memberships are subs in Twitch vocabulary — NewSponsor /
+        // MembershipGift / MemberMileStone bucket with Sub alongside Kick's
+        // Subscription/GiftSubscription (already caught by the "sub" probe).
+        if (m.Contains("sub", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("sponsor", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("membership", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("milestone", StringComparison.OrdinalIgnoreCase))
+            return (LiveFeedKind.Sub, who);
         if (m.Contains("raid", StringComparison.OrdinalIgnoreCase))   return (LiveFeedKind.Raid,   who);
         if (m.Contains("follow", StringComparison.OrdinalIgnoreCase)) return (LiveFeedKind.Follow, who);
+        // Monetary one-offs bucket with Redeem: Twitch cheers/redeems,
+        // YouTube SuperChat/SuperSticker/JewelsGifted, Kick KicksGifted.
         if (m.Contains("redeem", StringComparison.OrdinalIgnoreCase) ||
             m.Contains("reward", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("cheer",  StringComparison.OrdinalIgnoreCase))
+            m.Contains("cheer",  StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("superchat", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("supersticker", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("kicksgifted", StringComparison.OrdinalIgnoreCase) ||
+            m.Contains("jewels", StringComparison.OrdinalIgnoreCase))
             return (LiveFeedKind.Redeem, who);
         // Default to Visual so the row still surfaces — better than dropping.
         return (LiveFeedKind.Visual, who);

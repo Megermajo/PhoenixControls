@@ -56,6 +56,7 @@ public sealed partial class LogicCanvasView
     private void HookDragDrop()
     {
         HostRoot.AllowDrop = true;
+        HostRoot.DragEnter += OnHostDragEnter;
         HostRoot.DragOver  += OnHostDragOver;
         HostRoot.Drop      += OnHostDrop;
     }
@@ -69,10 +70,32 @@ public sealed partial class LogicCanvasView
     {
         try
         {
-            HostRoot.DragOver -= OnHostDragOver;
-            HostRoot.Drop     -= OnHostDrop;
+            HostRoot.DragEnter -= OnHostDragEnter;
+            HostRoot.DragOver  -= OnHostDragOver;
+            HostRoot.Drop      -= OnHostDrop;
         }
         catch { /* shutdown best-effort */ }
+    }
+
+    // ── Gesture-scoped cache of the Explorer-file accept probe ──
+    // GetStorageItemsAsync is an async shell round-trip; DragOver fires per
+    // pointer-move, so re-probing every event paid a deferral + storage query
+    // ~dozens of times per second. The item set can't change mid-gesture, so
+    // the FIRST successful probe of a gesture caches the accept/reject verdict
+    // (+ caption) and every subsequent DragOver applies it synchronously.
+    // Invalidated on DragEnter (a new gesture may carry a different
+    // DataPackage), DragLeave, and Drop; a locked-DataView probe failure is
+    // deliberately NOT cached so the next DragOver retries, exactly like the
+    // pre-cache behaviour.
+    private bool   _fileDragDecisionValid;
+    private bool   _fileDragAccepted;
+    private string _fileDragCaption = string.Empty;
+
+    private void OnHostDragEnter(object sender, DragEventArgs e)
+    {
+        // Fresh gesture (or re-entry with a possibly different payload) —
+        // force the first DragOver to re-run the async probe.
+        _fileDragDecisionValid = false;
     }
 
     private async void OnHostDragOver(object sender, DragEventArgs e)
@@ -131,6 +154,23 @@ public sealed partial class LogicCanvasView
         if (!e.DataView.Contains(StandardDataFormats.StorageItems))
             return;
 
+        // Cached verdict from this gesture's first successful probe —
+        // apply it synchronously (no deferral, no shell round-trip).
+        if (_fileDragDecisionValid)
+        {
+            if (_fileDragAccepted)
+            {
+                e.AcceptedOperation = DataPackageOperation.Copy;
+                TrySetDragUiOverride(e, _fileDragCaption);
+                ShowDropOverlay();
+            }
+            else
+            {
+                e.AcceptedOperation = DataPackageOperation.None;
+            }
+            return;
+        }
+
         var deferral = e.GetDeferral();
         try
         {
@@ -159,10 +199,16 @@ public sealed partial class LogicCanvasView
                                              : "Open matching .phxg";
                 TrySetDragUiOverride(e, caption);
                 ShowDropOverlay();
+                _fileDragAccepted      = true;
+                _fileDragCaption       = caption;
+                _fileDragDecisionValid = true;
             }
             else
             {
                 e.AcceptedOperation = DataPackageOperation.None;
+                _fileDragAccepted      = false;
+                _fileDragCaption       = string.Empty;
+                _fileDragDecisionValid = true;
             }
         }
         catch
@@ -220,6 +266,7 @@ public sealed partial class LogicCanvasView
     private void OnHostDragLeave(object sender, DragEventArgs e)
     {
         HideDropOverlay();
+        _fileDragDecisionValid = false; // gesture left the canvas — drop the cached probe verdict
     }
 
     private void ShowDropOverlay()
@@ -239,6 +286,7 @@ public sealed partial class LogicCanvasView
       try
       {
         HideDropOverlay();
+        _fileDragDecisionValid = false; // gesture is ending — next drag re-probes
         if (_vm is null) return;
 
         // Databank table drop — spawns a DB.RowCount node bound to the

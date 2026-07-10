@@ -71,6 +71,52 @@ public sealed partial class LogicCanvasView
     private NodeViewModel? _hoverNode;
     private LinkViewModel? _hoverLink;
 
+    // Idle-hover resolve cache. PointerMoved fires at mouse report rate while
+    // the cursor rests over the canvas, and ResolveModelHit walks every node
+    // plus a 25-sample bezier per link — re-resolving on sub-pixel jitter is
+    // pure waste. The cached hit is reused until the cursor travels
+    // IdleHoverRethreshScreenPx (screen-space, zoom-compensated) from the last
+    // resolve; MarkSceneDirty invalidates it on any scene change so a hover
+    // can't go stale under a still cursor after the scene shifts beneath it.
+    private bool _idleHitValid;
+    private Point _idleHitPoint;
+    private object? _idleHit;
+    private const double IdleHoverRethreshScreenPx = 1.5;
+
+    // Scene-dirty gate for the per-frame GPU repaint. OnRenderingTick used to
+    // call InvalidateImmediate unconditionally, so a fully idle canvas re-ran
+    // the whole Draw pass at frame cadence forever. Every visual-affecting
+    // source now calls MarkSceneDirty and the tick only invalidates while the
+    // counter is live. The counter is a small grace window (a few frames past
+    // the last change) so late-arriving layout/measure effects of a change
+    // still paint — an extra frame is invisible, a missed repaint is a bug.
+    // Volatile write + CAS decrement because callers may mark from off the UI
+    // thread; the render tick is the only decrementer.
+    private int _sceneDirtyFrames = SceneDirtyGraceFrames;
+    private const int SceneDirtyGraceFrames = 3;
+
+    internal void MarkSceneDirty()
+    {
+        System.Threading.Volatile.Write(ref _sceneDirtyFrames, SceneDirtyGraceFrames);
+        // The scene shifted — a cached idle-hover hit may no longer match what
+        // sits under the (possibly still) cursor; re-resolve on the next move.
+        _idleHitValid = false;
+        _idleHit = null;
+    }
+
+    /// <summary>
+    /// True while the scene-dirty grace window is live; consumes one grace
+    /// frame per call. Called exactly once per render tick.
+    /// </summary>
+    private bool ConsumeSceneDirtyFrame()
+    {
+        int frames = System.Threading.Volatile.Read(ref _sceneDirtyFrames);
+        if (frames <= 0) return false;
+        // CAS so a concurrent MarkSceneDirty refresh always wins over the decrement.
+        System.Threading.Interlocked.CompareExchange(ref _sceneDirtyFrames, frames - 1, frames);
+        return true;
+    }
+
     // Lazily-built DirectWrite formats (created on first draw, rebuilt never —
     // font metrics are process-scoped, mirroring NodeGeometry's text cache).
     private CanvasTextFormat? _imTitleFormat;
@@ -170,6 +216,7 @@ public sealed partial class LogicCanvasView
             EnsureImmediateHooked();
             ResolveImmediateThemeColors();
             ClearRetainedNodeMounts();   // empty NodeLayer — the GPU path renders nodes now
+            MarkSceneDirty();
             ImmediateCanvas?.Invalidate();
         }
         else
@@ -184,8 +231,16 @@ public sealed partial class LogicCanvasView
     {
         if (_immediateHooked || ImmediateCanvas is null) return;
         ImmediateCanvas.Draw += OnImmediateDraw;
+        // Cached CanvasGeometry must never survive a device (re)create —
+        // drop every geometry cache whenever Win2D rebuilds its resources
+        // (device-lost recovery included); they rebuild lazily on next draw.
+        ImmediateCanvas.CreateResources += OnImmediateCreateResources;
         _immediateHooked = true;
     }
+
+    private void OnImmediateCreateResources(
+        CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
+        => ReleaseDeviceGeometryCaches();
 
     // ─── Inline-edit overlay ────────────────────────────────────────────
     //
@@ -222,6 +277,7 @@ public sealed partial class LogicCanvasView
         XamlCanvas.SetTop(view, vm.Y);
         if (!NodeLayer.Children.Contains(view)) NodeLayer.Children.Add(view);
         _realizedNodes.Add(vm);                 // track so it's removed consistently
+        MarkSceneDirty();                       // grace frames cover the mount's follow-on measure
         ImmediateCanvas?.Invalidate();          // renderer now skips _editNode
     }
 
@@ -236,6 +292,9 @@ public sealed partial class LogicCanvasView
             NodeLayer.Children.Remove(view);
         }
         _realizedNodes.Remove(vm);
+        _nodeRowHeightsCache.Remove(vm);        // sockets/pills may have been edited while mounted
+        NodeGeometry.MarkGeometryDirty(vm.Id);  // static geometry gate — same reason
+        MarkSceneDirty();
         ImmediateCanvas?.Invalidate();          // GPU path draws the node again
     }
 
@@ -258,8 +317,10 @@ public sealed partial class LogicCanvasView
     //
     // Called from OnHostPointerPressed before the wire-drop / node-drag branches; a
     // pill hit sits mid-body (pins straddle the node edges) so it never competes with
-    // a genuine wire-drag. Value pills (input rows) and TEXT middle-attribute pills
-    // are handled; bool toggles + socket-label rename stay on the double-tap path.
+    // a genuine wire-drag. Value pills (input rows), TEXT middle-attribute pills, and
+    // BOOL middle-attribute checkmark rows (`☑ Key` — toggled in place, no NodeView
+    // materialization needed) are handled; socket-label rename stays on the
+    // double-tap path.
     private bool TryBeginInlineEditAtCanvasPoint(NodeViewModel node, Point canvasPoint)
     {
         if (_vm is null || node.IsReroute || node.HasCompactSymbol) return false;
@@ -267,10 +328,10 @@ public sealed partial class LogicCanvasView
         double x = canvasPoint.X, y = canvasPoint.Y;
 
         // Hit rects are computed by the SAME helpers the renderer uses
-        // (ComputeInputPillRect + RowCenterYDynamic via NodeGeometryRowCenter), so the
+        // (ComputeInputPillRect + the cached RowCenterForSocket path), so the
         // clickable target always matches the painted pill — including confined
         // (non-overlapping) and multi-line grown rows.
-        var rowHeights = NodeGeometry.SocketRowHeights(node.Model);
+        var rowHeights = GetRowHeightsCached(node);
         double RowHeightAt(int idx) => (idx >= 0 && idx < rowHeights.Length) ? rowHeights[idx] : NodeGeometry.SocketRowHeight;
 
         // 1) Input value pills.
@@ -286,8 +347,9 @@ public sealed partial class LogicCanvasView
             }
         }
 
-        // 2) Middle-attribute TEXT pills (Key …… [pill]) — same area math as
-        //    DrawMiddleAttributes (dynamic socket-rows offset, bool rows skipped).
+        // 2) Middle-attribute rows — same area math as DrawMiddleAttributes
+        //    (dynamic socket-rows offset). TEXT pills (Key …… [pill]) open the
+        //    inline editor; BOOL checkmark rows (`☑ Key`) toggle in place.
         if (node.HasMiddleAttributes)
         {
             double socketRowsTotal = 0;
@@ -306,7 +368,37 @@ public sealed partial class LogicCanvasView
                 double rowH  = NodeGeometry.MiddleAttrRowHeightFor(node.Model, m.Key, m.Value);
                 double rowCY = yTop + rowH / 2.0;
                 double half  = Math.Max(11.0, rowH / 2.0);
-                if (!m.IsBool && x >= mpX && x <= mpX + mpW && y >= rowCY - half && y <= rowCY + half)
+                if (m.IsBool)
+                {
+                    // Bool checkmark row (`☑ Key`, left-aligned) — toggled DIRECTLY
+                    // in canvas-space, one click, no NodeView materialization: a
+                    // toggle has no editor session to realize, so the pill-edit
+                    // machinery would be pure overhead. Hit rect mirrors the
+                    // painted glyph+label run in DrawMiddleAttributes (8 left pad
+                    // + 18 glyph + 6 gap + label) with a little slack on the right
+                    // so the tap target isn't pixel-tight. Same commit tail as
+                    // the retained NodeView.OnMiddleAttrBoolTapped: toggle →
+                    // undo push → OnGraphMutated (the Chat.Message platform
+                    // checkmarks change the exported `on_chat` header, so the
+                    // graph must flag dirty) → GPU redraw.
+                    double labelW = NodeGeometry.EstimateTextWidth(m.Key, 12.0);
+                    double bLeft  = nx + 8;
+                    double bRight = nx + 8 + 18 + 6 + labelW + 12;
+                    if (x >= bLeft && x <= bRight && y >= rowCY - half && y <= rowCY + half)
+                    {
+                        if (m.ToggleBool())
+                        {
+                            PushUndoForInlineEdit();
+                            _vm.OnGraphMutated();
+                            ImmediateCanvas?.Invalidate();
+                            GlobalLogger.Log(
+                                $" bool middle-attr '{m.Key}' on '{node.Title}' toggled to {m.BoolValue} (GPU in-place)",
+                                "Architect.LogicCanvasView.Win2D", LogLevel.Debug);
+                        }
+                        return true;
+                    }
+                }
+                else if (x >= mpX && x <= mpX + mpW && y >= rowCY - half && y <= rowCY + half)
                 {
                     BeginInlinePillEdit(node, m.BeginEdit, m, $"middle-attr '{m.Key}'");
                     return true;
@@ -360,11 +452,46 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    // Resolve + apply the hovered node/wire from the cursor (idle move only).
-    private void UpdateImmediateHover(Point canvasPoint)
+    // One idle-move scene resolve shared by the frame-edge cursor and the
+    // hover highlight. Pre-merge each ran its own full ResolveModelHit walk
+    // per PointerMoved; both consume the SAME hit for the SAME canvas point,
+    // so a single (cached) resolve is behavior-identical.
+    private void UpdateIdleHoverWin2D(Point canvasPoint)
+    {
+        var hit = ResolveModelHitCached(canvasPoint);
+        // FrameEdgeAt stays fresh per move — only the scene walk is cached —
+        // so the resize cursor still tracks the exact edge band under the cursor.
+        var edge = hit is FrameViewModel f
+            ? FrameEdgeAt(f, canvasPoint.X, canvasPoint.Y, FrameResizeBand())
+            : FrameResizeEdge.None;
+        ApplyFrameEdgeCursor(edge);
+        ApplyImmediateHover(hit);
+    }
+
+    // ResolveModelHit with the idle-move short-circuit: while the cursor stays
+    // within a ~1.5 screen-px radius of the last resolve (and the scene hasn't
+    // changed — MarkSceneDirty invalidates), the previous hit is reused.
+    private object? ResolveModelHitCached(Point canvasPoint)
+    {
+        if (_idleHitValid)
+        {
+            double zoom = Math.Max(_vm?.Zoom ?? 1.0, 0.0001);
+            double thr = IdleHoverRethreshScreenPx / zoom; // keep the radius ~constant on screen
+            double dx = canvasPoint.X - _idleHitPoint.X;
+            double dy = canvasPoint.Y - _idleHitPoint.Y;
+            if (dx * dx + dy * dy < thr * thr) return _idleHit;
+        }
+        _idleHit = ResolveModelHit(canvasPoint);
+        _idleHitPoint = canvasPoint;
+        _idleHitValid = true;
+        return _idleHit;
+    }
+
+    // Apply the resolved hover target (node/wire highlight) — split from the
+    // resolve so the idle path can share one hit with the frame-edge cursor.
+    private void ApplyImmediateHover(object? hit)
     {
         if (!_useImmediateMode || _vm is null) return;
-        var hit = ResolveModelHit(canvasPoint);
         var newNode = hit as NodeViewModel;
         var newLink = hit as LinkViewModel;
         bool dirty = false;
@@ -381,6 +508,8 @@ public sealed partial class LogicCanvasView
 
     private void ClearImmediateHover()
     {
+        _idleHitValid = false;
+        _idleHit = null;
         bool dirty = _hoverNode is not null || _hoverLink is not null;
         _hoverNode = null;
         if (_hoverLink is not null) { _hoverLink.IsHovered = false; _hoverLink = null; }
@@ -389,9 +518,11 @@ public sealed partial class LogicCanvasView
 
     /// <summary>
     /// Request an immediate-canvas repaint. Cheap no-op when immediate mode is
-    /// off. Called every render tick (LogicCanvasView OnRenderingTick) so pan /
-    /// zoom / drag all repaint at frame cadence; CanvasControl.Invalidate
-    /// internally coalesces multiple calls into one Draw per frame.
+    /// off. Called from OnRenderingTick while the scene-dirty grace window is
+    /// live (MarkSceneDirty sources + the live gesture/coalescer flags), so
+    /// pan / zoom / drag repaint at frame cadence while a fully idle canvas
+    /// skips the Draw pass entirely; CanvasControl.Invalidate internally
+    /// coalesces multiple calls into one Draw per frame.
     /// </summary>
     private void InvalidateImmediate()
     {
@@ -445,6 +576,7 @@ public sealed partial class LogicCanvasView
         if (!_useImmediateMode) return;
         _imColorsResolved = false;
         ResolveImmediateThemeColors();
+        MarkSceneDirty();
         ImmediateCanvas?.Invalidate();
     }
 
@@ -487,6 +619,16 @@ public sealed partial class LogicCanvasView
             ResolveImmediateThemeColors();
             var ds = args.DrawingSession;
             EnsureTextFormats(ds);
+
+            // DPI flip (monitor move / scale change) → drop the cached
+            // geometry so nothing device-scaled survives; every cache
+            // rebuilds lazily within this same pass.
+            float dpi = sender.Dpi;
+            if (dpi != _imLastDpi)
+            {
+                _imLastDpi = dpi;
+                ReleaseDeviceGeometryCaches();
+            }
 
             double zoom = _vm.Zoom <= 0 ? 1.0 : _vm.Zoom;
             double panX = _vm.PanX;
@@ -564,6 +706,35 @@ public sealed partial class LogicCanvasView
     }
 
     // ── One wire ──
+    //
+    // Per-wire bezier geometry cache. Building a CanvasPathBuilder +
+    // CanvasGeometry per wire per frame is finalizable RCW churn at draw
+    // cadence; the path depends only on the two endpoints (ControlDistance is
+    // a pure function of them), so the geometry is reused until an endpoint
+    // moves. Entries are released when the link leaves the graph
+    // (DetachDecorations → ReleaseWireGeometry) and the whole cache drops on
+    // device recreate / DPI change (ReleaseDeviceGeometryCaches).
+    private sealed class WireGeometryCacheEntry
+    {
+        public CanvasGeometry? Geometry;
+        public double Fx, Fy, Tx, Ty;
+    }
+
+    private readonly System.Collections.Generic.Dictionary<LinkViewModel, WireGeometryCacheEntry>
+        _wireGeometryCache = new();
+
+    private void ReleaseWireGeometry(LinkViewModel link)
+    {
+        if (_wireGeometryCache.Remove(link, out var entry))
+            entry.Geometry?.Dispose();
+    }
+
+    private void ClearWireGeometryCache()
+    {
+        foreach (var entry in _wireGeometryCache.Values) entry.Geometry?.Dispose();
+        _wireGeometryCache.Clear();
+    }
+
     private void DrawWire(CanvasControl sender, CanvasDrawingSession ds, LinkViewModel link, Rect visible)
     {
         var from = link.LastFromAnchor;
@@ -579,15 +750,27 @@ public sealed partial class LogicCanvasView
             || maxY < visible.Y || minY > visible.Y + visible.Height)
             return;
 
-        double dx = BezierPath.ControlDistance(fx, fy, tx, ty);
-        using var pb = new CanvasPathBuilder(sender);
-        pb.BeginFigure(new Vector2((float)fx, (float)fy));
-        pb.AddCubicBezier(
-            new Vector2((float)(fx + dx), (float)fy),
-            new Vector2((float)(tx - dx), (float)ty),
-            new Vector2((float)tx, (float)ty));
-        pb.EndFigure(CanvasFigureLoop.Open);
-        using var geom = CanvasGeometry.CreatePath(pb);
+        if (!_wireGeometryCache.TryGetValue(link, out var cached))
+        {
+            cached = new WireGeometryCacheEntry();
+            _wireGeometryCache[link] = cached;
+        }
+        if (cached.Geometry is null
+            || cached.Fx != fx || cached.Fy != fy || cached.Tx != tx || cached.Ty != ty)
+        {
+            cached.Geometry?.Dispose();
+            double dx = BezierPath.ControlDistance(fx, fy, tx, ty);
+            using var pb = new CanvasPathBuilder(sender);
+            pb.BeginFigure(new Vector2((float)fx, (float)fy));
+            pb.AddCubicBezier(
+                new Vector2((float)(fx + dx), (float)fy),
+                new Vector2((float)(tx - dx), (float)ty),
+                new Vector2((float)tx, (float)ty));
+            pb.EndFigure(CanvasFigureLoop.Open);
+            cached.Geometry = CanvasGeometry.CreatePath(pb);
+            cached.Fx = fx; cached.Fy = fy; cached.Tx = tx; cached.Ty = ty;
+        }
+        var geom = cached.Geometry!;
 
         Color stroke = WireColor(link);
         float thickness = (float)link.EffectiveStrokeThickness;
@@ -640,19 +823,15 @@ public sealed partial class LogicCanvasView
 
         if (node.IsReroute)
         {
-            // Diamond wire-knot — fixed neutral grey body, selection-driven stroke.
+            // Diamond wire-knot — fixed neutral grey body, selection-driven
+            // stroke. Shape is a constant; the cached origin-centred geometry
+            // is drawn at the knot's offset instead of rebuilding a path per
+            // reroute per frame.
             float cx = (float)(nx + 10), cy = (float)(ny + 10);
-            var diamond = new Vector2[]
-            {
-                new(cx, cy - 10), new(cx + 10, cy), new(cx, cy + 10), new(cx - 10, cy),
-            };
-            using var dpb = new CanvasPathBuilder(ImmediateCanvas);
-            dpb.BeginFigure(diamond[0]);
-            dpb.AddLine(diamond[1]); dpb.AddLine(diamond[2]); dpb.AddLine(diamond[3]);
-            dpb.EndFigure(CanvasFigureLoop.Closed);
-            using var dgeom = CanvasGeometry.CreatePath(dpb);
-            ds.FillGeometry(dgeom, Color.FromArgb(0xFF, 0x3C, 0x3C, 0x41));
-            ds.DrawGeometry(dgeom, node.IsSelected ? _imSelection : Color.FromArgb(0xFF, 0x69, 0x69, 0x69), 1.5f);
+            var dgeom = _rerouteDiamondGeom ??= BuildClosedPolygon(ImmediateCanvas, s_rerouteDiamondPts);
+            var doffset = new Vector2(cx, cy);
+            ds.FillGeometry(dgeom, doffset, Color.FromArgb(0xFF, 0x3C, 0x3C, 0x41));
+            ds.DrawGeometry(dgeom, doffset, node.IsSelected ? _imSelection : Color.FromArgb(0xFF, 0x69, 0x69, 0x69), 1.5f);
             return;
         }
 
@@ -691,7 +870,7 @@ public sealed partial class LogicCanvasView
         {
             // Socket rows — label (+ value pill). PINS are drawn LAST (after the
             // border) so the outline can't cut through the edge-straddling bubbles.
-            var rowHeights = NodeGeometry.SocketRowHeights(node.Model);
+            var rowHeights = GetRowHeightsCached(node);
             double RowHeightAt(int idx) => (idx >= 0 && idx < rowHeights.Length) ? rowHeights[idx] : NodeGeometry.SocketRowHeight;
 
             foreach (var s in node.Inputs)
@@ -844,14 +1023,15 @@ public sealed partial class LogicCanvasView
     }
 
     // Middle-attribute rows — DefaultProperties keys with no matching socket,
-    // rendered as `Key  [value-pill]` or `Key  ☑/☐`, beneath the socket grid.
+    // rendered as `Key …… [value-pill]` (text) or a left-aligned `☑ Key`
+    // checkmark row (bool), beneath the socket grid.
     private void DrawMiddleAttributes(CanvasDrawingSession ds, NodeViewModel node, double nx, double ny, double nw)
     {
         if (!node.HasMiddleAttributes) return;
         // Socket area can now be taller than rows*24 (wrapped pills),
         // so the middle-attr block starts below the ACTUAL summed socket-row heights.
         double socketRowsTotal = 0;
-        foreach (var h in NodeGeometry.SocketRowHeights(node.Model)) socketRowsTotal += h;
+        foreach (var h in GetRowHeightsCached(node)) socketRowsTotal += h;
         double y = ny + NodeGeometry.FirstSocketRowY(node.Model)
                  + socketRowsTotal
                  + NodeGeometry.MiddleAttrAreaTopPad;
@@ -870,11 +1050,26 @@ public sealed partial class LogicCanvasView
             // to match, exactly like the socket-pill path (ComputeInputPillRect).
             double rowH  = NodeGeometry.MiddleAttrRowHeightFor(node.Model, m.Key, m.Value);
             double rowCY = y + rowH / 2.0;
-            ds.DrawText(m.Key, new Rect(nx + 8, rowCY - 9, Math.Max(0, nw * 0.5), 18), _imSubText, _imLabelFormat);
             if (m.IsBool)
-                ds.DrawText(m.BoolGlyph, new Rect(nx + nw - 26, rowCY - 9, 18, 18), _imText, _imLabelFormat);
+            {
+                // Bool checkmark row — LEFT-aligned `☑ Key` (glyph + label),
+                // mirroring the retained MiddleAttributeRowTemplate's bool
+                // StackPanel (Chat.Message's Twitch /
+                // YouTube / Kick list). Checked rows read bright (_imText),
+                // unchecked dim (_imSubText) so the ON/OFF state is visible
+                // straight off the GPU canvas without materializing the
+                // NodeView. Geometry (8 left pad + 18 glyph + 6 gap + label)
+                // is mirrored by the bool-row width budget in
+                // NodeGeometry.ComputeIntrinsicWidth AND the single-click
+                // toggle hit-test in TryBeginInlineEditAtCanvasPoint — keep
+                // the three in lockstep.
+                var boolColor = m.BoolValue ? _imText : _imSubText;
+                ds.DrawText(m.BoolGlyph, new Rect(nx + 8, rowCY - 9, 18, 18), boolColor, _imLabelFormat);
+                ds.DrawText(m.Key, new Rect(nx + 32, rowCY - 9, Math.Max(0, nw - 40), 18), boolColor, _imLabelFormat);
+            }
             else
             {
+                ds.DrawText(m.Key, new Rect(nx + 8, rowCY - 9, Math.Max(0, nw * 0.5), 18), _imSubText, _imLabelFormat);
                 // Middle-attr rows have no output column on their line, so the pill
                 // uses the right portion of the full body width (Key …… [pill]).
                 double mpX = nx + nw * 0.42;
@@ -902,8 +1097,24 @@ public sealed partial class LogicCanvasView
         }
     }
 
-    private static double NodeGeometryRowCenter(NodeViewModel node, int rowIndex)
-        => NodeGeometry.NodeBorderInset + NodeGeometry.RowCenterYDynamic(node.Model, rowIndex);
+    // Per-node socket-row-height cache. NodeGeometry.SocketRowHeights already
+    // memoizes by node id, but validating that entry recomputes an
+    // O(sockets+attributes) content hash on EVERY call — and DrawNodeBody
+    // consults the rows several times per node per draw (body, pills,
+    // middle-attrs, every pin's row centre). This caches the resolved array
+    // per node VM; any node-VM PropertyChanged, every committed graph
+    // mutation, edit-mode exit, and graph load/unload drop the entry so
+    // socket/attribute edits re-derive on the next draw.
+    private readonly System.Collections.Generic.Dictionary<NodeViewModel, double[]>
+        _nodeRowHeightsCache = new();
+
+    private double[] GetRowHeightsCached(NodeViewModel node)
+    {
+        if (_nodeRowHeightsCache.TryGetValue(node, out var rows)) return rows;
+        rows = NodeGeometry.SocketRowHeights(node.Model);
+        _nodeRowHeightsCache[node] = rows;
+        return rows;
+    }
 
     // Prefer the MEASURED row-centre (set when a real NodeView was
     // mounted to edit this node) over the computed dynamic estimate — mirroring the
@@ -912,9 +1123,71 @@ public sealed partial class LogicCanvasView
     // state. Falls back to the dynamic estimate for nodes never mounted (the pure-GPU
     // case), where the wire path also falls back to the same dynamic estimate — so
     // both states stay in lockstep.
-    private static double RowCenterForSocket(NodeViewModel node, SocketViewModel s)
+    private double RowCenterForSocket(NodeViewModel node, SocketViewModel s)
         => SocketRenderState.TryGetMeasuredRowCenterY(s.Id)
-           ?? NodeGeometryRowCenter(node, s.RowIndex);
+           ?? RowCenterFromCachedHeights(node, s.RowIndex);
+
+    // NodeGeometry.NodeBorderInset + NodeGeometry.RowCenterYDynamic, computed
+    // from the per-node cached row-height array so each row-centre lookup
+    // doesn't re-trigger SocketRowHeights' content-hash validation. The
+    // summation is kept in exact lockstep with RowCenterYDynamic; the
+    // degenerate paths delegate to it verbatim.
+    private double RowCenterFromCachedHeights(NodeViewModel node, int rowIndex)
+    {
+        if (rowIndex < 0)
+            return NodeGeometry.NodeBorderInset + NodeGeometry.RowCenterYDynamic(node.Model, rowIndex);
+        var heights = GetRowHeightsCached(node);
+        if (heights.Length == 0)
+            return NodeGeometry.NodeBorderInset + NodeGeometry.RowCenterYDynamic(node.Model, rowIndex);
+        double y = NodeGeometry.FirstSocketRowY(node.Model);
+        int upto = Math.Min(rowIndex, heights.Length);
+        for (int r = 0; r < upto; r++) y += heights[r];
+        double h = rowIndex < heights.Length ? heights[rowIndex] : NodeGeometry.SocketRowHeight;
+        return NodeGeometry.NodeBorderInset + y + h / 2.0;
+    }
+
+    // ── Pin / knot shape templates ──
+    // The pin outlines are shape CONSTANTS in the 14×14 pin box (origin-
+    // relative); the reroute diamond is a 20×20 knot centred on the origin.
+    // Each kind's CanvasGeometry is built once and drawn at a per-pin offset
+    // instead of rebuilding a path per pin per frame. Dropped + lazily
+    // rebuilt on device recreate / DPI change (ReleaseDeviceGeometryCaches).
+    private static readonly Vector2[] s_pinChevronPts  = { new(2f, 2f), new(11f, 7f), new(2f, 12f) };
+    private static readonly Vector2[] s_pinTrianglePts = { new(7f, 2f), new(12f, 12f), new(2f, 12f) };
+    private static readonly Vector2[] s_pinDiamondPts  = { new(7f, 2f), new(12f, 7f), new(7f, 12f), new(2f, 7f) };
+    private static readonly Vector2[] s_pinSquarePts   = { new(2f, 2f), new(12f, 2f), new(12f, 12f), new(2f, 12f) };
+    private static readonly Vector2[] s_rerouteDiamondPts = { new(0f, -10f), new(10f, 0f), new(0f, 10f), new(-10f, 0f) };
+
+    private CanvasGeometry? _pinChevronGeom;
+    private CanvasGeometry? _pinTriangleGeom;
+    private CanvasGeometry? _pinDiamondGeom;
+    private CanvasGeometry? _pinSquareGeom;
+    private CanvasGeometry? _rerouteDiamondGeom;
+
+    // Last DPI the geometry caches were built under (0 = never built).
+    private float _imLastDpi;
+
+    private static CanvasGeometry BuildClosedPolygon(ICanvasResourceCreator rc, Vector2[] pts)
+    {
+        using var pb = new CanvasPathBuilder(rc);
+        pb.BeginFigure(pts[0]);
+        for (int i = 1; i < pts.Length; i++) pb.AddLine(pts[i]);
+        pb.EndFigure(CanvasFigureLoop.Closed);
+        return CanvasGeometry.CreatePath(pb);
+    }
+
+    // Drop every cached CanvasGeometry (wire beziers + pin/knot templates).
+    // Called from the CreateResources hook (device created / lost+recreated)
+    // and the per-draw DPI check; everything rebuilds lazily on next use.
+    private void ReleaseDeviceGeometryCaches()
+    {
+        ClearWireGeometryCache();
+        _pinChevronGeom?.Dispose();     _pinChevronGeom = null;
+        _pinTriangleGeom?.Dispose();    _pinTriangleGeom = null;
+        _pinDiamondGeom?.Dispose();     _pinDiamondGeom = null;
+        _pinSquareGeom?.Dispose();      _pinSquareGeom = null;
+        _rerouteDiamondGeom?.Dispose(); _rerouteDiamondGeom = null;
+    }
 
     // Draw the socket pin in its TYPE SHAPE (matches PinPathGeometry / the retained
     // path): Flow=chevron, Bool=triangle, Collection=rounded-square, Any/Vector=
@@ -952,22 +1225,18 @@ public sealed partial class LogicCanvasView
 
             default:
             {
-                Vector2[]? pts = s.Kind switch
+                CanvasGeometry? geom = s.Kind switch
                 {
-                    SocketPinKind.Chevron  => new[] { new Vector2((float)(ox + 2), (float)(oy + 2)), new Vector2((float)(ox + 11), (float)(oy + 7)), new Vector2((float)(ox + 2), (float)(oy + 12)) },
-                    SocketPinKind.Triangle => new[] { new Vector2((float)(ox + 7), (float)(oy + 2)), new Vector2((float)(ox + 12), (float)(oy + 12)), new Vector2((float)(ox + 2), (float)(oy + 12)) },
-                    SocketPinKind.Diamond  => new[] { new Vector2((float)(ox + 7), (float)(oy + 2)), new Vector2((float)(ox + 12), (float)(oy + 7)), new Vector2((float)(ox + 7), (float)(oy + 12)), new Vector2((float)(ox + 2), (float)(oy + 7)) },
-                    SocketPinKind.Square   => new[] { new Vector2((float)(ox + 2), (float)(oy + 2)), new Vector2((float)(ox + 12), (float)(oy + 2)), new Vector2((float)(ox + 12), (float)(oy + 12)), new Vector2((float)(ox + 2), (float)(oy + 12)) },
+                    SocketPinKind.Chevron  => _pinChevronGeom  ??= BuildClosedPolygon(ImmediateCanvas, s_pinChevronPts),
+                    SocketPinKind.Triangle => _pinTriangleGeom ??= BuildClosedPolygon(ImmediateCanvas, s_pinTrianglePts),
+                    SocketPinKind.Diamond  => _pinDiamondGeom  ??= BuildClosedPolygon(ImmediateCanvas, s_pinDiamondPts),
+                    SocketPinKind.Square   => _pinSquareGeom   ??= BuildClosedPolygon(ImmediateCanvas, s_pinSquarePts),
                     _                      => null,
                 };
-                if (pts is null) { ds.FillCircle((float)cx, (float)cy, 4.5f, pinColor); return; }
-                using var pb = new CanvasPathBuilder(ImmediateCanvas);
-                pb.BeginFigure(pts[0]);
-                for (int i = 1; i < pts.Length; i++) pb.AddLine(pts[i]);
-                pb.EndFigure(CanvasFigureLoop.Closed);
-                using var geom = CanvasGeometry.CreatePath(pb);
-                if (s.PinFilled) ds.FillGeometry(geom, pinColor);
-                else             ds.DrawGeometry(geom, pinColor, 1.5f, stroke);
+                if (geom is null) { ds.FillCircle((float)cx, (float)cy, 4.5f, pinColor); return; }
+                var offset = new Vector2((float)ox, (float)oy);
+                if (s.PinFilled) ds.FillGeometry(geom, offset, pinColor);
+                else             ds.DrawGeometry(geom, offset, pinColor, 1.5f, stroke);
                 return;
             }
         }

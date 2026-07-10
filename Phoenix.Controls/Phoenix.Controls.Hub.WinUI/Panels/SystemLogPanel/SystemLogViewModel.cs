@@ -152,9 +152,9 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// Exact-match source filter. Setting persists
-    /// the value to AppConfig.SystemLogSourceFilter (debounced via
-    /// ConfigManager.Save) and rebuilds VisibleRows so the panel reflects
-    /// the new predicate immediately. Null / empty clears the filter.
+    /// the value to AppConfig.SystemLogSourceFilter (deferred via
+    /// ConfigManager.SaveDeferred) and rebuilds VisibleRows so the panel
+    /// reflects the new predicate immediately. Null / empty clears the filter.
     /// </summary>
     public string? SourceFilter
     {
@@ -235,9 +235,11 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Writes the active level chip set + source
     /// filter to AppConfig and asks ConfigManager to persist. Called on
-    /// every level toggle and on every SourceFilter setter; the save
-    /// itself is cheap (a single JSON write) but we still swallow IO
-    /// failures so a transient disk-full doesn't fault the UI handler.
+    /// every level toggle and on every SourceFilter setter — both run on
+    /// the UI thread, so the write is deferred to a worker (a synchronous
+    /// File.Replace on AV/OneDrive-backed %AppData% can stall hundreds of
+    /// ms). We still swallow failures so a transient disk-full doesn't
+    /// fault the UI handler.
     /// </summary>
     private void PersistFilterState()
     {
@@ -253,7 +255,7 @@ public sealed class SystemLogViewModel : ObservableObject, IDisposable
             if (_filterMask.HasFlag(SystemLogLevel.Error)) levels.Add(nameof(SystemLogLevel.Error));
             cfg.SystemLogActiveLevels = levels;
             cfg.SystemLogSourceFilter = _sourceFilter;
-            ConfigManager.Save(Paths.AppConfigJson);
+            ConfigManager.SaveDeferred(Paths.AppConfigJson);
         }
         catch (Exception ex)
         {

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -56,6 +57,29 @@ namespace Phoenix.Controls.Hub.Core
         private readonly object _pairCompleteSweepLock = new();
         private DateTime _pairCompleteLastSweep = DateTime.MinValue;
 
+        // Verified-bearer cache. RemoteAuthManager.VerifyTokenAsync runs
+        // PBKDF2-SHA256 at 200 000 iterations plus a DB read + LastSeen write —
+        // deliberately expensive against brute force, but a paired Viewer
+        // polling /api/snapshot re-pays that KDF on every request. Cache a
+        // SUCCESSFUL verification for a short TTL so only the first request
+        // per window pays it. Keys are SHA-256 digests of the wire token, so
+        // plaintext bearers never sit in a long-lived structure; failures are
+        // never cached, so a wrong token always pays the full KDF. Explicit
+        // revokes bypass the TTL: RemoteAuthManager.DeviceRevoked (raised
+        // after the DB revocation persists) is wired to InvalidateAuthCacheFor,
+        // so the TTL only bounds out-of-band DB edits. A hit does NOT extend
+        // the entry, so every token re-verifies against the DB (incl. the
+        // Revoked flag) at least once per TTL. LastSeen consequently advances
+        // once per window rather than per request.
+        private static readonly TimeSpan AuthCacheTtl = TimeSpan.FromSeconds(30);
+        private const int AuthCacheMaxEntries = 64;
+        private sealed class AuthCacheEntry
+        {
+            public string DeviceId = string.Empty;
+            public long ExpiresAtTicks;   // Environment.TickCount64 basis
+        }
+        private readonly ConcurrentDictionary<string, AuthCacheEntry> _authCache = new();
+
         private HttpListener? _listener;
         private CancellationTokenSource? _cts;
         private Task? _acceptTask;
@@ -72,6 +96,12 @@ namespace Phoenix.Controls.Hub.Core
         {
             _auth     = auth     ?? throw new ArgumentNullException(nameof(auth));
             _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+            // Revocations must beat the auth-cache TTL: RemoteAuthManager raises
+            // DeviceRevoked after the DB row is marked revoked, and dropping the
+            // cached verifications here makes the very next request re-verify
+            // (and fail). Unhooked in Dispose/DisposeAsync, not StopAsync, so a
+            // Stop→Start cycle keeps the wiring.
+            _auth.DeviceRevoked += InvalidateAuthCacheFor;
         }
 
         public async Task StartAsync()
@@ -207,6 +237,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async ValueTask DisposeAsync()
         {
+            _auth.DeviceRevoked -= InvalidateAuthCacheFor;
             try { await StopAsync().ConfigureAwait(false); }
             catch { /* shutdown is best-effort */ }
         }
@@ -224,6 +255,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public void Dispose()
         {
+            _auth.DeviceRevoked -= InvalidateAuthCacheFor;
             // Stop the listener synchronously so the port is released even if
             // the background drain stalls; the rest of StopAsync (session
             // close, accept-loop await, cts cleanup) runs on a worker so we
@@ -723,7 +755,7 @@ namespace Phoenix.Controls.Hub.Core
             if (path != "/ws") { Write(ctx, 404, "Not Found"); return; }
 
             string? bearer = ExtractBearerFromSubprotocol(ctx.Request.Headers["Sec-WebSocket-Protocol"]);
-            string? deviceId = bearer is null ? null : await _auth.VerifyTokenAsync(bearer).ConfigureAwait(false);
+            string? deviceId = bearer is null ? null : await VerifyBearerCachedAsync(bearer).ConfigureAwait(false);
             if (deviceId is null) { Write(ctx, 401, "Unauthorized"); return; }
 
             HttpListenerWebSocketContext wsCtx;
@@ -832,7 +864,76 @@ namespace Phoenix.Controls.Hub.Core
             if (string.IsNullOrWhiteSpace(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
                 return null;
             string token = auth.Substring("Bearer ".Length).Trim();
-            return await _auth.VerifyTokenAsync(token).ConfigureAwait(false);
+            return await VerifyBearerCachedAsync(token).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// TTL-cached front for <see cref="RemoteAuthManager.VerifyTokenAsync"/>.
+        /// A warm hit skips the 200k-iteration PBKDF2 + DB round-trip; a miss
+        /// or expired entry runs the full verification (including the Revoked
+        /// check) and caches only success. See the <c>_authCache</c> field
+        /// comment for the revoke-window / LastSeen trade-offs.
+        /// </summary>
+        private async Task<string?> VerifyBearerCachedAsync(string? token)
+        {
+            if (string.IsNullOrWhiteSpace(token)) return null;
+
+            string key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+            long now = Environment.TickCount64;
+            if (_authCache.TryGetValue(key, out var hit))
+            {
+                if (now < hit.ExpiresAtTicks) return hit.DeviceId;
+                _authCache.TryRemove(key, out _);
+            }
+
+            string? deviceId = await _auth.VerifyTokenAsync(token).ConfigureAwait(false);
+            if (deviceId is null) return null;
+
+            if (_authCache.Count >= AuthCacheMaxEntries) EvictAuthCache(now);
+            _authCache[key] = new AuthCacheEntry
+            {
+                DeviceId      = deviceId,
+                ExpiresAtTicks = now + (long)AuthCacheTtl.TotalMilliseconds,
+            };
+            return deviceId;
+        }
+
+        private void EvictAuthCache(long now)
+        {
+            // Drop expired entries first; if the map is still at cap (more
+            // live devices than slots), drop the soonest-to-expire entry so
+            // the fresh verification always gets a slot. The map is tiny
+            // (≤64), so the linear walk is cheaper than a real LRU list.
+            string? soonestKey = null;
+            long soonestTicks = long.MaxValue;
+            foreach (var kv in _authCache)
+            {
+                if (kv.Value.ExpiresAtTicks <= now) { _authCache.TryRemove(kv.Key, out _); continue; }
+                if (kv.Value.ExpiresAtTicks < soonestTicks)
+                {
+                    soonestTicks = kv.Value.ExpiresAtTicks;
+                    soonestKey   = kv.Key;
+                }
+            }
+            if (_authCache.Count >= AuthCacheMaxEntries && soonestKey is not null)
+                _authCache.TryRemove(soonestKey, out _);
+        }
+
+        /// <summary>
+        /// Drop every cached verification for <paramref name="deviceId"/> so an
+        /// explicit revoke takes effect on the next request instead of waiting
+        /// out the TTL. Subscribed to <see cref="RemoteAuthManager.DeviceRevoked"/>
+        /// in the constructor, so every revoke through
+        /// <see cref="RemoteAuthManager.RevokeDeviceAsync"/> invalidates automatically.
+        /// </summary>
+        public void InvalidateAuthCacheFor(string deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId)) return;
+            foreach (var kv in _authCache)
+            {
+                if (string.Equals(kv.Value.DeviceId, deviceId, StringComparison.Ordinal))
+                    _authCache.TryRemove(kv.Key, out _);
+            }
         }
 
         private static async Task<JsonElement?> ReadBodyAsJsonAsync(HttpListenerContext ctx)

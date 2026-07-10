@@ -1033,7 +1033,9 @@ namespace Phoenix.Controls.Architect.Core
             string stableMacroId = macroId.Replace("-", "");
             string slotPrefix = $"_macro_{stableMacroId}_{ctx.IdPrefix(node)}";
 
-            var entryNode = macro.Graph.Nodes.FirstOrDefault(n => n.Title == "Macro.Entry");
+            // allEntries already holds every Macro.Entry in body order — reuse it
+            // instead of a third full body scan.
+            var entryNode = allEntries.FirstOrDefault();
             if (entryNode != null)
             {
                 var entryOutputs = entryNode.Sockets

@@ -224,11 +224,52 @@ public sealed partial class DatabankBrowserView : UserControl
         _vm.SelectedRowIndex = RowList.SelectedIndex;
     }
 
+    // The ListView's own template ScrollViewer, resolved via a visual-tree
+    // walk on first Loaded. The rows must scroll inside the ListView — an
+    // outer vertically-scrolling ScrollViewer would hand the ItemsStackPanel
+    // infinite height and defeat UI virtualization — so the header strip
+    // syncs to THIS viewer's horizontal offset.
+    private ScrollViewer? _rowListScrollViewer;
+
+    private void OnRowListLoaded(object sender, RoutedEventArgs e)
+    {
+        if (!TryHookRowListScrollViewer())
+        {
+            // Template not realized yet on this Loaded pass — retry once the
+            // pending layout has built the ListView's visual tree.
+            DispatcherQueue?.TryEnqueue(() => TryHookRowListScrollViewer());
+        }
+    }
+
+    private bool TryHookRowListScrollViewer()
+    {
+        if (_rowListScrollViewer is not null) return true;
+        if (RowList is null) return false;
+        var sv = FindDescendantScrollViewer(RowList);
+        if (sv is null) return false;
+        _rowListScrollViewer = sv;
+        sv.ViewChanged += OnRowScrollViewChanged;
+        return true;
+    }
+
+    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject root)
+    {
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is ScrollViewer sv) return sv;
+            var nested = FindDescendantScrollViewer(child);
+            if (nested is not null) return nested;
+        }
+        return null;
+    }
+
     // Keep the column header strip horizontally aligned with the row grid as
-    // the user scrolls the row scroll-viewer. The header is its own
-    // ScrollViewer so the divider line stays anchored under the column row;
-    // we just mirror the offset on every view-change.
-    private void OnRowScrollViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    // the user scrolls the ListView's internal scroll viewer. The header is
+    // its own ScrollViewer so the divider line stays anchored under the
+    // column row; we just mirror the offset on every view-change.
+    private void OnRowScrollViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         if (sender is ScrollViewer sv && HeaderScroll is not null)
             HeaderScroll.ChangeView(sv.HorizontalOffset, null, null, disableAnimation: true);
@@ -1185,15 +1226,18 @@ public sealed partial class DatabankBrowserView : UserControl
     /// Locate the row VM whose Cells list contains <paramref name="cell"/>.
     /// Avoids depending on the visual-tree walk that the prior modal path
     /// used (which broke once we moved editing inline since the editor
-    /// shares the same row as its TextBlock).
+    /// shares the same row as its TextBlock). Resolved through the cell's
+    /// owning-row back-reference; the VisibleRows membership check preserves
+    /// the old cell-scan's contract that a cell from a recycled/stale row
+    /// resolves to null (edit dropped) rather than persisting against a row
+    /// the grid no longer shows.
     /// </summary>
     private DatabankRowViewModel? FindRowForCell(DatabankCellViewModel cell)
     {
         if (_vm is null) return null;
-        foreach (var r in _vm.VisibleRows)
-            foreach (var c in r.Cells)
-                if (ReferenceEquals(c, cell)) return r;
-        return null;
+        var row = cell.Row;
+        if (row is null) return null;
+        return _vm.VisibleRows.Contains(row) ? row : null;
     }
 
     // Walks up the visual tree from the cell text-block to the parent

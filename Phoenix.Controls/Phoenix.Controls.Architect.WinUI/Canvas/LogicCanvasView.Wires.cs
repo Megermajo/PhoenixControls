@@ -123,6 +123,7 @@ public sealed partial class LogicCanvasView
         foreach (var m in _danglingMarkers.Values) DanglingMarkerLayer.Children.Remove(m);
         _danglingMarkers.Clear();
         _danglingSignatures.Clear();
+        ClearWireGeometryCache();   // the whole link set is going away with the VM
     }
 
     private void OnLinksChangedForDecor(object? sender, NotifyCollectionChangedEventArgs e)
@@ -169,10 +170,12 @@ public sealed partial class LogicCanvasView
         _chevronGeoms.Remove(lvm);
         if (_danglingMarkers.Remove(lvm, out var mark)) DanglingMarkerLayer.Children.Remove(mark);
         _danglingSignatures.Remove(lvm);
+        ReleaseWireGeometry(lvm);   // drop the cached GPU bezier for the departing link
     }
 
     private void OnLinkPropertyChanged(LinkViewModel lvm, PropertyChangedEventArgs e)
     {
+        MarkSceneDirty();   // any link property change (path, hover lift, dangling) feeds the GPU wire draw
         switch (e.PropertyName)
         {
             case nameof(LinkViewModel.PathData):
@@ -208,6 +211,13 @@ public sealed partial class LogicCanvasView
     /// </summary>
     private void RefreshFlowChevron(LinkViewModel lvm)
     {
+        // Fast path: nothing ever populates these dictionaries in this build
+        // (the chevron feature is retired), so the PathData arm — which fires
+        // per wire per frame during node drags — pays two Count reads instead
+        // of two always-miss hash removes. The removal below stays reachable
+        // for the documented stale-chevron cleanup should either map ever
+        // hold entries again.
+        if (_flowChevrons.Count == 0 && _chevronGeoms.Count == 0) return;
         if (_flowChevrons.Remove(lvm, out var existing))
             FlowDecorLayer.Children.Remove(existing);
         _chevronGeoms.Remove(lvm);

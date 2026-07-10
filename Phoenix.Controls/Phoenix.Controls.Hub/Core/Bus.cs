@@ -223,6 +223,15 @@ namespace Phoenix.Controls.Hub.Core
             // at Start() to decide between in-proc and WebSocket transport.
             try { InProcBus.Register(new BusInProcBridgeImpl(this)); }
             catch (Exception ex) { GlobalLogger.Error("Bus", "InProcBus.Register", ex); }
+
+            // Invalidate the on_bus dispatch gate whenever the script registry
+            // mutates (load/refresh, enable toggle, process-instance
+            // register/unregister). The handler only flips a flag — the
+            // recompute happens lazily on the next inbound message, so a burst
+            // of OnChanged raises (e.g. RecordExecution per script run) stays
+            // O(1) here.
+            try { ScriptRegistry.Instance.OnChanged += () => Volatile.Write(ref _onBusHandlersDirty, 1); }
+            catch (Exception ex) { GlobalLogger.Error("Bus", "ScriptRegistry.OnChanged hook", ex); }
         }
 
         /// <summary>
@@ -801,6 +810,53 @@ namespace Phoenix.Controls.Hub.Core
             Volatile.Write(ref _onSceneChangedCache, typed);
         }
 
+        // Gate for the per-message on_bus fan-out at the bottom of
+        // RouteIncomingMessage. Building the busVars dictionary + closure and
+        // entering ExecuteOnBusScriptsAsync (init-gate await + registry scan)
+        // costs allocations on EVERY bus message even when no script declares an
+        // on_bus header. Cache "any enabled script carries an on_bus block" and
+        // skip the dispatch entirely when none does — the predicate is a strict
+        // superset of the per-type match inside ExecuteOnBusScriptsAsync, so a
+        // skip only ever elides a provably-empty scan.
+        //
+        // Starts TRUE so messages arriving before the registry's first load keep
+        // pre-gate semantics (ExecuteOnBusScriptsAsync's own _initTask await
+        // covers the not-yet-loaded window); the first OnChanged — raised at the
+        // end of LoadScripts — marks the cache dirty and the next message
+        // recomputes from the populated registry.
+        private volatile bool _anyOnBusHandlers = true;
+        private int _onBusHandlersDirty;
+        private static readonly Func<ScriptInfo, bool> _hasOnBusHeader =
+            static s => s.BusEventTypes.Count > 0;
+
+        private bool AnyOnBusHandlers()
+        {
+            // Clear the dirty flag BEFORE scanning so a registry change that
+            // lands mid-scan re-marks it and the next message recomputes from
+            // fresh state (invalidate-before-read).
+            if (Interlocked.Exchange(ref _onBusHandlersDirty, 0) == 1)
+            {
+                bool any = false;
+                try
+                {
+                    foreach (var _ in ScriptRegistry.Instance.WhereEnabled(_hasOnBusHeader))
+                    {
+                        any = true;
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // On any doubt, dispatch — the gate must only skip work that
+                    // is provably a no-op.
+                    GlobalLogger.Error("Bus", "on_bus gate recompute failed", ex);
+                    any = true;
+                }
+                _anyOnBusHandlers = any;
+            }
+            return _anyOnBusHandlers;
+        }
+
         private void RouteIncomingMessage(BusMessage msg)
         {
             // Wait keys are stored as `${type}:${filter}:${waitId}` so multiple
@@ -814,10 +870,21 @@ namespace Phoenix.Controls.Hub.Core
             // directly; matched entries are removed atomically from both _pendingWaits
             // and the prefix bucket. Visual waits (bare-guid keys) are unaffected —
             // they're never inserted into the prefix index.
-            string specificPrefix = $"{msg.Type}:{msg.Payload ?? ""}:";
-            string wildcardPrefix = $"{msg.Type}:*:";
-            DrainPrefixBucket(specificPrefix, msg);
-            DrainPrefixBucket(wildcardPrefix, msg);
+            //
+            // Skip the whole drain when nothing is pending — the specific
+            // prefix interpolates the FULL payload into a string, a payload-sized
+            // allocation per inbound message that matches nothing for the vast
+            // majority of traffic (waiters exist only while a script awaits a bus
+            // response). _pendingWaits also holds visual waits (bare-guid keys),
+            // so an active visual wait occasionally lets a non-matching drain
+            // through; that only costs what every message paid before the guard.
+            if (!_pendingWaits.IsEmpty)
+            {
+                string specificPrefix = $"{msg.Type}:{msg.Payload ?? ""}:";
+                string wildcardPrefix = $"{msg.Type}:*:";
+                DrainPrefixBucket(specificPrefix, msg);
+                DrainPrefixBucket(wildcardPrefix, msg);
+            }
 
             // Named event routing
             switch (msg.Type)
@@ -969,16 +1036,23 @@ namespace Phoenix.Controls.Hub.Core
             // wildcard guards (emitted by ScriptExporter) can compare against it.
             // Defensive null coalesce — Target defaults to "" on the model but a
             // legacy sender could set it null explicitly.
-            var busVars = new Dictionary<string, string>
+            //
+            // Gated on the cached on_bus probe: when no enabled script carries an
+            // on_bus header, the dictionary + closure + ExecuteOnBusScriptsAsync
+            // scan would all be dead weight — skip them.
+            if (AnyOnBusHandlers())
             {
-                { "bus.type",    msg.Type           },
-                { "bus.source",  msg.Source         },
-                { "bus.target",  msg.Target ?? ""   },
-                { "bus.payload", msg.Payload ?? ""  }
-            };
-            _ = AsyncErrorBoundary.SafeRunAsync(
-                () => ScriptManager.Instance.ExecuteOnBusScriptsAsync(msg.Type, busVars),
-                "Bus", $"on_bus({msg.Type})");
+                var busVars = new Dictionary<string, string>
+                {
+                    { "bus.type",    msg.Type           },
+                    { "bus.source",  msg.Source         },
+                    { "bus.target",  msg.Target ?? ""   },
+                    { "bus.payload", msg.Payload ?? ""  }
+                };
+                _ = AsyncErrorBoundary.SafeRunAsync(
+                    () => ScriptManager.Instance.ExecuteOnBusScriptsAsync(msg.Type, busVars),
+                    "Bus", $"on_bus({msg.Type})");
+            }
         }
 
         // Register a prefix-keyed wait so RouteIncomingMessage
@@ -1239,6 +1313,12 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         private async Task BroadcastToRemoteAsync(BusMessage msg, CancellationToken ct = default)
         {
+            // With zero remote peers the fan-out loop below never runs — skip
+            // the JSON + UTF-8 serialization of the envelope entirely. In-proc
+            // subscribers are fanned separately by BroadcastAsync / the bridge's
+            // PublishAsync, so this remote-only early-out never affects them.
+            if (_clients.IsEmpty) return;
+
             string json = JsonSerializer.Serialize(msg);
             byte[] bytes = Encoding.UTF8.GetBytes(json);
             var segment = new ArraySegment<byte>(bytes);

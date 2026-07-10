@@ -84,11 +84,12 @@ public sealed partial class MiniMapOverlay : UserControl
     // Colour-only minimap edits (node header / frame
     // colour) no longer force a full O(N+F) Rectangle rebuild. _colorDirty drives
     // an in-place rect.Fill/Stroke repaint via these per-VM rect caches (populated
-    // in RenderNodes/RenderFrames, cleared on Rebuild + Detach). Geometry edits
-    // (X/Y/W/H) still RequestRebuild; OnRenderingTick checks _rebuildDirty FIRST,
-    // so a pending rebuild always supersedes (and rebuilds) the caches — the
-    // colour pass only runs when the node/frame set is unchanged since the last
-    // rebuild, keeping the cache keys valid.
+    // in RenderNodes/RenderFrames, cleared on Detach). The caches also persist
+    // ACROSS geometry rebuilds: RenderNodes/RenderFrames reuse the cached
+    // Rectangle per VM and only reposition/resize it in place, so a drag-time
+    // rebuild burst allocates zero UIElements. Children are diffed (add/remove/
+    // reorder) only when the node/frame set itself changed, keeping the cache
+    // keys valid at all times.
     private bool _colorDirty;
     private readonly Dictionary<NodeViewModel, Rectangle> _nodeRectCache = new();
     private readonly Dictionary<FrameViewModel, Rectangle> _frameRectCache = new();
@@ -451,12 +452,38 @@ public sealed partial class MiniMapOverlay : UserControl
 
     private void RenderFrames()
     {
-        FrameLayer.Children.Clear();
-        _frameRectCache.Clear(); // rebuild the colour cache
-        if (_vm is null) return;
+        if (_vm is null)
+        {
+            FrameLayer.Children.Clear();
+            _frameRectCache.Clear();
+            return;
+        }
 
+        // Reuse the cached Rectangle per FrameViewModel across rebuilds — a
+        // geometry rebuild runs once per displayed frame during a drag, so
+        // allocating + remounting a rect per frame here was pure churn. The
+        // hot path below only writes W/H/Fill/Stroke/Canvas.Left/Top in place
+        // and never touches Children; the child set is diffed further down
+        // only when the frame set itself changed.
+        int cachedBefore = _frameRectCache.Count;
+        int hits = 0;
+        bool added = false;
         foreach (var f in _vm.Frames)
         {
+            if (_frameRectCache.TryGetValue(f, out var rect))
+            {
+                hits++;
+            }
+            else
+            {
+                rect = new Rectangle
+                {
+                    StrokeThickness = 0.5,
+                    IsHitTestVisible = false,
+                };
+                _frameRectCache[f] = rect; // also feeds the in-place colour repaint
+                added = true;
+            }
             // Soften the minimap frame fill from the
             // canvas-side #40<rgb> (~25%) down to ~9% alpha. On the
             // bright minimap surface, 25% reads as opaque saturated
@@ -466,43 +493,85 @@ public sealed partial class MiniMapOverlay : UserControl
             // defaultAlpha keeps the colour identity while pushing the
             // fill into the "ghost background" range. Stroke stays at
             // 0x80 so the frame outline is still legible.
-            var rect = new Rectangle
-            {
-                Width  = Math.Max(1.0, f.Width  * _scale),
-                Height = Math.Max(1.0, f.Height * _scale),
-                Fill   = SolidBrushFromHex(f.FrameColorHex, defaultAlpha: 0x18),
-                Stroke = SolidBrushFromHex(f.FrameColorHex, defaultAlpha: 0x80),
-                StrokeThickness = 0.5,
-                IsHitTestVisible = false,
-            };
+            rect.Width  = Math.Max(1.0, f.Width  * _scale);
+            rect.Height = Math.Max(1.0, f.Height * _scale);
+            rect.Fill   = SolidBrushFromHex(f.FrameColorHex, defaultAlpha: 0x18);
+            rect.Stroke = SolidBrushFromHex(f.FrameColorHex, defaultAlpha: 0x80);
             Microsoft.UI.Xaml.Controls.Canvas.SetLeft(rect, (f.X - _boundsX) * _scale);
             Microsoft.UI.Xaml.Controls.Canvas.SetTop (rect, (f.Y - _boundsY) * _scale);
-            FrameLayer.Children.Add(rect);
-            _frameRectCache[f] = rect; // for in-place colour repaint
+        }
+
+        bool removed = hits < cachedBefore;
+        if (removed)
+        {
+            var live = new HashSet<FrameViewModel>(_vm.Frames);
+            var stale = new List<FrameViewModel>();
+            foreach (var key in _frameRectCache.Keys)
+                if (!live.Contains(key)) stale.Add(key);
+            foreach (var key in stale) _frameRectCache.Remove(key);
+        }
+
+        // Re-sync the child list (collection order = paint order) only on a
+        // structural change; the Children.Count check also heals a re-Attach
+        // whose Detach cleared the cache but left the layer populated.
+        if (added || removed || FrameLayer.Children.Count != _frameRectCache.Count)
+        {
+            FrameLayer.Children.Clear();
+            foreach (var f in _vm.Frames)
+                FrameLayer.Children.Add(_frameRectCache[f]);
         }
     }
 
     private void RenderNodes()
     {
-        NodeLayer.Children.Clear();
-        _nodeRectCache.Clear(); // rebuild the colour cache
-        if (_vm is null) return;
+        if (_vm is null)
+        {
+            NodeLayer.Children.Clear();
+            _nodeRectCache.Clear();
+            return;
+        }
 
+        // Same reuse contract as RenderFrames: reposition/resize the cached
+        // Rectangle per NodeViewModel in place, no per-rebuild allocation and
+        // no Children mutation on the drag-time hot path.
+        int cachedBefore = _nodeRectCache.Count;
+        int hits = 0;
+        bool added = false;
         foreach (var n in _vm.Nodes)
         {
-            double w = Math.Max(2.0, n.Width  * _scale);
-            double h = Math.Max(2.0, n.Height * _scale);
-            var rect = new Rectangle
+            if (_nodeRectCache.TryGetValue(n, out var rect))
             {
-                Width  = w,
-                Height = h,
-                Fill   = SolidBrushFromHex(n.HeaderColorHex, defaultAlpha: 0xE0),
-                IsHitTestVisible = false,
-            };
+                hits++;
+            }
+            else
+            {
+                rect = new Rectangle { IsHitTestVisible = false };
+                _nodeRectCache[n] = rect; // also feeds the in-place colour repaint
+                added = true;
+            }
+            rect.Width  = Math.Max(2.0, n.Width  * _scale);
+            rect.Height = Math.Max(2.0, n.Height * _scale);
+            rect.Fill   = SolidBrushFromHex(n.HeaderColorHex, defaultAlpha: 0xE0);
             Microsoft.UI.Xaml.Controls.Canvas.SetLeft(rect, (n.X - _boundsX) * _scale);
             Microsoft.UI.Xaml.Controls.Canvas.SetTop (rect, (n.Y - _boundsY) * _scale);
-            NodeLayer.Children.Add(rect);
-            _nodeRectCache[n] = rect; // for in-place colour repaint
+        }
+
+        bool removed = hits < cachedBefore;
+        if (removed)
+        {
+            var live = new HashSet<NodeViewModel>(_vm.Nodes);
+            var stale = new List<NodeViewModel>();
+            foreach (var key in _nodeRectCache.Keys)
+                if (!live.Contains(key)) stale.Add(key);
+            foreach (var key in stale) _nodeRectCache.Remove(key);
+        }
+
+        // Child-order resync only on a structural change (see RenderFrames).
+        if (added || removed || NodeLayer.Children.Count != _nodeRectCache.Count)
+        {
+            NodeLayer.Children.Clear();
+            foreach (var n in _vm.Nodes)
+                NodeLayer.Children.Add(_nodeRectCache[n]);
         }
     }
 

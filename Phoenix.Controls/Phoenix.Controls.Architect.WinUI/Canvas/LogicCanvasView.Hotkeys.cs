@@ -123,5 +123,8 @@ public sealed partial class LogicCanvasView
     /// the context model.
     /// </summary>
     internal void OnVmSelectionChangedForHotkeys(object? sender, EventArgs e)
-        => RecomputeHotkeyContext();
+    {
+        MarkSceneDirty();   // selection halos render on the GPU canvas
+        RecomputeHotkeyContext();
+    }
 }

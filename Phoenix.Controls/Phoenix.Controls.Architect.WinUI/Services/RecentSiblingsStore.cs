@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
@@ -41,12 +42,29 @@ public static class RecentSiblingsStore
     // caller writing an unbounded list and stalling Hub boot.
     private const int MaxEntries = 32;
 
-    // Serialises the Load → mutate → Save sequence
-    // in Touch. Pre-fix two concurrent Touch calls (sibling windows opening /
-    // focusing in parallel) could both Load the same on-disk list, mutate
-    // independent copies, and the second Save would clobber the first writer's
-    // change (TOCTOU between Load and Save).
+    // Debounce window for coalescing Touch bursts (open + focus + save can
+    // fire back-to-back) into a single disk write.
+    private const int FlushDebounceMs = 500;
+
+    // Serialises disk writes only. Pre-fix the whole Load → mutate → Save
+    // sequence ran under one lock ON THE UI THREAD per Touch; two concurrent
+    // Touch calls could otherwise both Load the same on-disk list, mutate
+    // independent copies, and the second Save would clobber the first
+    // writer's change (TOCTOU between Load and Save). The in-memory cache
+    // below is now the single source of truth, so this lock only has to keep
+    // two flushes from interleaving the file.
     private static readonly object s_ioLock = new();
+
+    // Guards the in-memory cache + debounce state. Mutations (Touch/Remove/
+    // Replace) are memory-only under this lock, so callers on the UI thread
+    // never wait on disk; the debounced flush snapshots the cache and writes
+    // on the thread pool.
+    private static readonly object s_cacheLock = new();
+    private static List<Entry>? s_cache;
+    private static Timer? s_flushTimer;
+    private static long s_mutationSeq;   // bumped under s_cacheLock per mutation
+    private static long s_flushedSeq;    // last seq written to disk; under s_ioLock
+    private static bool s_exitFlushHooked;
 
     public sealed class Entry
     {
@@ -69,12 +87,9 @@ public static class RecentSiblingsStore
         if (string.IsNullOrWhiteSpace(absolutePath)) return;
         try
         {
-            // Hold s_ioLock across the whole
-            // Load → mutate → Save so concurrent Touch calls can't clobber
-            // each other's MRU update.
-            lock (s_ioLock)
+            lock (s_cacheLock)
             {
-                var list = Load();
+                var list = EnsureCacheLocked();
                 // Remove any prior entry for this path (case-insensitive on Windows).
                 for (int i = list.Count - 1; i >= 0; i--)
                 {
@@ -88,11 +103,11 @@ public static class RecentSiblingsStore
                     FocusOrder = focusOrder,
                 });
                 // Sort newest-first by LastOpenUtc and cap.
-                var capped = list
+                s_cache = list
                     .OrderByDescending(e => e.LastOpenUtc)
                     .Take(MaxEntries)
                     .ToList();
-                Save(capped);
+                MarkDirtyAndScheduleFlushLocked();
             }
         }
         catch (Exception ex)
@@ -114,11 +129,24 @@ public static class RecentSiblingsStore
         if (string.IsNullOrWhiteSpace(absolutePath)) return;
         try
         {
-            var list = Load();
-            int before = list.Count;
-            list.RemoveAll(e =>
-                string.Equals(e.Path, absolutePath, StringComparison.OrdinalIgnoreCase));
-            if (list.Count != before) Save(list);
+            bool changed;
+            lock (s_cacheLock)
+            {
+                var list = EnsureCacheLocked();
+                int before = list.Count;
+                list.RemoveAll(e =>
+                    string.Equals(e.Path, absolutePath, StringComparison.OrdinalIgnoreCase));
+                changed = list.Count != before;
+                if (changed)
+                {
+                    s_mutationSeq++;
+                    HookExitFlushLocked();
+                }
+            }
+            // Terminal window-close path — flush synchronously so the removal
+            // (and any still-debounced Touch) lands before the host process
+            // can call Environment.Exit.
+            if (changed) TryFlush();
         }
         catch (Exception ex)
         {
@@ -138,7 +166,13 @@ public static class RecentSiblingsStore
         try
         {
             var list = entries?.ToList() ?? new List<Entry>();
-            Save(list);
+            lock (s_cacheLock)
+            {
+                s_cache = list;
+                s_mutationSeq++;
+                HookExitFlushLocked();
+            }
+            TryFlush();
         }
         catch (Exception ex)
         {
@@ -151,9 +185,33 @@ public static class RecentSiblingsStore
     /// <summary>
     /// Read the persisted entries. Returns an empty list when the
     /// file is missing, empty, or unparseable — boot replay is
-    /// best-effort.
+    /// best-effort. Served from the in-memory cache after the first
+    /// read so repeat calls never re-hit disk.
     /// </summary>
     public static List<Entry> Load()
+    {
+        try
+        {
+            lock (s_cacheLock)
+            {
+                // Copy so callers (Hub replay sorts in place) can't mutate
+                // the cache's list.
+                return new List<Entry>(EnsureCacheLocked());
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Log(
+                $"RecentSiblingsStore.Load failed: {ex.Message}",
+                "RecentSiblingsStore", LogLevel.System);
+            return new List<Entry>();
+        }
+    }
+
+    private static List<Entry> EnsureCacheLocked()
+        => s_cache ??= LoadFromDisk();
+
+    private static List<Entry> LoadFromDisk()
     {
         try
         {
@@ -170,6 +228,60 @@ public static class RecentSiblingsStore
                 $"RecentSiblingsStore.Load failed: {ex.Message}",
                 "RecentSiblingsStore", LogLevel.System);
             return new List<Entry>();
+        }
+    }
+
+    private static void MarkDirtyAndScheduleFlushLocked()
+    {
+        s_mutationSeq++;
+        HookExitFlushLocked();
+        if (s_flushTimer is null)
+        {
+            s_flushTimer = new Timer(static _ => TryFlush(), null,
+                FlushDebounceMs, Timeout.Infinite);
+        }
+        else
+        {
+            s_flushTimer.Change(FlushDebounceMs, Timeout.Infinite);
+        }
+    }
+
+    private static void HookExitFlushLocked()
+    {
+        // A pending debounced flush can be killed by the host's
+        // Environment.Exit(0); ProcessExit still runs on that path, so a
+        // one-time hook guarantees the last mutation lands on disk.
+        if (s_exitFlushHooked) return;
+        s_exitFlushHooked = true;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => TryFlush();
+    }
+
+    private static void TryFlush()
+    {
+        try
+        {
+            List<Entry> snapshot;
+            long seq;
+            lock (s_cacheLock)
+            {
+                if (s_cache is null) return;
+                snapshot = new List<Entry>(s_cache);
+                seq = s_mutationSeq;
+            }
+            lock (s_ioLock)
+            {
+                // A concurrent flush already wrote this state (or newer) —
+                // skipping keeps a stale snapshot from overwriting it.
+                if (seq <= s_flushedSeq) return;
+                Save(snapshot);
+                s_flushedSeq = seq;
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Log(
+                $"RecentSiblingsStore flush failed: {ex.Message}",
+                "RecentSiblingsStore", LogLevel.Debug);
         }
     }
 

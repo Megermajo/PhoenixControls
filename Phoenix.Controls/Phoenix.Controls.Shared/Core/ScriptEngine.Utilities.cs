@@ -135,8 +135,33 @@ namespace Phoenix.Controls.Shared.Core
             if (line.StartsWith("on_clipboard"))
                 return string.IsNullOrEmpty(EventType)
                     || EventType.StartsWith("Clipboard.", StringComparison.OrdinalIgnoreCase);
+            // on_chat — chat is multi-platform (Twitch / YouTube / Kick), but a BARE
+            // `on_chat:` keeps its historical meaning of Twitch chat only, so every
+            // graph and hand-authored script written before the multi-platform chat
+            // pipeline behaves exactly as it always did. A platform list widens it:
+            // `on_chat(twitch, kick):` enters for the listed platforms' chat events.
+            // Empty EventType stays permissive (direct/test invocations).
             if (line.StartsWith("on_chat"))
-                return string.IsNullOrEmpty(EventType) || EventType.Equals("Twitch.ChatMessage", StringComparison.OrdinalIgnoreCase);
+            {
+                if (string.IsNullOrEmpty(EventType)) return true;
+                string? chatPlatform = ChatPlatforms.FromEventType(EventType);
+                if (chatPlatform is null) return false;
+
+                int open = line.IndexOf('(');
+                if (open < 0)
+                    return chatPlatform == ChatPlatforms.Twitch;
+                int close = line.LastIndexOf(')');
+                string list = close > open ? line.Substring(open + 1, close - open - 1) : string.Empty;
+                if (string.IsNullOrWhiteSpace(list))
+                    return chatPlatform == ChatPlatforms.Twitch;
+
+                foreach (var token in list.Split(','))
+                {
+                    if (token.Trim().Trim('"').Equals(chatPlatform, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            }
             if (line.StartsWith("on_startup"))
                 return string.IsNullOrEmpty(EventType) || EventType.Equals("Startup", StringComparison.OrdinalIgnoreCase);
             // Live processes — on_process_start / on_process_stop run a process

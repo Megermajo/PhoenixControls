@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Models;
 
 namespace Phoenix.Controls.Architect.Core
@@ -125,6 +126,17 @@ namespace Phoenix.Controls.Architect.Core
                     return;
                 case "YouTube.Message":
                     AddRange(tokens, "user.name", "user.message");
+                    return;
+                case "Chat.Message":
+                    // Unified multi-platform chat trigger — Twitch.ChatMessage's
+                    // set plus the platform discriminator. The legacy titles
+                    // above stay handled for graphs not yet re-saved through
+                    // migration.
+                    AddRange(tokens,
+                        "user.message", "user.name", "user.command", "user.args",
+                        "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster",
+                        "user.color_hex", "user.sub_months",
+                        "event.iscommand", "user.platform");
                     return;
 
                 // ── Other event sources.
@@ -292,6 +304,21 @@ namespace Phoenix.Controls.Architect.Core
                 case "System.DoAction":
                     tokens.Add("result.sb_dispatched");
                     return;
+            }
+
+            // ── Catalog-driven platform events (YouTube/Kick) — single source
+            // in PlatformEventCatalog. Runs after the switch so the explicit
+            // cases above (incl. legacy YouTube.Message) are never shadowed.
+            // The Hub runtime injects user.platform + event.payload for every
+            // catalog event on top of the per-socket tokens.
+            var platformEvent = PlatformEventCatalog.Find(n.Title);
+            if (platformEvent != null)
+            {
+                foreach (var s in platformEvent.Sockets)
+                    tokens.Add(s.VarToken);
+                tokens.Add("user.platform");
+                tokens.Add("event.payload");
+                return;
             }
 
             // Everything past the switch reads n.Attributes. The Node model

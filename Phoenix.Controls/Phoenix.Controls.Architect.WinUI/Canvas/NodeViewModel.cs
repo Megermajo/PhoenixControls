@@ -526,6 +526,7 @@ public sealed class NodeViewModel : ObservableObject
     {
         _cachedWidth  = double.NaN;
         _cachedHeight = double.NaN;
+        NodeGeometry.MarkGeometryDirty(_node.Id); // keep the static geometry gate in lockstep
     }
 
     /// <summary>
@@ -710,6 +711,7 @@ public sealed class NodeViewModel : ObservableObject
     /// </summary>
     private void OnMiddleAttributePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        NodeGeometry.MarkGeometryDirty(_node.Id); // per-keystroke writes reach Node.Attributes even while the relayout below is deferred
         var m = sender as MiddleAttributeViewModel;
         if (e.PropertyName == nameof(MiddleAttributeViewModel.Value) ||
             e.PropertyName == nameof(MiddleAttributeViewModel.BoolValue))
@@ -773,6 +775,7 @@ public sealed class NodeViewModel : ObservableObject
     /// </summary>
     private void OnSocketPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        NodeGeometry.MarkGeometryDirty(_node.Id); // per-keystroke writes reach Node.Attributes even while the relayout below is deferred
         var s = sender as SocketViewModel;
         if (e.PropertyName == nameof(SocketViewModel.Label) ||
             e.PropertyName == nameof(SocketViewModel.ValuePill) ||

@@ -68,6 +68,8 @@ internal static class NodeProse
             "A durable FIFO queue backed by a databank variable (pipe-separated under the hood). Push work, pop the oldest, measure depth, clear it. Cross-script visible — drives raid trains, shoutout queues and rate-limited dispatch."),
         new CategoryMeta("Twitch Data", "#7A5414",
             "Read-only Twitch lookups — user info, stream state, roles, follow age, active viewers, last-active. Resolved through your Streamer.bot bot account; the result lands on output sockets and in the <code>{result.*}</code> tokens."),
+        new CategoryMeta("Platform Data", "#7A5414",
+            "Read-only YouTube and Kick lookups — the cross-platform siblings of the Twitch Data band. Resolved through the <code>Phoenix:</code> platform actions in Streamer.bot; the result lands on the output sockets and in the <code>{user.*}</code> tokens, just like the Twitch lookups."),
         new CategoryMeta("Platforms", "#7A4710",
             "Outbound actions to the outside world — Twitch chat &amp; moderation, Discord, HTTP, the filesystem and audio. All Twitch traffic is routed through your Streamer.bot bot account (the <code>Phoenix:</code> action pack); Phoenix never talks to Twitch directly."),
         new CategoryMeta("OBS", "#1F4E3A",
@@ -104,10 +106,12 @@ internal static class NodeProse
     internal static readonly IReadOnlyDictionary<string, NodeInfo> Nodes = new Dictionary<string, NodeInfo>
     {
         // ═══════════════════════════════ EVENTS ═══════════════════════════════
+        ["Chat.Message"] = new(
+            Summary: "Fires when any chatter — including the broadcaster and bots — sends a message on Twitch, YouTube Live or Kick, whichever platforms are ticked on the node.",
+            Description: "<p>The workhorse trigger, now for every platform at once. The three platform checkmarks on the node body choose which chats fire it (new nodes listen to all three), and <code>Platform</code> reports <code>twitch</code>, <code>youtube</code> or <code>kick</code> so one flow can branch per platform with <code>Logic.Switch</code>. <code>Message</code> is the raw line; <code>IsCommand</code> is true when it starts with <code>!</code> and matches this node's <code>Commands</code> filter, with the matched alias on <code>Command</code> and the trailing words on <code>Args</code>. The <code>User</code> output is a packed array — read individual fields with <code>Array.Get</code>/<code>Array.Unpack</code>, or use the broken-out <code>IsMod</code>/<code>IsSub</code>/<code>IsBroadcaster</code>/<code>IsVip</code> pins plus <code>SubMonths</code> and <code>ColorHex</code>.</p><p>Role pins bind best-effort off Twitch: YouTube maps owner / moderator / member onto <code>IsBroadcaster</code> / <code>IsMod</code> / <code>IsSub</code>, Kick maps moderator / subscriber onto <code>IsMod</code> / <code>IsSub</code>, and <code>IsVip</code> is Twitch-only. Old <code>Twitch.ChatMessage</code> and <code>YouTube.Message</code> nodes upgrade to this node automatically on load with only their original platform ticked, so existing graphs behave exactly as before. Bots and the broadcaster fire this too — set the Bot Username in Settings if you don't want feedback loops. Chat scripts are capped at a few concurrent runs, so a flood queues rather than piling up.</p>",
+            Example: "Set <code>Commands</code> to <b>ping</b> &rarr; branch on <code>Platform</code> and reply <code>\"@{user.name} pong\"</code> through the matching platform's SendChat."),
         ["Twitch.ChatMessage"] = new(
-            Summary: "Fires when any chatter — including the broadcaster and bots — sends a message in your channel.",
-            Description: "<p>The workhorse trigger. <code>Message</code> is the raw line; <code>IsCommand</code> is true when it starts with <code>!</code> and matches this node's <code>Commands</code> filter, with the matched alias on <code>Command</code> and the trailing words on <code>Args</code>. The <code>User</code> output is a packed array — read individual fields with <code>Array.Get</code>/<code>Array.Unpack</code>, or use the broken-out <code>IsMod</code>/<code>IsSub</code>/<code>IsVip</code> pins.</p><p>Bots and the broadcaster fire this too — set the Bot Username in Settings if you don't want feedback loops. Chat scripts are capped at a few concurrent runs, so a flood queues rather than piling up.</p>",
-            Example: "Set <code>Commands</code> to <b>ping</b> &rarr; reply <code>\"@{user.name} pong\"</code> with <code>Twitch.SendChat</code>."),
+            Summary: "Superseded by Chat.Message — old graphs migrate onto the unified chat trigger automatically, keeping Twitch as their only ticked platform."),
         ["Twitch.Subscription"] = new(
             Summary: "Fires on a brand-new subscription. Resubs and gift subs have their own dedicated nodes.",
             Description: "<p><code>Tier</code> is the normalised tier — <code>1</code>, <code>2</code>, <code>3</code> or <code>prime</code>. For the recurring path use <code>Twitch.Resub</code>; for gifted subs use <code>Twitch.GiftSub</code> / <code>Twitch.GiftBomb</code>.</p>",
@@ -141,9 +145,211 @@ internal static class NodeProse
             Description: "<p><code>Reward</code> is the reward title from your Twitch dashboard; <code>Input</code> is the viewer's text (empty when the reward asks for none). Branch on the title with <code>Logic.Switch</code> — Phoenix matches on the title, not the reward ID, because IDs regenerate on rename.</p>",
             Example: "<b>\"Hydrate!\"</b> redeem &rarr; a Visualist trigger and a chat nudge to drink water."),
         ["YouTube.Message"] = new(
-            Summary: "Fires on a YouTube Live chat message, when YouTube monitoring is configured in Hub.",
-            Description: "<p>The YouTube-side mirror of <code>Twitch.ChatMessage</code>. <code>User</code> and <code>Message</code> come from the YouTube chat payload. Requires YouTube credentials and monitoring enabled in Hub settings.</p>",
-            Example: "Cross-post a YouTube super-chat shout into your overlay."),
+            Summary: "Superseded by Chat.Message — old graphs migrate onto the unified chat trigger automatically, keeping YouTube as their only ticked platform."),
+
+        // ── YouTube Live events ────────────────────────────────────────────
+        ["YouTube.SuperChat"] = new(
+            Summary: "Fires when a viewer sends a Super Chat in your YouTube live chat.",
+            Description: "<p><code>User</code> is the sender and <code>Message</code> their highlighted text. <code>Amount</code> and <code>Currency</code> carry the purchase as YouTube reports it (e.g. <code>5.00</code> + <code>EUR</code>); <code>Tier</code> is the Super Chat colour tier.</p>",
+            Example: "Thank the sender in chat — <code>\"{user.name} dropped a {event.amount} {event.currency} Super Chat!\"</code> — and fire a Visualist alert."),
+        ["YouTube.SuperSticker"] = new(
+            Summary: "Fires when a viewer sends a Super Sticker in your YouTube live chat.",
+            Description: "<p><code>User</code> is the sender; <code>Amount</code> / <code>Currency</code> / <code>Tier</code> carry the purchase. <code>StickerAlt</code> is the sticker's alt text and <code>StickerUrl</code> its image URL — wire the URL straight into an overlay image widget.</p>",
+            Example: "Show the sticker on stream by passing <code>StickerUrl</code> to a Visualist image trigger."),
+        ["YouTube.NewSponsor"] = new(
+            Summary: "Fires when a viewer becomes a channel member, or upgrades their membership level.",
+            Description: "<p><code>User</code> is the member and <code>Level</code> the membership level name. <code>IsUpgrade</code> is true when an existing member moved up a level rather than joining fresh.</p>",
+            Example: "New member &rarr; welcome them by <code>Level</code>; branch on <code>IsUpgrade</code> for a \"levelled up!\" variant."),
+        ["YouTube.MemberMileStone"] = new(
+            Summary: "Fires when a channel member hits a membership milestone — their anniversary message.",
+            Description: "<p><code>User</code> and <code>Level</code> identify the member; <code>Months</code> is their total membership length and <code>Message</code> the note they attached — the YouTube cousin of a Twitch resub message.</p>",
+            Example: "Milestone at 12+ <code>Months</code> &rarr; read their <code>Message</code> aloud with <code>Audio.PlayTts</code>."),
+        ["YouTube.MembershipGift"] = new(
+            Summary: "Fires when a viewer gifts channel memberships — once for the gift purchase itself.",
+            Description: "<p><code>User</code> is the <em>gifter</em>; <code>Count</code> is how many memberships they gifted and <code>Tier</code> the level. Each recipient arrives separately on <code>YouTube.GiftMembershipReceived</code>.</p>",
+            Example: "Gift of 10+ memberships &rarr; a celebration overlay sized to <code>Count</code>."),
+        ["YouTube.GiftMembershipReceived"] = new(
+            Summary: "Fires once per viewer who receives a gifted channel membership.",
+            Description: "<p><code>User</code> is the <em>recipient</em>; <code>Gifter</code> names who paid and <code>Tier</code> the level. The bulk purchase itself fires <code>YouTube.MembershipGift</code>.</p>",
+            Example: "Welcome each recipient: <code>\"{user.name} was gifted a membership by {user.gifter}!\"</code>"),
+        ["YouTube.FirstWords"] = new(
+            Summary: "Fires the first time a viewer speaks in your YouTube live chat this stream.",
+            Description: "<p><code>User</code> and <code>Message</code> carry the debut line. Like every platform event it also binds <code>{user.platform}</code> (<code>youtube</code> here), so a shared greeter flow can tell platforms apart.</p>",
+            Example: "First-time chatter &rarr; greet them by name with a welcome overlay."),
+        ["YouTube.NewSubscriber"] = new(
+            Summary: "Fires when someone subscribes to your YouTube channel — the free bell, not a paid membership.",
+            Description: "<p><code>User</code> is the new subscriber where YouTube reports one. <code>Payload</code> carries the raw event JSON (also readable as <code>{event.payload}</code>) — the exact field set depends on the connected Streamer.bot build, so parse it with <code>HTTP.ParseJson</code> if you need more.</p>",
+            Example: "New subscriber &rarr; a small chime overlay; keep it light, these can come in bursts."),
+        ["YouTube.UserBanned"] = new(
+            Summary: "Fires when a user is banned from your YouTube live chat.",
+            Description: "<p><code>User</code> is who got banned; <code>BanType</code> is the kind of ban YouTube reports and <code>Duration</code> its length in seconds for temporary bans.</p>",
+            Example: "Log every ban — who and what kind — to a databank audit table."),
+        ["YouTube.UserTimedout"] = new(
+            Summary: "Fires when a user is timed out in your YouTube live chat. Requires Streamer.bot 1.0.5 or newer.",
+            Description: "<p><code>User</code> is who was timed out and <code>Duration</code> the timeout length in seconds. Older Streamer.bot builds never send this event — Hub warns at connect when it's missing.</p>",
+            Example: "Post <code>\"{user.name} is taking a {event.duration}s break\"</code> to your mod log."),
+        ["YouTube.MessageDeleted"] = new(
+            Summary: "Fires when a message is deleted from your YouTube live chat.",
+            Description: "<p><code>User</code> is the message's author and <code>MessageId</code> the deleted message's id. <code>Payload</code> holds the raw event JSON (<code>{event.payload}</code>) if your Streamer.bot build sends more.</p>",
+            Example: "Mirror deletions into an overlay chat widget so the on-screen chat stays clean."),
+        ["YouTube.JewelsGifted"] = new(
+            Summary: "Fires when a viewer sends Jewels, YouTube's gifting currency. Requires Streamer.bot 1.0.5 or newer.",
+            Description: "<p><code>User</code> is the sender and <code>Amount</code> the jewel amount as reported. The payload shape for this event isn't published, so <code>Payload</code> / <code>{event.payload}</code> carries the raw JSON for anything beyond that.</p>",
+            Example: "Thank jewel gifts in chat and stack the <code>Amount</code> into a databank counter."),
+        ["YouTube.StatisticsUpdated"] = new(
+            Summary: "Fires periodically while live with refreshed YouTube stream statistics.",
+            Description: "<p><code>Viewers</code> is the current concurrent-viewer count, <code>Views</code> the broadcast's total views and <code>Likes</code> its like count. It fires on YouTube's own refresh cadence — treat it as a ticker, not an alert.</p>",
+            Example: "Push <code>Likes</code> into a like-goal overlay on every update."),
+        ["YouTube.PresentViewers"] = new(
+            Summary: "Fires when Streamer.bot reports the viewers currently present in your YouTube chat.",
+            Description: "<p><code>Users</code> is a comma-joined list of viewer names and <code>IsLive</code> whether the broadcast is live. Exact shape and cadence depend on the connected Streamer.bot build — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Snapshot who's around into the databank for a lurker raffle."),
+        ["YouTube.BroadcastStarted"] = new(
+            Summary: "Fires when your YouTube broadcast goes live.",
+            Description: "<p><code>Title</code>, <code>BroadcastId</code>, <code>Privacy</code> and <code>Status</code> describe the broadcast as YouTube reports it; how much is filled in depends on the connected Streamer.bot build.</p>",
+            Example: "Going live &rarr; reset the session counters and post the go-live announcement."),
+        ["YouTube.BroadcastEnded"] = new(
+            Summary: "Fires when your YouTube broadcast ends.",
+            Description: "<p><code>Title</code>, <code>BroadcastId</code>, <code>Privacy</code> and <code>Status</code> describe the broadcast that ended; how much is filled in depends on the connected Streamer.bot build.</p>",
+            Example: "Stream over &rarr; stop live loops and log the session summary."),
+        ["YouTube.BroadcastAdded"] = new(
+            Summary: "Fires when a new broadcast is created or scheduled on your channel.",
+            Description: "<p><code>Title</code>, <code>BroadcastId</code>, <code>Privacy</code> and <code>Status</code> describe the new broadcast; how much is filled in depends on the connected Streamer.bot build.</p>",
+            Example: "Announce the newly scheduled stream in your community chat."),
+        ["YouTube.BroadcastRemoved"] = new(
+            Summary: "Fires when a broadcast is removed from your channel.",
+            Description: "<p><code>Title</code>, <code>BroadcastId</code>, <code>Privacy</code> and <code>Status</code> describe the removed broadcast; how much is filled in depends on the connected Streamer.bot build.</p>",
+            Example: "Clear any countdown overlay pointing at the removed broadcast."),
+        ["YouTube.BroadcastUpdated"] = new(
+            Summary: "Fires when a broadcast's details change — title, privacy or status.",
+            Description: "<p><code>Title</code>, <code>BroadcastId</code>, <code>Privacy</code> and <code>Status</code> carry the updated values; how much is filled in depends on the connected Streamer.bot build.</p>",
+            Example: "Title changed &rarr; refresh the on-screen title lower-third."),
+        ["YouTube.BroadcastMonitoringStarted"] = new(
+            Summary: "Fires when Streamer.bot starts monitoring a YouTube broadcast.",
+            Description: "<p><code>Title</code> and <code>BroadcastId</code> identify the broadcast. This is about Streamer.bot's monitoring session, not the stream itself; <code>Payload</code> / <code>{event.payload}</code> carries whatever else the connected build sends.</p>",
+            Example: "Use it as the \"YouTube pipeline is up\" signal in a status overlay."),
+        ["YouTube.BroadcastMonitoringEnded"] = new(
+            Summary: "Fires when Streamer.bot stops monitoring a YouTube broadcast.",
+            Description: "<p><code>Title</code> and <code>BroadcastId</code> identify the broadcast. This is about Streamer.bot's monitoring session, not the stream itself; <code>Payload</code> / <code>{event.payload}</code> carries whatever else the connected build sends.</p>",
+            Example: "Show a \"YouTube events paused\" badge so you notice mid-stream."),
+        ["YouTube.NewSponsorOnlyStarted"] = new(
+            Summary: "Fires when members-only mode is turned on in your YouTube chat.",
+            Description: "<p>No dedicated fields — the payload shape depends on the connected Streamer.bot build, so read <code>Payload</code> / <code>{event.payload}</code> for the raw JSON.</p>",
+            Example: "Flip a \"members-only chat\" badge onto your overlay."),
+        ["YouTube.NewSponsorOnlyEnded"] = new(
+            Summary: "Fires when members-only mode is turned off in your YouTube chat.",
+            Description: "<p>No dedicated fields — the payload shape depends on the connected Streamer.bot build, so read <code>Payload</code> / <code>{event.payload}</code> for the raw JSON.</p>",
+            Example: "Clear the \"members-only chat\" badge from your overlay."),
+        ["YouTube.PollStarted"] = new(
+            Summary: "Fires when a poll starts in your YouTube live chat.",
+            Description: "<p><code>Title</code> carries the poll question where the connected Streamer.bot build provides it; the rest of the payload shape is build-dependent — read <code>Payload</code> / <code>{event.payload}</code> for choices and counts.</p>",
+            Example: "Mirror the poll question onto a Visualist overlay."),
+        ["YouTube.PollUpdated"] = new(
+            Summary: "Fires as votes come in on a running YouTube poll.",
+            Description: "<p><code>Title</code> carries the poll question where the connected Streamer.bot build provides it; vote data is build-dependent — read <code>Payload</code> / <code>{event.payload}</code> for the raw JSON.</p>",
+            Example: "Keep an on-screen vote tally fresh while the poll runs."),
+        ["YouTube.PollClosed"] = new(
+            Summary: "Fires when a YouTube poll closes.",
+            Description: "<p><code>Title</code> carries the poll question where the connected Streamer.bot build provides it; the final results are build-dependent — read <code>Payload</code> / <code>{event.payload}</code> for the raw JSON.</p>",
+            Example: "Announce the winning option in chat."),
+        ["YouTube.SevenTVEmoteAdded"] = new(
+            Summary: "Fires when a 7TV emote is added to your YouTube channel set.",
+            Description: "<p><code>EmoteName</code> is the emote's name where the connected Streamer.bot build provides it; the rest of the payload is build-dependent — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Announce new emotes in chat so viewers try them straight away."),
+        ["YouTube.SevenTVEmoteRemoved"] = new(
+            Summary: "Fires when a 7TV emote is removed from your YouTube channel set.",
+            Description: "<p><code>EmoteName</code> is the emote's name where the connected Streamer.bot build provides it; the rest of the payload is build-dependent — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Note removed emotes in your mod log."),
+        ["YouTube.BetterTTVEmoteAdded"] = new(
+            Summary: "Fires when a BetterTTV emote is added to your YouTube channel set.",
+            Description: "<p><code>EmoteName</code> is the emote's name where the connected Streamer.bot build provides it; the rest of the payload is build-dependent — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Announce new emotes in chat so viewers try them straight away."),
+        ["YouTube.BetterTTVEmoteRemoved"] = new(
+            Summary: "Fires when a BetterTTV emote is removed from your YouTube channel set.",
+            Description: "<p><code>EmoteName</code> is the emote's name where the connected Streamer.bot build provides it; the rest of the payload is build-dependent — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Note removed emotes in your mod log."),
+
+        // ── Kick events ────────────────────────────────────────────────────
+        ["Kick.FirstWords"] = new(
+            Summary: "Fires the first time a viewer speaks in your Kick chat this stream.",
+            Description: "<p><code>User</code> and <code>Message</code> carry the debut line. Like every platform event it also binds <code>{user.platform}</code> (<code>kick</code> here), so a shared greeter flow can tell platforms apart.</p>",
+            Example: "First-time chatter &rarr; greet them by name with a welcome overlay."),
+        ["Kick.Follow"] = new(
+            Summary: "Fires when someone follows your Kick channel.",
+            Description: "<p><code>User</code> is the new follower — that's the whole payload. Keep the reaction light; follows can come in bursts.</p>",
+            Example: "Any follow &rarr; a small chime and a thank-you in chat."),
+        ["Kick.Subscription"] = new(
+            Summary: "Fires on a new paid subscription to your Kick channel.",
+            Description: "<p><code>User</code> is the subscriber; <code>Months</code> is their total subscribed months and <code>Duration</code> the length of the purchased term.</p>",
+            Example: "New sub &rarr; thank them in chat and fire a Visualist sub alert."),
+        ["Kick.Resubscription"] = new(
+            Summary: "Fires when a Kick viewer renews an existing subscription.",
+            Description: "<p><code>User</code> is the subscriber, <code>Months</code> their cumulative streak and <code>Duration</code> the renewed term — the Kick twin of <code>Twitch.Resub</code>.</p>",
+            Example: "Resub at 12+ <code>Months</code> &rarr; a loyalty shout-out sized to the streak."),
+        ["Kick.GiftSubscription"] = new(
+            Summary: "Fires when a viewer gifts a single Kick subscription.",
+            Description: "<p><code>Gifter</code> is who paid, <code>Recipient</code> who received it.</p>",
+            Example: "Thank the <code>Gifter</code> and welcome the <code>Recipient</code> in one chat line."),
+        ["Kick.MassGiftSubscription"] = new(
+            Summary: "Fires when a viewer gifts a batch of Kick subscriptions in one go.",
+            Description: "<p><code>Gifter</code> is who paid, <code>Count</code> how many subs, and <code>Recipients</code> a comma-joined list of who got them — walk it with <code>Flow.ForEach</code> to greet each one.</p>",
+            Example: "Gift bomb of 10+ &rarr; a celebration overlay sized to <code>Count</code>."),
+        ["Kick.RewardRedemption"] = new(
+            Summary: "Fires when a viewer redeems a Kick channel reward. Requires Streamer.bot 1.0.2 or newer.",
+            Description: "<p><code>User</code> is the redeemer, <code>Reward</code> the reward's title, <code>Input</code> the text they typed (empty when the reward asks for none), <code>Cost</code> its price and <code>RewardId</code> its id. Branch on the title with <code>Logic.Switch</code>, just like <code>Twitch.PointRedeem</code>.</p>",
+            Example: "<b>\"Hydrate!\"</b> redeem &rarr; the same water-break flow you run for Twitch redeems."),
+        ["Kick.KicksGifted"] = new(
+            Summary: "Fires when a viewer gifts Kicks — Kick's on-platform tipping currency. Requires Streamer.bot 1.0.2 or newer.",
+            Description: "<p><code>User</code> is the sender; <code>Amount</code> is how many Kicks, <code>KickName</code> the gift's name and <code>Tier</code> its tier — the closest Kick equivalent of a Twitch cheer.</p>",
+            Example: "Kicks gift of &ge; 100 &rarr; a Visualist alert scaled to <code>Amount</code>."),
+        ["Kick.StreamOnline"] = new(
+            Summary: "Fires when your Kick channel goes live.",
+            Description: "<p><code>Title</code> is the stream title and <code>Category</code> the category you're live in.</p>",
+            Example: "Going live &rarr; post the go-live announcement with title and category."),
+        ["Kick.StreamOffline"] = new(
+            Summary: "Fires when your Kick stream ends.",
+            Description: "<p>No dedicated fields — the payload shape depends on the connected Streamer.bot build; <code>Payload</code> / <code>{event.payload}</code> carries the raw JSON.</p>",
+            Example: "Stream over &rarr; stop live loops and log the session length."),
+        ["Kick.ViewerCountUpdate"] = new(
+            Summary: "Fires periodically while live with the current Kick viewer count.",
+            Description: "<p><code>Viewers</code> is the live count. A ticker, not an alert — it fires on Kick's own refresh cadence.</p>",
+            Example: "Feed <code>Viewers</code> into an on-stream counter or track the session peak."),
+        ["Kick.ChannelUpdate"] = new(
+            Summary: "Fires when your Kick channel's title or category changes.",
+            Description: "<p><code>Title</code> / <code>Category</code> are the new values, <code>OldTitle</code> / <code>OldCategory</code> what they replaced — compare them to react only to what actually changed.</p>",
+            Example: "Category changed &rarr; announce the game switch in chat."),
+        ["Kick.UserBanned"] = new(
+            Summary: "Fires when a user is permanently banned from your Kick chat.",
+            Description: "<p><code>User</code> is who was banned, <code>By</code> the moderator who did it and <code>Reason</code> the note they gave.</p>",
+            Example: "Write every ban with mod and reason to a databank audit table."),
+        ["Kick.UserTimedOut"] = new(
+            Summary: "Fires when a user is timed out in your Kick chat.",
+            Description: "<p>Same fields as <code>Kick.UserBanned</code> plus <code>Duration</code> — the timeout length in seconds.</p>",
+            Example: "Log timeouts and clear the user's lines from your overlay chat."),
+        ["Kick.PresentViewers"] = new(
+            Summary: "Fires when Streamer.bot reports the viewers currently present in your Kick chat.",
+            Description: "<p><code>Users</code> is a comma-joined list of names. Exact shape and cadence depend on the connected Streamer.bot build — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Snapshot who's around into the databank for a lurker raffle."),
+        ["Kick.BroadcasterAuthenticated"] = new(
+            Summary: "Fires when Streamer.bot completes Kick broadcaster authentication.",
+            Description: "<p>A pipeline-status signal, not a stream event. The payload shape depends on the connected Streamer.bot build — read <code>Payload</code> / <code>{event.payload}</code> if you need details.</p>",
+            Example: "Flip a \"Kick connected\" badge in a status overlay."),
+        ["Kick.BroadcasterChatConnected"] = new(
+            Summary: "Fires when Streamer.bot's connection to your Kick chat comes up.",
+            Description: "<p>Flow only — no data pins. Pair with <code>Kick.BroadcasterChatDisconnected</code> to track chat-link health.</p>",
+            Example: "Chat link up &rarr; clear the \"Kick chat offline\" warning from your overlay."),
+        ["Kick.BroadcasterChatDisconnected"] = new(
+            Summary: "Fires when Streamer.bot's connection to your Kick chat drops.",
+            Description: "<p>Flow only — no data pins.</p>",
+            Example: "Chat link down &rarr; show a \"Kick chat offline\" badge so you notice mid-stream."),
+        ["Kick.SevenTVEmoteAdded"] = new(
+            Summary: "Fires when a 7TV emote is added to your Kick channel set.",
+            Description: "<p><code>EmoteName</code> is the emote's name where the connected Streamer.bot build provides it; the rest of the payload is build-dependent — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Announce new emotes in chat so viewers try them straight away."),
+        ["Kick.SevenTVEmoteRemoved"] = new(
+            Summary: "Fires when a 7TV emote is removed from your Kick channel set.",
+            Description: "<p><code>EmoteName</code> is the emote's name where the connected Streamer.bot build provides it; the rest of the payload is build-dependent — <code>Payload</code> / <code>{event.payload}</code> has the raw JSON.</p>",
+            Example: "Note removed emotes in your mod log."),
         ["System.Startup"] = new(
             Summary: "Fires once when Hub finishes starting and the script registry has loaded.",
             Description: "<p>The place to spin up long-running <b>Processes</b> — chat collectors, rotating-tip loops, hourly digests — and to reset per-session scratch state. No event payload; the global clock tokens are available.</p>",
@@ -504,6 +710,16 @@ internal static class NodeProse
             Description: "<p>Uses Streamer.bot's active-viewers request. Returns the logins as a list — iterate with <code>Flow.ForEach</code> or pick one with <code>Array.Shuffle</code> + <code>Array.Get</code>.</p>",
             Example: "Award loyalty points to everyone currently chatting."),
 
+        // ═══════════════════════════ PLATFORM DATA ════════════════════════════
+        ["YouTube.GetUser"] = new(
+            Summary: "Looks up a YouTube user's profile and channel-role flags.",
+            Description: "<p>Fetched through the <code>Phoenix: YT Get User</code> action — connect Streamer.bot 1.0 or newer and import the YouTube set from the action pack. Returns <code>Id</code>, <code>DisplayName</code> and <code>ProfileImage</code> plus the role flags: <code>IsMod</code>, <code>IsSub</code> (channel member / sponsor) and <code>IsBroadcaster</code> (channel owner). <code>Username</code> defaults to <code>{user}</code> — the current chatter.</p>",
+            Example: "Gate a members-only command on <code>IsSub</code> in YouTube chat."),
+        ["Kick.GetUser"] = new(
+            Summary: "Looks up a Kick user's profile and role flags.",
+            Description: "<p>Fetched through the <code>Phoenix: Kick Get User</code> action — connect Streamer.bot 1.0.2 or newer and import the Kick set from the action pack. Returns <code>Id</code>, <code>Login</code>, <code>DisplayName</code> and <code>ProfileImage</code> plus the <code>IsMod</code> / <code>IsSub</code> role flags. <code>Username</code> defaults to <code>{user}</code> — the current chatter.</p>",
+            Example: "On <b>!profile</b> &rarr; GetUser the chatter &rarr; show their <code>ProfileImage</code> on an overlay card."),
+
         // ═══════════════════════════ PLATFORMS · TWITCH ═══════════════════════
         ["Twitch.SendChat"] = new(
             Summary: "Posts a message to chat through your configured Streamer.bot bot account.",
@@ -546,6 +762,82 @@ internal static class NodeProse
             Summary: "Ends a running Twitch poll by its PollId.",
             Description: "<p>Stops an in-progress poll early. <code>PollId</code> comes from the poll you started (via your own Streamer.bot action or the Twitch UI).</p>",
             Example: "Close a quick poll once chat has clearly decided."),
+
+        // ═══════════════════════════ PLATFORMS · YOUTUBE ══════════════════════
+        ["YouTube.SendChat"] = new(
+            Summary: "Posts a message to your YouTube live chat through Streamer.bot.",
+            Description: "<p>Dispatched through the <code>Phoenix: YT Send Chat</code> action — connect Streamer.bot 1.0 or newer and import the YouTube set from the action pack. YouTube caps live-chat messages at <b>200 characters</b> (tighter than Twitch's 500); a longer <code>Message</code> is dropped with a log line rather than sent truncated.</p>",
+            Example: "Reply to <b>!ping</b> on YouTube with <code>\"@{user.name} pong\"</code>."),
+        ["YouTube.SetTitle"] = new(
+            Summary: "Updates the running YouTube broadcast's title.",
+            Description: "<p>Sets the live broadcast's title via <code>Phoenix: YT Set Title</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). An empty <code>Title</code> is skipped with a log line.</p>",
+            Example: "Change the broadcast title from a <b>!title</b> command."),
+        ["YouTube.SetDescription"] = new(
+            Summary: "Updates the running YouTube broadcast's description.",
+            Description: "<p>Sets the live broadcast's description via <code>Phoenix: YT Set Description</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). An empty <code>Description</code> is skipped with a log line.</p>",
+            Example: "At go-live &rarr; write today's schedule into the description."),
+        ["YouTube.Timeout"] = new(
+            Summary: "Times a user out of your YouTube live chat for a number of seconds.",
+            Description: "<p>Dispatched through <code>Phoenix: YT Timeout</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). <code>Sec</code> defaults to 300; an empty <code>User</code> or a duration below 1 second is skipped with a log line.</p>",
+            Example: "Auto-timeout 300s on a banned-words match in YouTube chat."),
+        ["YouTube.Ban"] = new(
+            Summary: "Permanently hides a user from your YouTube live chat. There is no undo from inside Phoenix.",
+            Description: "<p>YouTube's permanent moderation action, dispatched through <code>Phoenix: YT Ban</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). Lifting it again means YouTube Studio — use <code>YouTube.Timeout</code> for anything reversible.</p>",
+            Example: "A spam-bot detector &rarr; ban the account on sight."),
+        ["YouTube.CreatePoll"] = new(
+            Summary: "Opens a poll in your YouTube live chat.",
+            Description: "<p><code>Choices</code> is a comma-separated list the wrapper action splits into options; <code>DurationSec</code> defaults to 60. Dispatched through <code>Phoenix: YT Create Poll</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). DoAction can't hand a poll id back, so pair it with <code>YouTube.EndPoll</code>, which acts on the active poll.</p>",
+            Example: "<b>!poll</b> &rarr; open a 60s \"which game next?\" poll from chat suggestions."),
+        ["YouTube.EndPoll"] = new(
+            Summary: "Ends the active YouTube poll.",
+            Description: "<p>Acts on the currently running poll — Streamer.bot's YT End Poll sub-action takes no arguments, so there is no id to wire. Dispatched through <code>Phoenix: YT End Poll</code> (Streamer.bot 1.0 or newer, YouTube action pack imported).</p>",
+            Example: "Close the poll once chat has clearly decided."),
+
+        // ═══════════════════════════ PLATFORMS · KICK ═════════════════════════
+        ["Kick.SendChat"] = new(
+            Summary: "Posts a message to your Kick chat through Streamer.bot.",
+            Description: "<p>Dispatched through the <code>Phoenix: Kick Send Chat</code> action — connect Streamer.bot 1.0.2 or newer and import the Kick set from the action pack. Kick caps chat messages at <b>500 characters</b> (same as Twitch); a longer <code>Message</code> is dropped with a log line rather than sent truncated.</p>",
+            Example: "Reply to <b>!ping</b> on Kick with <code>\"@{user.name} pong\"</code>."),
+        ["Kick.Reply"] = new(
+            Summary: "Posts a threaded reply to a specific Kick chat message.",
+            Description: "<p><code>MessageId</code> names the chat line to reply under; <code>Message</code> is the reply body. A reply is still a chat message, so the same <b>500-character</b> cap as <code>Kick.SendChat</code> applies. Dispatched through <code>Phoenix: Kick Reply</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
+            Example: "Answer a <b>!so</b> request inline, right under the requester's message."),
+        ["Kick.Timeout"] = new(
+            Summary: "Times a user out of your Kick chat for a number of seconds.",
+            Description: "<p>Dispatched through <code>Phoenix: Kick Timeout</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). <code>Sec</code> defaults to 300; an empty <code>User</code> or a duration below 1 second is skipped with a log line. Lift one early with <code>Kick.Untimeout</code>.</p>",
+            Example: "Auto-timeout 300s on a banned-words match in Kick chat."),
+        ["Kick.Ban"] = new(
+            Summary: "Permanently bans a user from your Kick channel.",
+            Description: "<p>Dispatched through <code>Phoenix: Kick Ban</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). Unlike the YouTube side there is a reverse path — pair it with <code>Kick.Unban</code> for reversible, tested mod flows.</p>",
+            Example: "A spam-bot detector &rarr; ban, with <code>Kick.Unban</code> wired to an appeal command."),
+        ["Kick.Unban"] = new(
+            Summary: "Lifts a ban on a Kick user.",
+            Description: "<p>Dispatched through <code>Phoenix: Kick Unban</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). An empty <code>User</code> is skipped with a log line.</p>",
+            Example: "An appeal command that unbans on a mod's approval."),
+        ["Kick.Untimeout"] = new(
+            Summary: "Lifts an active timeout on a Kick user early.",
+            Description: "<p>Dispatched through <code>Phoenix: Kick Untimeout</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). An empty <code>User</code> is skipped with a log line.</p>",
+            Example: "A mod's <b>!forgive</b> &rarr; end the timeout ahead of schedule."),
+        ["Kick.SetTitle"] = new(
+            Summary: "Updates the Kick channel's stream title.",
+            Description: "<p>Dispatched through <code>Phoenix: Kick Set Title</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). An empty <code>Title</code> is skipped with a log line.</p>",
+            Example: "Change the title from a <b>!title</b> command."),
+        ["Kick.SetCategory"] = new(
+            Summary: "Sets the Kick channel's category by name.",
+            Description: "<p><code>Category</code> is the category's name — the wrapper's Set Channel Category sub-action resolves it to the matching Kick category. Dispatched through <code>Phoenix: Kick Set Category</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). An empty <code>Category</code> is skipped with a log line.</p>",
+            Example: "Switch the category from a <b>!game</b> command."),
+        ["Kick.DeleteMessage"] = new(
+            Summary: "Removes one message from Kick chat by its MessageId.",
+            Description: "<p>Single-message moderation, dispatched through <code>Phoenix: Kick Delete Message</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). An empty <code>MessageId</code> is skipped with a log line.</p>",
+            Example: "A link-filter flow &rarr; delete the offending line, then warn the chatter."),
+        ["Kick.SetRewardCost"] = new(
+            Summary: "Changes the price of a Kick channel reward.",
+            Description: "<p><code>RewardId</code> identifies the reward; <code>Cost</code> is the new price. The Kick twin of <code>Twitch.UpdateRewardCost</code>, dispatched through <code>Phoenix: Kick Set Reward Cost</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
+            Example: "Double a reward's cost during a hype segment, restore it after."),
+        ["Kick.SetRewardEnabled"] = new(
+            Summary: "Turns a Kick channel reward on or off.",
+            Description: "<p><code>RewardId</code> identifies the reward; wire <code>Enabled</code> to a boolean to flip it from a script. The Kick twin of <code>Twitch.SetRewardEnabled</code>, dispatched through <code>Phoenix: Kick Set Reward Enabled</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
+            Example: "Disable a \"pick my game\" reward while a fixed schedule runs."),
 
         // ═══════════════════════════ PLATFORMS · DISCORD ══════════════════════
         ["Discord.SendMessage"] = new(

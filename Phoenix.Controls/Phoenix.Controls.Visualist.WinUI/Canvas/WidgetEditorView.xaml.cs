@@ -992,6 +992,15 @@ public sealed partial class WidgetEditorView : UserControl
     private Keyframe? _draggingKeyframe;
     private bool _keyframeDragDirty;
 
+    // Direct handle to the dragged keyframe's live marker Rectangle (same
+    // idea as _playheadLine): the drag fast path slides only this marker's
+    // Margin plus the playhead per pointer-move instead of a full
+    // RedrawTimeline; the full rebuild happens once on release. Captured by
+    // RedrawTimeline's marker loop (the press-time rebuild replaces the rect
+    // the pointer was captured on, so the sender element is NOT the live one).
+    private Microsoft.UI.Xaml.Shapes.Rectangle? _draggingMarkerRect;
+    private double _draggingMarkerCenterY;
+
     // Per-ParameterPath track rows. Rebuilt each RedrawTimeline from
     // the active trigger's keyframe set (insertion order = stable track order);
     // double-click-add maps the cursor Y back to a row → ParameterPath.
@@ -1187,6 +1196,7 @@ public sealed partial class WidgetEditorView : UserControl
         TimelineSurface.Children.Clear();
         _playheadLine = null;
         _playheadHalo = null;
+        _draggingMarkerRect = null;   // re-captured in the marker loop below
 
         if (_vm is not { } vm) { UpdateZoomChip(); return; }
         var trigger = vm.ActiveTriggerObject;
@@ -1387,6 +1397,14 @@ public sealed partial class WidgetEditorView : UserControl
                 // what we want here.
                 marker.RightTapped += (s, args) => OnKeyframeMarkerRightTapped(s, args, captureKf);
                 Microsoft.UI.Xaml.Controls.Canvas.SetZIndex(marker, ZMarker); // explicit Z-order — markers above ticks/baselines
+                // Keep the drag fast path's handle on the LIVE rect for the
+                // keyframe being dragged (the press-time rebuild replaced the
+                // rect the pointer capture actually sits on).
+                if (ReferenceEquals(_draggingKeyframe, kf))
+                {
+                    _draggingMarkerRect    = marker;
+                    _draggingMarkerCenterY = trackRow.CenterY;
+                }
                 TimelineSurface.Children.Add(marker);
             }
         }
@@ -1628,7 +1646,25 @@ public sealed partial class WidgetEditorView : UserControl
         kf.TimeMs = newMs;
         if (_vm is not null) _vm.PlayheadMs = newMs;
         e.Handled = true;
-        RedrawTimeline();
+
+        // Lightweight per-move repaint (the scrub path's pattern): slide only
+        // the dragged marker's Margin and the playhead line/halo instead of
+        // re-emitting every tick, label, baseline and marker per pointer-move.
+        // The marker already carries its selection styling from the press-time
+        // rebuild; the full RedrawTimeline reconciliation runs once on release.
+        if (_draggingMarkerRect is { } markerRect)
+        {
+            double x = TimeToX(newMs, zoom.PxPerSec, zoom.ScrollOffsetMs);
+            markerRect.Margin = new Thickness(x - 4.5, _draggingMarkerCenterY - 4.5, 0, 0);
+            _playheadMsCache = newMs;
+            RepositionPlayheadForTime(newMs);
+        }
+        else
+        {
+            // No live marker handle (zero-size redraw skipped the rebuild) —
+            // fall back to the full pass rather than dropping the frame.
+            RedrawTimeline();
+        }
     }
 
     private void OnKeyframeMarkerReleased(object sender, PointerRoutedEventArgs e)
@@ -1637,12 +1673,21 @@ public sealed partial class WidgetEditorView : UserControl
         {
             try { marker.ReleasePointerCapture(e.Pointer); } catch { /* best-effort */ }
         }
+        bool dragged = _keyframeDragDirty;
         if (_keyframeDragDirty && _vm?.Document is { } doc)
         {
             doc.MarkDirty();
         }
-        _draggingKeyframe  = null;
-        _keyframeDragDirty = false;
+        _draggingKeyframe   = null;
+        _keyframeDragDirty  = false;
+        _draggingMarkerRect = null;
+        // One full reconciliation pass for a drag that actually moved — the
+        // per-move fast path only slid the dragged marker + playhead, so the
+        // release rebuild settles everything (marker child order, playhead
+        // cache re-sync) in a single redraw instead of one per pointer-move.
+        // A plain click (no move) changed nothing the press-time redraw
+        // didn't already paint.
+        if (dragged) RedrawTimeline();
         e.Handled = true;
     }
 

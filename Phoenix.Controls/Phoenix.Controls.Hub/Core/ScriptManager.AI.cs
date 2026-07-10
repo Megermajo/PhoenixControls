@@ -920,6 +920,20 @@ namespace Phoenix.Controls.Hub.Core
                 }
 
                 var sb = new StringBuilder();
+                // Mid-stream persistence throttle. Writing the cumulative
+                // text to the Vars table on every delta is O(chunks) DB
+                // round-trips and, combined with a second sb.ToString() for
+                // the bus payload, O(response²) string allocation. Coalesce
+                // the DB writes to one per window; the local execution var
+                // still updates on every delta (SetLocalResultVar) and the
+                // AI_CHUNK bus broadcast keeps its per-delta cadence, so
+                // overlay / on_bus consumers observe an unchanged stream.
+                // Every terminal path persists the exact cumulative text, so
+                // the Vars row ends up byte-identical to per-delta writes.
+                const int DbPersistWindowMs = 250;
+                long lastDbPersistTicks = 0;   // 0 → the first delta persists immediately
+                int  lastDbPersistedLen = 0;   // matches the "" initialisation write above
+                string cumulative = string.Empty;
                 try
                 {
                     string label;
@@ -1140,13 +1154,24 @@ namespace Phoenix.Controls.Hub.Core
                                 continue;
                             }
                             sb.Append(chunk);
-                            await _engine.SetScriptVarAsync("result.ai_response", sb.ToString()).ConfigureAwait(false);
+                            cumulative = sb.ToString();
+                            long nowTicks = Environment.TickCount64;
+                            if (nowTicks - lastDbPersistTicks >= DbPersistWindowMs)
+                            {
+                                lastDbPersistTicks = nowTicks;
+                                lastDbPersistedLen = sb.Length;
+                                await _engine.SetScriptVarAsync("result.ai_response", cumulative).ConfigureAwait(false);
+                            }
+                            else
+                            {
+                                _engine.SetLocalResultVar("result.ai_response", cumulative);
+                            }
                             await Bus.Instance.BroadcastAsync(new BusMessage
                             {
                                 Type    = "AI_CHUNK",
                                 Source  = "Hub",
                                 Target  = "*",
-                                Payload = JsonSerializer.Serialize(new { chunk, cumulative = sb.ToString() }),
+                                Payload = JsonSerializer.Serialize(new { chunk, cumulative }),
                             }).ConfigureAwait(false);
                             if (ollamaDone) break;
                         }
@@ -1264,13 +1289,24 @@ namespace Phoenix.Controls.Hub.Core
                             if (string.IsNullOrEmpty(chunk)) continue;
 
                             sb.Append(chunk);
-                            await _engine.SetScriptVarAsync("result.ai_response", sb.ToString()).ConfigureAwait(false);
+                            cumulative = sb.ToString();
+                            long nowTicks = Environment.TickCount64;
+                            if (nowTicks - lastDbPersistTicks >= DbPersistWindowMs)
+                            {
+                                lastDbPersistTicks = nowTicks;
+                                lastDbPersistedLen = sb.Length;
+                                await _engine.SetScriptVarAsync("result.ai_response", cumulative).ConfigureAwait(false);
+                            }
+                            else
+                            {
+                                _engine.SetLocalResultVar("result.ai_response", cumulative);
+                            }
                             await Bus.Instance.BroadcastAsync(new BusMessage
                             {
                                 Type    = "AI_CHUNK",
                                 Source  = "Hub",
                                 Target  = "*",
-                                Payload = JsonSerializer.Serialize(new { chunk, cumulative = sb.ToString() }),
+                                Payload = JsonSerializer.Serialize(new { chunk, cumulative }),
                             }).ConfigureAwait(false);
                         }
                     }
@@ -1283,14 +1319,14 @@ namespace Phoenix.Controls.Hub.Core
                     {
                         string redactedPayload = RedactSecretsForLog(streamErrorPayload);
                         await _engine.SetScriptVarAsync("result.ai_error", $"{label} stream error: {redactedPayload}");
-                        await _engine.SetScriptVarAsync("result.ai_response", sb.ToString());
+                        await _engine.SetScriptVarAsync("result.ai_response", cumulative);
                         await _engine.SetScriptVarAsync("result.ai_done", "true");
                         _engine.SetLocalResultVar("result.stop_reason", stopReason);
                         GlobalLogger.Log($"AI Stream Error ({label} {model}): {redactedPayload}", "Script", LogLevel.CriticalError);
                         return null;
                     }
 
-                    await _engine.SetScriptVarAsync("result.ai_response", sb.ToString());
+                    await _engine.SetScriptVarAsync("result.ai_response", cumulative);
                     await _engine.SetScriptVarAsync("result.ai_done",     "true");
                     // Surface terminal stop / finish reason.
                     // Local-only (SetLocalResultVar) so it lives on the
@@ -1302,13 +1338,32 @@ namespace Phoenix.Controls.Hub.Core
                     // turn cap to bound token cost on long-running streams.
                     if (useMemory)
                     {
-                        var nextTurns = ConversationMemory.Append(priorTurns, userPrompt, sb.ToString(), ConversationMemory.DefaultMaxTurns);
+                        var nextTurns = ConversationMemory.Append(priorTurns, userPrompt, cumulative, ConversationMemory.DefaultMaxTurns);
                         await _engine.SetScriptVarAsync(memoryVar, ConversationMemory.Serialize(nextTurns));
                     }
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException)
+                {
+                    // Persist the coalesced tail so the Vars row carries the
+                    // same partial text an uncoalesced per-delta writer would
+                    // have left behind at cancel time. Best-effort — the
+                    // cancellation must win over a failing flush.
+                    if (sb.Length > lastDbPersistedLen)
+                    {
+                        try { await _engine.SetScriptVarAsync("result.ai_response", cumulative); }
+                        catch { /* teardown race */ }
+                    }
+                    throw;
+                }
                 catch (HttpRequestException hex)
                 {
+                    // Flush the coalesced tail first so the persisted partial
+                    // matches what per-delta writes would have left behind.
+                    if (sb.Length > lastDbPersistedLen)
+                    {
+                        try { await _engine.SetScriptVarAsync("result.ai_response", cumulative); }
+                        catch { /* error contract writes below still run */ }
+                    }
                     // Transport-layer failure (connection refused,
                     // DNS, timeout). For Ollama specifically this is the
                     // "daemon not running" signal: the loopback connect
@@ -1340,6 +1395,13 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 catch (Exception ex)
                 {
+                    // Flush the coalesced tail first so the persisted partial
+                    // matches what per-delta writes would have left behind.
+                    if (sb.Length > lastDbPersistedLen)
+                    {
+                        try { await _engine.SetScriptVarAsync("result.ai_response", cumulative); }
+                        catch { /* error contract writes below still run */ }
+                    }
                     // Surface exception kind for scripts and redact ex.Message for persistence.
                     // The redacted summary still lands in the
                     // script var; the un-redacted exception chain rides on the

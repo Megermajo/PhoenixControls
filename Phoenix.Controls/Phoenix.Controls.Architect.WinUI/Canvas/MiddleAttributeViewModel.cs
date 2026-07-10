@@ -107,6 +107,7 @@ public sealed class MiddleAttributeViewModel : ObservableObject
                 OnPropertyChanged(nameof(DisplayText));
                 OnPropertyChanged(nameof(BoolValue));
                 OnPropertyChanged(nameof(BoolGlyph));
+                OnPropertyChanged(nameof(BoolLabelOpacity));
                 OnPropertyChanged(nameof(IsMultiline));
                 OnPropertyChanged(nameof(PillMaxWidth));
                 OnPropertyChanged(nameof(PillTextWrapping));
@@ -133,6 +134,13 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     /// <summary>Glyph for the bool toggle — ☑ when on, ☐ when off. Mirrors
     /// <c>InspectorField.BoolCheckedGlyph / BoolUncheckedGlyph</c> (consumed pattern, not lifted file).</summary>
     public string BoolGlyph => BoolValue ? "☑" : "☐";
+
+    /// <summary>Opacity for the checkmark row's key label — unchecked rows dim
+    /// so the ON/OFF state of a platform list (Chat.Message Twitch / YouTube /
+    /// Kick) reads at a glance beyond the glyph shape alone. The glyph itself
+    /// stays full-opacity as the click affordance. Re-raised by the
+    /// <see cref="Value"/> setter alongside <see cref="BoolGlyph"/>.</summary>
+    public double BoolLabelOpacity => BoolValue ? 1.0 : 0.55;
 
     /// <summary>
     /// Hover-tooltip text for the middle-attribute

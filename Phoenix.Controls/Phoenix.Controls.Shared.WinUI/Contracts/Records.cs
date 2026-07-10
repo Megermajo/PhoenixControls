@@ -52,7 +52,11 @@ public record ChatMessage(
     bool           IsBroadcaster = false,
     bool           IsMod         = false,
     bool           IsVip         = false,
-    bool           IsSubscriber  = false);
+    bool           IsSubscriber  = false,
+    // Chat platform token ("twitch" / "youtube" / "kick"). Optional-with-default
+    // so every pre-multi-platform construction site keeps compiling with its
+    // original Twitch meaning.
+    string         Platform      = "twitch");
 
 /// <summary>
 /// Precedence-collapsed chat-role classification derived from the four

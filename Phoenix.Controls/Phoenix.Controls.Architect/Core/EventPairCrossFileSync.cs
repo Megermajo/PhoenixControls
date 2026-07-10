@@ -242,11 +242,12 @@ namespace Phoenix.Controls.Architect.Core
         /// a different file rather than the current one.
         /// </summary>
         /// <remarks>
-        /// Single-shot variant — re-loads every sibling <c>.phxg</c> on each
-        /// call. For tight loops over a graph's Event.* nodes (canvas's
+        /// Single-shot variant — pays a directory enumerate + mtime sweep per
+        /// call (peer parses only when a sibling changed, via the shared cache).
+        /// For tight loops over a graph's Event.* nodes (canvas's
         /// RefreshEventPairErrorState), build the index once via
         /// <see cref="LoadPeerEventIndex"/> and look up against the resulting
-        /// HashSet so a 10-node × 8-file graph doesn't trigger 80 file parses.
+        /// HashSet so a 10-node × 8-file graph doesn't re-sweep per node.
         /// </remarks>
         public static bool PeerExistsInOtherFiles(
             string? projectDir,
@@ -254,7 +255,10 @@ namespace Phoenix.Controls.Architect.Core
             string  eventName,
             string  peerTitle)
         {
-            var index = LoadPeerEventIndex(projectDir, currentFilePath);
+            // Contains-only read path — goes straight at the cached (or freshly
+            // built) index without the defensive per-call HashSet copy that
+            // LoadPeerEventIndex hands mutating callers.
+            var index = GetOrBuildPeerIndex(projectDir, currentFilePath);
             return index.Contains((peerTitle, eventName));
         }
 
@@ -273,6 +277,25 @@ namespace Phoenix.Controls.Architect.Core
         /// changes mid-session, rebuild before the next refresh.
         /// </summary>
         public static HashSet<(string Title, string EventName)> LoadPeerEventIndex(
+            string? projectDir,
+            string? currentFilePath)
+        {
+            // Copy so the caller is free to mutate without corrupting the cached
+            // set. Contains-only internal callers (PeerExistsInOtherFiles) use
+            // GetOrBuildPeerIndex directly and skip this allocation.
+            return new HashSet<(string Title, string EventName)>(
+                GetOrBuildPeerIndex(projectDir, currentFilePath), PeerEntryComparer.Instance);
+        }
+
+        /// <summary>
+        /// Core of <see cref="LoadPeerEventIndex"/> — returns the CACHED index
+        /// instance when no peer mtime changed, or builds, caches and returns a
+        /// fresh one. The returned set is shared with the cache and must be
+        /// treated as read-only; it is never mutated after construction (rebuilds
+        /// replace the cache entry wholesale), so lock-free concurrent Contains
+        /// reads are safe.
+        /// </summary>
+        private static HashSet<(string Title, string EventName)> GetOrBuildPeerIndex(
             string? projectDir,
             string? currentFilePath)
         {
@@ -315,9 +338,9 @@ namespace Phoenix.Controls.Architect.Core
 
             if (cached is not null && MtimesEqual(cached.FileMtimes, mtimes))
             {
-                // Return a copy so the caller is free to mutate without
-                // corrupting our cached set.
-                return new HashSet<(string Title, string EventName)>(cached.Index, PeerEntryComparer.Instance);
+                // Cache hit — hand back the shared instance (read-only contract,
+                // see method doc). LoadPeerEventIndex copies for mutating callers.
+                return cached.Index;
             }
 
             // Cold path — load every peer once, populate index.
@@ -338,10 +361,13 @@ namespace Phoenix.Controls.Architect.Core
 
             lock (s_peerCacheGate)
             {
+                // The built set itself becomes the cached instance — nothing
+                // mutates it after this point (rebuilds replace the entry), so
+                // no defensive copy is needed here either.
                 s_peerCache[canonical] = new PeerIndexCache
                 {
                     FileMtimes = mtimes,
-                    Index      = new HashSet<(string Title, string EventName)>(index, PeerEntryComparer.Instance),
+                    Index      = index,
                 };
             }
             return index;

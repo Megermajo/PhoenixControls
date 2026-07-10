@@ -73,6 +73,15 @@ public sealed partial class LogicCanvasView
         // in the Keyboard partial. KeyUp on Space drops the pan-mode arm
         // so a subsequent LMB+drag goes back to marquee / node-drag.
         if (e.Key == VirtualKey.Space) _spaceHeld = false;
+        // Arrow-key release ends the nudge gesture — partnered with
+        // TryNudgeSelection in the Keyboard partial. Dropping the arm here
+        // forces the next arrow event to push its own undo snapshot instead
+        // of merging into one left over from a finished gesture.
+        if (e.Key is VirtualKey.Left or VirtualKey.Right
+                  or VirtualKey.Up   or VirtualKey.Down)
+        {
+            _nudgeUndoArmed = false;
+        }
     }
 
     /// <summary>
@@ -82,12 +91,16 @@ public sealed partial class LogicCanvasView
     /// would silently spawn a Logic.If the user never asked for. KeyUp
     /// doesn't fire on the host while focus is elsewhere. Same
     /// reasoning applies to Space-as-pan-mode: alt-tabbing while Space
-    /// is physically held leaves the canvas "stuck" in pan-mode.
+    /// is physically held leaves the canvas "stuck" in pan-mode — and to
+    /// the nudge-undo arm: an arrow key released while focus is elsewhere
+    /// never delivers its KeyUp here, so a later repeat reaching the
+    /// re-focused canvas would skip its undo snapshot.
     /// </summary>
     private void OnHostLostFocus(object sender, RoutedEventArgs e)
     {
-        _heldQuickKey = null;
-        _spaceHeld    = false;
+        _heldQuickKey   = null;
+        _spaceHeld      = false;
+        _nudgeUndoArmed = false;
     }
 
     /// <summary>

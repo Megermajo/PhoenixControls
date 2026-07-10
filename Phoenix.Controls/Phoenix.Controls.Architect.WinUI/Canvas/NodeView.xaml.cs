@@ -148,11 +148,11 @@ public sealed partial class NodeView : UserControl
     /// </summary>
     internal void StampOwnerCanvas(LogicCanvasView canvas) => _cachedCanvas = canvas;
 
-    // Per-node flash storyboard cache (Architect UI WIP). Re-flashing a node
-    // that's already flashing must Stop() the prior storyboard before
-    // starting a new one; otherwise WinUI keeps the previous
-    // DoubleAnimationUsingKeyFrames in its active-animation pool and the
-    // next flash's opacity ramps are layered on top of the stale ones —
+    // Per-node flash storyboard, built once (EnsureFlashStoryboard) and
+    // replayed per pulse. Re-flashing a node that's already flashing must
+    // Stop() the running timeline before Begin(); otherwise WinUI keeps the
+    // previous DoubleAnimationUsingKeyFrames in its active-animation pool and
+    // the next flash's opacity ramps are layered on top of the stale ones —
     // visually shows as the flash brush "sticking" at full opacity until
     // both timelines complete.
     private Storyboard? _currentFlashStoryboard;
@@ -447,27 +447,44 @@ public sealed partial class NodeView : UserControl
     /// opacity timelines don't stack.
     /// </summary>
     private const double FlashPeakOpacity = 0.42;
+
+    // Build the flash storyboard ONCE per NodeView and re-Begin it per pulse.
+    // Allocating a fresh Storyboard + 4 keyframes + 2 easing functions per
+    // DEBUG_NODE_EXEC flash churned the animation pool under a busy debug
+    // session; the timeline is a constant, so Stop()+Begin() on a cached
+    // instance replays the identical pulse. Targets FlashOverlay, which lives
+    // for this view's lifetime (cull unmounts keep the element; a real
+    // teardown discards the whole view, storyboard included).
+    private Storyboard EnsureFlashStoryboard()
+    {
+        if (_currentFlashStoryboard is not null) return _currentFlashStoryboard;
+        var anim = new DoubleAnimationUsingKeyFrames();
+        Storyboard.SetTarget(anim, FlashOverlay);
+        Storyboard.SetTargetProperty(anim, "Opacity");
+        anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.Zero, Value = 0 });
+        anim.KeyFrames.Add(new EasingDoubleKeyFrame {
+            KeyTime = TimeSpan.FromMilliseconds(120), Value = FlashPeakOpacity,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(300), Value = FlashPeakOpacity });
+        anim.KeyFrames.Add(new EasingDoubleKeyFrame {
+            KeyTime = TimeSpan.FromMilliseconds(420), Value = 0.0,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
+        var sb = new Storyboard();
+        sb.Children.Add(anim);
+        _currentFlashStoryboard = sb;
+        return sb;
+    }
+
     private void UpdateFlashOverlay(NodeViewModel vm)
     {
         if (FlashOverlay is null) return;
         if (vm.IsExecutingFlash)
         {
-            _currentFlashStoryboard?.Stop();
+            var sb = EnsureFlashStoryboard();
+            // Stop first so a re-fire mid-ramp restarts cleanly instead of
+            // stacking opacity timelines (the "sticking at full opacity" bug).
+            try { sb.Stop(); } catch { /* unloaded tree */ }
             FlashOverlay.Opacity = 0;
-            var anim = new DoubleAnimationUsingKeyFrames();
-            Storyboard.SetTarget(anim, FlashOverlay);
-            Storyboard.SetTargetProperty(anim, "Opacity");
-            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.Zero, Value = 0 });
-            anim.KeyFrames.Add(new EasingDoubleKeyFrame {
-                KeyTime = TimeSpan.FromMilliseconds(120), Value = FlashPeakOpacity,
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
-            anim.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = TimeSpan.FromMilliseconds(300), Value = FlashPeakOpacity });
-            anim.KeyFrames.Add(new EasingDoubleKeyFrame {
-                KeyTime = TimeSpan.FromMilliseconds(420), Value = 0.0,
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
-            var sb = new Storyboard();
-            sb.Children.Add(anim);
-            _currentFlashStoryboard = sb;
             try { sb.Begin(); } catch { /* design-time / pre-realised tree */ }
         }
         else
@@ -475,7 +492,6 @@ public sealed partial class NodeView : UserControl
             if (_currentFlashStoryboard is not null)
             {
                 try { _currentFlashStoryboard.Stop(); } catch { /* unloaded tree */ }
-                _currentFlashStoryboard = null;
             }
             FlashOverlay.Opacity = 0;
         }
@@ -1643,7 +1659,17 @@ public sealed partial class NodeView : UserControl
         if ((sender as FrameworkElement)?.DataContext is MiddleAttributeViewModel m)
         {
             if (m.ToggleBool())
-                GetCanvasCached(sender as DependencyObject)?.PushUndoForInlineEdit();
+            {
+                var canvas = GetCanvasCached(sender as DependencyObject);
+                canvas?.PushUndoForInlineEdit();
+                // Bool attrs can be semantically load-bearing (the Chat.Message
+                // Twitch / YouTube / Kick checkmarks change the exported
+                // `on_chat` header), so a toggle must flag the graph dirty —
+                // OnGraphMutated raises GraphMutatedAny → ArchitectViewModel
+                // IsDirty=true → save/autosave re-exports the .phx. Without it
+                // a toggle-only session presented as clean and never saved.
+                canvas?.ViewModel?.OnGraphMutated();
+            }
             e.Handled = true;
         }
     }

@@ -71,6 +71,13 @@ public sealed partial class InspectorPanel : UserControl
     // Cleared + repopulated on every RefreshNodeForm.
     private readonly List<Action> _keyframeRefreshers = new();
 
+    // Coalescing flags for OnNodeParamChanged: a burst of param changes (a
+    // trigger switch flipping IsAnimated on several rows, a multi-component
+    // vector write) previously enqueued one full node-form rebuild PER change.
+    // Each flag resets when its queued action runs, collapsing a burst to one.
+    private bool _nodeFormRefreshPending;
+    private bool _kfClusterRefreshPending;
+
     public InspectorPanel()
     {
         InitializeComponent();
@@ -105,6 +112,9 @@ public sealed partial class InspectorPanel : UserControl
         {
             old.PropertyChanged -= OnVmPropertyChanged;
             old.NodeBodyCommitted -= OnNodeParamCommittedEcho;
+            // Flush any in-flight slider gesture so its deferred dirty-mark
+            // lands before the panel lets go of the VM.
+            old.EndNodeAttributeGesture();
             _vm = null;
         }
         if (_onBusConnChanged is not null)
@@ -124,6 +134,8 @@ public sealed partial class InspectorPanel : UserControl
         {
             old.PropertyChanged -= OnVmPropertyChanged;
             old.NodeBodyCommitted -= OnNodeParamCommittedEcho;
+            // Flush any in-flight slider gesture before swapping VMs.
+            old.EndNodeAttributeGesture();
         }
         _vm = args.NewValue as VisualistViewModel;
         if (_vm is { } vm)
@@ -1210,17 +1222,48 @@ public sealed partial class InspectorPanel : UserControl
     }
 
     // A param's value / IsAnimated can change from OUTSIDE the inspector controls
-    // (canvas keyframe record, undo, the param's own Commit re-clamp). The
-    // cheapest correct refresh is a full rebuild — the param list is small
-    // (a handful of rows) and a rebuild re-reads every live value + diamond
-    // state. Marshalled to the UI thread defensively. Guarded by _suppressNodeEcho
+    // (canvas keyframe record, undo, the param's own Commit re-clamp). For value
+    // changes the cheapest correct refresh is a full rebuild — the param list is
+    // small (a handful of rows) and a rebuild re-reads every live value + diamond
+    // state. An IsAnimated flip only drives the ◀ ◇/◆ ▶ glyph, so it takes the
+    // lightweight cluster refresh instead. Both paths coalesce via a pending
+    // flag so N param changes in one burst schedule one queued action, not N.
+    // Marshalled to the UI thread defensively. Guarded by _suppressNodeEcho
     // so the rebuild we ourselves trigger via a control edit doesn't recurse.
     private void OnNodeParamChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_suppressNodeEcho) return;
         if (_vm is not { } vm) return;
-        try { DispatcherQueue?.TryEnqueue(() => { if (!_suppressNodeEcho) RefreshNodeForm(vm); }); }
-        catch (Exception ex) { GlobalLogger.Error("InspectorPanel", "OnNodeParamChanged", ex); }
+        try
+        {
+            if (string.Equals(e.PropertyName, nameof(NodeParamVm.IsAnimated), StringComparison.Ordinal))
+            {
+                if (_kfClusterRefreshPending) return;
+                _kfClusterRefreshPending = true;
+                bool queued = DispatcherQueue?.TryEnqueue(() =>
+                {
+                    _kfClusterRefreshPending = false;
+                    RefreshKeyframeClusters();
+                }) == true;
+                if (!queued) _kfClusterRefreshPending = false;
+                return;
+            }
+
+            if (_nodeFormRefreshPending) return;
+            _nodeFormRefreshPending = true;
+            bool ok = DispatcherQueue?.TryEnqueue(() =>
+            {
+                _nodeFormRefreshPending = false;
+                if (!_suppressNodeEcho) RefreshNodeForm(vm);
+            }) == true;
+            if (!ok) _nodeFormRefreshPending = false;
+        }
+        catch (Exception ex)
+        {
+            _nodeFormRefreshPending = false;
+            _kfClusterRefreshPending = false;
+            GlobalLogger.Error("InspectorPanel", "OnNodeParamChanged", ex);
+        }
     }
 
     // ─── per-kind row builders ───────────────────────────────────────────
@@ -1316,6 +1359,7 @@ public sealed partial class InspectorPanel : UserControl
                 p.NumberValue = v;        // Commit happens inside the VM setter
             }, p);
         };
+        AttachSliderUndoGesture(slider);
         box.ValueChanged += (_, args) =>
         {
             if (_suppressNodeEcho) return;
@@ -1561,6 +1605,7 @@ public sealed partial class InspectorPanel : UserControl
                 try { box.Value = v; } finally { _suppressNodeEcho = false; }
                 WriteComponent(v);
             };
+            AttachSliderUndoGesture(slider);
             box.ValueChanged += (_, args) =>
             {
                 if (_suppressNodeEcho) return;
@@ -1660,9 +1705,9 @@ public sealed partial class InspectorPanel : UserControl
         {
             try
             {
-                var vm = _vm;
-                bool has = vm?.ParamHasKeyframes(p) == true;
-                bool on  = has && vm?.IsParamOnKeyframe(p) == true;
+                // Single-pass has/on probe — this closure runs per param on
+                // every PlayheadMs tick (~30×/s during playback).
+                (bool has, bool on) = _vm?.ParamKeyframeState(p) ?? (false, false);
                 if (diamond.Content is TextBlock tb) tb.Text = on ? "◆" : "◇";
                 diamond.Foreground = has
                     ? (Brush)Application.Current.Resources["SelectionBrush"]
@@ -1739,6 +1784,24 @@ public sealed partial class InspectorPanel : UserControl
         };
         if (!string.IsNullOrEmpty(tooltip)) ToolTipService.SetToolTip(b, tooltip);
         return b;
+    }
+
+    // A slider thumb drag streams ValueChanged once per frame; bracket the
+    // pointer gesture so the VM batches the stream into ONE undo entry + ONE
+    // MarkDirty (Begin/EndNodeAttributeGesture) while per-tick writes keep the
+    // canvas preview live. Slider handles the raw pointer events internally,
+    // so the hooks must register with handledEventsToo. Keyboard nudges and
+    // NumberBox edits never enter a gesture and commit exactly as before.
+    private void AttachSliderUndoGesture(Slider slider)
+    {
+        slider.AddHandler(UIElement.PointerPressedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _vm?.BeginNodeAttributeGesture()), true);
+        slider.AddHandler(UIElement.PointerReleasedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _vm?.EndNodeAttributeGesture()), true);
+        slider.AddHandler(UIElement.PointerCaptureLostEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _vm?.EndNodeAttributeGesture()), true);
+        slider.AddHandler(UIElement.PointerCanceledEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler((_, _) => _vm?.EndNodeAttributeGesture()), true);
     }
 
     // Run a model write under echo-suppression so the control-sync writes inside

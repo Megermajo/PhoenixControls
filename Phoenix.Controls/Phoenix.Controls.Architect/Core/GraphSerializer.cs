@@ -253,22 +253,22 @@ namespace Phoenix.Controls.Architect.Core
                 string json = File.ReadAllText(filePath);
 
                 // Inspect the top-level "_schemaVersion" before binding to the
-                // model. JsonNode lets us peek without losing the original payload.
+                // model. Streaming Utf8JsonReader peek that stops at the first
+                // top-level hit — the previous JsonNode.Parse materialized a full
+                // DOM of the entire graph (allocated and discarded) just to read
+                // one int, doubling the parse cost of every load.
                 int loadedVersion = 0; // 0 = legacy (field absent)
                 bool hasVersionField = false;
                 try
                 {
-                    var root = JsonNode.Parse(json) as JsonObject;
-                    if (root != null && root.TryGetPropertyValue(SchemaVersionPropertyName, out var versionNode)
-                                     && versionNode is JsonValue v
-                                     && v.TryGetValue(out int parsed))
+                    if (TryReadTopLevelSchemaVersion(json, out int parsed))
                     {
                         // A malformed / negative
                         // _schemaVersion would otherwise slip past the upper-bound
                         // check below (parsed > Current is false for negatives) and
                         // mis-route migration as if it were a known legacy version.
                         // Clamp negatives to legacy (0) + warn; overflow values that
-                        // don't fit int already fail TryGetValue and stay legacy.
+                        // don't fit int already fail the peek and stay legacy.
                         if (parsed < 0)
                         {
                             GlobalLogger.Log(
@@ -374,6 +374,33 @@ namespace Phoenix.Controls.Architect.Core
                 try { OnLoadFailed?.Invoke(filePath, ex); } catch { }
                 return new Graph();
             }
+        }
+
+        /// <summary>
+        /// Streaming peek at the top-level <c>_schemaVersion</c> property.
+        /// Walks only the root object's property names — nested objects/arrays
+        /// (Nodes, Links, …) are hopped wholesale via <see cref="Utf8JsonReader.Skip"/>
+        /// — and returns at the first hit, so no DOM is materialized for the
+        /// (potentially multi-MB) graph payload. Returns false when the property
+        /// is absent or its value isn't an int-representable JSON number
+        /// (matching the old <c>JsonValue.TryGetValue&lt;int&gt;</c> semantics);
+        /// throws <see cref="JsonException"/> on malformed JSON, which the caller
+        /// treats as legacy and lets the binder surface.
+        /// </summary>
+        private static bool TryReadTopLevelSchemaVersion(string json, out int version)
+        {
+            version = 0;
+            var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(json));
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return false;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                bool match = reader.ValueTextEquals(SchemaVersionPropertyName);
+                if (!reader.Read()) return false; // advance onto the value token
+                if (match)
+                    return reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out version);
+                reader.Skip(); // no-op on primitives; jumps a whole nested object/array otherwise
+            }
+            return false;
         }
 
         /// <summary>
@@ -674,11 +701,14 @@ namespace Phoenix.Controls.Architect.Core
         {
             if (node.Sockets is null || node.Sockets.Count < 2) return;
 
-            static List<Socket> OrderByTemplate(IEnumerable<Socket> sockets, IReadOnlyList<string> templateOrder)
+            // Common case: graphs are saved in template order, so on reload the
+            // list already matches. Detect that with one allocation-free pass and
+            // skip the sort + three list builds below; the full rebuild stays as
+            // the fallback for genuine mismatches.
+            if (SocketsAlreadyOrdered(node, tmpl)) return;
+
+            static List<Socket> OrderByTemplate(IEnumerable<Socket> sockets, IReadOnlyDictionary<string, int> idx)
             {
-                var idx = new Dictionary<string, int>(StringComparer.Ordinal);
-                for (int i = 0; i < templateOrder.Count; i++)
-                    if (!idx.ContainsKey(templateOrder[i])) idx[templateOrder[i]] = i;
                 int orig = 0;
                 return sockets
                     .Select(s => (s, orig: orig++, tpl: idx.TryGetValue(s.Name ?? string.Empty, out var t) ? t : int.MaxValue))
@@ -689,10 +719,8 @@ namespace Phoenix.Controls.Architect.Core
                     .ToList();
             }
 
-            var inputs  = OrderByTemplate(node.Sockets.Where(s => s.Type == SocketType.Input),
-                                          tmpl.Inputs.Select(t => t.Item1).ToList());
-            var outputs = OrderByTemplate(node.Sockets.Where(s => s.Type == SocketType.Output),
-                                          tmpl.Outputs.Select(t => t.Item1).ToList());
+            var inputs  = OrderByTemplate(node.Sockets.Where(s => s.Type == SocketType.Input),  tmpl.InputOrder);
+            var outputs = OrderByTemplate(node.Sockets.Where(s => s.Type == SocketType.Output), tmpl.OutputOrder);
 
             var rebuilt = new List<Socket>(node.Sockets.Count);
             rebuilt.AddRange(inputs);
@@ -701,6 +729,45 @@ namespace Phoenix.Controls.Architect.Core
             if (rebuilt.SequenceEqual(node.Sockets)) return; // already ordered — no churn
             node.Sockets.Clear();
             node.Sockets.AddRange(rebuilt);
+        }
+
+        /// <summary>
+        /// True when <paramref name="node"/>'s socket list already matches what
+        /// <see cref="ReorderSocketsToTemplate"/>'s rebuild would produce: all
+        /// inputs before all outputs, and within each group the template sockets
+        /// first in non-decreasing template-index order (ties = duplicate names,
+        /// which the first-occurrence index maps collapse — original order kept,
+        /// same as the stable sort) followed only by non-template extras. Pure
+        /// read — sockets are never mutated here.
+        /// </summary>
+        private static bool SocketsAlreadyOrdered(Node node, NodeTemplate tmpl)
+        {
+            bool seenOutput = false;
+            bool inExtras   = false; // extras sort after template sockets within a group
+            int  lastTpl    = -1;
+            foreach (var s in node.Sockets)
+            {
+                bool isInput = s.Type == SocketType.Input;
+                if (isInput && seenOutput) return false;
+                if (!isInput && !seenOutput)
+                {
+                    // Group switch — reset the per-group monotonic state.
+                    seenOutput = true;
+                    inExtras   = false;
+                    lastTpl    = -1;
+                }
+                var order = isInput ? tmpl.InputOrder : tmpl.OutputOrder;
+                if (order.TryGetValue(s.Name ?? string.Empty, out int tpl))
+                {
+                    if (inExtras || tpl < lastTpl) return false;
+                    lastTpl = tpl;
+                }
+                else
+                {
+                    inExtras = true;
+                }
+            }
+            return true;
         }
 
         /// <summary>
@@ -747,6 +814,39 @@ namespace Phoenix.Controls.Architect.Core
             {
                 if (node.Title == "Process.Spawn")          node.Title = "Process.Start";
                 else if (node.Title == "Process.Terminate") node.Title = "Process.Stop";
+            }
+
+            // Unified multi-platform chat node:
+            // Twitch.ChatMessage and YouTube.Message collapse into ONE Chat.Message
+            // event trigger with per-platform checkmark attributes. Retitle here —
+            // BEFORE the template back-fill below — so the node binds to the
+            // Chat.Message template and gains its missing sockets additively
+            // (e.g. Platform; for YouTube.Message also IsCommand/Command/Args/…),
+            // while existing same-named sockets keep their instances/Ids and wires.
+            // Behavior-preservation contract: platform attrs seed ONLY when absent
+            // (TryAdd) — a legacy Twitch.ChatMessage migrates Twitch-only and a
+            // legacy YouTube.Message YouTube-only (zero behavior change), and a
+            // node already titled Chat.Message is never touched, so a user who
+            // unchecked a platform keeps that choice across reloads. The existing
+            // `Commands` attribute is left untouched (the template-defaults TryAdd
+            // further down can't clobber it either). Idempotent, same shape as the
+            // Process.Spawn/Terminate retitle above.
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Title == "Twitch.ChatMessage")
+                {
+                    node.Title = "Chat.Message";
+                    node.Attributes.TryAdd("Twitch",  "true");
+                    node.Attributes.TryAdd("YouTube", "false");
+                    node.Attributes.TryAdd("Kick",    "false");
+                }
+                else if (node.Title == "YouTube.Message")
+                {
+                    node.Title = "Chat.Message";
+                    node.Attributes.TryAdd("Twitch",  "false");
+                    node.Attributes.TryAdd("YouTube", "true");
+                    node.Attributes.TryAdd("Kick",    "false");
+                }
             }
 
             // Adjacency prebuild. The downstream
@@ -948,9 +1048,11 @@ namespace Phoenix.Controls.Architect.Core
                     continue;
                 }
 
-                // Remove sockets that no longer exist in the template (non-placeholder only)
-                var templateInputNames  = tmpl.Inputs.Select(t => t.Item1).ToHashSet();
-                var templateOutputNames = tmpl.Outputs.Select(t => t.Item1).ToHashSet();
+                // Remove sockets that no longer exist in the template (non-placeholder only).
+                // Name sets are the registration-time caches — templates are immutable
+                // post-RegisterDefaults, so no per-node rebuild is needed.
+                var templateInputNames  = tmpl.InputNames;
+                var templateOutputNames = tmpl.OutputNames;
                 node.Sockets.RemoveAll(s => !s.IsPlaceholder
                     && ((s.Type == SocketType.Input  && !templateInputNames.Contains(s.Name))
                      || (s.Type == SocketType.Output && !templateOutputNames.Contains(s.Name))));
@@ -978,6 +1080,12 @@ namespace Phoenix.Controls.Architect.Core
                             Name   = name,
                             Type   = SocketType.Input,
                             Color  = color,
+                            // Pin shape + wire-compat derive from DataType, not
+                            // Color. Without this, a back-filled socket rendered
+                            // as an Any ◆ and refused typed wires until the NEXT
+                            // save+reload re-synced DataType from Color (the
+                            // recurring minted-without-DataType class).
+                            DataType = NodeRegistry.DataTypeFromColorPublic(color),
                             Offset = new Point(-6, headerH + 6 + i * spacing)
                         });
                     }
@@ -994,6 +1102,8 @@ namespace Phoenix.Controls.Architect.Core
                             Name   = name,
                             Type   = SocketType.Output,
                             Color  = color,
+                            // Same DataType-at-mint rule as the input back-fill above.
+                            DataType = NodeRegistry.DataTypeFromColorPublic(color),
                             Offset = new Point(nodeWidth - 14, headerH + 6 + i * spacing)
                         });
                     }
@@ -1306,6 +1416,29 @@ namespace Phoenix.Controls.Architect.Core
                 try { schemaCache[table] = await Phoenix.Controls.Shared.Services.DB.Instance.GetTableColumnTypesAsync(table).ConfigureAwait(false); }
                 catch { /* DB offline — skip */ }
             }
+            if (schemaCache.Count == 0) return; // no resolvable table — nothing to apply
+
+            // FromSocketId / ToSocketId → links indexes, built once so each
+            // reroute hop in PropagateSocketTypeChange is a bucket lookup instead
+            // of a full graph.Links walk. Propagation only mutates socket
+            // Color/DataType — never links — so the indexes stay valid across it.
+            var linksBySourceSocket = new Dictionary<string, List<Link>>(StringComparer.Ordinal);
+            var linksByTargetSocket = new Dictionary<string, List<Link>>(StringComparer.Ordinal);
+            foreach (var link in graph.Links)
+            {
+                if (!string.IsNullOrEmpty(link.FromSocketId))
+                {
+                    if (!linksBySourceSocket.TryGetValue(link.FromSocketId, out var bySrc))
+                        linksBySourceSocket[link.FromSocketId] = bySrc = new List<Link>(2);
+                    bySrc.Add(link);
+                }
+                if (!string.IsNullOrEmpty(link.ToSocketId))
+                {
+                    if (!linksByTargetSocket.TryGetValue(link.ToSocketId, out var byDst))
+                        linksByTargetSocket[link.ToSocketId] = byDst = new List<Link>(2);
+                    byDst.Add(link);
+                }
+            }
 
             foreach (var node in graph.Nodes)
             {
@@ -1330,7 +1463,8 @@ namespace Phoenix.Controls.Architect.Core
                                                            : Phoenix.Controls.Shared.Models.SocketType.Input;
                 var updatedSocket = node.Sockets.Find(s => s.Name == socketName && s.Type == direction);
                 if (updatedSocket != null)
-                    PropagateSocketTypeChange(graph, updatedSocket, node, new HashSet<string>());
+                    PropagateSocketTypeChange(graph, updatedSocket, node,
+                        linksBySourceSocket, linksByTargetSocket, new HashSet<string>());
             }
         }
 
@@ -1338,19 +1472,24 @@ namespace Phoenix.Controls.Architect.Core
             Graph graph,
             Socket changedSocket,
             Node ownerNode,
+            Dictionary<string, List<Link>> linksBySourceSocket,
+            Dictionary<string, List<Link>> linksByTargetSocket,
             HashSet<string> visited)
         {
             if (!visited.Add(changedSocket.Id)) return;
+            if (string.IsNullOrEmpty(changedSocket.Id)) return; // load-time sweep pruned any link to an id-less socket
 
             bool isOutput = changedSocket.Type == Phoenix.Controls.Shared.Models.SocketType.Output;
 
             if (isOutput)
             {
-                // Walk links where changedSocket is the source.
-                foreach (var link in graph.Links)
+                // Walk links where changedSocket is the source — the bucket already
+                // guarantees FromSocketId matches; only the owner check remains.
+                if (!linksBySourceSocket.TryGetValue(changedSocket.Id, out var outgoing)) return;
+                foreach (var link in outgoing)
                 {
-                    if (link.FromNodeId != ownerNode.Id || link.FromSocketId != changedSocket.Id) continue;
-                    var targetNode = graph.Nodes.Find(n => n.Id == link.ToNodeId);
+                    if (link.FromNodeId != ownerNode.Id) continue;
+                    var targetNode = graph.FindNodeById(link.ToNodeId);
                     if (targetNode == null) continue;
 
                     if (targetNode.Title == "Flow.Reroute")
@@ -1362,17 +1501,19 @@ namespace Phoenix.Controls.Architect.Core
                         }
                         var rerouteOut = targetNode.Sockets.Find(s => s.Type == Phoenix.Controls.Shared.Models.SocketType.Output);
                         if (rerouteOut != null)
-                            PropagateSocketTypeChange(graph, rerouteOut, targetNode, visited);
+                            PropagateSocketTypeChange(graph, rerouteOut, targetNode,
+                                linksBySourceSocket, linksByTargetSocket, visited);
                     }
                 }
             }
             else
             {
                 // Input socket: walk links where changedSocket is the destination and update upstream reroutes.
-                foreach (var link in graph.Links)
+                if (!linksByTargetSocket.TryGetValue(changedSocket.Id, out var incoming)) return;
+                foreach (var link in incoming)
                 {
-                    if (link.ToNodeId != ownerNode.Id || link.ToSocketId != changedSocket.Id) continue;
-                    var sourceNode = graph.Nodes.Find(n => n.Id == link.FromNodeId);
+                    if (link.ToNodeId != ownerNode.Id) continue;
+                    var sourceNode = graph.FindNodeById(link.FromNodeId);
                     if (sourceNode?.Title != "Flow.Reroute") continue;
 
                     foreach (var s in sourceNode.Sockets)
@@ -1382,7 +1523,8 @@ namespace Phoenix.Controls.Architect.Core
                     }
                     var rerouteIn = sourceNode.Sockets.Find(s => s.Type == Phoenix.Controls.Shared.Models.SocketType.Input);
                     if (rerouteIn != null)
-                        PropagateSocketTypeChange(graph, rerouteIn, sourceNode, visited);
+                        PropagateSocketTypeChange(graph, rerouteIn, sourceNode,
+                            linksBySourceSocket, linksByTargetSocket, visited);
                 }
             }
         }

@@ -201,8 +201,7 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
             var db = DB.Instance;
             if (!db.IsHealthy) return;
 
-            // Fast-path: peek the max rowid via the same indexed access
-            // path that GetRowsWithRowIdAsync uses. If it hasn't changed
+            // Fast-path: scalar max(rowid) probe. If it hasn't changed
             // since our last read, skip the full pull.
             long latestRowId = await ReadMaxEventLogRowIdAsync(db).ConfigureAwait(false);
             long highWater;
@@ -275,21 +274,14 @@ public sealed class EventLogPanelViewModel : ObservableObject, IDisposable
     /// </summary>
     private static async Task<long> ReadMaxEventLogRowIdAsync(DB db)
     {
-        // We don't have a dedicated peek API on DB.cs; the simplest
-        // honest path is to issue a 1-row pull through the existing
-        // GetRowsWithRowIdAsync surface and read its rowid. Cost: one
-        // index seek under the shared connection lock. Avoids adding
-        // a parallel SQLite call path outside DB.cs (per task brief).
+        // Scalar probe — no row (and crucially no multi-KB Payload TEXT)
+        // is materialized just to learn whether new rows landed. The
+        // catch stays for the failure modes QueryScalar can't absorb
+        // (disposed-singleton race during shutdown): -1 = "skip the pull",
+        // same as the empty-table result.
         try
         {
-            var top = await db.GetRowsWithRowIdAsync(
-                tableName: "EventLog",
-                columnsInDeclarationOrder: EventLogColumns,
-                maxRows: 1,
-                offset: 0,
-                orderByColumn: "rowid",
-                orderDescending: true).ConfigureAwait(false);
-            return top.Count > 0 ? top[0].RowId : -1;
+            return await db.GetMaxRowIdAsync("EventLog").ConfigureAwait(false);
         }
         catch
         {
