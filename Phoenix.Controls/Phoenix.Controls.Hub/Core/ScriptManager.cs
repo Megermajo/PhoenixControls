@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
@@ -292,34 +293,62 @@ namespace Phoenix.Controls.Hub.Core
         private SemaphoreSlim _webhookSemaphore;
         private SemaphoreSlim _eventSemaphore;
 
-        // Re-entry guard for the event semaphore. Set after a
-        // caller has won an _eventSemaphore slot; checked at every acquire
-        // site so a nested event.trigger from an event script's body doesn't
-        // try to acquire a second slot from inside the held one. With cap=5
-        // and five outer event scripts each calling event.trigger, the inner
-        // calls used to wait 30s and time out (and effectively deadlock the
-        // event subsystem while every outer slot was held). AsyncLocal so
+        // Re-entry guard for the event semaphore. Each dispatch site sets it
+        // around its execution body once AcquireEventSlotAsync admits the run
+        // (the CALLER must set it — an AsyncLocal write inside the async
+        // acquire method mutates a copied ExecutionContext and never flows
+        // back to the awaiting dispatcher's flow); AcquireEventSlotAsync
+        // checks it first so a nested event.trigger from a script's body
+        // doesn't try to acquire a second slot from inside the held one. With
+        // cap=5 and five outer event scripts each calling event.trigger, the
+        // inner calls used to wait 30s and time out (and effectively deadlock
+        // the event subsystem while every outer slot was held). AsyncLocal so
         // the flag follows the async-flow, not the thread.
         private static readonly AsyncLocal<bool> _eventSemaphoreHeld = new();
 
         // Result of an event-slot acquire attempt — used so the matching
         // Release call only fires when we actually took a slot (re-entrant
-        // calls and timeouts must NOT release).
-        private enum EventSlotResult { Acquired, Reentered, TimedOut }
+        // calls, timeouts, policy bypasses and discards must NOT release).
+        private enum EventSlotResult { Acquired, Reentered, TimedOut, Bypassed, Discarded }
 
         /// <summary>
-        /// Acquires the event-semaphore slot, honoring re-entry. If
-        /// the current async flow already holds a slot (an outer event /
-        /// chat / startup / bus / state-change / internal-event script body
-        /// is executing and called event.trigger), returns Reentered without
-        /// touching the semaphore — the outer slot is still doing the work.
-        /// On a fresh acquire, returns Acquired (caller must Release). On a
-        /// timeout, returns TimedOut (caller must skip).
+        /// Acquires the event-semaphore slot, honoring re-entry and the
+        /// per-script execution policy. If the current async flow already
+        /// holds a slot (an outer event / chat / startup / bus / state-change
+        /// / internal-event script body is executing and called
+        /// event.trigger), returns Reentered without touching the semaphore —
+        /// the outer slot is still doing the work. An Overlap-policy script
+        /// skips the semaphore entirely and returns Bypassed; a Discard-policy
+        /// script with an execution already in flight returns Discarded and
+        /// the caller must skip the run. On a fresh acquire, returns Acquired
+        /// (caller must Release). On a timeout, returns TimedOut (caller must
+        /// skip).
+        ///
+        /// <para>
+        /// Caller-side contract for the re-entry flag: this method cannot set
+        /// <see cref="_eventSemaphoreHeld"/> itself — an AsyncLocal write
+        /// inside an async callee mutates a copied ExecutionContext that is
+        /// discarded when the method completes, so the awaiting dispatcher
+        /// (and any nested event.trigger it spawns) would never see the flag.
+        /// After an admitted result (Acquired / Bypassed / Reentered) the
+        /// dispatch site must save the prior flag value, set
+        /// <c>_eventSemaphoreHeld.Value = true</c> around the execution body,
+        /// and restore the saved value in its <c>finally</c> — the same
+        /// save/set/restore the chat path uses around its
+        /// _chatSemaphore-gated run.
+        /// </para>
         /// </summary>
         private async Task<EventSlotResult> AcquireEventSlotAsync(string fn)
         {
             if (_eventSemaphoreHeld.Value)
                 return EventSlotResult.Reentered;
+            // Policy gate sits after the re-entry check (a held outer slot
+            // already models "this flow is admitted") and before EmitQueued
+            // so a bypassed / discarded trigger never shows as queued.
+            if (!TryAdmit(fn, out bool bypassSemaphore))
+                return EventSlotResult.Discarded;
+            if (bypassSemaphore)
+                return EventSlotResult.Bypassed;
             if (_eventSemaphore.CurrentCount == 0)
                 GlobalLogger.Log($"Rate limit reached for event scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
             EmitQueued(fn);
@@ -329,20 +358,22 @@ namespace Phoenix.Controls.Hub.Core
                     "ScriptManager", LogLevel.CriticalError);
                 return EventSlotResult.TimedOut;
             }
-            _eventSemaphoreHeld.Value = true;
             return EventSlotResult.Acquired;
         }
 
         /// <summary>
         /// Companion to <see cref="AcquireEventSlotAsync"/>. Only
         /// releases the semaphore when we actually took a slot (i.e. the
-        /// caller saw Acquired); Reentered / TimedOut are no-ops so the
-        /// outer Acquire/Release pair stays balanced.
+        /// caller saw Acquired); Reentered / TimedOut / Bypassed / Discarded
+        /// are no-ops so the outer Acquire/Release pair stays balanced.
+        /// The re-entry flag is deliberately NOT cleared here — the dispatch
+        /// sites own it (save/set/restore around the execution body, see the
+        /// caller-side contract on AcquireEventSlotAsync), and a blanket
+        /// clear would clobber an outer flow's still-held flag.
         /// </summary>
         private void ReleaseEventSlot(EventSlotResult slot)
         {
             if (slot != EventSlotResult.Acquired) return;
-            _eventSemaphoreHeld.Value = false;
             try { _eventSemaphore.Release(); } catch (ObjectDisposedException) { }
         }
 
@@ -524,7 +555,16 @@ namespace Phoenix.Controls.Hub.Core
             // ScriptHostMonitor resets to Idle on the next registry refresh).
             // Pairs with Running, which fires from BeginExecutionTracked once
             // the semaphore is actually held.
-            Queued
+            Queued,
+            // The script's Discard execution policy dropped a new trigger
+            // because an execution of the same script was already in flight.
+            // Fired instead of Queued/Running — a discarded trigger never
+            // enters the engine, so no Finished/Error follow-up comes. Not an
+            // error: ScriptHostMonitor leaves the row state untouched.
+            // Best-effort by design: the running counter is read-then-act, so
+            // two simultaneous first triggers may both run — Discard is a
+            // drop-while-running valve, not a mutex.
+            Discarded
         }
 
         public sealed class ScriptLifecycleEvent
@@ -634,27 +674,105 @@ namespace Phoenix.Controls.Hub.Core
             => FireLifecycle(scriptName, ScriptExecutionPhase.Queued);
 
         // ── Script Monitor — per-script execution policy ────────────────────
-        // The picker in ScriptMonitorWindow writes here. Today only Queue is
-        // actually enforced (via the existing _chatSemaphore + _eventSemaphore
-        // path); Overlap and Discard are persisted in this dictionary but the
-        // semaphore wiring is a follow-up. The picker uses IsEnforced below to
-        // grey out the un-wired options so the UI never lies about behavior.
+        // The picker in ScriptMonitorWindow writes here; every semaphore-gated
+        // dispatch site consults TryAdmit below before its acquire. Queue rides
+        // the existing _chatSemaphore / _webhookSemaphore / _eventSemaphore
+        // waits; Overlap bypasses the wait so concurrent runs of the same
+        // script aren't capped; Discard drops a new trigger while an execution
+        // of the script is already in flight (see the Discarded phase comment
+        // in ScriptExecutionPhase for the best-effort caveat).
         public enum ExecutionPolicy
         {
-            Queue,    // default — wait for the semaphore slot (current behavior)
-            Overlap,  // run concurrently up to the cap (not yet enforced)
-            Discard   // drop new triggers if already running (not yet enforced)
+            Queue,    // default — wait for the semaphore slot
+            Overlap,  // run concurrently — skip the rate-limit semaphore
+            Discard   // drop new triggers while the script is already running
         }
 
-        /// <summary>True for policies whose runtime behavior actually differs
-        /// from <see cref="ExecutionPolicy.Queue"/>. The Script Monitor picker
-        /// disables non-enforced entries so users aren't misled — flip this
-        /// when Overlap / Discard get wired into the semaphore acquisition
-        /// path in <see cref="BeginExecutionTracked"/>.</summary>
-        public static bool IsEnforced(ExecutionPolicy policy) => policy == ExecutionPolicy.Queue;
+        /// <summary>True for policies whose runtime behavior is actually wired
+        /// into the dispatch sites — all three are, via <see cref="TryAdmit"/>.
+        /// The Script Monitor picker keeps consulting this so a future policy
+        /// value can ship persisted-but-unwired without the UI lying about
+        /// behavior (it appends a "(not yet enforced)" suffix when false).</summary>
+        public static bool IsEnforced(ExecutionPolicy policy) => true;
 
         private static readonly ConcurrentDictionary<string, ExecutionPolicy> _executionPolicies =
             new(StringComparer.OrdinalIgnoreCase);
+
+        // Per-script running-execution counter — feeds the Discard policy's
+        // "is one already in flight?" check. Keyed by script file name
+        // (OrdinalIgnoreCase, matching _executionPolicies); incremented in
+        // BeginExecutionTracked and decremented (entry removed at zero) in
+        // EndExecutionTracked — the single Begin/End funnel every dispatch
+        // site routes through, so the count covers all trigger families.
+        private static readonly ConcurrentDictionary<string, int> _runningCounts =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Current number of in-flight executions for a script
+        /// (0 when idle). Diagnostic/test accessor over the running counter.</summary>
+        internal static int GetRunningCount(string scriptName)
+            => !string.IsNullOrEmpty(scriptName) && _runningCounts.TryGetValue(scriptName, out int n) ? n : 0;
+
+        private static void IncrementRunningCount(string scriptName)
+        {
+            if (string.IsNullOrEmpty(scriptName)) return;
+            _runningCounts.AddOrUpdate(scriptName, 1, (_, n) => n + 1);
+        }
+
+        private static void DecrementRunningCount(string scriptName)
+        {
+            if (string.IsNullOrEmpty(scriptName)) return;
+            // Remove-at-zero keeps the map from accreting one entry per script
+            // name for the process lifetime. Both arms are compare-exchange
+            // shaped so a concurrent Begin can't be lost: the keyed TryRemove
+            // only removes when the value still matches, and TryUpdate only
+            // writes over the value we read.
+            while (_runningCounts.TryGetValue(scriptName, out int n))
+            {
+                if (n <= 1)
+                {
+                    if (_runningCounts.TryRemove(new KeyValuePair<string, int>(scriptName, n)))
+                        return;
+                }
+                else if (_runningCounts.TryUpdate(scriptName, n - 1, n))
+                {
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pre-acquire execution-policy decision shared by every semaphore-gated
+        /// dispatch site. Queue (default) admits and takes the semaphore as
+        /// before. Overlap admits with <paramref name="bypassSemaphore"/> set
+        /// so the caller skips the wait (and its Queued ping) entirely.
+        /// Discard checks the running counter: when an execution of this script
+        /// is already in flight it fires the Discarded lifecycle ping, logs one
+        /// Communication-tier line, and returns false — the caller must skip
+        /// the run. The counter check is read-then-act by design (see the
+        /// Discarded phase comment in <see cref="ScriptExecutionPhase"/>).
+        /// </summary>
+        private bool TryAdmit(string scriptName, out bool bypassSemaphore)
+        {
+            bypassSemaphore = false;
+            switch (GetExecutionPolicy(scriptName))
+            {
+                case ExecutionPolicy.Overlap:
+                    bypassSemaphore = true;
+                    return true;
+                case ExecutionPolicy.Discard:
+                    if (GetRunningCount(scriptName) > 0)
+                    {
+                        GlobalLogger.Log(
+                            $"Script '{scriptName}' trigger discarded — an execution is already running (policy: Discard).",
+                            "ScriptManager", LogLevel.Communication);
+                        FireLifecycle(scriptName, ScriptExecutionPhase.Discarded);
+                        return false;
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        }
 
         /// <summary>Reads the configured execution policy for a script. Defaults to <see cref="ExecutionPolicy.Queue"/>.</summary>
         public ExecutionPolicy GetExecutionPolicy(string scriptName)
@@ -752,6 +870,10 @@ namespace Phoenix.Controls.Hub.Core
             }
             long id = Interlocked.Increment(ref _executionIdCounter);
             _activeCts[id] = cts;
+            // Discard-policy bookkeeping — count this execution as in-flight
+            // until the matching EndExecutionTracked. Kept here (not at the
+            // dispatch sites) so every trigger family rides the one funnel.
+            IncrementRunningCount(scriptName);
             // Script Monitor lifecycle ping. By the time we reach Begin the
             // semaphore slot is already taken, so this is the "Running" transition.
             FireLifecycle(scriptName, ScriptExecutionPhase.Running);
@@ -769,12 +891,16 @@ namespace Phoenix.Controls.Hub.Core
             foreach (var kv in _activeCts)
                 if (ReferenceEquals(kv.Value, cts)) { foundKey = kv.Key; break; }
             if (foundKey.HasValue) _activeCts.TryRemove(foundKey.Value, out _);
+            // The paired BeginExecution routed through BeginExecutionTracked,
+            // which incremented the running counter — balance it here too.
+            DecrementRunningCount(scriptName);
             try { cts.Dispose(); } catch { }
         }
 
         private void EndExecutionTracked(ExecutionToken token)
         {
             _activeCts.TryRemove(token.Id, out _);
+            DecrementRunningCount(token.ScriptName);
             // Script Monitor lifecycle: cancellation == red, otherwise green.
             // Unhandled exceptions are caught upstream by the catch (Exception) blocks
             // in each handler and don't propagate here; the window also subscribes to
@@ -796,6 +922,72 @@ namespace Phoenix.Controls.Hub.Core
         public void ReportScriptFault(string scriptName, Exception ex)
         {
             FireLifecycle(scriptName, ScriptExecutionPhase.Error);
+        }
+
+        /// <summary>
+        /// Handler for <see cref="ScriptRegistry.ScriptContentChanged"/> —
+        /// re-arms ALL of the changed (or removed) script's fire-once /
+        /// fire-N / alternate state: the engine's in-memory do_n(N): counters
+        /// (keyed by file + line index) AND the DB-persisted, node-id-keyed
+        /// global._doonce_* / _don_counter_* / _flipflop_* vars the exporter
+        /// emits for the Flow.DoOnce / Flow.DoN / Flow.FlipFlop nodes. The
+        /// var keys are extracted from the script text itself (prior + fresh
+        /// content) — node ids only exist there — so removed nodes' state is
+        /// cleaned up alongside surviving nodes' re-arm. The DB purge runs
+        /// fire-and-forget behind AsyncErrorBoundary; a failed purge logs and
+        /// leaves the old state for the next change to retry.
+        /// Internal (not private) so tests can drive the ScriptManager →
+        /// engine/DB leg without a registry round-trip. Null-guarded because
+        /// a registry raise can theoretically land before the ctor finishes
+        /// wiring the engine in exotic test bootstraps.
+        /// </summary>
+        internal void OnScriptContentChanged(ScriptContentChange? change)
+        {
+            if (change is null || string.IsNullOrEmpty(change.FileName)) return;
+            _engine?.ResetDoNCountersForScript(change.FileName);
+
+            var keys = ExtractNodeStateVarKeys(change.PriorContent, change.NewContent);
+            if (keys.Count == 0) return;
+            string fileName = change.FileName;
+            AsyncErrorBoundary.SafeRunAsync(async () =>
+            {
+                await DB.Instance.DeleteEngineStateVariablesAsync(keys).ConfigureAwait(false);
+                GlobalLogger.Log(
+                    $"Script '{fileName}' changed — re-armed {keys.Count} persisted node-state var(s) (DoOnce / DoN / FlipFlop).",
+                    "ScriptManager", LogLevel.Communication);
+            }, "ScriptManager", $"node-state re-arm ({fileName})");
+        }
+
+        // Matches the persisted node-state vars the exporter emits: the node
+        // id suffix is a dash-stripped, zero-padded 12-char id, so the tail
+        // charset is strictly [A-Za-z0-9_]. Both the bare-assignment form
+        // (global._doonce_X = …) and the braced-read form ({global._doonce_X})
+        // contain the same match; braces are not part of it.
+        private static readonly Regex NodeStateVarRegex = new(
+            @"global\.(?:_don_counter_|_doonce_|_flipflop_)[A-Za-z0-9_]+",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// Distinct persisted node-state var keys referenced by either version
+        /// of a script's text. Scanning BOTH sides covers pre-existing state
+        /// for surviving nodes (present in both), state of nodes the edit
+        /// removed (prior only), and is naturally empty for scripts that use
+        /// none of the stateful flow nodes. Keys match the Vars-table form
+        /// (full "global." prefix). Internal for direct test coverage.
+        /// </summary>
+        internal static IReadOnlyCollection<string> ExtractNodeStateVarKeys(string? priorContent, string? newContent)
+        {
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            Collect(priorContent);
+            Collect(newContent);
+            return keys;
+
+            void Collect(string? src)
+            {
+                if (string.IsNullOrEmpty(src)) return;
+                foreach (Match m in NodeStateVarRegex.Matches(src))
+                    keys.Add(m.Value);
+            }
         }
 
         private async Task TimedExecuteAsync(string fn, string content, Dictionary<string, string> vars, CancellationToken token)
@@ -941,6 +1133,16 @@ namespace Phoenix.Controls.Hub.Core
                     "ScriptManager",
                     "DEBUG_VAR_SET broadcast");
             };
+
+            // Content-change → do_n counter invalidation. When Architect
+            // re-emits a .phx (or a file is deleted) the engine's per-script
+            // do_n(N): counters are keyed by line index and go stale — old
+            // keys become dead weight, or pin the wrong line after an edit.
+            // ScriptRegistry announces genuine content changes and removals
+            // on its Refresh re-scan; drop that file's counters so the blocks
+            // re-arm against the fresh line layout. Subscribed once here in
+            // the singleton ctor (process-lifetime) so there's no handler leak.
+            ScriptRegistry.Instance.ScriptContentChanged += OnScriptContentChanged;
 
             RegisterHubCommands();
             // Async script load — no longer blocks the ctor (or
@@ -1236,8 +1438,13 @@ namespace Phoenix.Controls.Hub.Core
             // 4. Run with event type context
             string fileName = Path.GetFileName(filePath);
             var slot = await AcquireEventSlotAsync(fileName).ConfigureAwait(false);
-            if (slot == EventSlotResult.TimedOut) return;
+            if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) return;
             var token = BeginExecutionTracked(fileName);
+            // Caller-side re-entry flag — see AcquireEventSlotAsync. Marks this
+            // flow as holding an event slot so a nested event.trigger from the
+            // script body re-enters instead of waiting on a second slot.
+            bool savedHeld = _eventSemaphoreHeld.Value;
+            _eventSemaphoreHeld.Value = true;
             try
             {
                 if (!ScriptRegistry.Instance.IsEnabled(fileName)) return;
@@ -1269,6 +1476,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             finally
             {
+                _eventSemaphoreHeld.Value = savedHeld;
                 EndExecutionTracked(token);
                 ReleaseEventSlot(slot);
             }
@@ -1387,30 +1595,40 @@ namespace Phoenix.Controls.Hub.Core
                 // re-wraps with OrdinalIgnoreCase at its own boundary.
                 var vars = new Dictionary<string, string>(sharedVars);
 
-                if (_chatSemaphore.CurrentCount == 0)
-                    GlobalLogger.Log($"Rate limit reached for chat scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
-                EmitQueued(fn);
-                // Bound the wait so a hung chat script can't head-of-line
-                // the entire chat queue. Mirrors the 30s pattern used by the event
-                // and webhook semaphores. Drop this script on timeout.
-                bool acquired;
-                try
-                {
-                    acquired = await _chatSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-                }
-                catch (ObjectDisposedException)
-                {
-                    // _chatSemaphore was disposed by shutdown while this chat message was in
-                    // flight — drop cleanly so teardown completes (the entry guard in
-                    // ExecuteOnChatScriptsAsync covers the common case; this closes the race window).
+                // Execution-policy gate — Overlap skips the chat semaphore
+                // (and its Queued ping) so concurrent runs of this script
+                // aren't capped; Discard drops the trigger while an execution
+                // is already in flight. Queue keeps the wait below.
+                if (!TryAdmit(fn, out bool bypassSemaphore))
                     return;
-                }
-                if (!acquired)
+
+                bool acquired = false;
+                if (!bypassSemaphore)
                 {
-                    GlobalLogger.Log(
-                        $"Chat script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentChatScripts}).",
-                        "ScriptManager", LogLevel.CriticalError);
-                    return;
+                    if (_chatSemaphore.CurrentCount == 0)
+                        GlobalLogger.Log($"Rate limit reached for chat scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
+                    EmitQueued(fn);
+                    // Bound the wait so a hung chat script can't head-of-line
+                    // the entire chat queue. Mirrors the 30s pattern used by the event
+                    // and webhook semaphores. Drop this script on timeout.
+                    try
+                    {
+                        acquired = await _chatSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // _chatSemaphore was disposed by shutdown while this chat message was in
+                        // flight — drop cleanly so teardown completes (the entry guard in
+                        // ExecuteOnChatScriptsAsync covers the common case; this closes the race window).
+                        return;
+                    }
+                    if (!acquired)
+                    {
+                        GlobalLogger.Log(
+                            $"Chat script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentChatScripts}).",
+                            "ScriptManager", LogLevel.CriticalError);
+                        return;
+                    }
                 }
                 var token = BeginExecutionTracked(fn);
                 // [event-slot relief] This chat script is already gated by
@@ -1437,7 +1655,11 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     _eventSemaphoreHeld.Value = savedHeld;
                     EndExecutionTracked(token);
-                    try { _chatSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    // An Overlap bypass never took a slot — only release when we did.
+                    if (acquired)
+                    {
+                        try { _chatSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    }
                 }
             }
             catch (Exception ex)
@@ -1537,8 +1759,11 @@ namespace Phoenix.Controls.Hub.Core
 
                     string fn = info.FileName;
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-                    if (slot == EventSlotResult.TimedOut) continue;
+                    if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) continue;
                     var token = BeginExecutionTracked(fn);
+                    // Caller-side re-entry flag — see AcquireEventSlotAsync.
+                    bool savedHeld = _eventSemaphoreHeld.Value;
+                    _eventSemaphoreHeld.Value = true;
                     try
                     {
                         _engine.EventType  = eventType;
@@ -1551,6 +1776,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     finally
                     {
+                        _eventSemaphoreHeld.Value = savedHeld;
                         EndExecutionTracked(token);
                         ReleaseEventSlot(slot);
                     }
@@ -1582,8 +1808,11 @@ namespace Phoenix.Controls.Hub.Core
 
                     string fn = info.FileName;
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-                    if (slot == EventSlotResult.TimedOut) continue;
+                    if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) continue;
                     var token = BeginExecutionTracked(fn);
+                    // Caller-side re-entry flag — see AcquireEventSlotAsync.
+                    bool savedHeld = _eventSemaphoreHeld.Value;
+                    _eventSemaphoreHeld.Value = true;
                     try
                     {
                         _engine.EventType  = "Startup";
@@ -1596,6 +1825,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     finally
                     {
+                        _eventSemaphoreHeld.Value = savedHeld;
                         EndExecutionTracked(token);
                         ReleaseEventSlot(slot);
                     }
@@ -1627,8 +1857,11 @@ namespace Phoenix.Controls.Hub.Core
 
                     string fn = info.FileName;
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-                    if (slot == EventSlotResult.TimedOut) continue;
+                    if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) continue;
                     var token = BeginExecutionTracked(fn);
+                    // Caller-side re-entry flag — see AcquireEventSlotAsync.
+                    bool savedHeld = _eventSemaphoreHeld.Value;
+                    _eventSemaphoreHeld.Value = true;
                     try
                     {
                         _engine.EventType    = busEventType;
@@ -1642,6 +1875,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     finally
                     {
+                        _eventSemaphoreHeld.Value = savedHeld;
                         EndExecutionTracked(token);
                         ReleaseEventSlot(slot);
                     }
@@ -1686,18 +1920,28 @@ namespace Phoenix.Controls.Hub.Core
             // first means the queuing log line correctly precedes the wait, and we
             // don't pay for the file read until we actually have the slot.
             string fn = match.FileName;
-            if (_webhookSemaphore.CurrentCount == 0)
-                GlobalLogger.Log($"Rate limit reached for webhook scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
-            EmitQueued(fn);
-            // Bound the wait so a slow webhook can't park HTTP threads
-            // forever. Drop with CriticalError if the cap holds for >30s; the HTTP
-            // caller sees the request return without execution.
-            if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
-            {
-                GlobalLogger.Log(
-                    $"Webhook script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
-                    "ScriptManager", LogLevel.CriticalError);
+            // Execution-policy gate — see TryAdmit. Overlap skips the webhook
+            // semaphore; Discard drops the trigger while an execution of this
+            // script is already in flight.
+            if (!TryAdmit(fn, out bool bypassSemaphore))
                 return;
+            bool slotHeld = false;
+            if (!bypassSemaphore)
+            {
+                if (_webhookSemaphore.CurrentCount == 0)
+                    GlobalLogger.Log($"Rate limit reached for webhook scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
+                EmitQueued(fn);
+                // Bound the wait so a slow webhook can't park HTTP threads
+                // forever. Drop with CriticalError if the cap holds for >30s; the HTTP
+                // caller sees the request return without execution.
+                if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                {
+                    GlobalLogger.Log(
+                        $"Webhook script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
+                        "ScriptManager", LogLevel.CriticalError);
+                    return;
+                }
+                slotHeld = true;
             }
 
             try
@@ -1748,7 +1992,11 @@ namespace Phoenix.Controls.Hub.Core
             }
             finally
             {
-                try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                // An Overlap bypass never took a slot — only release when we did.
+                if (slotHeld)
+                {
+                    try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                }
             }
         }
 
@@ -1788,13 +2036,23 @@ namespace Phoenix.Controls.Hub.Core
             async Task RunOneAsync(ScriptInfo info)
             {
                 string fn = info.FileName;
-                EmitQueued(fn);
-                if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
-                {
-                    GlobalLogger.Log(
-                        $"Clipboard script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
-                        "ScriptManager", LogLevel.CriticalError);
+                // Execution-policy gate — see TryAdmit. Overlap skips the
+                // shared webhook semaphore; Discard drops the trigger while
+                // an execution of this script is already in flight.
+                if (!TryAdmit(fn, out bool bypassSemaphore))
                     return;
+                bool slotHeld = false;
+                if (!bypassSemaphore)
+                {
+                    EmitQueued(fn);
+                    if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                    {
+                        GlobalLogger.Log(
+                            $"Clipboard script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
+                            "ScriptManager", LogLevel.CriticalError);
+                        return;
+                    }
+                    slotHeld = true;
                 }
                 try
                 {
@@ -1830,7 +2088,11 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 finally
                 {
-                    try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    // An Overlap bypass never took a slot — only release when we did.
+                    if (slotHeld)
+                    {
+                        try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    }
                 }
             }
         }
@@ -1868,15 +2130,25 @@ namespace Phoenix.Controls.Hub.Core
             }
 
             string fn = match.FileName;
-            if (_webhookSemaphore.CurrentCount == 0)
-                GlobalLogger.Log($"Rate limit reached for hotkey scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
-            EmitQueued(fn);
-            if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
-            {
-                GlobalLogger.Log(
-                    $"Hotkey script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
-                    "ScriptManager", LogLevel.CriticalError);
+            // Execution-policy gate — see TryAdmit. Overlap skips the shared
+            // webhook semaphore; Discard drops the trigger while an execution
+            // of this script is already in flight.
+            if (!TryAdmit(fn, out bool bypassSemaphore))
                 return;
+            bool slotHeld = false;
+            if (!bypassSemaphore)
+            {
+                if (_webhookSemaphore.CurrentCount == 0)
+                    GlobalLogger.Log($"Rate limit reached for hotkey scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
+                EmitQueued(fn);
+                if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                {
+                    GlobalLogger.Log(
+                        $"Hotkey script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
+                        "ScriptManager", LogLevel.CriticalError);
+                    return;
+                }
+                slotHeld = true;
             }
 
             try
@@ -1913,7 +2185,11 @@ namespace Phoenix.Controls.Hub.Core
             }
             finally
             {
-                try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                // An Overlap bypass never took a slot — only release when we did.
+                if (slotHeld)
+                {
+                    try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                }
             }
         }
 
@@ -1963,15 +2239,25 @@ namespace Phoenix.Controls.Hub.Core
             foreach (var match in matches)
             {
                 string fn = match.FileName;
-                if (_webhookSemaphore.CurrentCount == 0)
-                    GlobalLogger.Log($"Rate limit reached for websocket scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
-                EmitQueued(fn);
-                if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
-                {
-                    GlobalLogger.Log(
-                        $"WebSocket script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
-                        "ScriptManager", LogLevel.CriticalError);
+                // Execution-policy gate — see TryAdmit. Overlap skips the
+                // shared webhook semaphore; Discard drops the trigger while
+                // an execution of this script is already in flight.
+                if (!TryAdmit(fn, out bool bypassSemaphore))
                     continue;
+                bool slotHeld = false;
+                if (!bypassSemaphore)
+                {
+                    if (_webhookSemaphore.CurrentCount == 0)
+                        GlobalLogger.Log($"Rate limit reached for websocket scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
+                    EmitQueued(fn);
+                    if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                    {
+                        GlobalLogger.Log(
+                            $"WebSocket script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
+                            "ScriptManager", LogLevel.CriticalError);
+                        continue;
+                    }
+                    slotHeld = true;
                 }
 
                 try
@@ -2015,7 +2301,11 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 finally
                 {
-                    try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    // An Overlap bypass never took a slot — only release when we did.
+                    if (slotHeld)
+                    {
+                        try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    }
                 }
             }
         }
@@ -2046,8 +2336,11 @@ namespace Phoenix.Controls.Hub.Core
 
                     string fn = info.FileName;
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-                    if (slot == EventSlotResult.TimedOut) continue;
+                    if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) continue;
                     var token = BeginExecutionTracked(fn);
+                    // Caller-side re-entry flag — see AcquireEventSlotAsync.
+                    bool savedHeld = _eventSemaphoreHeld.Value;
+                    _eventSemaphoreHeld.Value = true;
                     try
                     {
                         _engine.EventType  = $"StateChange.{stateName}";
@@ -2060,6 +2353,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     finally
                     {
+                        _eventSemaphoreHeld.Value = savedHeld;
                         EndExecutionTracked(token);
                         ReleaseEventSlot(slot);
                     }
@@ -2376,8 +2670,11 @@ namespace Phoenix.Controls.Hub.Core
                     // chain of 5 event scripts each calling event.trigger does
                     // not self-deadlock at cap=5.
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-                    if (slot == EventSlotResult.TimedOut) continue;
+                    if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) continue;
                     var token = BeginExecutionTracked(fn);
+                    // Caller-side re-entry flag — see AcquireEventSlotAsync.
+                    bool savedHeld = _eventSemaphoreHeld.Value;
+                    _eventSemaphoreHeld.Value = true;
                     // Save+restore EventType, BusEventType, AND ScriptFile so nested
                     // event.trigger calls don't leak the inner state out to the outer caller
                     // and don't tag NODE_EXEC markers with the wrong file.
@@ -2410,6 +2707,7 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     finally
                     {
+                        _eventSemaphoreHeld.Value = savedHeld;
                         _engine.EventType    = savedEventType;
                         _engine.BusEventType = savedBusEventType;
                         _engine.ScriptFile   = savedScriptFile;

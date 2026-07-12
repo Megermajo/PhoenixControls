@@ -998,9 +998,11 @@ public sealed class NodeViewModel : ObservableObject
     /// <c>__disabled</c> entry on <see cref="Node.Attributes"/> so the flag
     /// round-trips through .phxg save/load via the existing attribute
     /// serializer. NodeView paints disabled nodes at reduced opacity so the
-    /// authoring surface reads them as inert. Script-engine consumption of
-    /// the flag lands in a follow-up sprint — see the
-    /// <c>// TODO(skip-disabled-nodes)</c> comment in LogicCanvasView.Menus.cs.
+    /// authoring surface reads them as inert. ScriptExporter honors the flag
+    /// at export time: a disabled flow node emits only a trace comment and is
+    /// spliced out of the flow walk, a disabled event root suppresses its
+    /// handler entirely, and a disabled data provider resolves as-if-unwired
+    /// so consumers fall back to their socket-default attributes.
     /// </summary>
     public bool IsDisabled
     {

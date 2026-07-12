@@ -22,9 +22,9 @@ namespace Phoenix.Controls.Hub.WinUI.Dialogs;
 //
 // Live validation is intentionally minimal — bad inputs roll back to
 // defaults rather than blocking the dialog, so the user can never get
-// stuck unable to save a typo. Hot-reload of services that observe the
-// changed values is out of scope for v1: language and bot connection
-// changes prompt for a relaunch.
+// stuck unable to save a typo. Hot-reload is selective: the log-retention
+// cap and the translation stack re-apply on Save; language and bot
+// connection changes prompt for a relaunch.
 public sealed partial class SettingsDialog : ContentDialog
 {
     private readonly int _initialPivotIndex;
@@ -322,6 +322,7 @@ public sealed partial class SettingsDialog : ContentDialog
         LiveCaptionsBroadcastBox.Content    = Localizer.T("dialog.settings.checkbox.live_captions_broadcast", "Broadcast captions to overlays");
         LiveCaptionsAllowedLayersLabel.Text = Localizer.T("dialog.settings.label.live_captions_allowed_layers", "ALLOWED LAYERS (comma-separated layer ids; empty = all)");
         TranslationProviderLabel.Text       = Localizer.T("dialog.settings.label.translation_provider", "TRANSLATION PROVIDER (passthrough / http / ...)");
+        TranslationProviderShapeLabel.Text  = Localizer.T("dialog.settings.label.translation_provider_shape", "TRANSLATION PROVIDER SHAPE (phoenix / deepl / google / libre)");
         TranslationHttpEndpointLabel.Text   = Localizer.T("dialog.settings.label.translation_http_endpoint", "TRANSLATION HTTP ENDPOINT");
         TranslationApiKeyLabel.Text         = Localizer.T("dialog.settings.label.translation_api_key", "TRANSLATION API KEY");
         CaptionTargetLanguageLabel.Text     = Localizer.T("dialog.settings.label.caption_target_language", "CAPTION TARGET LANGUAGE (BCP-47, e.g. en, de, es)");
@@ -488,6 +489,7 @@ public sealed partial class SettingsDialog : ContentDialog
         LiveCaptionsBroadcastBox.IsChecked  = cfg.LiveCaptionsBroadcastToOverlays;
         LiveCaptionsAllowedLayersBox.Text   = string.Join(", ", cfg.LiveCaptionsAllowedLayers ?? new System.Collections.Generic.List<string>());
         TranslationProviderBox.Text         = cfg.TranslationProvider ?? "";
+        TranslationProviderShapeBox.Text    = cfg.TranslationProviderShape ?? "";
         TranslationHttpEndpointBox.Text     = cfg.TranslationHttpEndpoint ?? "";
         TranslationApiKeyBox.Password       = cfg.TranslationApiKey ?? "";
         CaptionTargetLanguageBox.Text       = cfg.CaptionTargetLanguage ?? "";
@@ -881,6 +883,7 @@ public sealed partial class SettingsDialog : ContentDialog
             cfg.LiveCaptionsBroadcastToOverlays = LiveCaptionsBroadcastBox.IsChecked ?? false;
             cfg.LiveCaptionsAllowedLayers = ParseCsvList(LiveCaptionsAllowedLayersBox.Text);
             cfg.TranslationProvider    = TranslationProviderBox.Text?.Trim() ?? "passthrough";
+            cfg.TranslationProviderShape = TranslationProviderShapeBox.Text?.Trim() ?? "phoenix";
             cfg.TranslationHttpEndpoint = TranslationHttpEndpointBox.Text?.Trim() ?? "";
             cfg.TranslationApiKey      = TranslationApiKeyBox.Password ?? "";
             cfg.CaptionTargetLanguage  = CaptionTargetLanguageBox.Text?.Trim() ?? "en";
@@ -917,6 +920,19 @@ public sealed partial class SettingsDialog : ContentDialog
                 _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
                     () => DB.Instance.RunRetentionSweepNowAsync(cfg.LogRetentionDays),
                     "SettingsDialog", "apply log-retention cap");
+            }
+
+            // Rebuild the active translator so provider / shape / endpoint / key
+            // changes take effect without a Hub restart. Reload disposes the
+            // outgoing translator (cancelling its in-flight requests), so guard it:
+            // a teardown fault must never break the save path itself.
+            try
+            {
+                Phoenix.Controls.Hub.Core.Translation.TranslationService.Instance.Reload();
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("SettingsDialog", "translation reload failed", ex);
             }
 
             GlobalLogger.Log("Settings saved.", "SettingsDialog", LogLevel.System);

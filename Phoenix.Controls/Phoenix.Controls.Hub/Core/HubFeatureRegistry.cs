@@ -183,7 +183,8 @@ namespace Phoenix.Controls.Hub.Core
 
             // ─────────────────────────────────────────────────────────────
             // TOOLS MENU — Hub ↔ Architect documentation unification
-            // (TODO P4 Hub: NodeRegistry-sourced "Nodes" tab in HubDocumentationForm)
+            // (authored for a future help/about surface — the WinForms
+            // documentation form that consumed this catalog was retired)
             // ─────────────────────────────────────────────────────────────
             Add(Localizer.T("hub.feature.docs_nodes_tab.title"),
                 Localizer.T("hub.feature.category.tools_menu"),

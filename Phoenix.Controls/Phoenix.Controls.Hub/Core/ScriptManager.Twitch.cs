@@ -74,8 +74,9 @@ namespace Phoenix.Controls.Hub.Core
 
             // OBS control — same model: the obs.* nodes dispatch these against an
             // SB action wrapping SB's native OBS sub-action (which talks to OBS over
-            // OBS-WebSocket). Hub's own ObsWebSocketClient is receive-only today, so
-            // outbound OBS control routes through Streamer.bot like the Twitch set.
+            // OBS-WebSocket). The three source-transform commands prefer Hub's own
+            // ObsWebSocketClient when it is connected and fall back to this relay;
+            // the remaining obs.* commands route through Streamer.bot unconditionally.
             public const string ObsSetScene       = "Phoenix: OBS Set Scene";
             public const string ObsSourceVisible  = "Phoenix: OBS Source Visible";
             public const string ObsRefreshBrowser = "Phoenix: OBS Refresh Browser";

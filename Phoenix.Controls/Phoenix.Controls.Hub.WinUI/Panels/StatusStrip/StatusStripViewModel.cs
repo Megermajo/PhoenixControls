@@ -28,11 +28,26 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     // Clock + version stamp restored per Design_Orders
     // §4.8. The strip used to be a left-zone-only widget; the spec asks for
     // left status zone + center contextual + right meta (clock + version).
-    // Center contextual is wired empty for now — call sites will publish
-    // labels (e.g. "Script Engine ready", per-layer FPS readout) here as
-    // the §4.8 hooks land.
+    // Center contextual is fed by the script-engine lifecycle producer
+    // below ("Script Engine ready" / "▶ <name>" / transient error flash) —
+    // see OnScriptLifecycle / UpdateCenterContextual.
     private string _clock = string.Empty;
     private string _centerContextual = string.Empty;
+
+    // Center-contextual script-engine producer state. The running map is
+    // refcounted (name → in-flight run count) because the Overlap policy
+    // lets N runs of the same script execute concurrently — a plain set
+    // would collapse them to one entry and the first Finished/Error would
+    // clear the readout while sibling runs are still going. Mutated
+    // exclusively on the dispatcher (every lifecycle event is Post'ed
+    // before it touches VM state) so no lock is needed; the error flash
+    // timer holds the "⚠ <name>" readout for a few seconds before the
+    // computed state resumes.
+    private readonly ScriptManager? _scriptManager;
+    private readonly Action<ScriptManager.ScriptLifecycleEvent>? _onScriptLifecycle;
+    private readonly Dictionary<string, int> _runningScripts = new(StringComparer.OrdinalIgnoreCase);
+    private DispatcherTimer? _errorFlashTimer;
+    private bool _errorFlashActive;
     private DispatcherTimer? _clockTimer;
     // 1 s dispatcher tick polls
     // LayerRegistry.ActiveLayerCount + HUDServer.CurrentBroadcastFps +
@@ -75,6 +90,26 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         _statsTimer.Tick += (_, _) => RefreshStats();
         _statsTimer.Start();
         RefreshStats();
+
+        // Center-contextual producer per Design_Orders §4.8 — the slot
+        // mirrors the script engine's live state ("Script Engine ready"
+        // when idle, "▶ <name>" for a single run, "▶ N scripts running"
+        // beyond that, and a transient "⚠ <name>" flash on error).
+        // Lifecycle events arrive on the engine/bus thread; each is Post'ed
+        // to the dispatcher before touching VM state so the x:Bind-fed
+        // setter never fires off-thread. Design-time / fake hosting has no
+        // engine singleton to observe — resolution is guarded and the slot
+        // simply stays empty there.
+        ScriptManager? manager = null;
+        try { manager = ScriptManager.Instance; }
+        catch { /* design-time host — no engine available */ }
+        _scriptManager = manager;
+        if (_scriptManager is not null)
+        {
+            _onScriptLifecycle = evt => _ui.Post(() => OnScriptLifecycle(evt));
+            _scriptManager.ScriptLifecycle += _onScriptLifecycle;
+            UpdateCenterContextual();
+        }
     }
 
     /// <summary>
@@ -201,6 +236,116 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         }
     }
 
+    // Lifecycle → running-map bookkeeping. Runs on the dispatcher (see the
+    // ctor wiring). Running increments the name's refcount; Finished/Error
+    // decrement and remove the entry at zero, so N overlapping runs of the
+    // same script keep the readout alive until the LAST one ends. Queued
+    // and Trigger are decorative for this readout: Queued precedes Running
+    // without occupying an execution slot, and Trigger is a node-level ping
+    // inside an already-Running script. Discarded is likewise a no-op — it
+    // replaces Queued/Running for a trigger dropped by the Discard policy,
+    // so the same-name execution that IS in flight keeps its map entry
+    // until its own Finished/Error.
+    private void OnScriptLifecycle(ScriptManager.ScriptLifecycleEvent evt)
+    {
+        if (_disposed) return;
+        switch (evt.Phase)
+        {
+            case ScriptManager.ScriptExecutionPhase.Running:
+                _runningScripts[evt.ScriptName] =
+                    _runningScripts.TryGetValue(evt.ScriptName, out int count) ? count + 1 : 1;
+                break;
+            case ScriptManager.ScriptExecutionPhase.Finished:
+                DecrementRunning(evt.ScriptName);
+                break;
+            case ScriptManager.ScriptExecutionPhase.Error:
+                DecrementRunning(evt.ScriptName);
+                BeginErrorFlash(evt.ScriptName);
+                break;
+            default:
+                return;
+        }
+        // While the error flash holds the slot, the computed state waits —
+        // the flash's Tick recomputes once it expires.
+        if (!_errorFlashActive) UpdateCenterContextual();
+    }
+
+    // Refcount decrement with removal at zero. Guarded lookup — an Error
+    // can arrive for a script this VM never saw as Running (e.g. a failure
+    // before the Running phase, or a VM constructed mid-execution); a bare
+    // decrement would mint a negative count and corrupt the readout, so
+    // unknown names are simply ignored.
+    private void DecrementRunning(string scriptName)
+    {
+        if (!_runningScripts.TryGetValue(scriptName, out int count)) return;
+        if (count <= 1) _runningScripts.Remove(scriptName);
+        else _runningScripts[scriptName] = count - 1;
+    }
+
+    // Hold "⚠ <name>" in the center slot briefly, then resume the computed
+    // state. A second error restarts the shared timer and shows the most
+    // recent failure — the System Log stays the detail surface; this
+    // readout is just the attention hook.
+    private void BeginErrorFlash(string scriptName)
+    {
+        _errorFlashActive = true;
+        CenterContextual = string.Format(
+            CultureInfo.CurrentCulture,
+            Localizer.T("panel.statusstrip.center_script_error_format", "⚠ {0}"),
+            DisplayName(scriptName));
+        if (_errorFlashTimer is null)
+        {
+            _errorFlashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _errorFlashTimer.Tick += (_, _) =>
+            {
+                _errorFlashTimer?.Stop();
+                _errorFlashActive = false;
+                if (!_disposed) UpdateCenterContextual();
+            };
+        }
+        // Stop-then-start restarts the interval so back-to-back errors get
+        // a full window each.
+        _errorFlashTimer.Stop();
+        _errorFlashTimer.Start();
+    }
+
+    private void UpdateCenterContextual()
+    {
+        string text;
+        if (_runningScripts.Count == 0)
+        {
+            text = Localizer.T("panel.statusstrip.center_engine_ready", "Script Engine ready");
+        }
+        else if (_runningScripts.Count == 1)
+        {
+            // One distinct script — show its name even when several runs of
+            // it overlap; the count would add noise without information.
+            string single = string.Empty;
+            foreach (var name in _runningScripts.Keys) { single = name; break; }
+            text = string.Format(
+                CultureInfo.CurrentCulture,
+                Localizer.T("panel.statusstrip.center_script_running_format", "▶ {0}"),
+                DisplayName(single));
+        }
+        else
+        {
+            // Distinct-script count (map keys), not total in-flight runs —
+            // "N scripts running" reads as N different scripts.
+            text = string.Format(
+                CultureInfo.CurrentCulture,
+                Localizer.T("panel.statusstrip.center_scripts_running_format", "▶ {0} scripts running"),
+                _runningScripts.Count);
+        }
+        CenterContextual = text;
+    }
+
+    // Engine lifecycle events carry the .phx file name; the strip shows the
+    // bare stem, matching the Scripts panel's row labels.
+    private static string DisplayName(string scriptName) =>
+        scriptName.EndsWith(".phx", StringComparison.OrdinalIgnoreCase)
+            ? scriptName[..^4]
+            : scriptName;
+
     /// <summary>Formatted "Layers: N" readout.</summary>
     public string LayersText => _layersText;
     /// <summary>Formatted "FPS: X.X" readout (or "FPS: —" before HUD ready).</summary>
@@ -239,6 +384,18 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         if (s is not null)
         {
             try { s.Stop(); } catch { }
+        }
+        // Unhook the script-engine lifecycle feed and stop the error-flash
+        // timer so neither pins this VM after the panel is torn down.
+        if (_scriptManager is not null && _onScriptLifecycle is not null)
+        {
+            try { _scriptManager.ScriptLifecycle -= _onScriptLifecycle; } catch { }
+        }
+        var f = _errorFlashTimer;
+        _errorFlashTimer = null;
+        if (f is not null)
+        {
+            try { f.Stop(); } catch { }
         }
     }
 
@@ -285,10 +442,12 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     public string Clock { get => _clock; private set => Set(ref _clock, value); }
 
     /// <summary>
-    /// Center contextual slot per Design_Orders §4.8. Wired empty for now —
-    /// the §4.8 hooks (e.g. "Script Engine ready", per-layer FPS readout)
-    /// land in a follow-up; this property is the published surface so they
-    /// can publish without re-touching the XAML.
+    /// Center contextual slot per Design_Orders §4.8, fed by the
+    /// script-engine lifecycle producer: "Script Engine ready" when idle,
+    /// "▶ &lt;name&gt;" while one script runs, "▶ N scripts running" beyond
+    /// that, and a transient "⚠ &lt;name&gt;" flash on error. The setter
+    /// stays public so future §4.8 hooks (per-layer FPS readout etc.) can
+    /// publish without re-touching the XAML.
     /// </summary>
     public string CenterContextual
     {

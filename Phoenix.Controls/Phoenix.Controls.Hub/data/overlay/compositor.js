@@ -4376,9 +4376,14 @@
         }
 
         // ── H65 / F14 — Viewer passthrough ──────────────────────────────────
-        // TODO(thumbnail): manifesto §4.6 calls for a live thumbnail render here.
-        // For now this is a transparent passthrough so Viewer can be dropped onto a wire
-        // without breaking the chain.
+        // The transparent passthrough IS the intended runtime behavior, not a
+        // stopgap: this canvas is composited straight into the live OBS output,
+        // so any on-canvas thumbnail render would be visible on stream. The
+        // manifesto's Viewer thumbnail is a design-time affordance and ships in
+        // Visualist (upstream-image preview on the node body). If a runtime
+        // debug render is ever wanted it must ride the ?debug=1 opt-in like the
+        // render telemetry — never the default path. Passing the input through
+        // untouched keeps a Viewer dropped onto a wire from breaking the chain.
         async evalViewer(node) {
             const inLink = this.findLinkTo(node.Id, 'In');
             if (!inLink) return null;

@@ -597,10 +597,13 @@ public sealed class ViewerServer : IAsyncDisposable
 
     private async Task PumpAsync(WebSocketSession session, CancellationToken ct)
     {
-        // Viewer is read-only: we never expect commands from the wire.
-        // Drain inbound frames purely to keep the socket healthy and to
-        // notice when the peer goes away.
+        // Viewer is read-only: the single client → server message is the
+        // "PING" latency probe, answered with a VIEWER_PONG echo so the
+        // browser can measure round-trip time on its own clock. Every
+        // other inbound frame is drained purely to keep the socket healthy
+        // and to notice when the peer goes away.
         var buf = new byte[4 * 1024];
+        var message = new MemoryStream();
         int cumulative = 0;
         while (session.WebSocket.State == WebSocketState.Open && !ct.IsCancellationRequested)
         {
@@ -626,10 +629,22 @@ public sealed class ViewerServer : IAsyncDisposable
                     return;
                 }
 
-                // Reset cumulative tally when the peer finishes a message.
-                if (result.EndOfMessage) cumulative = 0;
+                // Buffer text frames (bounded by the cap above) so a PING
+                // split across continuation frames still parses. Binary has
+                // no defined meaning on this wire and is dropped unread.
+                if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                    message.Write(buf, 0, result.Count);
 
-                // Discard payload — no client → server commands defined.
+                if (result.EndOfMessage)
+                {
+                    // Reset cumulative tally when the peer finishes a message.
+                    cumulative = 0;
+                    if (message.Length > 0)
+                    {
+                        TryAnswerPing(session, message);
+                        message.SetLength(0);
+                    }
+                }
             }
             catch (WebSocketException) { return; }
             catch (OperationCanceledException) { return; }
@@ -639,6 +654,41 @@ public sealed class ViewerServer : IAsyncDisposable
                 return;
             }
         }
+    }
+
+    // The one message a client may send: {"type":"PING","t":<Date.now()>}.
+    // Reply with a VIEWER_PONG whose payload is the client's own timestamp
+    // echoed verbatim — the browser computes RTT as Date.now() - payload
+    // entirely on its local clock, so server/client clock skew never enters
+    // the measurement. Anything that is not a well-formed PING (bad JSON
+    // included) is silently discarded: the viewer surface stays read-only
+    // and gains no command channel here.
+    private static void TryAnswerPing(WebSocketSession session, MemoryStream message)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(
+                new ReadOnlyMemory<byte>(message.GetBuffer(), 0, (int)message.Length));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return;
+            if (!doc.RootElement.TryGetProperty("type", out var type) ||
+                type.ValueKind != JsonValueKind.String ||
+                !string.Equals(type.GetString(), "PING", StringComparison.Ordinal))
+                return;
+            if (!doc.RootElement.TryGetProperty("t", out var t)) return;
+
+            var envelope = new BusMessage
+            {
+                Type    = "VIEWER_PONG",
+                Source  = "Hub",
+                Target  = "*",
+                Payload = t.GetRawText(),
+                SentAt  = DateTime.UtcNow,
+            };
+            // Ride the session's bounded send channel like every other
+            // frame — the pong shares the fanout path's backpressure rules.
+            session.Send(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, JsonOpts)));
+        }
+        catch (JsonException) { /* not JSON — drop, same as any non-PING */ }
     }
 
     // ── live event fanout ─────────────────────────────────────────────

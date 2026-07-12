@@ -375,10 +375,24 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public string TranslationProvider { get; set; } = "passthrough";
 
-        /// <summary>HTTP endpoint URL template for the "http" translator. Receives JSON {text, target}.</summary>
+        /// <summary>
+        /// Request/response shape the "http" translator speaks to
+        /// <see cref="TranslationHttpEndpoint"/>. Accepted values:
+        ///   "phoenix" (default) — POST {text, target} → {translated}; optional Bearer key.
+        ///   "deepl"             — DeepL v2 REST shape (DeepL-Auth-Key header).
+        ///   "google"            — Google Cloud Translation v2 shape (key as ?key= query param).
+        ///   "libre"             — LibreTranslate shape (api_key in the JSON body).
+        /// The value is persisted verbatim; unknown values fall back to "phoenix" at use-time.
+        /// </summary>
+        public string TranslationProviderShape { get; set; } = "phoenix";
+
+        /// <summary>HTTP endpoint URL for the "http" translator. Receives the JSON body dictated
+        /// by <see cref="TranslationProviderShape"/> (default "phoenix": {text, target}).</summary>
         public string TranslationHttpEndpoint { get; set; } = "";
 
-        /// <summary>Optional API key sent as Bearer token for the "http" translator.</summary>
+        /// <summary>Optional API key for the "http" translator. How it travels depends on
+        /// <see cref="TranslationProviderShape"/>: Bearer header (phoenix), DeepL-Auth-Key
+        /// header (deepl), ?key= query parameter (google), api_key body field (libre).</summary>
         [JsonConverter(typeof(DpapiProtectedStringConverter))]
         public string TranslationApiKey { get; set; } = "";
 

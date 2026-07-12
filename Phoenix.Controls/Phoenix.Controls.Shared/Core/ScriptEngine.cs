@@ -1909,9 +1909,18 @@ namespace Phoenix.Controls.Shared.Core
         // triggers — that's the whole point of "do N times" being durable.
         // BUT if Architect re-saves a .phxg and the exporter re-emits the .phx
         // with new line indices, the OLD keys for that file become dead weight.
-        // LogicWatcher's reload pathway is the right place to invoke this; the
-        // wiring lives in another slice, so for now this method just provides
-        // the surface and clears anything keyed under the named script file.
+        // Wiring: ScriptRegistry.ScriptContentChanged (genuine content change
+        // or file removal on a Refresh re-scan, which is what LogicWatcher's
+        // debounce drives) → ScriptManager → this method, so a re-exported
+        // script's counters re-arm against the fresh line layout.
+        //
+        // Scope note: this clears ONLY the in-memory do_n(N): block counters.
+        // The Architect Flow.DoN / DoOnce / FlipFlop nodes persist their state
+        // as DB-backed, node-id-keyed global._* vars; those are re-armed by
+        // ScriptManager's ScriptContentChanged handler (it extracts the keys
+        // from the script text and purges them via
+        // DB.DeleteEngineStateVariablesAsync) — a script edit re-arms both
+        // state families, while an untouched script's durable state survives.
         // ─────────────────────────────────────────────────────────────────
         public void ResetDoNCountersForScript(string scriptFile)
         {

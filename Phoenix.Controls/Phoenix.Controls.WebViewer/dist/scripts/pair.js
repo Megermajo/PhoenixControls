@@ -219,6 +219,10 @@ export function topbarMarkup(channel, mode, latencyMs) {
   latStrong.textContent = latencyMs == null ? "—" : `${latencyMs}ms`;
   lat.appendChild(latStrong);
   top.appendChild(lat);
+  // Cache the latency <strong> on the root (same __phx handle pattern as
+  // the panel headers) so connected.js can patch it in place on each
+  // VIEWER_PONG. The pair screen never touches it and keeps the null "—".
+  top.__phxLatency = latStrong;
   return top;
 }
 

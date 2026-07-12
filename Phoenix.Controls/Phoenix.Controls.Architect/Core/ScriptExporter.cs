@@ -59,6 +59,14 @@ namespace Phoenix.Controls.Architect.Core
         private static bool IsLinearFlowOutput(Socket s)
             => s.Type == SocketType.Output && LinearFlowOutputNames.Contains(s.Name ?? "");
 
+        // A node soft-disabled from the editor — "Disable Node" toggles the
+        // __disabled attribute (NodeViewModel.IsDisabled owns the write side;
+        // the flag round-trips through .phxg via the normal attribute
+        // serializer). Case-insensitive to match the ViewModel's read contract,
+        // so a hand-edited "True" in a .phxg behaves like the UI's "true".
+        private static bool IsDisabled(Node node)
+            => string.Equals(node.GetAttr("__disabled", ""), "true", StringComparison.OrdinalIgnoreCase);
+
         private readonly string _macroContextId; // set when exporting a macro sub-graph
 
         // Shared across nested ScriptExporter instances so we can detect
@@ -347,6 +355,11 @@ namespace Phoenix.Controls.Architect.Core
                 .ToList();
             foreach (var evt in eventNodes)
             {
+                // A disabled event root suppresses its entire handler — no
+                // header, no body. The engine simply finds no matching block
+                // for that event, so a graph whose roots are all disabled still
+                // exports a loadable (header-only) script.
+                if (IsDisabled(evt)) continue;
                 _visitedNodes.Clear();
                 _visitedOrder.Clear();
                 ProcessEventNode(evt);
@@ -668,6 +681,56 @@ namespace Phoenix.Controls.Architect.Core
         {
             if (_visitedNodes.Contains(node.Id)) return;
             if (_blockedForBranch.Contains(node.Id)) return;
+
+            // Disabled-node bypass/splice. A node the author switched off emits
+            // no command — only a trace comment — and the walk continues
+            // downstream, so upstream is spliced straight to downstream as if
+            // the node weren't there. The continuation is picked in two tiers:
+            //
+            //   1. EXACTLY ONE flow output (per SocketTypeHelper.IsFlowPin, the
+            //      shared exec-vs-data discriminator) — follow it regardless of
+            //      its name. Single-continuation nodes are unambiguous, and the
+            //      linear-name set below misses some of them (Flow.Delay's only
+            //      output is "Then"), which would otherwise dead-end the whole
+            //      downstream chain.
+            //   2. Zero or multiple flow outputs — fall back to the FIRST
+            //      linear flow output (FollowFlowOutput; the name set stays
+            //      untouched because it also scopes merge traversal). Loop
+            //      nodes continue via their Completed/Done linear output (the
+            //      loop body is simply never entered); multi-output branch
+            //      nodes (Logic.If/Branch, Flow.FlipFlop, Switch, Sequence,
+            //      Async.Parallel, Flow.Cooldown) expose NO linear output, so
+            //      disabling one honestly dead-ends that whole branch — there
+            //      is no sensible arm to pick on the author's behalf.
+            //
+            // The "(disabled)" suffix keeps the comment out of the engine's
+            // `# [Title]` node-exec marker shape (StartsWith "# [" AND EndsWith
+            // "]"), so a disabled node never flashes in the debug trace. A
+            // comment-only (or fully empty) block body is engine-safe:
+            // ExecuteBlock skips '#' lines at any indent and FindBlockEnd /
+            // ExecuteBlock tolerate empty bodies, so no `pass` filler is needed
+            // — a bare `pass` line would only hit the engine's
+            // unrecognized-command log path on every run.
+            if (IsDisabled(node))
+            {
+                MarkVisited(node.Id);
+                Emit($"{Indent(indent)}# [{node.Title}] (disabled)");
+                var flowOuts = node.Sockets
+                    .Where(s => s.Type == SocketType.Output && SocketTypeHelper.IsFlowPin(s))
+                    .Take(2)
+                    .ToList();
+                if (flowOuts.Count == 1)
+                {
+                    var next = GetTargetNode(node.Id, flowOuts[0].Id);
+                    if (next != null) ProcessNode(next, indent);
+                }
+                else
+                {
+                    FollowFlowOutput(node, indent);
+                }
+                return;
+            }
+
             MarkVisited(node.Id);
 
             int savedIndent = _currentIndent;
@@ -911,6 +974,15 @@ namespace Phoenix.Controls.Architect.Core
             var src = NodeById(link.FromNodeId);
             var srcSocket = src?.Sockets.FirstOrDefault(s => s.Id == link.FromSocketId);
             if (src == null || srcSocket == null) return fallback;
+
+            // Disabled data provider — treat the consumer's socket as UNWIRED so
+            // it falls back to its inline pill / socket default instead of
+            // evaluating (and possibly hoisting) a node the author switched off.
+            // Data-side mirror of the flow splice in ProcessNode; every handler
+            // arg (Resolve/Materialize) and pure-data chain (ComputeInlineValue)
+            // funnels through here, so this one gate covers them all.
+            if (IsDisabled(src))
+                return InlineLiteralOrFallback(node, inputSocket, socketName, fallback);
 
             return ResolveOutputFromNode(src, srcSocket);
         }
@@ -1534,7 +1606,9 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     var nameSrc  = NodeById(nameLink.FromNodeId);
                     var nameSock = nameSrc?.Sockets.FirstOrDefault(s => s.Id == nameLink.FromSocketId);
-                    if (nameSrc != null && nameSock != null)
+                    // A disabled Name source reads as-if-unwired — fall through
+                    // to the static attribute (same rule as ResolveInputValue).
+                    if (nameSrc != null && nameSock != null && !IsDisabled(nameSrc))
                         return $"{{state.{ResolveOutputFromNode(nameSrc, nameSock)}}}";
                 }
                 return $"{{state.{src.GetAttr("Name", "phase")}}}";
@@ -1551,7 +1625,9 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     var inSrc = NodeById(inLink.FromNodeId);
                     var inSock = inSrc?.Sockets.FirstOrDefault(s => s.Id == inLink.FromSocketId);
-                    if (inSrc != null && inSock != null) return ResolveOutputFromNode(inSrc, inSock);
+                    // A disabled upstream source reads as-if-unwired — fall
+                    // through to this Value node's own literal attribute.
+                    if (inSrc != null && inSock != null && !IsDisabled(inSrc)) return ResolveOutputFromNode(inSrc, inSock);
                 }
                 string v = src.GetAttr("Value", "");
                 // H9 — escape inner quotes/backslashes so a Value.String containing

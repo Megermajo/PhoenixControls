@@ -406,12 +406,14 @@ namespace Phoenix.Controls.Architect.Core
         // 0.13.9 — nodes whose live path doesn't exist yet, hidden from the
         // spawn palette / search / node-reference (but kept registered so existing
         // graphs still load + export, and tests still cover them). These are
-        // exactly the Twitch/OBS actions with NO corresponding Streamer.bot
+        // exactly the Twitch actions with NO corresponding Streamer.bot
         // sub-action / Phoenix action-pack entry: SB can't create a poll the way
         // the node assumes; resolving a prediction needs ids DoAction can't return;
         // reward/redemption nodes need a reward pre-defined; Delete Message /
         // Sub-Only Mode / Whisper have no usable native sub-action (or need a
-        // phone-verified bot); the OBS transform nodes aren't wired. Un-hide a
+        // phone-verified bot). The OBS transform nodes (SetSourcePosition /
+        // Scale / Rotation) are no longer listed — they dispatch for real via
+        // Hub's direct OBS WebSocket (SB action relay as fallback). Un-hide a
         // title here the moment its action path lands. See PhoenixActionPack.md.
         public static readonly HashSet<string> HiddenFromPalette = new(StringComparer.Ordinal)
         {
@@ -424,9 +426,6 @@ namespace Phoenix.Controls.Architect.Core
             "Twitch.DeleteMessage",
             "Twitch.Whisper",
             "Twitch.SubOnlyMode",
-            "OBS.SetSourcePosition",
-            "OBS.SetSourceScale",
-            "OBS.SetSourceRotation",
             // 2026-06-24 — the AI band (LLM / vision / image-gen nodes) is
             // neither tested nor fully functional yet, so it is hidden from
             // the spawn palette / search / node-reference and deferred as a

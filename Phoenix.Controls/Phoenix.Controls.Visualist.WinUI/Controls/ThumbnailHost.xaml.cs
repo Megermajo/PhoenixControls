@@ -30,9 +30,58 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 /// </summary>
 public sealed partial class ThumbnailHost : UserControl
 {
+    // Monotonic snapshot token — bumped by every SetSnapshot call so an
+    // asynchronous bitmap-decode failure that lands AFTER a newer snapshot
+    // repainted the host can be recognised as stale and ignored.
+    private int _snapshotGeneration;
+
+    // The bitmap the CURRENT snapshot assigned to PreviewImage (null when
+    // the current snapshot isn't showing an image), plus its hint. Compared
+    // by reference in the failure handler so only the live source can flip
+    // the host to the degraded look.
+    private BitmapImage? _currentBitmap;
+    private string? _currentImageHint;
+
     public ThumbnailHost()
     {
         InitializeComponent();
+        // TryLoadBitmap only validates the URI shape — the decode itself is
+        // asynchronous, so an http(s) URL serving non-image content (or a
+        // corrupt file) fails here, after SetSnapshot already returned.
+        // Route it to the same "(image unavailable)" degradation as the
+        // synchronous failure path.
+        PreviewImage.ImageFailed += (_, e) =>
+            OnPreviewImageFailed(_snapshotGeneration, e.ErrorMessage);
+    }
+
+    // Flips the host from a blank/broken image surface to the Unloaded-style
+    // hint when an async bitmap decode fails. Stale callbacks — an older
+    // snapshot's generation, or a source PreviewImage no longer shows — are
+    // ignored so a late failure can't overwrite a newer snapshot's render.
+    private void OnPreviewImageFailed(int generation, string? errorMessage)
+    {
+        try
+        {
+            if (generation != _snapshotGeneration) return;
+            if (_currentBitmap is null
+                || !ReferenceEquals(PreviewImage.Source, _currentBitmap)) return;
+            _currentBitmap = null;
+
+            PreviewImage.Source     = null;
+            PreviewImage.Visibility = Visibility.Collapsed;
+            PreviewHint.Text        = _currentImageHint ?? "(image unavailable)";
+            PreviewHint.Visibility  = Visibility.Visible;
+
+            // Same breadcrumb posture as TryLoadBitmap's missing-file path:
+            // Debug level, no modal, enough detail to diagnose a bad URL.
+            GlobalLogger.Log(
+                $"Image preview decode failed{(string.IsNullOrWhiteSpace(errorMessage) ? "" : $" ({errorMessage})")} — degraded to hint.",
+                "ThumbnailHost", LogLevel.Debug);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("ThumbnailHost", "OnPreviewImageFailed", ex);
+        }
     }
 
     /// <summary>
@@ -47,6 +96,13 @@ public sealed partial class ThumbnailHost : UserControl
     {
         try
         {
+            // Invalidate any in-flight async decode from the previous
+            // snapshot — its ImageFailed must not repaint over what we
+            // render below.
+            _snapshotGeneration++;
+            _currentBitmap    = null;
+            _currentImageHint = null;
+
             // Default: collapse all overlays + clear error tint. Each
             // case below opts back in to the visuals it needs.
             PreviewImage.Source     = null;
@@ -65,10 +121,20 @@ public sealed partial class ThumbnailHost : UserControl
             {
                 case NodeEvaluator.PreviewKind.Image:
                 {
-                    if (TryLoadBitmap(snapshot?.Source, out var bmp))
+                    if (TryLoadBitmap(snapshot?.Source, out var bmp) && bmp is not null)
                     {
                         PreviewImage.Source = bmp;
                         PreviewImage.Visibility = Visibility.Visible;
+                        // The decode is still in flight — hook the bitmap's
+                        // own ImageFailed in addition to the element-level
+                        // handler wired in the ctor: when the source is
+                        // assigned before the control enters the visual tree
+                        // the element event may never fire.
+                        _currentBitmap    = bmp;
+                        _currentImageHint = snapshot?.Hint;
+                        int gen = _snapshotGeneration;
+                        bmp.ImageFailed += (_, e) =>
+                            OnPreviewImageFailed(gen, e.ErrorMessage);
                     }
                     else
                     {

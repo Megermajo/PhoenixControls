@@ -9,10 +9,10 @@ namespace Phoenix.Controls.Architect.Core
     // to DB at runtime).
     //
     // Notable per-template invariants preserved verbatim:
-    //   * DB.Increment — keeps "Key" off the default-attr block
-    //     (Key socket is the source of truth, an attribute would
-    //     silently shadow it); ships Amount=1 by default so a
-    //     freshly-dropped node increments by 1 without any wiring.
+    //   * DB.Increment — uses the DB.SetCell socket shape (TableName /
+    //     RowId / Column / Amount input sockets, with matching attribute
+    //     defaults feeding the inline pills); ships Amount=1 by default
+    //     so a freshly-dropped node increments by 1 without any wiring.
     //   * DB.InsertRow / DB.FetchRow — deliberately omits a
     //     "NewRowId" / "Row" default; the matching exporter handlers
     //     fall back to a node-id-suffixed local var so two of the same

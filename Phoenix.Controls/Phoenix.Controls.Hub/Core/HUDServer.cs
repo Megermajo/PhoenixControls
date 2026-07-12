@@ -131,6 +131,12 @@ namespace Phoenix.Controls.Hub.Core
         public string MediaDirectory { get; set; } = "";
 
         public static bool IsStarted { get; private set; } = false;
+        // Raised when the accept loop dies without an orderly Stop() / host
+        // cancellation — the overlay server is down and only a Hub restart
+        // brings it back. Static to match IsStarted: the status aggregator
+        // observes the class-level lifecycle, not a specific instance.
+        // Per-request faults never raise this; they continue the loop.
+        public static event Action? OnFatalError;
         // Per-layer WebSocket connections live in `_layerRegistry`. ClientCount and
         // OnClientCountChanged read from there; the legacy single-broadcast `_clients`
         // list was retired alongside the rewrite of BroadcastRawAsync to fan out via
@@ -364,7 +370,38 @@ namespace Phoenix.Controls.Hub.Core
                 catch (OperationCanceledException) when (loopToken.IsCancellationRequested) { break; }
                 catch (Exception ex)
                 {
+                    // Per-request accept fault — logged and the loop continues;
+                    // this path never counts as a fatal exit.
                     GlobalLogger.Error("HUDServer", "accept error", ex);
+                }
+            }
+
+            // Distinguish an orderly shutdown (Stop() latched _stopped, or the
+            // host / linked CT cancelled) from the accept loop dying on its
+            // own — e.g. HttpListener dropping out of IsListening after an
+            // unrecoverable OS-level fault. Only the abnormal exit is
+            // announced: IsStarted flips false so pollers stop reporting a
+            // healthy overlay server, and OnFatalError lets the status
+            // aggregator mark the HUD channel Errored immediately.
+            if (IsStarted && Volatile.Read(ref _stopped) == 0 && !loopToken.IsCancellationRequested)
+            {
+                IsStarted = false;
+                GlobalLogger.Log(
+                    "HUD Server accept loop exited unexpectedly — overlay serving is down until Hub restarts.",
+                    "HUDServer", LogLevel.CriticalError);
+                // Per-handler isolation, mirroring the Bus / WS fan-out
+                // pattern — one faulting subscriber must not skip the rest.
+                var handlers = OnFatalError?.GetInvocationList();
+                if (handlers is not null)
+                {
+                    foreach (var d in handlers)
+                    {
+                        try { ((Action)d)(); }
+                        catch (Exception ex)
+                        {
+                            GlobalLogger.Error("HUDServer", "OnFatalError subscriber threw", ex);
+                        }
+                    }
                 }
             }
         }

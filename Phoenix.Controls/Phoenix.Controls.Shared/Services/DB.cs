@@ -1258,6 +1258,49 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
+        /// Engine-maintenance batch delete for reserved-prefix vars — the
+        /// counterpart to <see cref="DeleteVariableAsync"/>'s reserved-key
+        /// guard. That guard exists to stop SCRIPT-driven deletes
+        /// (db.delete_var) from trampling engine state; this method is the
+        /// engine's own housekeeping path (e.g. re-arming a re-saved script's
+        /// persisted DoOnce / DoN / FlipFlop vars) and is deliberately NOT
+        /// reachable from any registered script command. Blank keys are
+        /// skipped; keys are deleted in chunks so one lock acquisition covers
+        /// each batch.
+        /// </summary>
+        public async Task DeleteEngineStateVariablesAsync(IReadOnlyCollection<string> keys)
+        {
+            if (keys == null || keys.Count == 0) return;
+
+            const int ChunkSize = 100;
+            var chunk = new List<string>(ChunkSize);
+            foreach (var key in keys)
+            {
+                if (string.IsNullOrWhiteSpace(key)) continue;
+                chunk.Add(key);
+                if (chunk.Count == ChunkSize)
+                {
+                    await DeleteChunkAsync(chunk).ConfigureAwait(false);
+                    chunk.Clear();
+                }
+            }
+            if (chunk.Count > 0)
+                await DeleteChunkAsync(chunk).ConfigureAwait(false);
+
+            async Task DeleteChunkAsync(List<string> batch)
+            {
+                var placeholders = new string[batch.Count];
+                for (int i = 0; i < batch.Count; i++) placeholders[i] = "@k" + i;
+                string sql = "DELETE FROM Vars WHERE VarKey IN (" + string.Join(",", placeholders) + ")";
+                await ExecuteAsync(sql, cmd =>
+                {
+                    for (int i = 0; i < batch.Count; i++)
+                        cmd.Parameters.AddWithValue("@k" + i, batch[i]);
+                }).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
         /// Keys reserved for engine bookkeeping (per-execution counters,
         /// state-change flipflops, internal queues). Scripts can READ these via
         /// {global._foo} but must not delete or trample them.

@@ -10,47 +10,26 @@ using Phoenix.Controls.ViewerServer;
 
 namespace Phoenix.Controls.Hub.WinUI.Services;
 
-// Boot orchestrator for the WinUI Hub. Drives seven boot steps and reports
-// each through the IProgress<SplashProgress> contract (defined in
+// Boot orchestrator for the WinUI Hub. Drives the numbered boot steps and
+// reports each through the IProgress<SplashProgress> contract (defined in
 // App.xaml.cs as `record struct SplashProgress(string Status, double Fraction)`).
 //
-// ── Splash wire-up site ─────────────────────────────────────────────────
-// App.xaml.cs has a stub `BootHubServicesAsync(IProgress<SplashProgress>)`
-// that just awaits Task.Delay. The integration turn replaces the body with:
+// ── Wire-up (App.xaml.cs) ───────────────────────────────────────────────
+// App.OnLaunched → OnLaunchedCore shows the splash, runs the heavy pre-UI
+// bootstrap (log writer / AppData migrator / DB.Initialize / Localizer),
+// then calls BootAsync(dispatcher, navigator, progress). The navigator is a
+// DeferredPillarNavigator — the real implementation (MainWindow) can't exist
+// until boot completes, so the shim is Attach()ed to MainWindow right after
+// construction and forwards from then on; pre-attach calls are dropped with
+// a log line (nothing is queued or replayed). Panels are injected via
+// MainWindow.SetPanels(services, new PanelFactory()) before Activate so the
+// first frame paints with content; the splash closes on first Loaded.
 //
-//     private IHubServices? _services;
-//     private IPanelFactory? _panelFactory;   // the concrete factory owner
-//
-//     protected override async void OnLaunched(LaunchActivatedEventArgs args)
-//     {
-//         _splash = new SplashWindow();
-//         _splash.Activate();
-//         try
-//         {
-//             _services = await HubBootstrapper.BootAsync(
-//                 dispatcher: new DispatcherQueueUiDispatcher(_splash.DispatcherQueue),
-//                 progress:   _splash.Progress);
-//         }
-//         catch (Exception ex)
-//         {
-//             System.Diagnostics.Debug.WriteLine($"BootHubServicesAsync failed: {ex}");
-//         }
-//
-//         _main = new MainWindow();
-//         _main.Activate();
-//
-//         if (_services != null && _panelFactory != null)
-//             _main.SetPanels(_services, _panelFactory);
-//
-//         _splash.Close();
-//         _splash = null;
-//     }
-//
-// IUiDispatcher is implemented by the integration turn wrapping
-// a Microsoft.UI.Dispatching.DispatcherQueue. This bootstrapper deliberately does not
-// reference WinUI 3 types here — the Hub.WinUI csproj brings WindowsAppSDK
-// for chrome/splash/MainWindow code, but the bridge stays SDK-agnostic so a
-// future test fixture can drive it with a synchronous dispatcher.
+// IUiDispatcher wraps a Microsoft.UI.Dispatching.DispatcherQueue on the App
+// side. This bootstrapper deliberately references no WinUI 3 types — the
+// Hub.WinUI csproj brings WindowsAppSDK for chrome/splash/MainWindow code,
+// but the bridge stays SDK-agnostic so a test fixture can drive it with a
+// synchronous dispatcher.
 // ────────────────────────────────────────────────────────────────────────
 public static class HubBootstrapper
 {

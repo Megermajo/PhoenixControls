@@ -1080,7 +1080,11 @@ public sealed partial class LogicCanvasView
         // ToggleNodeDisabled helper applies "make these match" semantics
         // against the right-clicked node's state.
         //
-        // TODO(skip-disabled-nodes): ScriptManager should skip nodes flagged __disabled
+        // The flag is consumed at EXPORT time (ScriptExporter), not by the
+        // runtime: a disabled flow node emits only a trace comment and the
+        // walk splices through its linear flow output; a disabled event root
+        // suppresses its whole handler; a disabled data provider reads
+        // as-if-unwired so consumers fall back to their socket defaults.
         {
             bool currentlyDisabled = node.IsDisabled;
             string disableText;
@@ -1259,10 +1263,10 @@ public sealed partial class LogicCanvasView
     // Disable / Enable Node toggle. Flips the
     // <c>__disabled</c> attribute on the node model; NodeView paints
     // disabled nodes at reduced opacity. Multi-selection: toggle every node
-    // in the selection in a single undo entry. The script engine's
-    // consumption of the flag is deferred — see the follow-up comment below.
-    //
-    // TODO(skip-disabled-nodes): ScriptManager should skip nodes flagged __disabled
+    // in the selection in a single undo entry. ScriptExporter consumes the
+    // flag on export: disabled flow nodes are bypassed/spliced out of the
+    // emitted .phx, disabled event roots emit no handler, and disabled data
+    // providers resolve as-if-unwired (socket defaults).
     private void ToggleNodeDisabled(NodeViewModel node, bool multiNode)
     {
         if (_vm is null) return;

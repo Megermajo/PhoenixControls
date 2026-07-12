@@ -50,7 +50,8 @@ namespace Phoenix.Controls.Hub.Core.Translation
         }
 
         /// <summary>
-        /// Re-reads <c>AppConfig.Current.TranslationProvider</c> and rebuilds the active translator.
+        /// Re-reads the translation fields on <c>AppConfig.Current</c> (provider, shape,
+        /// endpoint, API key) and rebuilds the active translator.
         /// Call after settings changes; safe to call any time.
         /// </summary>
         public void Reload()
@@ -84,7 +85,8 @@ namespace Phoenix.Controls.Hub.Core.Translation
             string name = (cfg.TranslationProvider ?? "passthrough").Trim().ToLowerInvariant();
             return name switch
             {
-                "http" => new HttpTranslator(cfg.TranslationHttpEndpoint ?? "", cfg.TranslationApiKey ?? ""),
+                "http" => new HttpTranslator(cfg.TranslationHttpEndpoint ?? "", cfg.TranslationApiKey ?? "",
+                                             cfg.TranslationProviderShape ?? "phoenix"),
                 _      => new PassthroughTranslator(),
             };
         }

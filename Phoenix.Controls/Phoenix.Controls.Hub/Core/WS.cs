@@ -31,6 +31,47 @@ namespace Phoenix.Controls.Hub.Core
 
         public bool IsConnected { get; private set; } = false;
 
+        // True while the automatic reconnector is between attempts: socket
+        // down, auth not fatally rejected, teardown not latched, and
+        // Websocket.Client's retry loop still armed (it schedules the next
+        // attempt off ErrorReconnectTimeout). Derived rather than latched —
+        // the library owns the retry loop, so "down but still trying" is the
+        // only honest connecting signal we can report. Consumers (status
+        // aggregator) render it as Connecting instead of a bare Disconnected.
+        public bool ReconnectPending
+        {
+            get
+            {
+                if (IsConnected || _authFailedFatal) return false;
+                if (Volatile.Read(ref _stopped) != 0) return false;
+                lock (_clientLock)
+                {
+                    var client = _client;
+                    if (client is null) return false;
+                    try { return client.IsReconnectionEnabled; }
+                    catch (ObjectDisposedException) { return false; }
+                }
+            }
+        }
+
+        // Outcome of the GetEvents Twitch probe for the CURRENT connection:
+        // null until the probe response lands (and again after every
+        // disconnect — a reconnected Streamer.bot may be a different build or
+        // have re-linked platforms), then true/false for "SB exposes Twitch
+        // events". Backed by a tri-state int rather than a bool? auto-property
+        // because it's written on the WS receive thread and read by UI-side
+        // status aggregators — int writes are atomic and Volatile keeps the
+        // cross-thread read honest, where a Nullable<bool> copy is neither.
+        private int _twitchEventsProbe = -1; // -1 unknown, 0 absent, 1 present
+        public bool? TwitchEventsAvailable
+        {
+            get
+            {
+                int v = Volatile.Read(ref _twitchEventsProbe);
+                return v < 0 ? null : v == 1;
+            }
+        }
+
         // Bounded so a flood of upstream chat messages can't grow this queue
         // unboundedly and OOM the process. Producers must use TryAdd (not Add)
         // to honor the back-pressure: TryAdd returns false on full so we can
@@ -110,6 +151,10 @@ namespace Phoenix.Controls.Hub.Core
         // could observe a stale `false` after the auth-failure flip and let reconnects
         // continue spinning against bad creds.
         private volatile bool _authFailedFatal;
+        // Read surface for the status aggregator — the latched fatal-auth
+        // state is what turns the StreamerBot channel Errored instead of a
+        // plain Disconnected.
+        public bool AuthFailedFatal => _authFailedFatal;
 
         // Rx subscription handles — disposed and replaced each Initialize() call so
         // reconnect attempts don't accumulate duplicate event handlers.
@@ -192,6 +237,9 @@ namespace Phoenix.Controls.Hub.Core
             // and disables reconnect with the misleading "auth was rejected"
             // CriticalError, so the operator's correction silently fails.
             _authFailedFatal = false;
+            // The Twitch probe outcome is connection-scoped — reset alongside
+            // the auth latch so the fresh round-trip starts from "unknown".
+            Volatile.Write(ref _twitchEventsProbe, -1);
 
             // Dispose any previous client before overwriting the field. Without this
             // its background subscriptions remained alive and competed with the new
@@ -275,6 +323,9 @@ namespace Phoenix.Controls.Hub.Core
               // are otherwise unprotected; an unhandled throw kills the Rx thread.
               try {
                 IsConnected = false;
+                // Invalidate the connection-scoped Twitch probe outcome; the
+                // GetEvents round-trip re-runs after the next SubscribeToEvents.
+                Volatile.Write(ref _twitchEventsProbe, -1);
 
                 // Exponential backoff + ±25% jitter. Without this, a constant 5s retry
                 // hammers SB during auth-loops and produces a thundering-herd retry on
@@ -1641,6 +1692,8 @@ namespace Phoenix.Controls.Hub.Core
             try { _scriptQueue.Dispose(); } catch { }
 
             IsConnected = false;
+            // Connection-scoped probe outcome dies with the connection.
+            Volatile.Write(ref _twitchEventsProbe, -1);
 
             // Offload the potentially blocking Dispose calls so the caller's
             // SyncContext (UI thread) is unblocked while the library joins its
@@ -2000,10 +2053,13 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // GetEvents response: { id, events: { Twitch: [...], YouTube: [...], ... } }.
-        // Purely diagnostic — subscription is already sent with the full list; SB
+        // Mostly diagnostic — subscription is already sent with the full list; SB
         // ignores names it doesn't know. One log line per platform, only when
-        // something is missing.
-        private static void HandleGetEventsResponse(System.Text.Json.JsonElement root)
+        // something is missing. The Twitch bucket is additionally recorded as
+        // state (TwitchEventsAvailable): the status surfaces downgrade the
+        // Twitch channel to Degraded when SB is connected but its Twitch
+        // platform is unlinked, so "no Twitch events" must outlive the log line.
+        private void HandleGetEventsResponse(System.Text.Json.JsonElement root)
         {
             try
             {
@@ -2011,10 +2067,23 @@ namespace Phoenix.Controls.Hub.Core
                     events.ValueKind != System.Text.Json.JsonValueKind.Object)
                     return;
 
+                bool twitchAvailable = WarnIfPlatformEventsMissing(events, "Twitch", TwitchEvents,
+                    "Twitch events/nodes will not fire — connect the Twitch broadcaster account in Streamer.bot.");
+                Volatile.Write(ref _twitchEventsProbe, twitchAvailable ? 1 : 0);
+
                 WarnIfPlatformEventsMissing(events, "YouTube", YouTubeEvents,
                     "YouTube events/nodes will not fire — connect the YouTube platform in Streamer.bot (SB ≥ 1.0 recommended; UserTimedout/JewelsGifted need ≥ 1.0.5).");
                 WarnIfPlatformEventsMissing(events, "Kick", KickEvents,
                     "Kick events/nodes will not fire — Streamer.bot ≥ 1.0.2 with the Kick platform connected (app login + streamer.bot website account link) is required.");
+
+                // Re-announce the (unchanged) connection bool now that the
+                // probe outcome is known. The event is an idempotent "is the
+                // socket up" pulse — subscribers re-read the richer state
+                // (TwitchEventsAvailable / AuthFailedFatal) on every fire, so
+                // repeating the same bool is safe; without it the status
+                // aggregators would sit on the stale pre-probe reading until
+                // their next 30 s sanity poll.
+                OnConnectionStatusChanged?.Invoke(IsConnected);
             }
             catch (Exception ex)
             {
@@ -2022,7 +2091,10 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        private static void WarnIfPlatformEventsMissing(System.Text.Json.JsonElement events, string source, string[] wanted, string hint)
+        // Logs when a platform bucket is missing entirely or lacks wanted
+        // names. Returns true when the connected build exposes at least one
+        // event for the platform — the probe outcome callers may record.
+        private static bool WarnIfPlatformEventsMissing(System.Text.Json.JsonElement events, string source, string[] wanted, string hint)
         {
             var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             // Case-insensitive property scan — TryGetProperty is case-SENSITIVE
@@ -2043,7 +2115,7 @@ namespace Phoenix.Controls.Hub.Core
                 GlobalLogger.Log(
                     $"Connected Streamer.bot exposes NO {source} events — {hint}",
                     "WS", LogLevel.Communication);
-                return;
+                return false;
             }
 
             var missing = new List<string>();
@@ -2055,6 +2127,7 @@ namespace Phoenix.Controls.Hub.Core
                     $"Connected Streamer.bot lacks {missing.Count} {source} event(s): {string.Join(", ", missing)} — those nodes will not fire (older SB build?).",
                     "WS", LogLevel.Communication);
             }
+            return true;
         }
     }
 }

@@ -253,9 +253,10 @@ namespace Phoenix.Controls.Visualist.Core
         }
 
         // BFS-style walk from `node`'s canonical "In" socket to the nearest
-        // resolvable Image source. Lives next to the rest of the evaluator so
-        // the canvas can paint from a pre-computed snapshot rather than
-        // re-walking the graph on every Invalidate.
+        // resolvable Image source — Image.Load (file path) and Image.LoadUrl
+        // (http/https url) both terminate the walk. Lives next to the rest of
+        // the evaluator so the canvas can paint from a pre-computed snapshot
+        // rather than re-walking the graph on every Invalidate.
         private static PreviewSnapshot ResolveUpstreamImageSnapshot(EvalContext ctx, Node start)
         {
             var inSock = start.Sockets.FirstOrDefault(s =>
@@ -288,11 +289,24 @@ namespace Phoenix.Controls.Visualist.Core
                     return new PreviewSnapshot { Kind = PreviewKind.Image, Source = p, Declared = PreviewSource.UpstreamImage };
                 }
 
+                // Image.LoadUrl is the second resolvable terminal: the snapshot
+                // carries the raw Url and the WinUI ThumbnailHost loads http(s)
+                // URIs through the same BitmapImage path it uses for absolute
+                // file paths, so a LoadUrl-fed chain previews just like a
+                // file-fed one.
+                if (string.Equals(n.Title, "Image.LoadUrl", StringComparison.OrdinalIgnoreCase))
+                {
+                    string u = StripQuotes(n.Attributes.GetValueOrDefault("Url", string.Empty));
+                    if (string.IsNullOrEmpty(u))
+                        return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = PreviewSource.UpstreamImage, Hint = "(no url set)" };
+                    return new PreviewSnapshot { Kind = PreviewKind.Image, Source = u, Declared = PreviewSource.UpstreamImage };
+                }
+
                 // Walk through the canonical Image input — same priority order
                 // the canvas uses for its passthrough preview. Bail when the
                 // chain terminates in a non-Image source we can't decode at
-                // design time (Image.LoadUrl, Video.Load, mask shape generator,
-                // Color.Constant, etc.).
+                // design time (Video.Load, mask shape generator, Color.Constant,
+                // etc.).
                 string[] preferredNames = { "In", "Image", "A" };
                 Socket? upSock = null;
                 foreach (var name in preferredNames)

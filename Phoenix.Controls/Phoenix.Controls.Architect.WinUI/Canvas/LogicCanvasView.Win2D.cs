@@ -342,7 +342,7 @@ public sealed partial class LogicCanvasView
             var (px, py, pw, ph, _) = ComputeInputPillRect(nx, nw, rowCY, RowHeightAt(s.RowIndex), s, node);
             if (x >= px && x <= px + pw && y >= py - 2 && y <= py + ph + 2)
             {
-                BeginInlinePillEdit(node, s.BeginValuePillEdit, s, $"input '{s.Label}'");
+                BeginInlinePillEdit(node, s.BeginValuePillEdit, s);
                 return true;
             }
         }
@@ -391,16 +391,13 @@ public sealed partial class LogicCanvasView
                             PushUndoForInlineEdit();
                             _vm.OnGraphMutated();
                             ImmediateCanvas?.Invalidate();
-                            GlobalLogger.Log(
-                                $" bool middle-attr '{m.Key}' on '{node.Title}' toggled to {m.BoolValue} (GPU in-place)",
-                                "Architect.LogicCanvasView.Win2D", LogLevel.Debug);
                         }
                         return true;
                     }
                 }
                 else if (x >= mpX && x <= mpX + mpW && y >= rowCY - half && y <= rowCY + half)
                 {
-                    BeginInlinePillEdit(node, m.BeginEdit, m, $"middle-attr '{m.Key}'");
+                    BeginInlinePillEdit(node, m.BeginEdit, m);
                     return true;
                 }
                 yTop += rowH;
@@ -415,18 +412,13 @@ public sealed partial class LogicCanvasView
     // focus the editor TextBox in THIS pointer event (NodeView.FocusInlineEditorFor =
     // UpdateLayout + Focus + SelectAll), mirroring the retained OnPillTapped path.
     // Without it, the just-materialized NodeView hadn't laid out, so flipping IsEditing
-    // showed nothing and the user had to click again to actually edit. The
-    //  line (Debug) is temporary — it confirms on the rolling log
-    // whether the click HIT a pill, materialized the view, and surfaced the editor.
-    private void BeginInlinePillEdit(NodeViewModel node, System.Action beginEdit, object editTarget, string diagLabel)
+    // showed nothing and the user had to click again to actually edit.
+    private void BeginInlinePillEdit(NodeViewModel node, System.Action beginEdit, object editTarget)
     {
         EnterImmediateEdit(node);          // materialize the real NodeView over the GPU canvas
         beginEdit();                        // IsEditing=true → editor TextBox Visibility flips Visible
-        bool shown = _nodeViews.TryGetValue(node, out var view) && view.FocusInlineEditorFor(editTarget);
+        if (_nodeViews.TryGetValue(node, out var view)) view.FocusInlineEditorFor(editTarget);
         ImmediateCanvas?.Invalidate();
-        GlobalLogger.Log(
-            $" {diagLabel} on '{node.Title}' → materialized={view is not null}, editorShown+focused={shown}",
-            "Architect.LogicCanvasView.Win2D", LogLevel.Debug);
     }
 
     // Remove every cull/proxy-mounted NodeView from NodeLayer when immediate mode

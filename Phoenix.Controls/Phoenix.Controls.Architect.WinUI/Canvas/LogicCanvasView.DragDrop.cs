@@ -559,9 +559,10 @@ public sealed partial class LogicCanvasView
             else if (phxLayerWinner is not null)
             {
                 // No Architect file in the drop — route the layer file to
-                // whichever host subscribed. When no subscriber is wired the
-                // route is the only feedback (per task spec — TODO follow-up
-                // once the pillar-launch surface is plumbed end-to-end).
+                // whichever host subscribed. In-Hub the chain is fully wired:
+                // LayerFileOpenRequested → Architect.MainView's subscriber →
+                // IPillarNavigator (Hub.MainWindow), which swaps to Visualist
+                // and opens the file.
                 var handler = LayerFileOpenRequested;
                 if (handler is not null)
                 {
@@ -573,9 +574,10 @@ public sealed partial class LogicCanvasView
                 }
                 else
                 {
-                    // TODO: once a Hub-shell-aware host is in place, route
-                    // .phxlayer drops via the pillar-launch surface so the
-                    // user doesn't have to alt-tab to Visualist.
+                    // Nobody subscribed — only happens when Architect runs
+                    // without a Hub host (headless / tests); in-Hub the route
+                    // above always has a subscriber. The log line is the only
+                    // feedback in that configuration.
                     GlobalLogger.Log(
                         $"dragdrop.unrouted.phxlayer:{phxLayerWinner.Name} — open in Visualist",
                         source: "Architect.LogicCanvasView",
@@ -1034,13 +1036,11 @@ public sealed partial class LogicCanvasView
     /// entry-point <see cref="ShowDatabankColumnSpawnMenuFromShell"/> so
     /// both gestures share the same menu builder.
     ///
-    /// DB.Increment is included for parity with the menu list, but
-    /// the runtime template (NodeRegistry.Templates.Databank.cs) doesn't
-    /// model a Column socket — Increment's row addressing goes through the
-    /// "Key" socket. We still write Attributes["Column"] so the user's
-    /// drop intent is preserved in graph JSON; once the
-    /// actual increment-by-column semantics ship, the attribute lookup is
-    /// already in place. See the DB.Increment TODO below.
+    /// DB.Increment participates fully: its template
+    /// (NodeRegistry.Templates.Databank.cs) models a Column input socket
+    /// with a matching attribute default, and the exporter resolves Column
+    /// into the emitted increment — the Attributes["Column"] write here is
+    /// live wiring, not a parked hint.
     /// </summary>
     private void ShowDatabankColumnSpawnFlyout(
         string tableName,
@@ -1132,12 +1132,13 @@ public sealed partial class LogicCanvasView
         Point anchorPos,
         Point spawnPos)
     {
-        // TODO DB.Increment: NodeRegistry's DB.Increment
-        // template has TableName but no Column attribute default; the
-        // Attributes["Column"] write here is silently preserved on the
-        // node but unread by the current exporter. A follow-up can either
-        // retrofit DB.Increment with a Column socket or drop it from this
-        // menu — both are acceptable closures.
+        // DB.Increment consumes both writes — its template models TableName
+        // + Column input sockets (with attribute defaults) and the exporter
+        // resolves Column into the emitted increment. One nuance: the drop
+        // pre-binds TableName + Column but no RowId, so the export takes the
+        // variable-key branch (increments global.<column>) rather than a
+        // table-cell increment until the user wires a row — a deliberate
+        // default, not a defect.
         var menu = new MenuFlyout();
         AddDatabankColumnSpawnItem(menu, "DB.GetCell",     "Get",               tableName, columnName, spawnPos);
         AddDatabankColumnSpawnItem(menu, "DB.SetCell",     "Set",               tableName, columnName, spawnPos);

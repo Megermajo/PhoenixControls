@@ -32,7 +32,64 @@ const WS_TERMINAL_CLOSE_CODES = new Set([4401, 4403, 4404]);
 // we assume the token's gone bad and stop, surfacing the re-pair message.
 const WS_MAX_OPENLESS_RETRIES = 5;
 
+// Latency + staleness cadence. The PING round-trips through ViewerServer
+// as VIEWER_PONG echoing our own Date.now(), so the topbar RTT is measured
+// entirely on this device's clock. The 1s ticker repaints the footer's
+// "last sync" from the local receive clock — never from envelope.sentAt,
+// whose server clock may be skewed against ours.
+const PING_INTERVAL_MS = 10000;
+const SYNC_TICK_MS     = 1000;
+
+// Interval handles — module-level singletons because only one connected
+// dashboard exists per page. renderConnected wipes root.innerHTML on
+// re-render, so clearing these before (re)creating them guarantees an
+// orphaned ticker can never keep painting into a detached footer node.
+let pingTimer  = null;
+let syncTimer  = null;
+let timerOwner = null; // the WebSocket the live intervals belong to
+
+// Connection generation — bumped whenever the dashboard (re)renders, the
+// user disconnects, or auth terminates. Every socket chain (openWs → its
+// open/message/close handlers → scheduleReconnect) captures the generation
+// it was born under and no-ops once it's stale, so an abandoned socket's
+// reconnect loop can never re-open later and steal the live dashboard's
+// timers or repaint its DOM. The stopTimers owner-guard below stays as
+// belt-and-braces beneath this.
+let connectionGen = 0;
+let activeWs = null; // socket owned by the current generation (for teardown)
+
+// When an owner is given, only that socket's own intervals are cleared —
+// a stale socket's late "close" event must not kill the timers a newer
+// connection just started.
+function stopTimers(owner) {
+  if (owner && owner !== timerOwner) return;
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+  timerOwner = null;
+}
+
+function startTimers(ws, state, ui) {
+  stopTimers();
+  timerOwner = ws;
+  const sendPing = () => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify({ type: "PING", t: Date.now() })); }
+    catch { /* socket died mid-send — the close handler owns recovery */ }
+  };
+  sendPing(); // fire once on open so the latency pill fills promptly
+  pingTimer = setInterval(sendPing, PING_INTERVAL_MS);
+  syncTimer = setInterval(() => {
+    if (!state.lastRecvMs) return;
+    const age = (Date.now() - state.lastRecvMs) / 1000;
+    ui.footSync.textContent = `last sync ${age.toFixed(1)}s ago`;
+  }, SYNC_TICK_MS);
+}
+
 export function renderConnected(root, ctx) {
+  // Retire any previous connection chain before repainting — its socket,
+  // handlers, and pending reconnects all see a stale generation and no-op.
+  const gen = ++connectionGen;
+  stopTimers();
   root.innerHTML = "";
   root.appendChild(el("div", "viewer-watermark"));
   const topbar = topbarMarkup(ctx.channel, "lan", null);
@@ -63,7 +120,17 @@ export function renderConnected(root, ctx) {
   footer.appendChild(el("div", "spacer"));
   const disc = el("button", "link");
   disc.textContent = "Disconnect";
-  disc.addEventListener("click", () => ctx.onDisconnect());
+  // onDisconnect re-renders the pair screen; the abandoned socket and its
+  // reconnect loop must die with it. Bump the generation FIRST so the
+  // socket's own close event (and any queued reconnect) sees itself as
+  // stale, then close the socket so it can't linger half-open.
+  disc.addEventListener("click", () => {
+    connectionGen++;
+    stopTimers();
+    try { activeWs?.close(); } catch { /* already dead */ }
+    activeWs = null;
+    ctx.onDisconnect();
+  });
   footer.appendChild(disc);
   root.appendChild(footer);
 
@@ -74,6 +141,9 @@ export function renderConnected(root, ctx) {
     scripts: [],
     syslog: [],
     status: { streamerBot: "Disconnected", hudOverlay: "Disconnected", ipcBus: "Disconnected", twitchIrc: "Disconnected" },
+    // Local-clock ms timestamp of the last byte received from the server
+    // (snapshot or WS frame). Drives the "last sync" staleness ticker.
+    lastRecvMs: 0,
   };
 
   renderStatus(strip, state.status);
@@ -82,14 +152,14 @@ export function renderConnected(root, ctx) {
   renderScripts(scriptsPane, state.scripts);
   renderSyslog(syslogPane, state.syslog);
 
-  bootstrap(ctx, state, { feedPane, chatPane, scriptsPane, syslogPane, strip, footSync, footer })
+  bootstrap(ctx, state, { feedPane, chatPane, scriptsPane, syslogPane, strip, footSync, footer, topbar }, gen)
     .catch(err => {
       console.error("viewer bootstrap failed", err);
       footSync.textContent = "snapshot failed";
     });
 }
 
-async function bootstrap(ctx, state, ui) {
+async function bootstrap(ctx, state, ui, gen) {
   const creds = ctx.getCreds();
   if (!creds?.token) { ctx.onDisconnect(); return; }
 
@@ -100,9 +170,14 @@ async function bootstrap(ctx, state, ui) {
       headers: { "Authorization": `Bearer ${creds.token}` },
     });
   } catch {
+    if (gen !== connectionGen) return;
     ui.footSync.textContent = "Hub unreachable";
     return;
   }
+  // The await can outlive this dashboard (user hit Disconnect or the view
+  // re-rendered mid-flight) — a stale bootstrap must not touch state or,
+  // worse, clear a NEWER session's credentials via onDisconnect below.
+  if (gen !== connectionGen) return;
   if (resp.status === 401 || resp.status === 403) {
     ctx.onDisconnect();
     return;
@@ -112,8 +187,12 @@ async function bootstrap(ctx, state, ui) {
     return;
   }
   const snap = await resp.json();
+  if (gen !== connectionGen) return;
   const dt = (performance.now() - t0).toFixed(0);
   ui.footSync.textContent = `last sync ${dt}ms`;
+  // Seed the staleness clock from the snapshot so the ticker starts sane
+  // even if the WS takes a moment to deliver its first frame.
+  state.lastRecvMs = Date.now();
 
   state.feed    = (snap.liveFeed    || []).slice(-MAX_FEED);
   state.chat    = (snap.chat        || []).slice(-MAX_CHAT);
@@ -128,10 +207,15 @@ async function bootstrap(ctx, state, ui) {
   renderSyslog(ui.syslogPane, state.syslog);
 
   // Live channel.
-  openWs(ctx, state, ui);
+  openWs(ctx, state, ui, gen);
 }
 
-function openWs(ctx, state, ui, reconnect) {
+function openWs(ctx, state, ui, gen, reconnect) {
+  // Stale chain — the dashboard re-rendered, disconnected, or auth-
+  // terminated since this attempt was scheduled. Never mint a socket for
+  // a retired generation.
+  if (gen !== connectionGen) return;
+
   // `reconnect` carries the current backoff delay across attempts.
   // First call from bootstrap leaves it undefined; we seed it here.
   // QC27-06 — `openlessFailures` counts consecutive WS close events that
@@ -155,20 +239,34 @@ function openWs(ctx, state, ui, reconnect) {
     ws = new WebSocket(wsUrl, [`bearer.${creds.token}`]);
   } catch (err) {
     console.error("ws open failed", err);
-    scheduleReconnect(ctx, state, ui, reconnect);
+    scheduleReconnect(ctx, state, ui, gen, reconnect);
     return;
   }
+  activeWs = ws;
 
   ws.addEventListener("open", () => {
+    if (gen !== connectionGen) {
+      // Ghost socket from a retired chain — close it and walk away
+      // without touching the live dashboard's timers.
+      try { ws.close(); } catch { /* best-effort */ }
+      return;
+    }
     // Healthy connection — reset backoff so the next disconnect retries
     // promptly instead of inheriting a 30s delay from a prior outage.
     reconnect.opened = true;
     reconnect.openedThisAttempt = true;
     reconnect.openlessFailures = 0;
     reconnect.delayMs = WS_RECONNECT_MIN_MS;
+    startTimers(ws, state, ui);
   });
 
   ws.addEventListener("message", evt => {
+    // Retired chain — this socket's state and DOM handles belong to a
+    // dashboard that no longer exists.
+    if (gen !== connectionGen) return;
+    // Any inbound frame proves the server is alive — even one we fail to
+    // parse below. The staleness ticker reads this local-clock stamp.
+    state.lastRecvMs = Date.now();
     let envelope;
     try { envelope = JSON.parse(evt.data); }
     catch { return; }
@@ -219,11 +317,27 @@ function openWs(ctx, state, ui, reconnect) {
           renderStatus(ui.strip, state.status);
         }
         break;
+      case "VIEWER_PONG": {
+        // payload is our own Date.now() echoed back by the server, so the
+        // RTT is measured on a single clock. Guard against a mangled echo:
+        // a NaN / negative delta leaves the pill showing its last value.
+        const rtt = Date.now() - Number(payload);
+        const latEl = ui.topbar && ui.topbar.__phxLatency;
+        if (latEl && Number.isFinite(rtt) && rtt >= 0) {
+          latEl.textContent = `${rtt}ms`;
+        }
+        break;
+      }
     }
-    ui.footSync.textContent = `last sync 0.${(envelope.sentAt ? "0" : "0")}s`;
   });
 
   ws.addEventListener("close", (evt) => {
+    // Retired chain — no reconnect, no timer teardown, no DOM writes.
+    // A newer generation owns all of those now.
+    if (gen !== connectionGen) return;
+    // Whatever the close reason, this socket's intervals must die with it
+    // — the reconnect path re-creates them on the next successful open.
+    stopTimers(ws);
     // QC27-06 — auth-class terminal codes: stop reconnecting, clear the
     // stored token, surface a re-pair message. Without this the loop
     // would hammer a permanently-401 endpoint until the tab closes.
@@ -245,15 +359,19 @@ function openWs(ctx, state, ui, reconnect) {
         return;
       }
     }
-    scheduleReconnect(ctx, state, ui, reconnect);
+    scheduleReconnect(ctx, state, ui, gen, reconnect);
   });
   ws.addEventListener("error", () => { /* close handler retries */ });
 }
 
-function scheduleReconnect(ctx, state, ui, reconnect) {
+function scheduleReconnect(ctx, state, ui, gen, reconnect) {
+  // Retired chain — don't repaint the footer or queue another attempt.
+  // openWs re-checks the generation when the timeout fires, so a bump
+  // that lands during the backoff window also kills the chain.
+  if (gen !== connectionGen) return;
   const delay = Math.round(reconnect.delayMs);
   ui.footSync.textContent = `ws closed — reconnecting in ${(delay / 1000).toFixed(1)}s`;
-  setTimeout(() => openWs(ctx, state, ui, reconnect), delay);
+  setTimeout(() => openWs(ctx, state, ui, gen, reconnect), delay);
   // Grow the next delay; cap at the ceiling. Only growth-on-fail —
   // a successful "open" resets the value in the open-listener above.
   reconnect.delayMs = Math.min(reconnect.delayMs * WS_RECONNECT_FACTOR, WS_RECONNECT_MAX_MS);
@@ -265,6 +383,14 @@ function scheduleReconnect(ctx, state, ui, reconnect) {
 // next paint is the PIN form with a recoverable next step for the user.
 function handleAuthTermination(ctx, ui, message) {
   console.warn("viewer: terminating reconnect —", message);
+  // Retire the whole connection chain: no handler, timer, or queued
+  // reconnect from this socket may run again. The socket is closed too in
+  // case the server left it half-open (terminal codes usually arrive on
+  // an already-closed socket, so this is belt-and-braces).
+  connectionGen++;
+  stopTimers();
+  try { activeWs?.close(); } catch { /* already closed */ }
+  activeWs = null;
   try { ui.footSync.textContent = message; } catch {}
   try { ctx.onDisconnect(); } catch (err) { console.error(err); }
 }

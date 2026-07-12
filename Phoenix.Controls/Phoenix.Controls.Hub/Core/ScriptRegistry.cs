@@ -12,6 +12,15 @@ using Phoenix.Controls.Shared.Core;
 
 namespace Phoenix.Controls.Hub.Core
 {
+    /// <summary>
+    /// Payload for <see cref="ScriptRegistry.ScriptContentChanged"/>. Carries
+    /// the bare .phx file name plus the prior and fresh content so consumers
+    /// can extract state keys that live in the script text (e.g. the
+    /// node-id-suffixed global._doonce_* / _don_counter_* / _flipflop_* vars).
+    /// <see cref="NewContent"/> is null when the file was removed from disk.
+    /// </summary>
+    public sealed record ScriptContentChange(string FileName, string? PriorContent, string? NewContent);
+
     public class ScriptInfo
     {
         public string    FileName        { get; set; } = "";
@@ -159,6 +168,21 @@ namespace Phoenix.Controls.Hub.Core
 
         public event Action? OnChanged;
 
+        /// <summary>
+        /// Fires when a Refresh re-scan finds a script whose cached content
+        /// genuinely changed, and when a script was removed from disk. NOT
+        /// raised for unchanged re-scans or for transient read failures
+        /// (those keep the prior content alive). The payload carries the bare
+        /// file name plus the prior and fresh content (fresh is null for a
+        /// removal) so consumers can invalidate per-script engine state —
+        /// both the file-keyed do_n counters and the node-id-keyed persisted
+        /// DoOnce / DoN / FlipFlop vars, whose ids only the script text
+        /// knows. Raised per-handler-guarded (SafeEvent), with no registry
+        /// lock held, after the new state has been published to
+        /// <see cref="_scripts"/>.
+        /// </summary>
+        public event Action<ScriptContentChange>? ScriptContentChanged;
+
         public void LoadScripts(string logicPath)
         {
             // Serialise concurrent LoadScripts invocations. The lock
@@ -239,6 +263,10 @@ namespace Phoenix.Controls.Hub.Core
 
             var saved = LoadPersistedStates();
             var onDisk = new HashSet<string>();
+            // Scripts whose cached content genuinely changed this scan
+            // (removals appended below) — announced via ScriptContentChanged
+            // once the swap is complete.
+            var contentChanged = new List<ScriptContentChange>();
 
             foreach (var file in Directory.GetFiles(logicPath, "*.phx"))
             {
@@ -316,6 +344,17 @@ namespace Phoenix.Controls.Hub.Core
                     fresh.ObsEventTypes      = prior.ObsEventTypes;
                 }
                 _scripts[name] = fresh;
+
+                // A genuine content change: the prior entry had loaded content
+                // and the fresh read differs. New-on-disk entries (prior ==
+                // null) and lazily-unloaded priors (Content == null) have no
+                // stale per-script engine state to invalidate, and failed
+                // reads keep the prior content — none of those announce.
+                if (readOk && prior?.Content != null &&
+                    !string.Equals(prior.Content, freshContent, StringComparison.Ordinal))
+                {
+                    contentChanged.Add(new ScriptContentChange(name, prior.Content, freshContent));
+                }
             }
 
             // Snapshot the keys to remove into a local list before mutating the
@@ -332,11 +371,21 @@ namespace Phoenix.Controls.Hub.Core
             }
             foreach (var key in keysToRemove)
             {
-                _scripts.TryRemove(key, out _);
+                _scripts.TryRemove(key, out var removedInfo);
+                // A deleted file's engine state is stale by definition. The
+                // prior content rides along so subscribers can still extract
+                // the removed script's node-state var keys.
+                contentChanged.Add(new ScriptContentChange(key, removedInfo?.Content, null));
             }
 
             // Generalized duplicate scan covers webhook + websocket + hotkey.
             DetectDuplicateHeaderNames();
+
+            // Announce content changes + removals before the bulk OnChanged so
+            // engine-state invalidation lands before UI consumers repaint. No
+            // lock is held here; SafeEvent gives per-handler try/catch.
+            foreach (var change in contentChanged)
+                SafeEvent.Raise(ScriptContentChanged, change, "ScriptRegistry", "ScriptContentChanged");
 
             SafeEvent.Raise(OnChanged, "ScriptRegistry", "OnChanged");
         }

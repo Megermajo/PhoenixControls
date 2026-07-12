@@ -64,8 +64,11 @@ namespace Phoenix.Controls.Hub.Core
 
             string fn = $"process::{instanceId}";
             var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-            if (slot == EventSlotResult.TimedOut) return;
+            if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) return;
             var token = BeginExecutionTracked(fn);
+            // Caller-side re-entry flag — see AcquireEventSlotAsync.
+            bool savedHeld = _eventSemaphoreHeld.Value;
+            _eventSemaphoreHeld.Value = true;
             try
             {
                 var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -84,6 +87,7 @@ namespace Phoenix.Controls.Hub.Core
             }
             finally
             {
+                _eventSemaphoreHeld.Value = savedHeld;
                 EndExecutionTracked(token);
                 ReleaseEventSlot(slot);
             }

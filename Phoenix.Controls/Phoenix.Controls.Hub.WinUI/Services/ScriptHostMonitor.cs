@@ -27,8 +27,8 @@ namespace Phoenix.Controls.Hub.WinUI.Services;
 //     System Log panel — this is just a terse marker for the row.
 //   - Current ScriptState: derived from the latest Phase observed
 //     (default Idle; Phase==Queued ⇒ Queued; Phase==Running ⇒ Running;
-//     Phase==Finished ⇒ Idle; Phase==Error ⇒ Errored; Phase==Trigger
-//     doesn't change row state).
+//     Phase==Finished ⇒ Idle; Phase==Error ⇒ Errored; Phase==Trigger and
+//     Phase==Discarded don't change row state).
 //   - Queued is wired now: ScriptManager fires it before each
 //     chat/event/webhook WaitAsync, and the row flips to yellow ("queued")
 //     until BeginExecutionTracked fires Running after the slot is acquired.
@@ -94,6 +94,15 @@ public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
                     // Decorative ping — a non-chat trigger node fired. Don't
                     // perturb State/RunCount; the panel may flash the row but
                     // the Snapshot() row stays stable.
+                    return;
+                case ScriptManager.ScriptExecutionPhase.Discarded:
+                    // Discard-policy drop — the trigger never ran, so this is
+                    // neither an error nor a completed run. Don't touch State /
+                    // RunCount / LastError: the row keeps reflecting whatever
+                    // in-flight execution caused the discard, and ScriptManager's
+                    // Communication-tier log line is the visible trace. (Live has
+                    // no neutral "last trigger" field to stamp, so this is a
+                    // deliberate no-op.)
                     return;
             }
 

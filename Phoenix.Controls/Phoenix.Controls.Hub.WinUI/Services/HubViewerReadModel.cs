@@ -115,19 +115,27 @@ internal sealed class HubViewerReadModel : IHubReadModel, IDisposable
 
     private ViewerConnectionStatus SnapshotConnectionStatus()
     {
-        var s = _services.Status;
+        var s  = _services.Status;
+        var sb = s.StreamerBot;
+        // TwitchIrc rides the Streamer.bot socket (Hub has no direct IRC
+        // connection of its own), but it is not a blind mirror: when SB is
+        // connected yet its GetEvents probe reported no Twitch events
+        // (platform unlinked / broadcaster logged out), the channel
+        // downgrades to Degraded so the Viewer shows "SB up, Twitch dead"
+        // honestly. While the probe is still pending (null) the base value
+        // stands. Same four-string wire shape as before; "Degraded" is a
+        // ConnectionState string the WebViewer already styles.
+        var twitchIrc =
+            sb == ConnectionState.Connected &&
+            WS.Instance.TwitchEventsAvailable == false
+                ? ConnectionState.Degraded
+                : sb;
         return new ViewerConnectionStatus
         {
-            StreamerBot = s.StreamerBot.ToString(),
+            StreamerBot = sb.ToString(),
             HudOverlay  = s.HudOverlay.ToString(),
             IpcBus      = s.IpcBus.ToString(),
-            // ViewerSnapshot has a TwitchIrc slot but the IHubServices
-            // status aggregator doesn't currently expose it as a distinct
-            // signal — Twitch IRC liveness travels through WS today, so we
-            // mirror StreamerBot here. When the dedicated IRC signal lands
-            // (TODO 2026-05-15 in ConnectionStatus.cs), swap in the real
-            // value without touching the wire shape.
-            TwitchIrc   = s.StreamerBot.ToString(),
+            TwitchIrc   = twitchIrc.ToString(),
         };
     }
 

@@ -9,22 +9,30 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     // Partial split: obs.* command registrations.
-    // OBS control surface. Each handler dispatches a Phoenix
-    // action-pack wrapper (e.g. `Phoenix: OBS Set Scene`) via DispatchNamedAction
-    // — DoAction with action:{ name } against a user-configured Streamer.bot
+    // OBS control surface — dual transport. The three transform handlers
+    // (obs.set_source_position / _scale / _rotation) prefer Hub's own
+    // ObsWebSocketClient: when the direct OBS WS v5 connection is up they run
+    // GetSceneItemId → SetSceneItemTransform themselves (see
+    // ApplyObsTransformAsync) and surface OBS's own failure comment in
+    // `result.obs_error`. Every other obs.* command — and the transforms when
+    // the direct connection is down — dispatches a Phoenix action-pack
+    // wrapper (e.g. `Phoenix: OBS Set Scene`) via DispatchNamedAction:
+    // DoAction with action:{ name } against a user-configured Streamer.bot
     // action that wraps SB's native OBS sub-action. The previous bare-string
     // DoAction("ObsSetScene", …) only resolved under the StreamSimulator, so OBS
     // nodes silently no-op'd against a live Streamer.bot (same class of bug the
     // twitch.* nodes had — see ScriptManager.Twitch.cs). Conventions:
     //   * Empty required string args → log + return (no dispatch).
-    //   * Numeric/bool args forwarded as invariant strings (they surface as
-    //     %variable% values inside the SB action).
-    //   * `result.obs_error` is cleared after dispatch to preserve the existing
-    //     downstream `if {result.obs_error}` script contract.
+    //   * Numeric/bool args forwarded as invariant strings on the SB relay
+    //     (they surface as %variable% values inside the SB action); the
+    //     direct path keeps them numeric.
+    //   * `result.obs_error` is "" after a successful direct dispatch and
+    //     after every SB relay (fire-and-forget — no response to inspect);
+    //     a failed direct dispatch writes the diagnostic into it. This
+    //     preserves the downstream `if {result.obs_error}` script contract
+    //     on both transports.
     //   * DispatchNamedAction logs LOUDLY (CriticalError) when SB is disconnected
-    //     or the wrapper action is missing — no more silent no-op. Hub's own
-    //     ObsWebSocketClient is receive-only today; a future direct-OBS request
-    //     path could bypass SB without changing the script-facing contract.
+    //     or the wrapper action is missing — no more silent no-op.
 #pragma warning disable CS1998
     public partial class ScriptManager
     {
@@ -185,6 +193,21 @@ namespace Phoenix.Controls.Hub.Core
                         "Script", LogLevel.Communication);
                     return null;
                 }
+                // Direct transport first: a live OBS WS connection gives a
+                // real success/failure response instead of the SB relay's
+                // fire-and-forget. Field names are the OBS v5
+                // SceneItemTransform keys.
+                var obs = ObsWebSocketClient.Current;
+                if (obs is { IsConnected: true })
+                {
+                    await ApplyObsTransformAsync(obs, "obs.set_source_position", scene, source,
+                        new Dictionary<string, double>
+                        {
+                            ["positionX"] = x,
+                            ["positionY"] = y,
+                        });
+                    return null;
+                }
                 DispatchNamedAction("obs.set_source_position", PhxSbActions.ObsSourcePosition, new {
                     scene,
                     source,
@@ -226,6 +249,18 @@ namespace Phoenix.Controls.Hub.Core
                         "Script", LogLevel.Communication);
                     return null;
                 }
+                // Direct-vs-relay split — see obs.set_source_position.
+                var obs = ObsWebSocketClient.Current;
+                if (obs is { IsConnected: true })
+                {
+                    await ApplyObsTransformAsync(obs, "obs.set_source_scale", scene, source,
+                        new Dictionary<string, double>
+                        {
+                            ["scaleX"] = scaleX,
+                            ["scaleY"] = scaleY,
+                        });
+                    return null;
+                }
                 DispatchNamedAction("obs.set_source_scale", PhxSbActions.ObsSourceScale, new {
                     scene,
                     source,
@@ -256,6 +291,17 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     GlobalLogger.Log("obs.set_source_rotation: empty source — skipping.",
                         "Script", LogLevel.Communication);
+                    return null;
+                }
+                // Direct-vs-relay split — see obs.set_source_position.
+                var obs = ObsWebSocketClient.Current;
+                if (obs is { IsConnected: true })
+                {
+                    await ApplyObsTransformAsync(obs, "obs.set_source_rotation", scene, source,
+                        new Dictionary<string, double>
+                        {
+                            ["rotation"] = degrees,
+                        });
                     return null;
                 }
                 DispatchNamedAction("obs.set_source_rotation", PhxSbActions.ObsSourceRotation, new {
@@ -352,6 +398,31 @@ namespace Phoenix.Controls.Hub.Core
             });
         }
 
+        // Direct-OBS transform dispatch shared by the three obs.set_source_*
+        // handlers. Runs the two-step GetSceneItemId → SetSceneItemTransform
+        // against the live ObsWebSocketClient and maps the outcome onto the
+        // script-facing `result.obs_error` contract: "" on success, a
+        // diagnostic string on failure — plus a Communication-tier log line
+        // so the operator sees WHY a transform didn't land.
+        private async Task ApplyObsTransformAsync(
+            ObsWebSocketClient obs, string command, string scene, string source,
+            IReadOnlyDictionary<string, double> transformFields)
+        {
+            var result = await obs.SetSceneItemTransformAsync(scene, source, transformFields);
+            if (result.Success)
+            {
+                await _engine.SetScriptVarAsync("result.obs_error", "");
+                return;
+            }
+
+            string error = string.IsNullOrWhiteSpace(result.Comment)
+                ? $"OBS request failed (code {result.Code})"
+                : result.Comment;
+            GlobalLogger.Log($"{command} → direct OBS dispatch failed: {error}",
+                "Script", LogLevel.Communication);
+            await _engine.SetScriptVarAsync("result.obs_error", error);
+        }
+
         /// <summary>
         /// Fans an inbound OBS WebSocket v5 event out to every enabled
         /// script declaring an <c>on_obs("&lt;eventType&gt;")</c> header with a
@@ -418,7 +489,10 @@ namespace Phoenix.Controls.Hub.Core
             {
                 string fn = info.FileName;
                 var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
-                if (slot == EventSlotResult.TimedOut) return;
+                if (slot == EventSlotResult.TimedOut || slot == EventSlotResult.Discarded) return;
+                // Caller-side re-entry flag — see AcquireEventSlotAsync.
+                bool savedHeld = _eventSemaphoreHeld.Value;
+                _eventSemaphoreHeld.Value = true;
                 try
                 {
                     string content = await ScriptRegistry.Instance
@@ -452,6 +526,7 @@ namespace Phoenix.Controls.Hub.Core
                 }
                 finally
                 {
+                    _eventSemaphoreHeld.Value = savedHeld;
                     ReleaseEventSlot(slot);
                 }
             }

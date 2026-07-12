@@ -7,6 +7,28 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607121 - 2026.07.12
+
+**New**
+- Architect: OBS nodes to move, scale, and rotate scene sources are now available — they control OBS directly.
+- Hub: choose the translation service (DeepL, Google, or LibreTranslate) in Settings — changes apply without a restart.
+- Hub: the status bar shows what the script engine is currently doing.
+- Viewer: the browser view shows its connection latency and how long ago it last synced.
+
+**Fixed**
+- Architect: disabled nodes are now skipped correctly when a script runs — the flow continues past them instead of stopping.
+- Architect: disabling a trigger node now stops that script from firing at all.
+- Architect: "Do Once", "Do N", and "Flip Flop" nodes start fresh when a script is edited — they no longer stay used up from before the change.
+- Hub: the script overlap setting is now enforced — a script that is already running skips or waits as configured.
+- Hub: the connection dots show a clear error when sign-in fails and an in-progress state while reconnecting.
+- Viewer: the connection display shows a warning when Streamer.bot is connected but Twitch is not linked.
+- Hub: the overlay server reports a clear error if it stops working, instead of failing silently.
+- Hub: switching between the Hub, Architect, and Visualist tabs is more reliable.
+- Improved reliability of script event handling.
+- Visualist: hovering over a node pin highlights its connected wires.
+- Visualist: web images show a preview on the node while editing.
+- Visualist: a widget whose image cannot load shows "(image unavailable)" instead of staying blank.
+
 ## Hotfix - 1.0.2607101 - 2026.07.10
 
 **New**

@@ -148,12 +148,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             GlobalLogger.Error("Visualist.MainView", "NodeTemplates.RegisterAll", ex);
         }
 
-        // Post-T15 the pillar-local VisualistChrome was Visibility=Collapsed
-        // because Hub.MainWindow's HubChrome owns the only visible chrome.
-        // Polish pass deleted the dead VisualistChrome control entirely —
-        // the public action methods on this MainView (NewLayer, OpenLayerDialog,
-        // …) are the only entry points and Hub's MenuDefinition.Visualist
-        // dispatches into them via OnMenuItemInvoked.
+        // Hub.MainWindow's HubChrome owns the only visible chrome — there is
+        // no pillar-local chrome control. The public action methods on this
+        // MainView (NewLayer, OpenLayerDialog, …) are the only entry points;
+        // Hub's MenuDefinition.Visualist dispatches into them via
+        // OnMenuItemInvoked.
 
         _canvasView = new LayerCanvasView { DataContext = ViewModel };
         _editorView = new WidgetEditorView { DataContext = ViewModel };
@@ -979,10 +978,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // MediaPickerDialog import path converge on one implementation.
 
     /// <summary>
-    /// Drives the Layer Canvas / Widget Editor sub-tab swap. Called both by
-    /// direct ToggleButton clicks and by the View menu items in
-    /// VisualistChrome (View → Layer Canvas / Widget Editor) — single source
-    /// of truth so the toggle visuals stay synced regardless of entry point.
+    /// Drives the Layer Canvas / Widget Editor pane swap. Reached via Hub's
+    /// Visualist View menu (ShowLayerCanvas / ShowWidgetEditor, dispatched
+    /// through OnMenuItemInvoked), the trigger strip's ← Back, and
+    /// double-click-to-enter — single source of truth for the pane swap and
+    /// the side-panel context regardless of entry point.
     /// </summary>
     private void SelectSubTab(bool showCanvas)
     {

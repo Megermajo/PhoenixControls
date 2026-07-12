@@ -26,10 +26,10 @@
                 Text="LAYERS" />
         </Border>
 
-        <!-- ScrollViewer-around-ListView wrapper dropped — ListView already
-             scrolls its own viewport; the outer ScrollViewer would surface
+        <!-- No ScrollViewer wrapper around the ListView — ListView already
+             scrolls its own viewport; an outer ScrollViewer would surface
              a double scrollbar the moment a LayerListItem grew past the
-             rail height (TODO 2026-05-07 P3). -->
+             rail height. -->
         <!-- Finding #22 — empty-state hint. Row 1 hosts BOTH the ListView and a
              muted centered hint; the hint is overlaid on the ListView and toggled
              by Visibility from code-behind (see LayerRail.xaml.cs), mirroring

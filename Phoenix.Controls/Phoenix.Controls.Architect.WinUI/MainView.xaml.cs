@@ -641,10 +641,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // System-log warning the pre-fix code already emitted.
         _logicCanvasView.LayerFileOpenRequested += (_, path) =>
         {
-            // TODO — Hub.MainWindow.NavigateTo(PillarKind.Visualist,
-            // openTarget: path) must actually drive a swap to the Visualist
-            // tab and call its Open(path) entrypoint. This only
-            // raises the call; the receiving navigator wiring is still owed.
+            // Hub.MainWindow implements IPillarNavigator: NavigateTo awaits
+            // the pillar swap to Visualist, then forwards path to its Open.
             try
             {
                 if (_hostWindow is Phoenix.Controls.Shared.WinUI.Contracts.IPillarNavigator nav)

@@ -54,7 +54,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <!-- TextTrimming + MaxWidth so a long template name (e.g.
                          "Image.LoadFromUrlWithCachedFallback") doesn't bleed
-                         past the node frame (TODO 2026-05-07 round 2 P1). -->
+                         past the node frame. -->
                     <TextBlock
                         x:Name="TitleText"
                         FontFamily="{StaticResource MonoFont}"

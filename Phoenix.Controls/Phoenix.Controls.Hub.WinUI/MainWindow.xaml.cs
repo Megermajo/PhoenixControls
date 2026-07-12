@@ -81,44 +81,71 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     ///   * Hub.App.OnLaunched's --open argv parser — Explorer
     ///     double-click on a .phxg / .phxlayer routes through here so the
     ///     right pillar comes up with the file already loaded.
+    /// IPillarNavigator keeps the sync-void shape, so the async core is
+    /// fire-and-forget through AsyncErrorBoundary, matching the surrounding
+    /// "best-effort, log on fault" semantic.
     /// </summary>
     public void NavigateTo(PillarKind kind, string? openTarget = null)
     {
-        OnPillarTabClicked(this, kind);
+        _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
+            () => NavigateToCore(kind, openTarget),
+            "MainWindow",
+            $"NavigateTo({kind}, '{openTarget}') failed");
+    }
+
+    // The pillar swap MUST be awaited before openTarget is dispatched.
+    // SwitchPillarAsync suspends at the outgoing pillar's dirty prompt and
+    // only constructs the target MainView after that await — dispatching
+    // without awaiting would observe _architectView/_visualistView still
+    // null and silently skip the open, leaving the pillar up but empty.
+    // The swap's bool result gates the dispatch: a declined dirty prompt
+    // must drop openTarget even when the target MainView already exists
+    // from an earlier visit — dispatching into the hidden pillar would
+    // clobber its open document behind the user's back.
+    private async Task NavigateToCore(PillarKind kind, string? openTarget)
+    {
+        bool swapped = await SwitchPillarAsync(kind);
         if (string.IsNullOrEmpty(openTarget)) return;
-        try
+        if (!swapped)
         {
-            switch (kind)
-            {
-                case PillarKind.Architect when _architectView is not null:
-                    // Architect.OpenAsync replaces the deadlock-prone
-                    // sync Open; IPillarNavigator.NavigateTo stays sync void so
-                    // fire-and-forget through AsyncErrorBoundary, matching the
-                    // surrounding "best-effort, log on fault" semantic.
-                    var architectView = _architectView;
-                    var targetPath = openTarget;
-                    _ = Phoenix.Controls.Shared.Core.AsyncErrorBoundary.SafeRunAsync(
-                        () => architectView.OpenAsync(targetPath),
-                        "MainWindow",
-                        $"NavigateTo(Architect, '{targetPath}') open failed");
-                    break;
-                case PillarKind.Visualist when _visualistView is not null:
-                    // This is the receiving end of the .phxlayer
-                    // drop route. Architect's LogicCanvasView raises
-                    // LayerFileOpenRequested → Architect.MainView's
-                    // subscriber calls IPillarNavigator.NavigateTo(Visualist,
-                    // openTarget: path) → lands here, which swaps the active
-                    // pillar to Visualist and forwards the path to
-                    // _visualistView.Open. The "dragdrop.unrouted
-                    // .phxlayer" log line only fires when Architect runs
-                    // outside a MainView host (e.g. headless tests).
-                    _visualistView.Open(openTarget);
-                    break;
-            }
+            // Dropping openTarget is the intended outcome of a declined
+            // dirty prompt; log so the drop stays visible.
+            GlobalLogger.Log(
+                $"NavigateTo({kind}): open target '{openTarget}' dropped — pillar swap declined at the dirty prompt.",
+                "MainWindow", LogLevel.System);
+            return;
         }
-        catch (Exception ex)
+        switch (kind)
         {
-            GlobalLogger.Error("MainWindow", $"NavigateTo({kind}, '{openTarget}') open failed", ex);
+            case PillarKind.Architect when _architectView is not null:
+                // Architect.OpenAsync replaces the deadlock-prone sync Open.
+                // Awaited here — the whole core already runs inside the
+                // NavigateTo error boundary, so a faulted load is logged
+                // with the navigation context.
+                await _architectView.OpenAsync(openTarget);
+                break;
+            case PillarKind.Visualist when _visualistView is not null:
+                // This is the receiving end of the .phxlayer
+                // drop route. Architect's LogicCanvasView raises
+                // LayerFileOpenRequested → Architect.MainView's
+                // subscriber calls IPillarNavigator.NavigateTo(Visualist,
+                // openTarget: path) → lands here, which swaps the active
+                // pillar to Visualist and forwards the path to
+                // _visualistView.Open. The "dragdrop.unrouted
+                // .phxlayer" log line only fires when Architect runs
+                // outside a MainView host (e.g. headless tests).
+                _visualistView.Open(openTarget);
+                break;
+            case PillarKind.Architect:
+            case PillarKind.Visualist:
+                // Still null after a completed swap — shouldn't happen (the
+                // swap constructs the target MainView before returning true),
+                // but a defensive drop-with-log beats dispatching into a
+                // null view if a future swap path forgets construction.
+                GlobalLogger.Log(
+                    $"NavigateTo({kind}): open target '{openTarget}' dropped — pillar view unavailable after swap.",
+                    "MainWindow", LogLevel.System);
+                break;
         }
     }
 
@@ -723,7 +750,21 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             "MainWindow", LogLevel.System);
     }
 
+    // Thin event-contract wrapper — the chrome's tab strip needs a sync
+    // event handler, while NavigateToCore needs an awaitable Task so the
+    // deep-link open can't race the (possibly prompt-suspended) swap. Both
+    // funnel into SwitchPillarAsync so a single entry-point owns the swap;
+    // the tab click has no follow-up dispatch, so the swap's bool result
+    // is irrelevant here and deliberately ignored.
     private async void OnPillarTabClicked(object? sender, PillarKind kind)
+        => await SwitchPillarAsync(kind);
+
+    // Returns true when the requested pillar is active on return — the swap
+    // completed, or the tab was already active. Returns false when the
+    // outgoing pillar's dirty prompt was declined (or faulted, treated as a
+    // decline) so callers with a follow-up action (NavigateToCore's
+    // openTarget dispatch) know the target pillar never came up.
+    private async Task<bool> SwitchPillarAsync(PillarKind kind)
     {
         // Single-HUB collapse — pillar tabs swap MainPaneRegion
         // content rather than spawning sibling exes. Each pillar's MainView
@@ -732,7 +773,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // round-trip away from the tab.
 
         // No-op when the user clicks the already-active tab — no prompt, no swap.
-        if (kind == _activePillar) return;
+        if (kind == _activePillar) return true;
 
         // CHANGELOG promises a save-before-close prompt on pillar swap as well
         // as Hub exit. Mirror OnAppWindowClosing's pattern: if the OUTGOING
@@ -759,7 +800,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 GlobalLogger.Error("MainWindow", "PromptSaveBeforeCloseAsync on swap", ex);
                 proceed = false;
             }
-            if (!proceed) return;
+            if (!proceed) return false;
         }
 
         switch (kind)
@@ -805,6 +846,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         ChromeBar.SetPillar(kind, undoRedo);
         UpdateWindowTitle();
         UpdateChromeFilename();
+        return true;
     }
 
     private void OnPillarShellStateChanged(object? sender, System.EventArgs e)

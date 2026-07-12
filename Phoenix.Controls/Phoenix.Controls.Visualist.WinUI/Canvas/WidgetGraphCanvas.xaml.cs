@@ -382,6 +382,18 @@ public sealed partial class WidgetGraphCanvas : UserControl
     private Link? _selectedLink;
     private Microsoft.UI.Xaml.Shapes.Path? _selectedLinkPath;
 
+    // Pin the pointer currently rests on. The node view owns the pin-LOCAL
+    // hover feedback (scale 14→18 + glow + tooltip in BuildPinPath); the
+    // canvas layers the part only it can see — the wires incident to the
+    // hovered pin get an emphasized stroke so the author can trace where the
+    // pin connects across a dense graph. Tracked as (node id, socket id)
+    // rather than Path references because RedrawLinks rebuilds every wire
+    // Path wholesale: it re-applies this highlight from the ids the same way
+    // it re-applies _selectedLink, so a frame-coalesced redraw landing
+    // mid-hover doesn't silently drop the effect.
+    private string? _hoveredPinNodeId;
+    private string? _hoveredPinSocketId;
+
     // Frame-coalesce parity with Architect's LogicCanvasView. Pointer
     // moves during a node drag previously called RedrawLinks() per pointer
     // event, which on a high-Hz mouse + a dense graph fired the full wire
@@ -1003,6 +1015,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _wireSourceNode   = null;
         _wireSourceSocket = null;
         _wireSourcePin    = null;
+        // The hovered pin element leaves the tree with its node view; the
+        // stale ids would otherwise re-arm the wire highlight on the rebuilt
+        // Paths with no pointer over the replacement pin.
+        _hoveredPinNodeId   = null;
+        _hoveredPinSocketId = null;
 
         var nodes = _trigger?.Graph?.Nodes;
         if (_trigger is null)
@@ -1217,6 +1234,15 @@ public sealed partial class WidgetGraphCanvas : UserControl
             LinkLayer.Children.Add(path);
             _linkPaths[link] = path;   // feed the node-drag incident reroute
             if (selected) _selectedLinkPath = path;
+
+            // Re-apply the pin-hover emphasis the same way selection is
+            // re-applied above — a frame-coalesced redraw landing mid-hover
+            // otherwise rebuilds this Path with base styling and silently
+            // drops the effect. Suppressed while a wire drag is live (the
+            // drag preview owns wire coloring; BeginWireDrag also clears the
+            // hover state, so this guard is belt-and-braces).
+            if (_wireSourceNode is null && IsIncidentToHoveredPin(link))
+                ApplyWireStyle(link, path, hovered: true);
         }
 
         // Re-add the in-flight temp wire LAST so the drag preview
@@ -2248,10 +2274,11 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         foreach (var (socketId, pin) in nodeView.PinElements)
         {
-            // Capture the socket via the pin Tag (set in WidgetGraphNodeView.BuildPinRow).
-            // Pins are FrameworkElements (Rectangles) that bubble pointer events
-            // up through the node view; we attach to the pin directly so the
-            // node-drag and wire-drag paths don't compete.
+            // Capture the socket via the pin Tag (set in WidgetGraphNodeView.BuildPinPath
+            // on the outer container). Each pin is a 14×14 Grid hosting the glyph
+            // Path + hover-glow Ellipse; pointer events bubble up through the node
+            // view, so we attach to the pin directly to keep the node-drag and
+            // wire-drag paths from competing.
             pin.PointerPressed  += OnPinPointerPressed;
             pin.PointerEntered  += OnPinPointerEntered;
             pin.PointerExited   += OnPinPointerExited;
@@ -2542,6 +2569,12 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // first hover hit-test; see HitTestPinAt).
         _pinCenterCache = null;
 
+        // A drag almost always starts on a hovered pin. Drop the incident-wire
+        // hover emphasis now — the pointer capture moves to WorldCanvas, so the
+        // pin's PointerExited may never fire, and the drag preview owns wire
+        // coloring for the whole drag.
+        ClearPinHoverHighlight();
+
         _wireSourceNode    = sourceNode;
         _wireSourceSocket  = socket;
         _wireSourcePin     = pin;
@@ -2776,13 +2809,97 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
     private void OnPinPointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        // Cosmetic — could grow the pin or show a tooltip later. No-op
-        // for now so the seam is visible in code review.
+        // Canvas-scope hover affordance: emphasize every wire incident to the
+        // hovered pin so its connections read at a glance across a dense
+        // graph. The pin-LOCAL feedback (scale 14→18 + glow + tooltip)
+        // already lives in WidgetGraphNodeView.BuildPinPath — the committed
+        // wire Paths are the one surface only the canvas can restyle.
+        // Skipped while a wire drag is live: the drag preview owns wire
+        // coloring (green/red compat) for the whole drag.
+        if (_wireSourceNode is not null) return;
+        if (sender is not FrameworkElement pin || pin.Tag is not Socket socket) return;
+
+        // Drop any lingering highlight first (a missed PointerExited must
+        // never leave two pins' wires emphasized at once).
+        ClearPinHoverHighlight();
+
+        Node? owner = ResolveOwnerNode(pin);
+        if (owner is null) return;
+        _hoveredPinNodeId   = owner.Id;
+        _hoveredPinSocketId = socket.Id;
+        RestyleIncidentWires(hovered: true);
     }
 
     private void OnPinPointerExited(object sender, PointerRoutedEventArgs e)
     {
-        // Symmetric companion to OnPinPointerEntered. Same comment.
+        // Symmetric companion to OnPinPointerEntered — restore the incident
+        // wires to their base style exactly (type colour / exec white / gold
+        // selection all re-resolve through the same tokens RedrawLinks uses).
+        ClearPinHoverHighlight();
+    }
+
+    // Restore any hover-emphasized wires to base styling, THEN drop the
+    // hovered-pin ids (the restore pass needs them to find its targets).
+    // Idempotent — safe from every caller (exit, drag start, re-enter).
+    private void ClearPinHoverHighlight()
+    {
+        if (_hoveredPinSocketId is null) return;
+        RestyleIncidentWires(hovered: false);
+        _hoveredPinNodeId   = null;
+        _hoveredPinSocketId = null;
+    }
+
+    // True when the link touches the hovered pin. Matched on the
+    // (node id, socket id) pair — the same key the wire model itself carries —
+    // so the highlight can never bleed onto another node's like-named socket.
+    private bool IsIncidentToHoveredPin(Link link)
+        => _hoveredPinNodeId is not null
+           && ((link.FromNodeId == _hoveredPinNodeId && link.FromSocketId == _hoveredPinSocketId)
+            || (link.ToNodeId   == _hoveredPinNodeId && link.ToSocketId   == _hoveredPinSocketId));
+
+    // Restyle the rendered Paths of every link incident to the hovered pin,
+    // in place — no rebuild, no geometry churn. _linkPaths is the same
+    // Link→Path map the node-drag incident reroute feeds from, so any wire
+    // RedrawLinks skipped (endpoint mid-layout) is simply absent and picks up
+    // the correct style from the re-apply inside the next RedrawLinks pass.
+    private void RestyleIncidentWires(bool hovered)
+    {
+        foreach (var (link, path) in _linkPaths)
+        {
+            if (!IsIncidentToHoveredPin(link)) continue;
+            ApplyWireStyle(link, path, hovered);
+        }
+    }
+
+    // Style one committed wire Path. Base styling re-resolves through the
+    // exact brush/thickness tokens RedrawLinks uses (type-coloured data wire,
+    // exec white, gold selection), so a restore is pixel-identical to a fresh
+    // paint. Hover emphasis routes through the theme's OkBrush status token —
+    // green reads "connected" in the §2 palette semantics — at the selection
+    // weight, so the emphasized stroke matches the established highlight
+    // weight without stealing the selection gold; a wire that is BOTH
+    // selected and hovered keeps its gold (selection outranks hover).
+    private void ApplyWireStyle(Link link, Microsoft.UI.Xaml.Shapes.Path path, bool hovered)
+    {
+        Socket? srcSocket = null;
+        if (_nodeViews.TryGetValue(link.FromNodeId, out var fromView))
+        {
+            srcSocket = fromView.Node.Sockets?
+                .FirstOrDefault(s => string.Equals(s.Id, link.FromSocketId, StringComparison.Ordinal));
+        }
+        bool isFlow   = srcSocket?.DataType == SocketDataType.Flow;
+        bool selected = _selectedLink is { } sl && sl.Id == link.Id;
+
+        if (hovered && !selected)
+        {
+            path.Stroke          = ResolveBrush("OkBrush", 0xEE, 0x6F, 0xA4, 0x6B);
+            path.StrokeThickness = WireThicknessFor(isFlow, selected: true);
+        }
+        else
+        {
+            path.Stroke          = WireBrushFor(srcSocket, isFlow, selected);
+            path.StrokeThickness = WireThicknessFor(isFlow, selected);
+        }
     }
 
     private Node? ResolveOwnerNode(FrameworkElement pin)

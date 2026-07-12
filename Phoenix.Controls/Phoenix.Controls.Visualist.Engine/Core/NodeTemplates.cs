@@ -962,7 +962,8 @@ namespace Phoenix.Controls.Visualist.Core
             // to Out, so it can be dropped on a wire without breaking the chain. The
             // canvas paints a Fusion-style live thumbnail in the body by walking
             // upstream from the Viewer's "In" socket to the nearest resolvable Image
-            // source (PreviewSource.UpstreamImage). When no such source exists the
+            // source (PreviewSource.UpstreamImage) — both Image.Load file paths and
+            // Image.LoadUrl urls terminate the walk. When no such source exists the
             // body shows the unloaded placeholder (empty card + hint label) instead
             // of a busy checker pattern, so the node reads as "preview-capable,
             // awaiting input" rather than "broken". Compositor.js still drives the
@@ -972,11 +973,11 @@ namespace Phoenix.Controls.Visualist.Core
                 outputs: new[] { S("Out", SocketDataType.Any) },
                 previewSource: PreviewSource.UpstreamImage);
 
-            // Particles.Emit emitter (design-time scaffold).
-            // Follows the WebSource pattern: design-time template
-            // ships now so the editor palette + authored .phxlayer files
-            // start using it; the compositor.js runtime case is the separate
-            // sweep that actually emits and animates particles.
+            // Particles.Emit emitter. The compositor.js runtime is
+            // live: a tick-based per-widget emitter renders the sprite field
+            // and hooks the widget into a continuous rAF loop
+            // (requestWidgetAnimator) so particles keep flowing between
+            // triggers.
             //
             // Shape choice: 2D-sprite emitter. Simpler than a 3D engine,
             // doesn't pull in an external dep, composes via the same Image
@@ -1026,23 +1027,27 @@ namespace Phoenix.Controls.Visualist.Core
                     { "Color",    "#ffffffff" },
                 });
 
-            // WebSource node template (design-time scaffold).
-            // Goal: an iframe / WebView2 source node so widgets can host
-            // arbitrary HTML pages (live pinboards, video feeds, etc.) inside
-            // an OBS browser source. The runtime side (compositor.js) doesn't
-            // implement the iframe rasterise yet — that needs a separate sweep
-            // wiring &lt;iframe&gt; → drawImage capture (or WebView2 host
-            // rendering). The template lands here so the WebSource widget
-            // PRESET (Visualist roadmap) can be authored once the runtime is
-            // ready, and the existing palette starts surfacing the node so
-            // streamers can start composing graphs against it.
+            // WebSource — url-driven image source with a refresh knob.
+            // The compositor.js runtime is live: it fetches the Url through
+            // the Hub-side /asset/url proxy (same path Image.LoadUrl uses)
+            // and renders image content-types only, re-fetching every
+            // RefreshSeconds via a cache-busting bucket param. A non-image
+            // URL (an HTML page) is rejected at proxy validation and the
+            // runtime surfaces a clear WebSource-specific console.warn so
+            // authors see "the URL didn't return an image" rather than a
+            // generic load failure. Full iframe/HTML rasterisation is
+            // deliberately NOT built — browsers cannot paint a cross-origin
+            // iframe to a canvas, so there is no honest drawImage path for
+            // arbitrary pages.
             //
-            // The node carries a Url attribute (the page to load) and a
-            // RefreshSeconds attribute (how often to re-snapshot the iframe).
-            // Output is the rendered iframe surface as an Image — same shape
-            // every other Image.* source node returns. Preview thumbnail is
-            // OwnUrl so the design-time canvas paints a placeholder/screenshot
-            // for that URL once UrlImageCache learns to resolve it.
+            // The node carries a Url attribute (the resource to fetch) and a
+            // RefreshSeconds attribute (how often the runtime re-fetches).
+            // Output is the fetched surface as an Image — same shape every
+            // other Image.* source node returns. Preview thumbnail is OwnUrl:
+            // the design-time canvas loads the Url directly as a bitmap; an
+            // image URL previews in the node body, and a non-image URL (an
+            // HTML page) fails the async decode and flips the thumbnail host
+            // to its "(image unavailable)" hint via ImageFailed.
             Add("WebSource", "Inputs",
                 inputs:  Empty(),
                 outputs: O("Image", SocketDataType.Image),

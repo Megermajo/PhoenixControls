@@ -18,18 +18,23 @@
 #     PhoenixControls/ root are present, log the conflict and exit non-zero.
 #     Manual resolution required (the user merges by hand or deletes one
 #     side); we never silently union them at install time.
-#   * Roaming + Local -- both %APPDATA% and %LOCALAPPDATA% are scanned.
-#     Per the design's installer mock (redesign-plan/design/project/installer.jsx)
-#     the new home for streamer-facing user data is %LOCALAPPDATA%/PhoenixControls/.
-#     Roaming is preserved for the small slice of state that pre-dated the
-#     rebrand under %APPDATA%/Phoenix.Sovereign/.
+#   * Roaming + Local -- both %APPDATA% and %LOCALAPPDATA% are scanned;
+#     both roots are live homes for the suite (see Paths.RoamingAppData /
+#     Paths.LocalAppData). Roaming %APPDATA%/PhoenixControls/ holds the
+#     primary user state -- the SQLite databank, config.json, window
+#     layouts, logs -- while %LOCALAPPDATA%/PhoenixControls/ holds
+#     machine-local state (WebView2 profiles, thumbnail/image caches,
+#     viewer device tokens).
 #   * -WhatIf -- prints the planned move set and exits without touching disk.
 #     The Track 8 verify step ("manually run installer/migrate-appdata.ps1
 #     -WhatIf") relies on this.
 #
-# TODO(track-9): rename sovereign_v2.db -> phoenix.db when the SovereignDB
-# class is renamed. Until then, the .db / .db-wal / .db-shm sibling triplet
-# rides along intact under whatever filename the legacy root used.
+# DB filenames: the databank rename shipped as phoenix_v3.db under
+# %APPDATA%/PhoenixControls/ -- a fresh filename with deliberately no
+# migration shim, so this script has no per-file DB rename to perform.
+# Any legacy .db / .db-wal / .db-shm sibling triplet simply rides along
+# intact inside the directory move, under whatever filename the legacy
+# root used; the current suite ignores it.
 #
 # Exit codes:
 #   0  success / no-op (also returned when -WhatIf was passed)

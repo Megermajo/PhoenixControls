@@ -28,16 +28,23 @@ namespace Phoenix.Controls.Hub.Core.Translation
     }
 
     /// <summary>
-    /// HttpTranslator — generic HTTP-backed translator. Posts {text, target} as JSON to the
-    /// endpoint configured in <c>AppConfig.TranslationHttpEndpoint</c> and reads the response's
-    /// "translated" field. Optional Bearer token from <c>AppConfig.TranslationApiKey</c>.
-    ///
-    /// This is a stub — real backends (DeepL, Google Cloud Translation, Azure Translator,
-    /// LibreTranslate, custom AI proxy) all have slightly different request/response shapes.
-    /// The user either:
-    ///   (a) points TranslationHttpEndpoint at a service that already speaks {text,target} → {translated}, or
-    ///   (b) replaces this class with their own ITranslator wired into TranslationService.
-    /// On any failure, returns the original text so live captions never go silent.
+    /// HttpTranslator — HTTP-backed translator. Posts to the endpoint configured in
+    /// <c>AppConfig.TranslationHttpEndpoint</c>, speaking the request/response shape selected
+    /// by <c>AppConfig.TranslationProviderShape</c>:
+    ///   "phoenix" — POST {text, target}; optional Bearer key; reads "translated".
+    ///               The native shape for custom proxies / user-written adapters, and the
+    ///               fallback for unknown shape values.
+    ///   "deepl"   — POST {text: [..], target_lang} with a "DeepL-Auth-Key" Authorization
+    ///               header; reads translations[0].text.
+    ///   "google"  — POST {q, target, format: "text"} with the key appended as a ?key=
+    ///               query parameter; reads data.translations[0].translatedText.
+    ///   "libre"   — POST {q, target, format: "text"} plus api_key in the body when a key
+    ///               is set; reads translatedText.
+    /// The endpoint URL always comes from TranslationHttpEndpoint — the shape only changes
+    /// body, headers, and response parsing — so self-hosted or regional deployments work by
+    /// pointing the endpoint wherever the provider lives.
+    /// On any failure (including a response missing the expected field), returns the original
+    /// text so live captions never go silent.
     ///
     /// Concurrency: a per-instance <see cref="SemaphoreSlim"/> caps in-flight requests so a flood
     /// of TRANSLATE_REQUEST messages can't exhaust HttpClient sockets (M91).
@@ -76,6 +83,7 @@ namespace Phoenix.Controls.Hub.Core.Translation
 
         private readonly string _endpoint;
         private readonly string _apiKey;
+        private readonly string _shape;
 
         // ── L46 / L47 in-flight tracking ──────────────────────────────────────
         // Tracks every active TranslateAsync call by an internal monotonic id so
@@ -107,10 +115,15 @@ namespace Phoenix.Controls.Hub.Core.Translation
         /// <summary>Outcome of the most recent <see cref="TranslateAsync"/> completion.</summary>
         public TranslationOutcome LastTranslationOutcome => (TranslationOutcome)Volatile.Read(ref _lastOutcome);
 
-        public HttpTranslator(string endpoint, string apiKey)
+        /// <param name="endpoint">Backend URL from <c>AppConfig.TranslationHttpEndpoint</c>.</param>
+        /// <param name="apiKey">Optional key from <c>AppConfig.TranslationApiKey</c>; transport depends on shape.</param>
+        /// <param name="shape">Provider shape from <c>AppConfig.TranslationProviderShape</c>
+        /// ("phoenix" | "deepl" | "google" | "libre"); unknown values behave as "phoenix".</param>
+        public HttpTranslator(string endpoint, string apiKey, string shape = "phoenix")
         {
             _endpoint = endpoint ?? "";
             _apiKey   = apiKey ?? "";
+            _shape    = (shape ?? "phoenix").Trim().ToLowerInvariant();
         }
 
         /// <summary>
@@ -252,22 +265,9 @@ namespace Phoenix.Controls.Hub.Core.Translation
 
                 try
                 {
-                    // ── Request contract (L79) ────────────────────────────────────
-                    // POST <Endpoint> with JSON body:   { "text": "<source>", "target": "<lang>" }
-                    // Expects JSON response:            { "translated": "<output>" }
-                    // No real provider speaks this shape natively — users must point
-                    // TranslationHttpEndpoint at a proxy that adapts to their backend
-                    // (DeepL, Google Cloud Translation, Azure Translator, LibreTranslate, etc.).
-                    // TODO: surface a provider-shape switch on AppConfig
-                    //       (e.g. TranslationProviderShape: "phoenix" | "deepl" | "google" | "libre")
-                    //       so common providers work without a proxy.
-                    var body = JsonSerializer.Serialize(new { text, target = targetLanguage });
-                    using var req = new HttpRequestMessage(HttpMethod.Post, _endpoint)
-                    {
-                        Content = new StringContent(body, Encoding.UTF8, "application/json"),
-                    };
-                    if (!string.IsNullOrEmpty(_apiKey))
-                        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                    // Request/response contract per AppConfig.TranslationProviderShape —
+                    // see BuildRequest/ParseTranslated for the per-provider wire formats.
+                    using var req = BuildRequest(text, targetLanguage);
 
                     using var resp = await _http.SendAsync(req, linked.Token).ConfigureAwait(false);
                     if (!resp.IsSuccessStatusCode)
@@ -278,12 +278,16 @@ namespace Phoenix.Controls.Hub.Core.Translation
 
                     string respJson = await resp.Content.ReadAsStringAsync(linked.Token).ConfigureAwait(false);
                     using var doc = JsonDocument.Parse(respJson);
-                    if (doc.RootElement.TryGetProperty("translated", out var t) && t.ValueKind == JsonValueKind.String)
+                    string? translated = ParseTranslated(doc.RootElement);
+                    if (translated != null)
                     {
                         Volatile.Write(ref _lastOutcome, (int)TranslationOutcome.Success);
-                        return t.GetString() ?? text;
+                        return translated;
                     }
-                    Volatile.Write(ref _lastOutcome, (int)TranslationOutcome.Success);
+                    // Response was well-formed JSON but the expected field is missing or
+                    // mis-typed — a provider error as far as we're concerned, though the
+                    // original text still passes through (captions never go silent).
+                    Volatile.Write(ref _lastOutcome, (int)TranslationOutcome.Error);
                     return text;
                 }
                 catch (OperationCanceledException)
@@ -317,6 +321,131 @@ namespace Phoenix.Controls.Hub.Core.Translation
             finally
             {
                 Interlocked.Decrement(ref _inFlight);
+            }
+        }
+
+        // ── Provider request/response shapes ──────────────────────────────────
+        // The endpoint URL is always AppConfig.TranslationHttpEndpoint; the shape
+        // only decides body, headers, and (for Google) the ?key= query parameter.
+
+        /// <summary>
+        /// Builds the outbound POST for the configured provider shape.
+        ///   phoenix: { "text": "<source>", "target": "<lang>" }          + Bearer key header
+        ///   deepl:   { "text": ["<source>"], "target_lang": "<LANG>" }   + DeepL-Auth-Key header
+        ///   google:  { "q": "<source>", "target": "<lang>", "format": "text" } + ?key= on the URL
+        ///   libre:   { "q": "<source>", "target": "<lang>", "format": "text", "api_key"? }
+        /// Unknown shapes fall back to phoenix.
+        /// </summary>
+        private HttpRequestMessage BuildRequest(string text, string targetLanguage)
+        {
+            string body;
+            HttpRequestMessage req;
+            switch (_shape)
+            {
+                case "deepl":
+                    // DeepL v2 /translate: text is an array, target_lang is uppercase,
+                    // and the key rides a provider-specific Authorization scheme.
+                    body = JsonSerializer.Serialize(new
+                    {
+                        text = new[] { text },
+                        target_lang = targetLanguage.ToUpperInvariant(),
+                    });
+                    req = new HttpRequestMessage(HttpMethod.Post, _endpoint)
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                    };
+                    if (!string.IsNullOrEmpty(_apiKey))
+                        req.Headers.Authorization = new AuthenticationHeaderValue("DeepL-Auth-Key", _apiKey);
+                    return req;
+
+                case "google":
+                    // Google Cloud Translation v2: the key travels as a query parameter,
+                    // not a header. Preserve any query the configured endpoint already has.
+                    body = JsonSerializer.Serialize(new
+                    {
+                        q = text,
+                        target = targetLanguage,
+                        format = "text",
+                    });
+                    string uri = _endpoint;
+                    if (!string.IsNullOrEmpty(_apiKey))
+                        uri += (uri.Contains('?') ? "&" : "?") + "key=" + Uri.EscapeDataString(_apiKey);
+                    return new HttpRequestMessage(HttpMethod.Post, uri)
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                    };
+
+                case "libre":
+                    // LibreTranslate: api_key rides in the JSON body — only when set, so
+                    // keyless self-hosted instances don't get a spurious empty field.
+                    body = string.IsNullOrEmpty(_apiKey)
+                        ? JsonSerializer.Serialize(new { q = text, target = targetLanguage, format = "text" })
+                        : JsonSerializer.Serialize(new { q = text, target = targetLanguage, format = "text", api_key = _apiKey });
+                    return new HttpRequestMessage(HttpMethod.Post, _endpoint)
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                    };
+
+                default: // "phoenix" — and the use-time fallback for unknown shape values.
+                    body = JsonSerializer.Serialize(new { text, target = targetLanguage });
+                    req = new HttpRequestMessage(HttpMethod.Post, _endpoint)
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                    };
+                    if (!string.IsNullOrEmpty(_apiKey))
+                        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                    return req;
+            }
+        }
+
+        /// <summary>
+        /// Extracts the translated string from the provider response, or null when the
+        /// expected field is missing or mis-typed. Callers map null to
+        /// <see cref="TranslationOutcome.Error"/> and pass the original text through.
+        ///   phoenix: { "translated": "..." }
+        ///   deepl:   { "translations": [ { "text": "..." } ] }
+        ///   google:  { "data": { "translations": [ { "translatedText": "..." } ] } }
+        ///   libre:   { "translatedText": "..." }
+        /// </summary>
+        private string? ParseTranslated(JsonElement root)
+        {
+            switch (_shape)
+            {
+                case "deepl":
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("translations", out var dArr) &&
+                        dArr.ValueKind == JsonValueKind.Array && dArr.GetArrayLength() > 0 &&
+                        dArr[0].ValueKind == JsonValueKind.Object &&
+                        dArr[0].TryGetProperty("text", out var dText) &&
+                        dText.ValueKind == JsonValueKind.String)
+                        return dText.GetString();
+                    return null;
+
+                case "google":
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("data", out var gData) &&
+                        gData.ValueKind == JsonValueKind.Object &&
+                        gData.TryGetProperty("translations", out var gArr) &&
+                        gArr.ValueKind == JsonValueKind.Array && gArr.GetArrayLength() > 0 &&
+                        gArr[0].ValueKind == JsonValueKind.Object &&
+                        gArr[0].TryGetProperty("translatedText", out var gText) &&
+                        gText.ValueKind == JsonValueKind.String)
+                        return gText.GetString();
+                    return null;
+
+                case "libre":
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("translatedText", out var lText) &&
+                        lText.ValueKind == JsonValueKind.String)
+                        return lText.GetString();
+                    return null;
+
+                default: // "phoenix" — and the use-time fallback for unknown shape values.
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("translated", out var pText) &&
+                        pText.ValueKind == JsonValueKind.String)
+                        return pText.GetString();
+                    return null;
             }
         }
 

@@ -420,11 +420,11 @@ public sealed partial class ScriptView : UserControl, IDisposable,
         flyout.Items.Add(toggle);
 
         // Set Policy → Queue / Overlap / Discard.
-        // Tracks ScriptManager._executionPolicies; Queue is the only
-        // currently-enforced policy (IsEnforced) — the others persist but
-        // a parenthesised "(not yet enforced)" tag is appended so users
-        // aren't misled about runtime behaviour.
-        // Lane C: applies to all selected rows (policyTargets).
+        // Tracks ScriptManager._executionPolicies; all three policies are
+        // enforced at the dispatch gates (IsEnforced). A policy that ever
+        // ships un-enforced picks up a parenthesised "(not yet enforced)"
+        // tag so users aren't misled about runtime behaviour.
+        // Applies to all selected rows (policyTargets).
         flyout.Items.Add(BuildPolicySubMenu(policyTargets));
 
         flyout.Items.Add(new MenuFlyoutSeparator());
@@ -506,10 +506,10 @@ public sealed partial class ScriptView : UserControl, IDisposable,
         string label,
         ScriptManager.ExecutionPolicy current)
     {
-        // Marker "●" prefixes the currently-selected policy; not-yet-
-        // enforced policies trail "(not yet enforced)" so users aren't
-        // surprised when Overlap / Discard don't change runtime
-        // behaviour. ScriptManager.IsEnforced is the source of truth.
+        // Marker "●" prefixes the currently-selected policy; a policy that
+        // ships un-enforced trails "(not yet enforced)" so users aren't
+        // surprised when it doesn't change runtime behaviour.
+        // ScriptManager.IsEnforced is the source of truth.
         bool selected = current == policy;
         bool enforced = ScriptManager.IsEnforced(policy);
         string text = (selected ? "● " : "    ") + label;

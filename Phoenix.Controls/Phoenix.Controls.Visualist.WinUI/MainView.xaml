@@ -26,14 +26,11 @@
         <KeyboardAccelerator Modifiers="Control" Key="O" Invoked="OnOpenLayerAccelerator" />
     </UserControl.KeyboardAccelerators>
 
-    <!-- Single-HUB collapse (T15 retirement): Hub.MainWindow embeds this view
-         inside its MainPaneRegion and owns the only visible chrome. The
-         pillar-local VisualistChrome was deleted in  polish — the
-         Chrome was Visibility="Collapsed" since T15 but its event
-         subscriptions and compiled-XAML bindings still ran. The public action
-         methods on this MainView (NewLayer, OpenLayerDialog, …) carry the
-         former Chrome's responsibilities (TODO 2026-05-07 P3 — dead
-         VisualistChrome control). -->
+    <!-- Single-HUB collapse: Hub.MainWindow embeds this view inside its
+         MainPaneRegion and owns the only visible chrome. There is no
+         pillar-local chrome control — the public action methods on this
+         MainView (NewLayer, OpenLayerDialog, …) are the entry points,
+         dispatched from Hub's Visualist menu via OnMenuItemInvoked. -->
     <Grid Background="{StaticResource CoalShellBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />

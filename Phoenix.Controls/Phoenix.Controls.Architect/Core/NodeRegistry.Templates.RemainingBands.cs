@@ -449,11 +449,14 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) },
                 new Dictionary<string, string> { { "Enabled", "true" } });
 
-            // ── OBS (proxy via Streamer.bot DoAction) ─────────────────────
-            // First-pass OBS control surface. Each node is a flow-bearing
-            // exec node with a single Done continuation; the engine handler currently logs
-            // a Communication-tier stub and returns. The Streamer.bot DoAction relay (and
-            // eventually a direct OBS-WebSocket client in the Hub) lands in a follow-up.
+            // ── OBS (direct WebSocket + Streamer.bot DoAction relay) ──────
+            // OBS control surface. Each node is a flow-bearing exec node with
+            // a single Done continuation, dispatched for real by the engine
+            // handler: the transform nodes (SetSourcePosition / Scale /
+            // Rotation) go straight over Hub's OBS WebSocket v5 client when it
+            // is connected; everything else — and the transforms when OBS is
+            // unreachable — relays through the matching Phoenix action-pack
+            // wrapper via Streamer.bot DoAction (see ScriptManager.Obs.cs).
             // Shared "OBS" category; OBS brand-ish blue (80,130,200) keeps them visually
             // distinct from the Twitch (DarkViolet) and HTTP (DarkSlateBlue) families.
             var ObsBlue = Color.FromArgb(80, 130, 200);

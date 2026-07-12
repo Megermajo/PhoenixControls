@@ -578,10 +578,10 @@ public sealed partial class LogicCanvasView
                 e.Handled = true;
                 break;
 
-            // Keyboard zoom — Ctrl+0 reset, Ctrl++/= zoom in, Ctrl+- zoom out
-            // (TODO 2026-05-07 round 2 P3 — no keyboard zoom). Anchored on
-            // the host viewport centre because there's no cursor on a key
-            // press; mirrors the same clamp range PointerWheel uses.
+            // Keyboard zoom — Ctrl+0 reset, Ctrl++/= zoom in, Ctrl+- zoom
+            // out. Anchored on the host viewport centre because there's no
+            // cursor on a key press; mirrors the same clamp range
+            // PointerWheel uses.
             // 0.10.0: Ctrl+Shift+= / Ctrl+Shift+- swaps the 1.1
             // per-press step for 1.025 (fine-step) so users can land
             // on targeted zoom levels (100%, 150%, 200%) without
