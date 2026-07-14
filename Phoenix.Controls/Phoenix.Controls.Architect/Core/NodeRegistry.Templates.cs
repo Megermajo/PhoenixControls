@@ -97,10 +97,16 @@ namespace Phoenix.Controls.Architect.Core
             SetSocketDescriptions("Chat.Message", new()
             {
                 { "User",      "Packed 7-element array [name, is_mod, is_sub, is_vip, is_broadcaster, color_hex, sub_months]. Feed through Array.Get or Array.Unpack to read individual fields." },
-                { "Command",   "Matched alias with the leading ! stripped. Empty when the message wasn't a command." },
-                { "Args",      "Words after the command, as a list. Iterate with Flow.ForEach or pull individual ones with Array.Get." },
-                { "IsCommand", "True if the message started with ! and matched the Commands filter on this node." },
+                { "Command",   "The first word of the message, lowercased, with a leading ! stripped — equals the matched alias inside a Commands-filtered flow. Never empty for a non-empty message." },
+                { "Args",      "The text after the command, as a single space-separated string. Split on space with Text.Split before Flow.ForEach / Array.Get (Array nodes expect comma-separated lists)." },
+                { "IsCommand", "True when the message starts with ! (the Commands filter separately gates whether the flow fires at all)." },
                 { "Platform",  "Which platform sent the line: twitch, youtube or kick. Branch on it with Logic.Switch to answer per platform." },
+            });
+            SetSocketDescriptions("Chat.Send", new()
+            {
+                { "Message",   "The chat line to send. Platform limits apply per target (Twitch/Kick 500 chars, YouTube 200) — an over-limit message is dropped for that platform with a log entry." },
+                { "Platforms", "Optional runtime OVERRIDE of the checkmarks: a single platform name or a comma list — twitch, youtube, kick (case doesn't matter). Leave empty to use the checked platforms below." },
+                { "Done",      "Fires after the send was handed to every targeted platform." },
             });
             SetSocketDescriptions("Public.Get", new()
             {
@@ -116,7 +122,10 @@ namespace Phoenix.Controls.Architect.Core
             });
             SetSocketDescriptions("Var.Set", new()
             {
-                { "Value", "Stored as {var.<VariableName>}. Writes inside an Async.Parallel branch stay inside that branch — they do NOT merge back to the parent. Use Public.Set when a value needs to cross branches." },
+                // One name-keyed entry covers BOTH the Value input and the Value
+                // output (socket descriptions are keyed by name), so the text is
+                // written direction-neutral.
+                { "Value", "Stored as {var.<VariableName>} and relayed on the Value output, so downstream nodes can use the freshly-set value immediately. Writes inside an Async.Parallel branch stay inside that branch — they do NOT merge back to the parent. Use Public.Set when a value needs to cross branches." },
             });
             SetSocketDescriptions("Chat.WaitForNext", new()
             {
@@ -207,6 +216,7 @@ namespace Phoenix.Controls.Architect.Core
             SetKeywords("Math.Floor",          "round", "down");
             SetKeywords("Math.Ceil",           "round", "up", "ceiling");
             SetKeywords("Chat.Message",        "chat", "message", "command", "twitch", "youtube", "kick");
+            SetKeywords("Chat.Send",           "say", "respond", "reply", "send", "twitch", "youtube", "kick");
             SetKeywords("Twitch.SendChat",     "say", "respond", "reply");
             SetKeywords("Twitch.LastActive",   "lastseen", "active", "presence");
             SetKeywords("Twitch.GetViewers",   "viewers", "audience", "list");
@@ -368,6 +378,10 @@ namespace Phoenix.Controls.Architect.Core
             SetRequiredInputs("HTTP.Patch",  "Url");
             SetRequiredInputs("HTTP.Delete", "Url");
 
+            // Chat — Send without Message is a no-op (same rule as the legacy
+            // per-platform senders it replaced).
+            SetRequiredInputs("Chat.Send", "Message");
+
             // Twitch — SendChat without Message is a no-op.
             SetRequiredInputs("Twitch.SendChat", "Message");
 
@@ -384,7 +398,6 @@ namespace Phoenix.Controls.Architect.Core
             SetRequiredInputs("DB.ClearTable", "TableName");
             SetRequiredInputs("DB.GetColumn",  "TableName");
             SetRequiredInputs("DB.FetchRow",   "TableName");
-            SetRequiredInputs("DB.Increment",  "Key"); // Key socket is the source of truth
 
             // File — Path is mandatory for every Read/Write.
             SetRequiredInputs("File.ReadText",  "Path");

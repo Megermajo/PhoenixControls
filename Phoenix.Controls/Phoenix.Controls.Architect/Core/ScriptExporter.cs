@@ -1159,7 +1159,12 @@ namespace Phoenix.Controls.Architect.Core
                 && srcSocket.Name != "Flow" && !srcSocket.IsPlaceholder)
             {
                 string rawMacroId = src.GetAttr("MacroId", "");
+                // `_graph.Macros` can be null on an unhealed programmatic graph
+                // (explicit `"Macros": null`) — and this arm is reachable for a
+                // flow-disconnected, data-only-wired Macro.Call whose flow handler
+                // (which would take the not-found skip) never runs.
                 if (!string.IsNullOrEmpty(rawMacroId)
+                    && _graph.Macros is not null
                     && _graph.Macros.Any(m => m.MacroId == rawMacroId))
                     return $"{{global._macro_{rawMacroId.Replace("-", "")}_{IdPrefix(src)}_ret_{SanitizeIdentifier(srcSocket.Name)}}}";
             }
@@ -1184,6 +1189,11 @@ namespace Phoenix.Controls.Architect.Core
                 if (src.Title == "Twitch.ChatMessage" || src.Title == "Chat.Message")
                 {
                     if (srcSocket.Name == "Platform") return "{user.platform}";
+                    // MessageId → {event.message_id} (BuildChatVars binds it from
+                    // ChatMessage.MessageId). Explicit mapping required — otherwise
+                    // it falls through to the generic {event.<name>} default below,
+                    // which would lowercase-collapse to {event.messageid}.
+                    if (srcSocket.Name == "MessageId") return "{event.message_id}";
                     if (srcSocket.Name == "Command") return "{user.command}";
                     if (srcSocket.Name == "Args")    return "{user.args}";
                     if (srcSocket.Name == "IsCommand") return "{event.iscommand}";
@@ -1237,6 +1247,21 @@ namespace Phoenix.Controls.Architect.Core
                 // so a handler binding to a broad subscription mask can branch.
                 if (src.Title == "OBS.Event" && srcSocket.Name == "EventData")
                     return "{event.data}";
+                // State.OnChange's Name / OldValue / NewValue outputs map to the
+                // state.* tokens bound by ScriptManager on a state-change run
+                // (state.name / state.new_value / state.old_value). Without this
+                // guard they fell through to the generic {event.<socket>} form
+                // ({event.oldvalue} etc.) which nothing binds, so a wired output
+                // pin leaked the raw token downstream.
+                if (src.Title == "State.OnChange")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Name":     return "{state.name}";
+                        case "OldValue": return "{state.old_value}";
+                        case "NewValue": return "{state.new_value}";
+                    }
+                }
 
                 return srcSocket.Name switch
                 {
@@ -1256,11 +1281,12 @@ namespace Phoenix.Controls.Architect.Core
                     _           => $"{{event.{srcSocket.Name.ToLower()}}}"
                 };
             }
-            // Giveaway.Id is a no-flow pure-data probe resolved inline as
-            // giveaway.default_id() (see ComputeInlineValue), NOT a result-base
-            // value output — handle it BEFORE the Giveaway.* value-output branch
-            // below so it doesn't resolve to a never-written "_gw_<id6>_id" var.
-            if (src.Title == "Giveaway.Id")
+            // Giveaway.Id / Giveaway.IsActive are no-flow pure-data probes
+            // resolved inline as giveaway.default_id() / giveaway.is_active(…)
+            // (see ComputeInlineValue), NOT result-base value outputs — handle
+            // them BEFORE the Giveaway.* value-output branch below so they don't
+            // resolve to a never-written "_gw_<id6>_…" var.
+            if (src.Title is "Giveaway.Id" or "Giveaway.IsActive")
                 return ResolvePureData(src);
 
             // Giveaway.* value outputs — Close (TotalTickets/EntrantCount),
@@ -1586,6 +1612,14 @@ namespace Phoenix.Controls.Architect.Core
             if (src.Title == "Var.Get")
                 // Blank/whitespace key would emit `{var.}` (never resolves); fall
                 // back to the "myVar" default the same way Var.Set does.
+                return $"{{var.{src.GetAttrOrFallback("VariableName", "myVar")}}}";
+
+            if (src.Title == "Var.Set")
+                // The Value OUTPUT relays the just-stored value. VarSetHandler
+                // emitted `var.<name> = <value>` on the flow before any consumer
+                // line runs, so at consume time {var.<name>} IS that value —
+                // resolve to the same token Var.Get emits. (Without this arm the
+                // socket fell to the dead-literal fallback at the bottom.)
                 return $"{{var.{src.GetAttrOrFallback("VariableName", "myVar")}}}";
 
             if (src.Title == "Public.Get")
@@ -1927,6 +1961,10 @@ namespace Phoenix.Controls.Architect.Core
                 // Flow.Select handled by dedicated branch in ResolveOutputFromNode (engine has no `select` runtime).
                 case "Queue.Length":     return "queue.length()";
                 case "Giveaway.Id":      return "giveaway.default_id()";
+                // Empty selector → giveaway.is_active() → the engine follows the
+                // app-wide default giveaway; a named selector resolves by
+                // id/key/title exactly like the flow giveaway nodes.
+                case "Giveaway.IsActive": return $"giveaway.is_active({ResolveInputValue(src, "Giveaway", "\"\"")})";
                 default:
                     return $"\"{src.Title}.result\"";
             }
@@ -2637,7 +2675,12 @@ namespace Phoenix.Controls.Architect.Core
         // user notices before running the script.
         private static void CheckMacroCallOrphans(Graph graph, List<ValidationWarning> warnings)
         {
-            var liveMacroIds = new HashSet<string>(graph.Macros.Select(m => m.MacroId));
+            // graph.Macros can be null on an unhealed programmatic graph — the
+            // sibling validator passes above guard it; an empty live set makes
+            // every bound Macro.Call correctly warn as orphaned.
+            var liveMacroIds = graph.Macros is null
+                ? new HashSet<string>()
+                : new HashSet<string>(graph.Macros.Select(m => m.MacroId));
             foreach (var node in graph.Nodes)
             {
                 if (node.Title != "Macro.Call") continue;

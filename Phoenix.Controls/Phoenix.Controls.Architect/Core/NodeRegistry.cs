@@ -446,6 +446,28 @@ namespace Phoenix.Controls.Architect.Core
             // palette/search; ProcessNodeMigration upgrades placed nodes on load.
             "Process.Spawn",
             "Process.Terminate",
+            // Unified outbound chat — the per-platform send nodes are superseded
+            // by Chat.Send (checkmarks + runtime Platforms override), mirroring
+            // the Chat.Message trigger unification. Kept REGISTERED (the exporter
+            // test corpus leans on Twitch.SendChat as its generic sink, and
+            // mid-migration graphs still load/export); MigrateNodes retitles
+            // placed nodes onto Chat.Send with only their own platform checked.
+            "Twitch.SendChat",
+            "YouTube.SendChat",
+            "Kick.SendChat",
+            // 2026-07-14 — platform nodes with NO usable Streamer.bot 1.0.x path,
+            // even after Majo's re-exported action pack. Hidden from palette/search/
+            // node-reference but kept REGISTERED (existing graphs load + export,
+            // coverage tests stay green). YouTube.GetUser: SB exposes no YouTube
+            // user-info sub-action. Kick.DeleteMessage: SB has no Kick delete-message
+            // sub-action (the pack's "Phoenix: Kick Delete Message" is an empty
+            // placeholder). Kick.SetRewardCost / Kick.SetRewardEnabled: Kick rewards
+            // are fixed at SB config time (no %rewardId% binding possible). Un-hide
+            // any of these the moment its action path lands. See PhoenixActionPack.md.
+            "YouTube.GetUser",
+            "Kick.DeleteMessage",
+            "Kick.SetRewardCost",
+            "Kick.SetRewardEnabled",
         };
 
         // Templates offered in the spawn palette / search / node-reference —

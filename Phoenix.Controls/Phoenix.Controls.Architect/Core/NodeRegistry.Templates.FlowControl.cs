@@ -61,17 +61,17 @@ namespace Phoenix.Controls.Architect.Core
                 new Dictionary<string, string> { { "Operator", defaultOp } });
 
             AddTemplate("Flow.FlipFlop",   "Flow Control", Color.SteelBlue,
-                "Alternates between A and B on every call. First call fires A, second fires B, third fires A again, and so on. The state is remembered across the whole Hub session for this node.",
+                "Alternates between A and B on every call. First call fires A, second fires B, third fires A again, and so on. The state is stored in the databank and survives Hub restarts; it re-arms when the graph is re-saved.",
                 new[] { ("Flow", ColExec) },
                 new[] { ("A", ColExec), ("B", ColExec) });
 
             AddTemplate("Flow.DoOnce",     "Flow Control", Color.SteelBlue,
-                "Fires Out the very first time it is reached, then silently swallows every later call. State is remembered across the whole Hub session for this node — restart Hub to reset.",
+                "Fires Out the very first time it is reached, then silently swallows every later call. State is stored in the databank and survives Hub restarts — re-saving the graph re-arms it.",
                 new[] { ("Flow", ColExec) },
                 new[] { ("Out", ColExec) });
 
             AddTemplate("Flow.DoN",        "Flow Control", Color.SteelBlue,
-                "Counts every call. Fires Loop Body for the first N calls, then fires Completed on the (N+1)-th and every later call. The counter is remembered across the whole Hub session for this node — restart Hub to reset.",
+                "Counts every call. Fires Loop Body for the first N calls, then fires Completed on the (N+1)-th and every later call. The counter is stored in the databank and survives Hub restarts — re-saving the graph re-arms it.",
                 new[] { ("Flow", ColExec), ("N", ColNumber) },
                 new[] { ("Loop Body", ColExec), ("Completed", ColExec) });
 
@@ -81,12 +81,12 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Loop Body", ColExec), ("Index", ColNumber), ("Completed", ColExec) });
 
             AddTemplate("Flow.WhileLoop",  "Flow Control", Color.DarkOrange,
-                "Repeats Loop Body while Condition is true; Completed fires once Condition becomes false. As a runaway-loop safety net the engine caps total loop iterations at 500 across the whole script (the aggregate budget shared by every loop in the run) — exhausting that budget logs a CriticalError and aborts. Re-evaluate Condition somewhere inside the body so the loop can end before it eats the budget.",
+                "Repeats Loop Body while Condition is true; Completed fires once Condition becomes false. As a runaway-loop safety net the engine caps total loop iterations at 500 across the whole script (the aggregate budget shared by every loop in the run) — exhausting that budget logs a CriticalError and halts the loop (execution continues after it). Re-evaluate Condition somewhere inside the body so the loop can end before it eats the budget.",
                 new[] { ("Flow", ColExec), ("Condition", ColBool) },
                 new[] { ("Loop Body", ColExec), ("Completed", ColExec) });
 
             AddTemplate("Flow.Cooldown",   "Flow Control", Color.OrangeRed,
-                "Rate-limits a flow with a global and/or per-user cooldown (both in seconds). Ready fires when enough time has passed since the last Ready; Blocked fires when the cooldown is still active. Set GlobalCooldown or UserCooldown to 0 to disable that check. Per-user is keyed by the User input — wire it from the chat user to give each viewer their own cooldown.",
+                "Rate-limits a flow with one cooldown timer keyed on the User input, armed for max(GlobalCooldown, UserCooldown) seconds. Ready fires when enough time has passed since the last Ready; Blocked fires while the cooldown is still active. Wire User from the chat user so each viewer gets their own timer — an empty/unwired User is always Blocked (there is no separate channel-wide timer).",
                 new[] { ("Flow", ColExec), ("User", ColString) },
                 new[] { ("Ready", ColExec), ("Blocked", ColExec) },
                 new Dictionary<string, string> { { "GlobalCooldown", "0" }, { "UserCooldown", "0" } });
@@ -97,7 +97,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Value", ColObject) });
 
             AddTemplate("Flow.IsValid",    "Flow Control", Color.RoyalBlue,
-                "Branches on whether Value is filled in. True fires when Value has content; False fires when it is empty, missing, or null. Accepts any type — useful for guarding optional inputs (e.g. \"only proceed if a Twitch.GetUser lookup succeeded\").",
+                "Branches on whether Value is filled in. True fires when Value has content; False fires when it is empty, missing, or null — and the strings 0, false, and null (any case) also count as not valid. Accepts any type — useful for guarding optional inputs (e.g. \"only proceed if a Twitch.GetUser lookup succeeded\").",
                 new[] { ("Flow", ColExec), ("Value", ColObject) },
                 new[] { ("True", ColExec), ("False", ColExec) });
 
@@ -124,7 +124,7 @@ namespace Phoenix.Controls.Architect.Core
                 displayName: "Reroute");
 
             AddTemplate("Logic.EnumMatch", "Logic", Color.DarkSlateBlue,
-                "Checks if Value matches any entry in a list of allowed values. Wire a list into List, or fall back to the comma-separated Entries attribute. Match fires if found and MatchedKey carries the matched entry; NoMatch fires otherwise. Comparison is exact string equality (case-sensitive).",
+                "Checks if Value matches any entry in a list of allowed values. Wire a list into List, or fall back to the comma-separated Entries attribute. Match fires if found and MatchedKey carries the matched entry; NoMatch fires otherwise. A wired List matches case-insensitively; the inline Entries attribute matches case-sensitively.",
                 new[] { ("Flow", ColExec), ("Value", ColObject), ("List", ColList) },
                 new[] { ("Match", ColExec), ("NoMatch", ColExec), ("MatchedKey", ColString) },
                 new Dictionary<string, string> { { "Entries", "Alpha, Beta, Gamma" } });

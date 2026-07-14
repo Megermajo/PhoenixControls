@@ -107,6 +107,26 @@ namespace Phoenix.Controls.Hub.Core
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Pulls the provider's human-readable failure text out of an AI error
+        /// body. Both Anthropic and OpenAI put it at <c>error.message</c>; used
+        /// so a guarded shape-miss raises the real reason ("rate limit exceeded")
+        /// instead of a bare shape complaint. The message flows through
+        /// <see cref="RedactSecretsForLog(Exception?)"/> at the catch site.
+        /// </summary>
+        private static string DescribeAiApiError(JsonDocument doc)
+        {
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("error", out var err)
+                && err.ValueKind == JsonValueKind.Object
+                && err.TryGetProperty("message", out var msg)
+                && msg.ValueKind == JsonValueKind.String)
+            {
+                return msg.GetString() ?? "unknown error";
+            }
+            return "no error payload";
+        }
+
         private void RegisterAICommands()
         {
             // ── AI ────────────────────────────────────────────────────────
@@ -154,9 +174,25 @@ namespace Phoenix.Controls.Hub.Core
                         using var resp = await SendWithManualRedirectAsync(req, _engine.ExecutionToken).ConfigureAwait(false);
                         string body = await ReadCappedAsync(resp, _engine.ExecutionToken).ConfigureAwait(false);
                         using var doc = JsonDocument.Parse(body);
-                        response = doc.RootElement
-                            .GetProperty("content")[0]
-                            .GetProperty("text").GetString() ?? "";
+                        // An error body (rate-limit, auth failure) has no
+                        // content[0].text — the unguarded GetProperty/[0] threw a
+                        // shapeless KeyNotFound/IndexOutOfRange into the outer
+                        // catch. Guard like the streaming/vision paths and raise
+                        // the provider's own error.message through the existing
+                        // result.ai_error contract instead.
+                        if (doc.RootElement.TryGetProperty("content", out var contentArr)
+                            && contentArr.ValueKind == JsonValueKind.Array
+                            && contentArr.GetArrayLength() > 0
+                            && contentArr[0].TryGetProperty("text", out var textEl)
+                            && textEl.ValueKind == JsonValueKind.String)
+                        {
+                            response = textEl.GetString() ?? "";
+                        }
+                        else
+                        {
+                            throw new InvalidOperationException(
+                                $"Anthropic response carried no content[0].text (HTTP {(int)resp.StatusCode}): {DescribeAiApiError(doc)}");
+                        }
                         // Surface Anthropic's stop_reason
                         // (end_turn / max_tokens / stop_sequence / tool_use)
                         // so scripts can branch on cap-hit vs clean stop.
@@ -191,10 +227,25 @@ namespace Phoenix.Controls.Hub.Core
                         using var resp = await SendWithManualRedirectAsync(req, _engine.ExecutionToken).ConfigureAwait(false);
                         string body = await ReadCappedAsync(resp, _engine.ExecutionToken).ConfigureAwait(false);
                         using var doc = JsonDocument.Parse(body);
-                        var firstChoice = doc.RootElement.GetProperty("choices")[0];
-                        response = firstChoice
-                            .GetProperty("message")
-                            .GetProperty("content").GetString() ?? "";
+                        // Same guard as the streaming path: an error body has no
+                        // choices[0]. A present choice whose message.content is
+                        // null (e.g. a tool-call finish) degrades to "" with
+                        // finish_reason still surfaced — only a truly choice-less
+                        // body is an error.
+                        if (!doc.RootElement.TryGetProperty("choices", out var choicesArr)
+                            || choicesArr.ValueKind != JsonValueKind.Array
+                            || choicesArr.GetArrayLength() == 0)
+                        {
+                            throw new InvalidOperationException(
+                                $"OpenAI response carried no choices[0] (HTTP {(int)resp.StatusCode}): {DescribeAiApiError(doc)}");
+                        }
+                        var firstChoice = choicesArr[0];
+                        response = firstChoice.TryGetProperty("message", out var msgEl)
+                            && msgEl.ValueKind == JsonValueKind.Object
+                            && msgEl.TryGetProperty("content", out var contEl)
+                            && contEl.ValueKind == JsonValueKind.String
+                            ? (contEl.GetString() ?? "")
+                            : "";
                         // Surface OpenAI's finish_reason as the
                         // same result.stop_reason var so authored scripts
                         // see one contract across providers (stop / length

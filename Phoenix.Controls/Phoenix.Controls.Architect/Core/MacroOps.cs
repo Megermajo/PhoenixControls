@@ -26,7 +26,11 @@ namespace Phoenix.Controls.Architect.Core
         {
             if (graph == null || string.IsNullOrEmpty(macroId)) return;
 
-            graph.Macros.RemoveAll(m => m.MacroId == macroId);
+            // Same explicit-null class as the exporter-side Macros guards —
+            // editor graphs are load-healed, but this helper also runs on
+            // programmatic graphs.
+            graph.Macros?.RemoveAll(m => m.MacroId == macroId);
+            if (graph.Nodes is null) return;
 
             foreach (var node in graph.Nodes)
             {

@@ -519,7 +519,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 .VisualistWindowRegistry.FindByPath(path);
             if (existing is not null)
             {
-                try { existing.Activate(); } catch { /* best-effort */ }
+                try { Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(existing); } catch { /* best-effort */ }
                 Phoenix.Controls.Visualist.WinUI.Services.RecentFiles.Touch(path);
                 return;
             }
@@ -668,7 +668,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         }
         if (_layerPreviewWindow is not null)
         {
-            try { _layerPreviewWindow.Activate(); return true; }
+            try { Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(_layerPreviewWindow); return true; }
             catch { _layerPreviewWindow = null; }
         }
         try
@@ -701,7 +701,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             var win = new Phoenix.Controls.Visualist.WinUI.Hosting.LayerPreviewWindow(title, layerId, w, h);
             win.Closed += (_, _) => _layerPreviewWindow = null;
             _layerPreviewWindow = win;
-            win.Activate();
+            Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(win);
             return true;
         }
         catch (Exception ex)
@@ -762,7 +762,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             string? targetId = ViewModel.SelectedWidget?.Id;
             var win = new Phoenix.Controls.Visualist.WinUI.Hosting.PresetGalleryWindow(ViewModel, targetId);
-            win.Activate();
+            Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(win);
         }
         catch (Exception ex)
         {
@@ -839,7 +839,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
             int idx = list.SelectedIndex;
             if (idx < 0 || idx >= windows.Count) return;
-            try { windows[idx].Activate(); }
+            try { Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(windows[idx]); }
             catch (Exception ex) { GlobalLogger.Error("Visualist.WinUI", "Window switch activate", ex); }
         }
         catch (Exception ex)

@@ -124,6 +124,16 @@
     <Content Include="Docs\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!--
+      The in-app changelog is linked from the repo-root Changelog.html (the
+      copy the release ritual maintains) so the Help-menu page and the
+      post-update "What's new" pop-up always match the build they ship with.
+      A hand-kept Docs/ mirror existed before and silently drifted (it was
+      stuck at v0.11.8); the build-time link removes that failure mode.
+    -->
+    <Content Include="..\..\Changelog.html" Link="Docs\changelog.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <!--

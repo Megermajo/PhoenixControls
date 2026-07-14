@@ -167,6 +167,48 @@ public sealed partial class GiveawayView : UserControl, IDisposable
         }
     }
 
+    private async void OnModBonusLostFocus(object sender, RoutedEventArgs e)
+    {
+        try { await ViewModel.CommitModBonusAsync(); }
+        catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save moderator bonus failed", ex); }
+    }
+
+    private async void OnModBonusKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            try { await ViewModel.CommitModBonusAsync(); }
+            catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save moderator bonus failed", ex); }
+        }
+        else if (e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            ViewModel.RevertModBonusDraft();
+        }
+    }
+
+    private async void OnTicketPriceLostFocus(object sender, RoutedEventArgs e)
+    {
+        try { await ViewModel.CommitTicketPriceAsync(); }
+        catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save ticket price failed", ex); }
+    }
+
+    private async void OnTicketPriceKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            try { await ViewModel.CommitTicketPriceAsync(); }
+            catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save ticket price failed", ex); }
+        }
+        else if (e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            ViewModel.RevertTicketPriceDraft();
+        }
+    }
+
     // ── Draw-winner overlay ─────────────────────────────────────────────
 
     private async void OnReDrawClick(object sender, RoutedEventArgs e)

@@ -214,7 +214,10 @@ namespace Phoenix.Controls.Visualist.Core
         /// </summary>
         public static bool IsPinAnimated(WidgetTimeline? timeline, Node node, Socket socket)
         {
-            if (timeline is null || node is null || socket is null) return false;
+            // Keyframes defaults non-null but an explicit `"keyframes": null` in a
+            // hand-edited .phxlayer survives deserialization — guard like the
+            // sibling BuildAnimatedPinSet does.
+            if (timeline?.Keyframes is null || node is null || socket is null) return false;
             if (!IsAnimatablePinType(socket.DataType)) return false;
             var components = GetPinComponents(socket);
             if (components.Count == 0) return false;

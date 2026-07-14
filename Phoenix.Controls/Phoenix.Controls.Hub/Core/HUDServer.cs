@@ -221,6 +221,11 @@ namespace Phoenix.Controls.Hub.Core
             // Stop() so a recreated HUDServer doesn't accumulate them on the
             // singleton registry.
             _layerRegistry.LayerRemoved += OnLayerRemoved;
+            // HUDServer owns the LayerReloaded → /hud broadcast forwarding
+            // itself (unhooked in Stop) — an externally-wired anonymous lambda
+            // on the process-lifetime registry pinned every disposed HUDServer
+            // for the rest of the session.
+            _layerRegistry.LayerReloaded += OnLayerReloadedRegistry;
             _overlayPath = ResolveOverlayPath();
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
@@ -295,6 +300,20 @@ namespace Phoenix.Controls.Hub.Core
             // removed mid-grace-window doesn't leak its entry until the next
             // periodic sweep.
             _recentlyReloaded.TryRemove(layerId, out _);
+        }
+
+        /// <summary>
+        /// Forwards LayerRegistry.LayerReloaded to every connected /hud/&lt;id&gt;
+        /// browser (OBS sources + Visualist's capture page reload via
+        /// compositor.js's LAYER_RELOADED handler). Wired in the ctor; unhooked
+        /// in <see cref="Stop"/> so a disposed HUDServer can't be re-entered by
+        /// a later registry fire.
+        /// </summary>
+        private void OnLayerReloadedRegistry(string layerId)
+        {
+            _ = AsyncErrorBoundary.SafeRunAsync(
+                () => PushLayerReloadedAsync(layerId),
+                "HUDServer", "PushLayerReloadedAsync");
         }
 
         /// <summary>
@@ -419,6 +438,10 @@ namespace Phoenix.Controls.Hub.Core
             try { _layerRegistry.OnConnectionsChanged -= FireClientCountChanged; } catch { }
             // Symmetric unhook for the LayerRemoved subscription.
             try { _layerRegistry.LayerRemoved -= OnLayerRemoved; } catch { }
+            // Symmetric unhook for the LayerReloaded forwarder (the third of the
+            // three registry subscriptions — omitting it leaked one disposed
+            // HUDServer reference per session and re-entered it on later reloads).
+            try { _layerRegistry.LayerReloaded -= OnLayerReloadedRegistry; } catch { }
 
             try { _cts.Cancel(); } catch { }
 

@@ -15,7 +15,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 /// (F = frame selection, C = comment frame) and canvas Ctrl-chords
 /// (Ctrl+Z/Y/F/G/N/W/Space) on its menu items — so typing those letters into a
 /// value pill, rename box, inspector field or databank cell fired the canvas
-/// action mid-word (user report: "hotkeys still affect the canvas when typed into a
+/// action mid-word (Majo: "hotkeys still affect the canvas when typed into a
 /// pill or other text-panel"). Worse, a MATCHED accelerator marks the KeyDown
 /// handled, which can cancel the character for text controls — so merely
 /// suppressing the action in the Invoked handler could still eat the

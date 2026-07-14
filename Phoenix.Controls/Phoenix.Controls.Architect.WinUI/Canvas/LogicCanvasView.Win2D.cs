@@ -254,6 +254,11 @@ public sealed partial class LogicCanvasView
     private void EnterImmediateEdit(NodeViewModel? vm)
     {
         if (!_useImmediateMode || vm is null) return;
+        // Breadcrumb the edit mount — it was active (Text.Builder mounted 9s
+        // earlier) in the 2026-07-14 freeze, and the mount runs a synchronous
+        // EnsureFullView + layout on the UI thread.
+        using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
+            .Begin("Architect.EnterImmediateEdit");
         // Same-node early-return ONLY when the edit view is genuinely mounted.
         // Several paths empty NodeLayer without exiting edit mode explicitly —
         // a pillar-tab / window re-attach re-runs ApplyImmediateModeState →
@@ -262,7 +267,7 @@ public sealed partial class LogicCanvasView
         // the view was never re-mounted, the renderer kept skipping _editNode,
         // and the (detached) editor still reported focus success, so the FIRST
         // pill edit after re-entering a window made the node vanish with no
-        // editor until a click-away reset _editNode (user report: "the first text
+        // editor until a click-away reset _editNode (Majo: "the first text
         // edit of a pill in a window always causes the node to disappear").
         // Those clear paths now exit edit mode themselves; this state check is
         // the by-construction backstop for any future clear path.
@@ -299,6 +304,9 @@ public sealed partial class LogicCanvasView
     private void ExitImmediateEdit()
     {
         if (_editNode is null) return;
+        // Breadcrumb the edit unmount (see EnterImmediateEdit).
+        using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
+            .Begin("Architect.ExitImmediateEdit");
         var vm = _editNode;
         _editNode = null;
         if (_nodeViews.TryGetValue(vm, out var view))
@@ -650,6 +658,14 @@ public sealed partial class LogicCanvasView
     private void OnImmediateDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
         if (!_useImmediateMode || _vm is null) return;
+
+        // Breadcrumb the GPU paint pass. Both recorded freezes (2026-07-01,
+        // 2026-07-14) latched 'RenderTick.WireRecompute — scope already CLOSED',
+        // i.e. the stall lived in code that runs AFTER the render tick in the
+        // same frame — and this Draw pass is the largest such surface. Same
+        // per-frame cost class as the render tick's own scope.
+        using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
+            .Begin("Architect.ImmediateDraw");
 
         try
         {

@@ -144,11 +144,21 @@ namespace Phoenix.Controls.Shared.Services
             // fallback so the runtime / exporter / clipboard producer all
             // see a well-formed identifier. Logged once per rewrite at
             // Communication tier (no modal for repeatable rejections).
+            // Explicit-JSON-null heal (same philosophy as GraphSerializer.
+            // MigrateNodes): field initializers don't survive an explicit null
+            // literal, and the Visualist editor derefs Widgets / Keyframes at
+            // dozens of sites (`timeline?.Keyframes.Any(...)` guards the
+            // timeline, not the list). Heal once at load so no later consumer
+            // needs to defend.
+            layer.Widgets ??= new();
             foreach (var widget in layer.Widgets)
             {
-                if (widget.Triggers is null) continue;
+                if (widget?.Triggers is null) continue;
                 foreach (var trigger in widget.Triggers)
                 {
+                    if (trigger is null) continue;
+                    if (trigger.Timeline is not null) trigger.Timeline.Keyframes ??= new();
+
                     string raw = trigger.Name ?? "";
                     if (!WidgetTrigger.IsValidName(raw))
                     {

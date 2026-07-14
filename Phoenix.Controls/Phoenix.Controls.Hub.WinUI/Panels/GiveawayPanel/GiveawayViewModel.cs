@@ -156,6 +156,10 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
             SeedCapPerUserDraft(g);
         if (_subBonusSeededGiveawayId != g?.Id || _subBonusDraft == _subBonusSeeded)
             SeedSubBonusDraft(g);
+        if (_modBonusSeededGiveawayId != g?.Id || _modBonusDraft == _modBonusSeeded)
+            SeedModBonusDraft(g);
+        if (_ticketPriceSeededGiveawayId != g?.Id || _ticketPriceDraft == _ticketPriceSeeded)
+            SeedTicketPriceDraft(g);
         RaiseDetailProperties();
         if (g is null)
         {
@@ -436,6 +440,144 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             GlobalLogger.Error("GiveawayViewModel", "SetSubscriberBonusFactorAsync failed", ex);
+        }
+    }
+
+    // ── Moderator-bonus factor editor (Settings card) ───────────────────
+    // Mirror of the subscriber-bonus editor above. The factor is the ticket
+    // WEIGHT multiplier applied to moderators at draw time: 1 = no bonus
+    // (default). Mod status comes from the IsSub/IsMod flags the entry
+    // script recorded (no live re-check, unlike subs); it multiplies with
+    // the subscriber factor for entrants who are both.
+    private string _modBonusDraft = string.Empty;
+    private long? _modBonusSeededGiveawayId;
+    private string _modBonusSeeded = string.Empty;
+
+    /// <summary>Raw text of the "Moderator bonus" factor field. 1 = no bonus.</summary>
+    public string ModBonusDraft
+    {
+        get => _modBonusDraft;
+        set => Set(ref _modBonusDraft, value ?? string.Empty);
+    }
+
+    /// <summary>Seeds the factor draft from the stored value and marks it pristine.</summary>
+    private void SeedModBonusDraft(GiveawayInfo? g)
+    {
+        _modBonusSeededGiveawayId = g?.Id;
+        _modBonusSeeded = g is null ? string.Empty : FormatFactor(g.ModBonusFactor);
+        ModBonusDraft = _modBonusSeeded;
+    }
+
+    // Same lazy/swappable saver seam as SubBonusSaver.
+    internal Func<long, double, Task> ModBonusSaver { get; set; } =
+        static (id, factor) => Phoenix.Controls.Hub.Core.GiveawayService.Instance.SetModeratorBonusFactorAsync(id, factor);
+
+    /// <summary>Drops an in-progress factor edit back to the stored value.</summary>
+    public void RevertModBonusDraft()
+        => SeedModBonusDraft(_selected);
+
+    /// <summary>
+    /// Persists the factor draft. Same rules as the subscriber factor:
+    /// non-numeric reverts, below-1 clamps to 1, accepts "1,5" / "1.5" / "2x".
+    /// </summary>
+    public async Task CommitModBonusAsync()
+    {
+        var g = _selected;
+        if (g is null) return;
+
+        string raw = _modBonusDraft.Trim().TrimEnd('x', 'X', '×').Replace(',', '.');
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double factor)
+            || double.IsNaN(factor) || double.IsInfinity(factor))
+        {
+            RevertModBonusDraft();
+            return;
+        }
+        factor = Math.Clamp(factor, 1.0, 100.0);
+
+        if (Math.Abs(factor - g.ModBonusFactor) < 0.0001)
+        {
+            SeedModBonusDraft(g); // normalize cosmetic variants without a write
+            return;
+        }
+
+        try
+        {
+            await ModBonusSaver(g.Id, factor).ConfigureAwait(false);
+            _modBonusSeededGiveawayId = g.Id;
+            _modBonusSeeded = _modBonusDraft;
+            await RefreshGiveawaysAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("GiveawayViewModel", "SetModeratorBonusFactorAsync failed", ex);
+        }
+    }
+
+    // ── Ticket-price editor (Settings card) ─────────────────────────────
+    // Same draft/seed/commit shape as the cap editor. The price is the
+    // channel-point cost PER TICKET charged by Giveaway.Ticket nodes that
+    // carry a currency table and follow this giveaway (Public = true);
+    // 0 = free entry (default).
+    private string _ticketPriceDraft = string.Empty;
+    private long? _ticketPriceSeededGiveawayId;
+    private string _ticketPriceSeeded = string.Empty;
+
+    /// <summary>Raw text of the "Ticket price" field. 0 = free.</summary>
+    public string TicketPriceDraft
+    {
+        get => _ticketPriceDraft;
+        set => Set(ref _ticketPriceDraft, value ?? string.Empty);
+    }
+
+    /// <summary>Seeds the price draft from the stored value and marks it pristine.</summary>
+    private void SeedTicketPriceDraft(GiveawayInfo? g)
+    {
+        _ticketPriceSeededGiveawayId = g?.Id;
+        _ticketPriceSeeded = g?.TicketPrice.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        TicketPriceDraft = _ticketPriceSeeded;
+    }
+
+    // Same lazy/swappable saver seam as CapPerUserSaver.
+    internal Func<long, int, Task> TicketPriceSaver { get; set; } =
+        static (id, price) => Phoenix.Controls.Hub.Core.GiveawayService.Instance.SetTicketPriceAsync(id, price);
+
+    /// <summary>Drops an in-progress price edit back to the stored value.</summary>
+    public void RevertTicketPriceDraft()
+        => SeedTicketPriceDraft(_selected);
+
+    /// <summary>
+    /// Persists the price draft. Numeric-range validation only: non-numeric
+    /// input reverts to the stored value, negatives clamp to 0.
+    /// </summary>
+    public async Task CommitTicketPriceAsync()
+    {
+        var g = _selected;
+        if (g is null) return;
+
+        if (!int.TryParse(_ticketPriceDraft.Trim(), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out int price))
+        {
+            RevertTicketPriceDraft();
+            return;
+        }
+        price = Math.Max(0, price);
+
+        if (price == g.TicketPrice)
+        {
+            SeedTicketPriceDraft(g); // normalize cosmetic variants without a write
+            return;
+        }
+
+        try
+        {
+            await TicketPriceSaver(g.Id, price).ConfigureAwait(false);
+            _ticketPriceSeededGiveawayId = g.Id;
+            _ticketPriceSeeded = _ticketPriceDraft;
+            await RefreshGiveawaysAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("GiveawayViewModel", "SetTicketPriceAsync failed", ex);
         }
     }
 

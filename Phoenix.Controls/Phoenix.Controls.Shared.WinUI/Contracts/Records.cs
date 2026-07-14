@@ -159,7 +159,9 @@ public record GiveawayInfo(
     string         Avg,           // pre-formatted "tickets / entrant"
     string         LastEntry,     // pre-formatted relative-ish string
     double         SubscriberBonusFactor,   // draw-time ticket weight for subs; 1 = no bonus
+    double         ModBonusFactor,          // draw-time ticket weight for mods; 1 = no bonus
     int            CapPerUser,    // 0 = unlimited
+    int            TicketPrice,   // channel points per ticket; 0 = free
     string         Winners);
 
 public record GiveawayEntrantInfo(

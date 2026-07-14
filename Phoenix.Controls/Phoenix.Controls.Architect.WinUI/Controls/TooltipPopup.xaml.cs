@@ -199,6 +199,12 @@ public sealed partial class TooltipPopup : UserControl
         if (anchor is null) return;
         if (anchor.XamlRoot is null) return;
 
+        // Breadcrumb the popup mount — it runs on the UI thread from the hover
+        // dwell timer, i.e. in the uninstrumented between-frames window the
+        // 2026-07 freeze captures pointed into.
+        using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
+            .Begin("Architect.TooltipShow");
+
         // The whole show path is wrapped so a popup-mount failure (XamlRoot
         // torn down mid-hover, a resource that didn't resolve in this
         // XamlRoot, etc.) surfaces in the rolling diagnostic log instead of

@@ -7,6 +7,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Phoenix.Controls.Hub.Core;
+using Phoenix.Controls.Hub.WinUI.Services;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
@@ -70,7 +71,7 @@ public sealed partial class DocumentationWindow : Window
             {
                 s_instance = new DocumentationWindow(HubFeatureRegistry.GetAll());
             }
-            s_instance.Activate();
+            WindowFront.Show(s_instance);
         }
         catch (Exception ex)
         {

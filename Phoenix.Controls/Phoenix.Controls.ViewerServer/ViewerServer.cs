@@ -729,9 +729,13 @@ public sealed class ViewerServer : IAsyncDisposable
                     };
                     byte[] frame = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, JsonOpts));
 
-                    foreach (var session in _sessions.Values.ToArray())
+                    // Enumerate the dictionary directly: ConcurrentDictionary's
+                    // enumerator is safe under concurrent add/remove, while both
+                    // .Values and .ToArray() take a full locked snapshot copy —
+                    // an avoidable allocation per broadcast on the event pump.
+                    foreach (var kv in _sessions)
                     {
-                        session.Send(frame);
+                        kv.Value.Send(frame);
                     }
                 }
             }

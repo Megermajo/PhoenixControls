@@ -315,7 +315,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
         // save on Close is also handled by Track().
         PopOutStateStore.Track(window, kind);
 
-        window.Activate();
+        WindowFront.Show(window);
     }
 
     // EventLog pop-outs live alongside the PopOutKind-tracked windows but
@@ -370,7 +370,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
                 }
             };
 
-            window.Activate();
+            WindowFront.Show(window);
         }
         catch (Exception ex)
         {
@@ -406,7 +406,7 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
                 }
             };
 
-            window.Activate();
+            WindowFront.Show(window);
         }
         catch (Exception ex)
         {

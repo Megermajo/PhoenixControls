@@ -102,14 +102,14 @@ internal static class NodeReferenceData
 
     private static readonly object[] UserFields =
     {
-        new { n = "name",        k = "string", d = "Login name — lowercased, no @ prefix." },
-        new { n = "displayName", k = "string", d = "Capitalised display name as shown in chat." },
-        new { n = "id",          k = "string", d = "Stable Twitch user ID. Survives renames." },
-        new { n = "isBot",       k = "bool",   d = "True for known bot accounts." },
-        new { n = "isMod",       k = "bool",   d = "True for channel moderators (and the broadcaster)." },
-        new { n = "isSub",       k = "bool",   d = "True if the user is currently subscribed." },
-        new { n = "isVip",       k = "bool",   d = "True if the user has VIP." },
-        new { n = "color",       k = "string", d = "Their chat name colour as #RRGGBB, or empty if Twitch default." },
+        new { n = "name",           k = "string", d = "Login name — lowercased, no @ prefix. The stable identity key." },
+        new { n = "platform",       k = "string", d = "Which chat the message came from: twitch, youtube or kick." },
+        new { n = "is_mod",         k = "bool",   d = "True for channel moderators (and the broadcaster)." },
+        new { n = "is_sub",         k = "bool",   d = "True if the user is currently subscribed / a member." },
+        new { n = "is_vip",         k = "bool",   d = "True if the user has VIP (Twitch only)." },
+        new { n = "is_broadcaster", k = "bool",   d = "True if the user is the channel owner." },
+        new { n = "sub_months",     k = "string", d = "Cumulative months subscribed (0 when not a sub)." },
+        new { n = "color_hex",      k = "string", d = "Their chat name colour as #RRGGBB, or empty for the platform default." },
     };
 
     // ── catalogue ─────────────────────────────────────────────────────────

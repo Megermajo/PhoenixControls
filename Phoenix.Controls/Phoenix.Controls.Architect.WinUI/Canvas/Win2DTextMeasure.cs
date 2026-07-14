@@ -72,7 +72,7 @@ internal static class Win2DCanvasFonts
 /// (node intrinsic width, pill rect, wrap decision) derived from the XAML
 /// number, so whenever DirectWrite needed slightly more room than the estimate
 /// plus its slack, the GPU renderer's CharacterEllipsis trimmed the last
-/// letters off the pill even though the row had reserved space (user report:
+/// letters off the pill even though the row had reserved space (Majo:
 /// "auto-scaling of text pills still cut off the last couple letters").
 /// <see cref="NodeGeometry.EstimateTextWidth"/> consults this oracle and takes
 /// the MAX of both engines, so every consumer stays in lockstep and the

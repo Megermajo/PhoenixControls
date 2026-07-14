@@ -41,13 +41,13 @@ internal static class NodeProse
     internal static readonly IReadOnlyList<CategoryMeta> Categories = new[]
     {
         new CategoryMeta("Events", "#7A2E2E",
-            "Stream-time triggers relayed from Streamer.bot, plus system, schedule, webhook, hotkey and clipboard sources. Every flow starts with one of these — they fire on the main thread, in the order received, and bind the event payload into the <code>{user.*}</code> / <code>{event.*}</code> tokens for everything downstream."),
+            "Stream-time triggers relayed from Streamer.bot, plus system, schedule, webhook, hotkey and clipboard sources. Every flow starts with one of these — dispatch is async and in arrival order, capped at a few concurrent runs (sequential by default), and each binds the event payload into the <code>{user.*}</code> / <code>{event.*}</code> tokens for everything downstream."),
         new CategoryMeta("Flow Control", "#3A4257",
             "Branches, switches, loops, gates and delays — the glue between an event and an action. Decide what matters, repeat work, fork the flow. None of these touch the network. The aggregate loop budget is 500 iterations per script run."),
         new CategoryMeta("Logic", "#46506B",
-            "Pure comparisons and boolean math — <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>and</code>, <code>or</code>, <code>not</code>, ternary select. Inlined into whatever reads them; no execution edge of their own."),
+            "Pure comparisons and boolean math — <code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>and</code>, <code>or</code>, <code>not</code>, ternary select. Inlined into whatever reads them; no execution edge of their own — the exception is <code>Logic.EnumMatch</code>, a flow node with its own <code>Match</code> / <code>NoMatch</code> edges."),
         new CategoryMeta("Async", "#1F5F6B",
-            "Time and waiting — delays, timeouts, parallel forks, and chat / visual awaits. Non-blocking: other flows keep running while one waits. Awaits resolve through the Hub bus and honour the script's timeout."),
+            "Time and waiting — delays, timeouts, parallel forks, and chat / visual awaits. Non-blocking: other flows keep running while one waits. Chat and visual awaits resolve through the Streamer.bot feed and the Hub bus; delay nodes <em>extend</em> the script deadline rather than being cut short by it."),
         new CategoryMeta("Math", "#4A5A2E",
             "Arithmetic, rounding, clamping, random and percentage-chance. Pure data: wire the result straight into another socket — no flow pin (except <code>Math.Chance</code>, which branches)."),
         new CategoryMeta("Text", "#2E5A4A",
@@ -57,9 +57,9 @@ internal static class NodeProse
         new CategoryMeta("Values", "#3A3F57",
             "Literal value nodes — drop a fixed string, int, float or bool onto the canvas and wire it in. Edit the value inline; wire the input to override it at run-time. The simplest inputs there are."),
         new CategoryMeta("Convert", "#4A3F57",
-            "Coerce a value from one type to another — to int, float, string or bool. Cheap, pure, no flow. Each carries a <code>Default</code> used when the input is empty or won't parse."),
+            "Coerce a value from one type to another — to int, float, string or bool. Cheap, pure, no flow. Each carries a <code>Default</code> that fills the input only when the socket is <em>unwired</em>; a wired value that won't parse yields <code>0</code> / <code>0.0</code> / <code>false</code>, not the Default."),
         new CategoryMeta("Variables", "#2E4A5A",
-            "Read and write named values by scope. <code>Var.*</code> is graph-scoped and persists in the databank but stays branch-local inside a parallel fork; <code>Public.*</code> is run-local scratch that crosses parallel branches but vanishes when the script ends."),
+            "Read and write named values by scope. <code>Var.*</code> is run-local (per-execution) — <em>not</em> persisted to the databank; it's gone when the run ends and stays branch-local inside a parallel fork. <code>Public.*</code> is run-local scratch too, but crosses parallel branches. For values that must survive the run, use <code>global.*</code> / <code>user.*</code> (the DB.* nodes) or <code>state.*</code>."),
         new CategoryMeta("State", "#3F4860",
             "A named state-machine store, persisted in the databank under the reserved <code>state.*</code> namespace. Survives restarts and is visible across every script — perfect for \"stream phase\", cooldown flags and last-winner. Changing a value fires <code>State.OnChange</code> listeners."),
         new CategoryMeta("Databank", "#6B5414",
@@ -67,19 +67,19 @@ internal static class NodeProse
         new CategoryMeta("Queue", "#2E4A5A",
             "A durable FIFO queue backed by a databank variable (pipe-separated under the hood). Push work, pop the oldest, measure depth, clear it. Cross-script visible — drives raid trains, shoutout queues and rate-limited dispatch."),
         new CategoryMeta("Twitch Data", "#7A5414",
-            "Read-only Twitch lookups — user info, stream state, roles, follow age, active viewers, last-active. Resolved through your Streamer.bot bot account; the result lands on output sockets and in the <code>{result.*}</code> tokens."),
+            "Read-only Twitch lookups — user info, stream state, roles, follow age, active viewers, last-active. Resolved through your Streamer.bot bot account; the result lands on the output sockets and in the <code>{user.*}</code> / <code>{stream.*}</code> / <code>{role.*}</code> / <code>{follow.*}</code> tokens."),
         new CategoryMeta("Platform Data", "#7A5414",
             "Read-only YouTube and Kick lookups — the cross-platform siblings of the Twitch Data band. Resolved through the <code>Phoenix:</code> platform actions in Streamer.bot; the result lands on the output sockets and in the <code>{user.*}</code> tokens, just like the Twitch lookups."),
         new CategoryMeta("Platforms", "#7A4710",
             "Outbound actions to the outside world — Twitch chat &amp; moderation, Discord, HTTP, the filesystem and audio. All Twitch traffic is routed through your Streamer.bot bot account (the <code>Phoenix:</code> action pack); Phoenix never talks to Twitch directly."),
         new CategoryMeta("OBS", "#1F4E3A",
-            "Drive OBS Studio — switch scenes, toggle sources and filters, record, stream, screenshot, save the replay buffer. Dispatched through the <code>Phoenix:</code> OBS actions in Streamer.bot, so OBS WebSocket is configured once in Streamer.bot, not here."),
+            "Drive OBS Studio — switch scenes, toggle sources and filters, record, stream, screenshot, save the replay buffer. Most OBS nodes relay through the <code>Phoenix:</code> OBS actions in Streamer.bot, but the scene-item transforms (<code>OBS.SetSourcePosition</code> / <code>OBS.SetSourceScale</code> / <code>OBS.SetSourceRotation</code>) and <code>OBS.Event</code> use Hub's own OBS WebSocket connection when it's enabled in config."),
         new CategoryMeta("Visuals", "#3A1F4E",
             "Drive the Visualist overlay compositor — fire triggers, push chat overlays, set text, visibility and widget properties. Fire-and-forget over the local HUD bus; non-blocking. Pair with <code>Async.WaitForVisual</code> when a flow needs to wait for an animation to finish."),
         new CategoryMeta("Bus", "#1F4E5A",
             "Send and broadcast messages on Hub's internal IPC bus — talk to Visualist, the Architect debug client, or your own WebSocket listeners. Fire-and-forget; pair with <code>Bus.OnMessage</code> to receive."),
         new CategoryMeta("Process", "#46466E",
-            "Long-running background loops — spawn a process body as a detached async unit, terminate it by id, and the entry / exit anchors that shape its parameters. Kick them off from <code>System.Startup</code>; they run until cancelled."),
+            "Long-running background loops — <code>Process.Start</code> launches a live instance whose own triggers (schedule, chat, …) keep running until <code>Process.Stop</code> ends it, not a fire-and-forget spawn. Start it more than once for several concurrent instances; pass start params read in the body as <code>{param.&lt;name&gt;}</code>. Kick them off from <code>System.Startup</code>."),
         new CategoryMeta("Macros", "#5A3A1F",
             "Reusable subgraphs called like a single node. A macro is inline-expanded into the graph at export time; build once, reuse everywhere. <code>Macro.Entry</code> / <code>Macro.Exit</code> declare its parameters and return values."),
         new CategoryMeta("Giveaway", "#5A2E3A",
@@ -108,13 +108,11 @@ internal static class NodeProse
         // ═══════════════════════════════ EVENTS ═══════════════════════════════
         ["Chat.Message"] = new(
             Summary: "Fires when any chatter — including the broadcaster and bots — sends a message on Twitch, YouTube Live or Kick, whichever platforms are ticked on the node.",
-            Description: "<p>The workhorse trigger, now for every platform at once. The three platform checkmarks on the node body choose which chats fire it (new nodes listen to all three), and <code>Platform</code> reports <code>twitch</code>, <code>youtube</code> or <code>kick</code> so one flow can branch per platform with <code>Logic.Switch</code>. <code>Message</code> is the raw line; <code>IsCommand</code> is true when it starts with <code>!</code> and matches this node's <code>Commands</code> filter, with the matched alias on <code>Command</code> and the trailing words on <code>Args</code>. The <code>User</code> output is a packed array — read individual fields with <code>Array.Get</code>/<code>Array.Unpack</code>, or use the broken-out <code>IsMod</code>/<code>IsSub</code>/<code>IsBroadcaster</code>/<code>IsVip</code> pins plus <code>SubMonths</code> and <code>ColorHex</code>.</p><p>Role pins bind best-effort off Twitch: YouTube maps owner / moderator / member onto <code>IsBroadcaster</code> / <code>IsMod</code> / <code>IsSub</code>, Kick maps moderator / subscriber onto <code>IsMod</code> / <code>IsSub</code>, and <code>IsVip</code> is Twitch-only. Old <code>Twitch.ChatMessage</code> and <code>YouTube.Message</code> nodes upgrade to this node automatically on load with only their original platform ticked, so existing graphs behave exactly as before. Bots and the broadcaster fire this too — set the Bot Username in Settings if you don't want feedback loops. Chat scripts are capped at a few concurrent runs, so a flood queues rather than piling up.</p>",
-            Example: "Set <code>Commands</code> to <b>ping</b> &rarr; branch on <code>Platform</code> and reply <code>\"@{user.name} pong\"</code> through the matching platform's SendChat."),
-        ["Twitch.ChatMessage"] = new(
-            Summary: "Superseded by Chat.Message — old graphs migrate onto the unified chat trigger automatically, keeping Twitch as their only ticked platform."),
+            Description: "<p>The workhorse trigger, now for every platform at once. The three platform checkmarks on the node body choose which chats fire it (new nodes listen to all three), and <code>Platform</code> reports <code>twitch</code>, <code>youtube</code> or <code>kick</code> so one flow can branch per platform with <code>Logic.Switch</code>. <code>Message</code> is the raw line; <code>IsCommand</code> is true whenever it starts with <code>!</code> (the <code>Commands</code> filter separately gates whether the flow fires). <code>Command</code> is the first word lowercased with <code>!</code> stripped (the matched alias inside a filtered flow), and <code>Args</code> is the text after it as one space-separated string — <code>Text.Split</code> it on space before <code>Array.Get</code>/<code>Flow.ForEach</code>. The <code>User</code> output is a packed array — read individual fields with <code>Array.Get</code>/<code>Array.Unpack</code>, or use the broken-out <code>IsMod</code>/<code>IsSub</code>/<code>IsBroadcaster</code>/<code>IsVip</code> pins plus <code>SubMonths</code> and <code>ColorHex</code>.</p><p>Role pins bind best-effort off Twitch: YouTube maps owner / moderator / member onto <code>IsBroadcaster</code> / <code>IsMod</code> / <code>IsSub</code>, Kick maps moderator / subscriber onto <code>IsMod</code> / <code>IsSub</code>, and <code>IsVip</code> is Twitch-only. Old <code>Twitch.ChatMessage</code> and <code>YouTube.Message</code> nodes upgrade to this node automatically on load with only their original platform ticked, so existing graphs behave exactly as before. Bots and the broadcaster fire this too — set the Bot Username in Settings if you don't want feedback loops. Chat scripts are capped at a few concurrent runs, so a flood queues rather than piling up. The <code>{user.name}</code> token is always lowercased — a stable identity key you can use for databank lookups.</p>",
+            Example: "Set <code>Commands</code> to <b>ping</b> &rarr; reply with <code>Chat.Send</code>, wiring the <code>Platform</code> output into its <code>Platforms</code> override so the answer goes back to whichever platform asked — no per-platform branch needed."),
         ["Twitch.Subscription"] = new(
-            Summary: "Fires on a brand-new subscription. Resubs and gift subs have their own dedicated nodes.",
-            Description: "<p><code>Tier</code> is the normalised tier — <code>1</code>, <code>2</code>, <code>3</code> or <code>prime</code>. For the recurring path use <code>Twitch.Resub</code>; for gifted subs use <code>Twitch.GiftSub</code> / <code>Twitch.GiftBomb</code>.</p>",
+            Summary: "Fires on a subscription — including resubs, which additively fire this node too. Gift subs have their own dedicated nodes.",
+            Description: "<p><code>Tier</code> is the normalised tier — <code>1</code>, <code>2</code>, <code>3</code> or <code>prime</code>. A renewal fires this node <em>and</em> <code>Twitch.Resub</code>, so use <code>Twitch.Resub</code> when you need renewal-specific fields (streak months, resub message); for gifted subs use <code>Twitch.GiftSub</code> / <code>Twitch.GiftBomb</code>.</p>",
             Example: "New tier-3 sub &rarr; <code>Twitch.Announcement</code> a thank-you and a Visualist burst."),
         ["Twitch.Resub"] = new(
             Summary: "Fires when a viewer renews an existing subscription, with their streak and resub message.",
@@ -138,14 +136,12 @@ internal static class NodeProse
             Example: "Cheer &ge; 500 &rarr; a Visualist particle burst sized to <code>Bits</code>."),
         ["Twitch.Follow"] = new(
             Summary: "Fires on a new follow. Re-follows do not re-fire.",
-            Description: "<p>Twitch debounces follows hard — this fires once per identity, ever. For \"welcome back\" loops, key off <code>Twitch.ChatMessage</code> with a databank lookup instead.</p>",
+            Description: "<p>Twitch debounces follows hard — this fires once per identity, ever. For \"welcome back\" loops, key off <code>Chat.Message</code> with a databank lookup instead.</p>",
             Example: "Any follow &rarr; a tiny Visualist chime overlay (no spam risk)."),
         ["Twitch.PointRedeem"] = new(
             Summary: "Fires when a viewer redeems a channel-points reward.",
             Description: "<p><code>Reward</code> is the reward title from your Twitch dashboard; <code>Input</code> is the viewer's text (empty when the reward asks for none). Branch on the title with <code>Logic.Switch</code> — Phoenix matches on the title, not the reward ID, because IDs regenerate on rename.</p>",
             Example: "<b>\"Hydrate!\"</b> redeem &rarr; a Visualist trigger and a chat nudge to drink water."),
-        ["YouTube.Message"] = new(
-            Summary: "Superseded by Chat.Message — old graphs migrate onto the unified chat trigger automatically, keeping YouTube as their only ticked platform."),
 
         // ── YouTube Live events ────────────────────────────────────────────
         ["YouTube.SuperChat"] = new(
@@ -353,18 +349,18 @@ internal static class NodeProse
         ["System.Startup"] = new(
             Summary: "Fires once when Hub finishes starting and the script registry has loaded.",
             Description: "<p>The place to spin up long-running <b>Processes</b> — chat collectors, rotating-tip loops, hourly digests — and to reset per-session scratch state. No event payload; the global clock tokens are available.</p>",
-            Example: "On startup &rarr; <code>Process.Spawn</code> the rotating-tips loop and clear the session counters."),
+            Example: "On startup &rarr; <code>Process.Start</code> the rotating-tips loop and clear the session counters."),
         ["Bus.OnMessage"] = new(
             Summary: "Fires when an internal bus message matches the Type / Source / Target filters.",
-            Description: "<p>The receive side of <code>Bus.Send</code> / <code>Bus.Broadcast</code>. <code>Type</code> and <code>Payload</code> carry the matched message; <code>*</code> in a filter matches anything. All matching handlers fire (fan-out), unlike <code>Event.Executor</code>.</p>",
+            Description: "<p>The receive side of <code>Bus.Send</code> / <code>Bus.Broadcast</code>. <code>Type</code> and <code>Payload</code> carry the matched message; <code>*</code> in a filter matches anything. All matching handlers fire (fan-out).</p>",
             Example: "Listen for a <code>VISUAL_COMPLETE</code> message and continue a multi-step alert."),
         ["Event.Trigger"] = new(
-            Summary: "Fires a named internal event, then continues immediately — the in-graph \"call\" side.",
-            Description: "<p>Raises the event named by <code>EventName</code> (or the wired <code>EventName</code> input) and carries on out of <code>Flow</code> without waiting. Drag <code>+ variable</code> pins to pass arguments and <code>+ return</code> pins to read values back. Pair with <code>Event.Executor</code>, which runs the handler.</p>",
+            Summary: "Fires a named internal event and waits for it — the in-graph \"call\" side.",
+            Description: "<p>Raises the event named by <code>EventName</code> (or the wired <code>EventName</code> input) and runs the matching <code>Event.Executor</code>(s) to completion, binding their return values before flow continues out of <code>Flow</code> — that's why the <code>+ return</code> pins work. Drag <code>+ variable</code> pins to pass arguments and <code>+ return</code> pins to read values back.</p>",
             Example: "Centralise \"give points\" once in an Executor, then <code>Event.Trigger</code> it from raid, cheer and sub flows."),
         ["Event.Executor"] = new(
             Summary: "Runs the handler body for a named internal event when an Event.Trigger fires it.",
-            Description: "<p>The handler side of the event pair. Drag <code>+ variable</code> pins to receive arguments and <code>+ return</code> pins to hand values back. First-match-wins: one enabled Executor per name runs, unlike <code>Bus.OnMessage</code>'s fan-out.</p>",
+            Description: "<p>The handler side of the event pair. Drag <code>+ variable</code> pins to receive arguments and <code>+ return</code> pins to hand values back. Fan-out: <em>every</em> enabled Executor with that name runs when the event fires, and a later Executor's returns overwrite an earlier one's.</p>",
             Example: "One <code>give_points</code> Executor that every points flow triggers — single source of truth."),
         ["Event.Return"] = new(
             Summary: "Ends an Event.Executor branch and hands return values back to the trigger.",
@@ -384,8 +380,8 @@ internal static class NodeProse
             Example: "Fire at <code>2026-01-01T20:00:00</code> &rarr; kick off the New Year overlay."),
         ["Schedule.Recurring"] = new(
             Summary: "Fires repeatedly on a fixed interval, with a running count.",
-            Description: "<p><code>IntervalSeconds</code> sets the cadence; <code>Count</code> starts at 1 and increments each fire. <code>MaxCount</code> caps the total (<code>0</code> = unlimited) and auto-stops the timer when reached.</p>",
-            Example: "Every 600s &rarr; rotate to the next tip in a list, stopping after the list is exhausted."),
+            Description: "<p><code>IntervalSeconds</code> sets the cadence; <code>Count</code> starts at 1 and increments each fire. The <code>MaxCount</code> field is <em>not yet wired</em> — the timer currently runs unbounded, so stop it yourself (gate the body on <code>Count</code> and a <code>Process.Stop</code>, or a state flag) when you need a limit.</p>",
+            Example: "Every 600s &rarr; rotate to the next tip in a list, wrapping the index with <code>Math.Modulo</code>."),
         ["State.OnChange"] = new(
             Summary: "Fires when a named state variable changes value.",
             Description: "<p>Watches the <code>state.*</code> namespace (written by <code>State.Set</code>). <code>OldValue</code> and <code>NewValue</code> bracket the change; it only fires when the value actually differs. All matching listeners fire.</p>",
@@ -410,7 +406,7 @@ internal static class NodeProse
         // ═══════════════════════════ FLOW CONTROL ═══════════════════════════
         ["Logic.Branch"] = new(
             Summary: "Two-way branch on a boolean. Exactly one of True / False fires.",
-            Description: "<p>The simplest fork. An unwired <code>Condition</code> is treated as <code>false</code>. For comparing two values inline, reach for <code>Logic.If</code> instead.</p>",
+            Description: "<p>The simplest fork. An unwired <code>Condition</code> is treated as <code>true</code>, so it fires the <code>True</code> branch by default. For comparing two values inline, reach for <code>Logic.If</code> instead.</p>",
             Example: "If the chatter <code>IsMod</code> &rarr; run the mod-only path; else nothing."),
         ["Logic.If"] = new(
             Summary: "Compares A against B with a chosen operator and branches True / False.",
@@ -422,11 +418,11 @@ internal static class NodeProse
             Example: "Switch on the command: <b>ping</b>, <b>quote</b>, <b>so</b>, <i>default</i>."),
         ["Logic.Sequence"] = new(
             Summary: "Fires every wired output in order, 1 → 8. Each branch runs to completion before the next.",
-            Description: "<p>\"Then, then, then.\" Unwired arms are skipped. Each branch's downstream graph runs to its next async point before the next sequence step fires.</p>",
+            Description: "<p>\"Then, then, then.\" Unwired arms are skipped. Each branch's downstream graph runs to <em>full completion</em> — including any delays or awaits — before the next sequence step fires, so a <code>Flow.Delay</code> in arm 1 holds up arm 2.</p>",
             Example: "Raid alert: 1) trigger the overlay, 2) post the shoutout, 3) log to the databank."),
         ["Logic.EnumMatch"] = new(
             Summary: "Checks whether Value matches any entry in an allowed set; branches Match / NoMatch.",
-            Description: "<p>Wire a list into <code>List</code>, or fall back to the comma-separated <code>Entries</code> attribute. On a hit, <code>Match</code> fires with the matched entry on <code>MatchedKey</code>; otherwise <code>NoMatch</code>. Exact, case-sensitive comparison.</p>",
+            Description: "<p>Wire a list into <code>List</code>, or fall back to the comma-separated <code>Entries</code> attribute. On a hit, <code>Match</code> fires with the matched entry on <code>MatchedKey</code>; otherwise <code>NoMatch</code>. A wired <code>List</code> matches case-<em>insensitively</em>; the inline <code>Entries</code> attribute is case-<em>sensitive</em>.</p>",
             Example: "Only run if the redeemed reward is one of your alert rewards."),
         ["Flow.ForLoop"] = new(
             Summary: "Counted loop from First to Last inclusive, with the counter on Index.",
@@ -434,7 +430,7 @@ internal static class NodeProse
             Example: "Count down 5 → 1, sending a chat line each iteration."),
         ["Flow.WhileLoop"] = new(
             Summary: "Repeats Loop Body while Condition is true; Completed fires when it goes false.",
-            Description: "<p>Re-evaluate the condition somewhere inside the body so the loop can end. As a runaway guard the engine caps total loop iterations at 500 per script run — blowing the budget logs a <code>CriticalError</code> and aborts the script.</p>",
+            Description: "<p>Re-evaluate the condition somewhere inside the body so the loop can end. As a runaway guard the engine caps total loop iterations at 500 per script run — blowing the budget logs a <code>CriticalError</code> and halts the <em>loop</em> only; the rest of the script continues after it.</p>",
             Example: "Pop the queue until it's empty, handling one entry per pass."),
         ["Flow.ForEach"] = new(
             Summary: "Walks every item in a list, firing Loop Body once per item.",
@@ -445,20 +441,20 @@ internal static class NodeProse
             Description: "<p>Fractional seconds allowed (e.g. <code>0.5</code>). Non-blocking — other flows keep running — and it honours the script's cancellation, so a shutdown or stop interrupts the wait.</p>",
             Example: "Greet a new sub &rarr; wait 4s &rarr; ask them to introduce themselves."),
         ["Flow.Cooldown"] = new(
-            Summary: "Rate-limits a flow with a global and/or per-user cooldown; branches Ready / Blocked.",
-            Description: "<p><code>Ready</code> fires when enough time has passed since the last Ready; <code>Blocked</code> fires while the cooldown holds. Set either cooldown to <code>0</code> to disable it. Wire <code>User</code> from the chatter to give each viewer their own timer.</p>",
-            Example: "<b>!hug</b> with a 30s per-user cooldown so nobody can spam it."),
+            Summary: "Rate-limits a flow with a single per-User cooldown timer; branches Ready / Blocked.",
+            Description: "<p>There is one timer, keyed on the <code>User</code> value and armed for <code>max(GlobalCooldown, UserCooldown)</code> seconds — there is no separate channel-wide timer. <code>Ready</code> fires when that long has passed since this user's last Ready; <code>Blocked</code> fires while it holds. <code>User</code> must resolve to a non-empty value (wire it from the chatter) or the node is permanently <code>Blocked</code>.</p>",
+            Example: "<b>!hug</b> with a 30s cooldown per chatter so nobody can spam it."),
         ["Flow.FlipFlop"] = new(
-            Summary: "Alternates between A and B on every call; the toggle persists for the Hub session.",
-            Description: "<p>First call fires <code>A</code>, second <code>B</code>, third <code>A</code> again. State is remembered across script runs until Hub restarts.</p>",
+            Summary: "Alternates between A and B on every call; the toggle is saved in the databank and survives restarts.",
+            Description: "<p>First call fires <code>A</code>, second <code>B</code>, third <code>A</code> again. The toggle is persisted in the databank, so it survives Hub restarts — it only resets when the script is re-saved (re-exported) from Architect.</p>",
             Example: "Toggle a webcam source on / off with one repeated hotkey."),
         ["Flow.DoOnce"] = new(
             Summary: "Fires Out the first time it's reached, then swallows every later call.",
-            Description: "<p>A one-shot guard. State persists for the Hub session — restart Hub to re-arm it.</p>",
-            Example: "Post a \"stream starting\" banner only on the first <code>System.Startup</code> of the session."),
+            Description: "<p>A one-shot guard. Its fired state is persisted in the databank — it survives Hub restarts and re-arms only when the script is re-saved (re-exported) from Architect.</p>",
+            Example: "Post a \"stream starting\" banner only the first time ever — it stays fired across restarts until you re-save the graph."),
         ["Flow.DoN"] = new(
             Summary: "Fires Loop Body for the first N calls, then Completed on every call after.",
-            Description: "<p>A counted gate (not a loop) — it counts across separate invocations. The counter persists for the Hub session.</p>",
+            Description: "<p>A counted gate (not a loop) — it counts across separate invocations. The counter is persisted in the databank, so it survives Hub restarts and only resets when the script is re-saved (re-exported) from Architect.</p>",
             Example: "Allow the first 3 redeems of a limited reward, then point everyone to next time."),
         ["Flow.Select"] = new(
             Summary: "Returns one of A/B/C/D based on Index (0=A … 3=D). Pure data, no flow.",
@@ -513,8 +509,8 @@ internal static class NodeProse
             Description: "<p>Each branch gets its own isolated copy of the script's local variables, so <code>Var.*</code> writes stay branch-local; use <code>Public.Set</code> when a value must cross branches. Pair with <code>Async.Join</code> to wait for all branches.</p>",
             Example: "Fire the overlay, post chat, and write the databank row all at once."),
         ["Async.Join"] = new(
-            Summary: "Barrier — waits for all active parallel branches to finish, then continues.",
-            Description: "<p>Place it after an <code>Async.Parallel</code> block to merge back to a single sequential flow once every branch has completed.</p>",
+            Summary: "A cosmetic marker for where parallel branches rejoin — the wait happens with or without it.",
+            Description: "<p>An <code>Async.Parallel</code> block <em>always</em> waits for all its branches to finish at its end; <code>Async.Join</code> does not create that barrier, it just marks where the branches visually rejoin into a single sequential flow. Placing one (or not) doesn't change when execution continues.</p>",
             Example: "Run three lookups in parallel, then post one combined summary."),
         ["Async.Timeout"] = new(
             Summary: "Branches on whether the current handler is still within a time budget.",
@@ -554,7 +550,7 @@ internal static class NodeProse
         ["Math.Ceil"] = new(Summary: "Rounds Val up to the nearest whole number. Pure data.", Example: "Round a progress percentage up."),
         ["Math.Random"] = new(
             Summary: "Returns a random integer in [Min, Max) — Min possible, Max never.",
-            Description: "<p>Half-open like a dice roll: <code>Min=1, Max=7</code> gives 1–6. Each read re-rolls, so cache it with <code>Var.Set</code> if you reuse the value.</p>",
+            Description: "<p>Half-open like a dice roll: <code>Min=1, Max=7</code> gives 1–6. One node's output is evaluated once and shared by every consumer wired to it — it only re-rolls per node instance and per loop iteration, so drop a second <code>Math.Random</code> (or loop) when you want an independent roll.</p>",
             Example: "Roll a d20 for a chat command."),
         ["Math.Chance"] = new(
             Summary: "Rolls a percentage and branches Success / Fail.",
@@ -564,7 +560,7 @@ internal static class NodeProse
         // ═══════════════════════════════ TEXT ═════════════════════════════════
         ["Text.Builder"] = new(
             Summary: "Fills {Arg1}/{Arg2}/{Arg3} placeholders in a template string. Pure data.",
-            Description: "<p>Edit <code>Template</code> inline, or wire it to override at run-time (a wired value wins). Named-slot substitution — wire the slots you use.</p>",
+            Description: "<p>Edit <code>Template</code> inline on the node body — a wired <code>Template</code> input is <em>ignored</em> by the exporter. If you need a wired (run-time) template, use <code>Text.Format</code> instead. Named-slot substitution — wire the slots you use.</p>",
             Example: "Build <code>\"{Arg1} just followed!\"</code> from the follower name."),
         ["Text.Format"] = new(
             Summary: "Fills {A}/{B}/{C}/{D} placeholders in a template string. Pure data.",
@@ -585,7 +581,7 @@ internal static class NodeProse
         // ════════════════════════════ COLLECTIONS ═════════════════════════════
         ["Array.Make"] = new(Summary: "Builds a list from up to eight wired values. Pure data.", Description: "<p>Unwired slots fall back to their inline default (empty). Pair with <code>Array.Get</code> / <code>Array.Unpack</code> on the other side.</p>", Example: "Assemble three option strings into a pickable list."),
         ["Array.Literal"] = new(Summary: "Outputs a hardcoded list from a comma-separated inline value. Pure data.", Description: "<p>Edit <code>Items</code> inline (e.g. <code>\"alpha, beta, gamma\"</code>). Use <code>Array.Make</code> when the values come from wires.</p>", Example: "A fixed list of tip messages to rotate through."),
-        ["Array.Get"] = new(Summary: "Returns the element at a zero-based Index. Pure data.", Description: "<p>Out-of-range indices return empty.</p>", Example: "Read item 0 — the command word — from a parsed line."),
+        ["Array.Get"] = new(Summary: "Returns the element at a zero-based Index. Pure data.", Description: "<p>Out-of-range indices <em>clamp</em> to the nearest valid element (first or last); only an empty list yields empty.</p>", Example: "Read item 0 — the command word — from a parsed line."),
         ["Array.Length"] = new(Summary: "Returns the number of elements in a list. Pure data.", Example: "Count the entrants in a giveaway list."),
         ["Array.Contains"] = new(Summary: "True when a list contains an element equal to Value. Case-sensitive, pure data.", Example: "Check whether a user is in your VIP list."),
         ["Array.Unpack"] = new(
@@ -595,7 +591,7 @@ internal static class NodeProse
         ["Array.Push"] = new(Summary: "Appends Value to a list and outputs the new list.", Description: "<p>A flow node — <code>Done</code> fires after the append and the <code>List</code> output carries the extended list for chaining.</p>", Example: "Add the latest winner to a running winners list."),
         ["Array.Filter"] = new(Summary: "Keeps only the elements that contain a substring. Case-sensitive, pure data.", Example: "Filter a chatter list down to those whose name contains \"bot\"."),
         ["Array.Sort"] = new(Summary: "Returns the list sorted ascending. Pure data.", Description: "<p>Alphabetical by default; turn on <code>Numeric</code> to sort as numbers (non-numeric items go last).</p>", Example: "Sort a leaderboard of scores."),
-        ["Array.Shuffle"] = new(Summary: "Returns the list in a fresh random order. Pure data.", Description: "<p>Re-shuffles each read — cache with <code>Var.Set</code> if you reuse it. Great for raffles.</p>", Example: "Shuffle entrants before drawing."),
+        ["Array.Shuffle"] = new(Summary: "Returns the list in a fresh random order. Pure data.", Description: "<p>One node's output is evaluated once and shared by every consumer wired to it — it only re-shuffles per node instance and per loop iteration. Great for raffles.</p>", Example: "Shuffle entrants before drawing."),
         ["Array.Reverse"] = new(Summary: "Returns the list with element order flipped. Pure data.", Example: "Show most-recent-first."),
         ["Array.Unique"] = new(Summary: "Removes duplicate values, keeping the first of each. Case-sensitive, pure data.", Example: "Dedupe a chatter list before counting."),
 
@@ -606,22 +602,22 @@ internal static class NodeProse
         ["Value.Bool"] = new(Summary: "Outputs a fixed boolean. Edit inline; wire Input to override. Pure data.", Example: "A feature flag you flip in one place."),
 
         // ═════════════════════════════ CONVERT ════════════════════════════════
-        ["Convert.ToInt"] = new(Summary: "Parses a value as a whole number, falling back to Default on failure. Pure data.", Example: "Turn a parsed command argument into a number."),
-        ["Convert.ToFloat"] = new(Summary: "Parses a value as a decimal number, falling back to Default. Pure data.", Example: "Read a fractional amount from text."),
+        ["Convert.ToInt"] = new(Summary: "Parses a value as a whole number. Pure data.", Description: "<p>The <code>Default</code> fills the input only when the socket is <em>unwired</em>; a wired value that won't parse yields <code>0</code>, not the Default.</p>", Example: "Turn a parsed command argument into a number."),
+        ["Convert.ToFloat"] = new(Summary: "Parses a value as a decimal number. Pure data.", Description: "<p>The <code>Default</code> fills the input only when the socket is <em>unwired</em>; a wired value that won't parse yields <code>0.0</code>, not the Default.</p>", Example: "Read a fractional amount from text."),
         ["Convert.ToString"] = new(
             Summary: "Converts any value to its string form. Pure data.",
             Description: "<p>Accepts int, float, bool, list or string. To keep a float's decimals, wire it from a float source — routing through an int-typed wire rounds it.</p>",
             Example: "Stringify a computed total for a chat message."),
-        ["Convert.ToBool"] = new(Summary: "Converts a string to a boolean — true/1/yes are true, else false. Pure data.", Example: "Read a yes/no setting into a branch."),
+        ["Convert.ToBool"] = new(Summary: "Converts a string to a boolean. Pure data.", Description: "<p>The truthy set is <code>true</code> / <code>1</code> / <code>yes</code> / <code>on</code> / <code>y</code> / <code>t</code> (case-insensitive and trimmed); anything else is <code>false</code>. The <code>Default</code> fills the input only when the socket is <em>unwired</em> — a wired value that isn't truthy yields <code>false</code>, not the Default.</p>", Example: "Read a yes/no setting into a branch."),
 
         // ════════════════════════════ VARIABLES ═══════════════════════════════
         ["Var.Get"] = new(
-            Summary: "Reads a graph-scoped variable by name. Pure data.",
-            Description: "<p>The variable name lives on the inline editor, not a socket. <code>Var.*</code> persists in the databank and is graph-local; inside an <code>Async.Parallel</code> fork it stays branch-local. Use <code>Public.Get</code> when a value must cross branches.</p>",
+            Summary: "Reads a run-local variable by name. Pure data.",
+            Description: "<p>The variable name lives on the inline editor, not a socket. <code>Var.*</code> is run-local (per-execution) — it's <em>not</em> persisted to the databank and is gone when the run ends; inside an <code>Async.Parallel</code> fork it stays branch-local. Use <code>Public.Get</code> to cross branches, and <code>global.*</code> / <code>user.*</code> (the DB.* nodes) or <code>state.*</code> for anything that must survive the run.</p>",
             Example: "Read this graph's running combo counter."),
         ["Var.Set"] = new(
-            Summary: "Writes a graph-scoped variable by name.",
-            Description: "<p>Persists under <code>var.&lt;name&gt;</code>. Writes inside a parallel branch do <b>not</b> merge back to the parent — that's <code>Public.Set</code>'s job.</p>",
+            Summary: "Writes a run-local variable by name.",
+            Description: "<p>Stores under <code>var.&lt;name&gt;</code> for the rest of this run only — <code>Var.*</code> is run-local, not saved to the databank, and gone when the run ends (use <code>global.*</code> / <code>user.*</code> or <code>state.*</code> to persist). The freshly-set value is relayed on the <code>Value</code> output socket (readable downstream as <code>{var.&lt;name&gt;}</code>). Writes inside a parallel branch do <b>not</b> merge back to the parent — that's <code>Public.Set</code>'s job.</p>",
             Example: "Cache a <code>Math.Random</code> roll so several nodes see the same value."),
         ["Public.Get"] = new(
             Summary: "Reads a run-wide variable by key. Pure data.",
@@ -637,7 +633,7 @@ internal static class NodeProse
             Summary: "Writes a value into the persistent state-machine store under a name.",
             Description: "<p>Stored in the databank's reserved <code>state.*</code> namespace — survives restarts and is visible to every script. Always writes; only fires <code>State.OnChange</code> when the value actually changed.</p>",
             Example: "Set <code>stream_phase</code> to <b>live</b> at the top of the stream."),
-        ["State.Get"] = new(Summary: "Reads a state value by name. Pure data.", Description: "<p>Returns empty when unset. Also lands in <code>{result.state_value}</code> for inline use.</p>", Example: "Read the current <code>stream_phase</code> to decide an overlay."),
+        ["State.Get"] = new(Summary: "Reads a state value by name. Pure data.", Description: "<p>Inlines the raw <code>{state.&lt;name&gt;}</code> token — an unset state passes the literal token through rather than resolving to empty, so use <code>State.Exists</code> to detect a never-set key.</p>", Example: "Read the current <code>stream_phase</code> to decide an overlay."),
         ["State.Switch"] = new(
             Summary: "Branches on the current value of a state variable — Case A / Case B / Default.",
             Description: "<p>Reads the named state and routes to the matching case (set the case strings inline), or <code>Default</code> if none match. A state-machine dispatcher in one node.</p>",
@@ -657,7 +653,7 @@ internal static class NodeProse
             Example: "Store the last winner's name for a <b>!lastwinner</b> command."),
         ["DB.Increment"] = new(
             Summary: "Atomically adds Amount to a numeric cell and returns the new value.",
-            Description: "<p>Race-safe — concurrent scripts incrementing the same cell never lose a write. <code>Amount</code> defaults to 1. The canonical points / counter primitive.</p>",
+            Description: "<p>With a <code>RowId</code> wired it targets that table cell and is race-safe — concurrent scripts incrementing the same cell never lose a write. With no <code>RowId</code> it increments a databank variable instead, which is <em>not</em> atomic and ignores <code>TableName</code>. Either way a blank cell counts from <code>0</code>, and a non-numeric cell refuses the write. <code>Amount</code> defaults to 1.</p>",
             Example: "On cheer &rarr; add <code>{user.bits}</code> to the chatter's points row and announce the total."),
         ["DB.CheckExists"] = new(Summary: "Branches True / False on whether a databank key exists.", Example: "First-seen detection — greet a chatter only if they have no row yet."),
         ["DB.DeleteVar"] = new(Summary: "Deletes a databank variable by key.", Description: "<p>Reserved namespaces (<code>state.*</code>, engine-internal keys) are protected — use <code>State.Delete</code> for state.</p>", Example: "Reset a per-session counter."),
@@ -665,10 +661,10 @@ internal static class NodeProse
         ["DB.FindRow"] = new(Summary: "Finds the first row where Column equals Value; branches Found / NotFound with the RowId.", Description: "<p>The lookup primitive for <code>User_*</code> tables — find a viewer's row by name, then read or update cells on it.</p>", Example: "Find a user's row by name, then <code>DB.SetCell</code> their points."),
         ["DB.GetCell"] = new(Summary: "Reads a single cell (Column) from a row (RowId) in a table. Pure data.", Example: "Read a viewer's stored points."),
         ["DB.SetCell"] = new(Summary: "Writes a single cell (Column) on a row (RowId) in a table.", Example: "Update a viewer's win count."),
-        ["DB.InsertRow"] = new(Summary: "Inserts a new row and returns its NewRowId.", Description: "<p>Creates the <code>User_*</code> table on demand. Two InsertRow nodes don't clobber each other's <code>NewRowId</code>.</p>", Example: "Add a new entry to a quotes table and keep its id."),
+        ["DB.InsertRow"] = new(Summary: "Inserts a new row and returns its NewRowId.", Description: "<p>Does <em>not</em> create the table — the <code>User_*</code> table must already exist (create it yourself first). Inserting into a missing table is a logged no-op and <code>NewRowId</code> reads <code>0</code>. Two InsertRow nodes don't clobber each other's <code>NewRowId</code>.</p>", Example: "Add a new entry to a quotes table and keep its id."),
         ["DB.DeleteRow"] = new(Summary: "Deletes a row by RowId from a table.", Example: "Remove a quote by its id."),
         ["DB.ClearTable"] = new(Summary: "Removes every row from a User_ table.", Example: "Wipe a per-stream leaderboard at the start of a stream."),
-        ["DB.GetColumn"] = new(Summary: "Returns every value in a column as a list. Pure data.", Description: "<p>Wire the result straight into <code>Flow.ForEach</code> or <code>Array.*</code>.</p>", Example: "Pull all entrant names for a giveaway draw."),
+        ["DB.GetColumn"] = new(Summary: "Returns every value in a column as a list. Pure data.", Description: "<p>Wire the result straight into <code>Flow.ForEach</code> or <code>Array.*</code>. Unlike the other databank reads, a missing or mistyped table here (and on <code>DB.FetchRow</code>) <em>throws</em> and aborts the whole script run rather than degrading quietly — make sure the table exists first.</p>", Example: "Pull all entrant names for a giveaway draw."),
         ["DB.FetchRow"] = new(
             Summary: "Fetches a whole row by RowId; branches Found / NotFound with the Row object.",
             Description: "<p>The <code>Row</code> output is the full record. Set the optional <code>KnownColumns</code> hint to surface <code>&lt;Row&gt;.&lt;column&gt;</code> suggestions in the inline-value autocomplete — a design-time aid only; the live row carries whatever columns it actually has.</p>",
@@ -683,7 +679,7 @@ internal static class NodeProse
         // ═══════════════════════════ TWITCH DATA ══════════════════════════════
         ["Twitch.GetUser"] = new(
             Summary: "Looks up a Twitch user's profile and the channel's last game / title.",
-            Description: "<p>Fetched through your Streamer.bot bot account. Returns id / login / display name / avatar / account-created plus the channel's last <code>Game</code> and <code>ChannelTitle</code> and the mod / sub / vip flags. <code>Username</code> defaults to <code>{user}</code> — the current chatter.</p>",
+            Description: "<p>Fetched through your Streamer.bot bot account. Returns id / login / display name / avatar / account-created plus the channel's last <code>Game</code> and <code>ChannelTitle</code> and the mod / sub / vip flags. <code>Username</code> defaults to <code>{user.name}</code> — the current chatter.</p>",
             Example: "On <b>!so</b> &rarr; GetUser the target &rarr; shout their last <code>Game</code>."),
         ["Twitch.GetStream"] = new(
             Summary: "Reads a channel's title and last category. Live metrics are limited.",
@@ -691,7 +687,7 @@ internal static class NodeProse
             Example: "Show the raider's last category in the raid alert."),
         ["Twitch.CheckRole"] = new(
             Summary: "Resolves a user's mod / sub / vip / broadcaster flags.",
-            Description: "<p>Looks up the roles via your bot account. <code>IsBroadcaster</code> is derived by comparing the login to your configured broadcaster name. <code>Username</code> defaults to <code>{user}</code>.</p>",
+            Description: "<p>Looks up the roles via your bot account. <code>IsBroadcaster</code> is derived by comparing the login to your configured broadcaster name. <code>Username</code> defaults to <code>{user.name}</code>.</p>",
             Example: "Gate a command on <code>IsMod</code> OR <code>IsVip</code>."),
         ["Twitch.IsOnline"] = new(
             Summary: "Checks whether a channel is currently live. Leave Channel empty for your own.",
@@ -699,7 +695,7 @@ internal static class NodeProse
             Example: "Only run the auto-host flow if the target is live."),
         ["Twitch.GetFollowAge"] = new(
             Summary: "Returns how long a user has followed — days, a formatted string, and the follow date.",
-            Description: "<p>Through your bot account. <code>IsFollowing</code> is false when they don't follow. <code>Formatted</code> reads like \"1y 12d\" / \"45d\". <code>Username</code> defaults to <code>{user}</code>.</p>",
+            Description: "<p>Through your bot account. <code>IsFollowing</code> is false when they don't follow. <code>Formatted</code> reads like \"1y 12d\" / \"45d\". <code>Username</code> defaults to <code>{user.name}</code>.</p>",
             Example: "On <b>!followage</b> &rarr; reply with the <code>Formatted</code> age."),
         ["Twitch.LastActive"] = new(
             Summary: "Branches on whether a user chatted within the last N minutes.",
@@ -713,18 +709,24 @@ internal static class NodeProse
         // ═══════════════════════════ PLATFORM DATA ════════════════════════════
         ["YouTube.GetUser"] = new(
             Summary: "Looks up a YouTube user's profile and channel-role flags.",
-            Description: "<p>Fetched through the <code>Phoenix: YT Get User</code> action — connect Streamer.bot 1.0 or newer and import the YouTube set from the action pack. Returns <code>Id</code>, <code>DisplayName</code> and <code>ProfileImage</code> plus the role flags: <code>IsMod</code>, <code>IsSub</code> (channel member / sponsor) and <code>IsBroadcaster</code> (channel owner). <code>Username</code> defaults to <code>{user}</code> — the current chatter.</p>",
+            Description: "<p><b>No live data yet:</b> Streamer.bot 1.0.x has no YouTube user-info path, so this node's outputs currently stay empty — treat it as a placeholder until Streamer.bot adds the lookup. When it lands it will fetch through the <code>Phoenix: YT Get User</code> action and return <code>Id</code>, <code>DisplayName</code> and <code>ProfileImage</code> plus the role flags: <code>IsMod</code>, <code>IsSub</code> (channel member / sponsor) and <code>IsBroadcaster</code> (channel owner). <code>Username</code> defaults to <code>{user.name}</code> — the current chatter.</p>",
             Example: "Gate a members-only command on <code>IsSub</code> in YouTube chat."),
         ["Kick.GetUser"] = new(
             Summary: "Looks up a Kick user's profile and role flags.",
-            Description: "<p>Fetched through the <code>Phoenix: Kick Get User</code> action — connect Streamer.bot 1.0.2 or newer and import the Kick set from the action pack. Returns <code>Id</code>, <code>Login</code>, <code>DisplayName</code> and <code>ProfileImage</code> plus the <code>IsMod</code> / <code>IsSub</code> role flags. <code>Username</code> defaults to <code>{user}</code> — the current chatter.</p>",
+            Description: "<p>Fetched through the <code>Phoenix: Kick Get User</code> action — connect Streamer.bot 1.0.2 or newer and import the Kick set from the action pack. <code>Id</code>, <code>Login</code>, <code>DisplayName</code> and <code>ProfileImage</code> fill in, but Streamer.bot 1.0.x's Kick lookup carries no role facts, so <code>IsMod</code> and <code>IsSub</code> <em>always read false</em> — don't gate on them here. <code>Username</code> defaults to <code>{user.name}</code> — the current chatter.</p>",
             Example: "On <b>!profile</b> &rarr; GetUser the chatter &rarr; show their <code>ProfileImage</code> on an overlay card."),
 
+        // ═══════════════════════════ PLATFORMS · CHAT ═════════════════════════
+        ["Chat.Send"] = new(
+            Summary: "Posts a chat message to the checked platforms — Twitch, YouTube and/or Kick — in one node.",
+            Description: "<p>The send-side mirror of the unified <code>Chat.Message</code> trigger. The Twitch/YouTube/Kick checkmarks on the node body pick the default targets; the optional <code>Platforms</code> input OVERRIDES them at runtime with a single name or a comma list (<code>twitch, kick</code>), so a script can answer on whichever platform a message came from — wire <code>Chat.Message</code>'s <code>Platform</code> output straight in. Text between <code>{</code> and <code>}</code> resolves against the flow context. Each platform's own limit applies (Twitch/Kick 500 characters, YouTube 200) — an over-limit message is dropped for that platform with a log line. Twitch sends through your configured Streamer.bot chat action; YouTube/Kick through their Phoenix action-pack actions.</p>",
+            Example: "Reply to <b>!ping</b> everywhere; or wire <code>Platform</code> &rarr; <code>Platforms</code> to answer only where it was asked."),
+
         // ═══════════════════════════ PLATFORMS · TWITCH ═══════════════════════
-        ["Twitch.SendChat"] = new(
-            Summary: "Posts a message to chat through your configured Streamer.bot bot account.",
-            Description: "<p>The most-used action node. Text between <code>{</code> and <code>}</code> is resolved against the flow context — anything an upstream node bound is fair game. Twitch's 500-character limit is enforced. Rate-limiting is Streamer.bot's job, not Phoenix's.</p>",
-            Example: "Reply to <b>!ping</b> with <code>\"@{user.name} pong\"</code>."),
+        ["Twitch.Reply"] = new(
+            Summary: "Posts a threaded reply to a specific Twitch chat message.",
+            Description: "<p><code>MessageId</code> names the chat line to reply under — leave it unwired to reply to the message that triggered the script (it defaults to the <code>Chat.Message</code> trigger's own id, <code>{event.message_id}</code>). <code>Message</code> is the reply body. A reply is still a chat message, so the same <b>500-character</b> cap as <code>Chat.Send</code> applies. Dispatched through <code>Phoenix: Reply</code> (Twitch action pack imported).</p>",
+            Example: "Answer <b>!ping</b> as a threaded reply with <code>\"@{user.name} pong\"</code>."),
         ["Twitch.Timeout"] = new(
             Summary: "Times a user out for a number of seconds.",
             Description: "<p>Your bot account must hold moderator privileges. Duration is bounded to Twitch's 1s–2-week range.</p>",
@@ -759,15 +761,11 @@ internal static class NodeProse
             Description: "<p><code>Title</code> plus <code>OutcomeA</code>–<code>OutcomeE</code> (wire only the ones you use) and a <code>DurationSec</code> window. Resolving a prediction needs an id Streamer.bot can't hand back, so close it from the Twitch UI or your own action.</p>",
             Example: "On a hype moment &rarr; open a \"will they clutch it?\" prediction."),
         ["Twitch.EndPoll"] = new(
-            Summary: "Ends a running Twitch poll by its PollId.",
-            Description: "<p>Stops an in-progress poll early. <code>PollId</code> comes from the poll you started (via your own Streamer.bot action or the Twitch UI).</p>",
+            Summary: "Ends the currently-active Twitch poll.",
+            Description: "<p>Streamer.bot ends whichever poll is currently running — the <code>PollId</code> input is advisory only, and no Phoenix node can hand you a real PollId, so leave it empty and rely on there being one active poll.</p>",
             Example: "Close a quick poll once chat has clearly decided."),
 
         // ═══════════════════════════ PLATFORMS · YOUTUBE ══════════════════════
-        ["YouTube.SendChat"] = new(
-            Summary: "Posts a message to your YouTube live chat through Streamer.bot.",
-            Description: "<p>Dispatched through the <code>Phoenix: YT Send Chat</code> action — connect Streamer.bot 1.0 or newer and import the YouTube set from the action pack. YouTube caps live-chat messages at <b>200 characters</b> (tighter than Twitch's 500); a longer <code>Message</code> is dropped with a log line rather than sent truncated.</p>",
-            Example: "Reply to <b>!ping</b> on YouTube with <code>\"@{user.name} pong\"</code>."),
         ["YouTube.SetTitle"] = new(
             Summary: "Updates the running YouTube broadcast's title.",
             Description: "<p>Sets the live broadcast's title via <code>Phoenix: YT Set Title</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). An empty <code>Title</code> is skipped with a log line.</p>",
@@ -786,21 +784,17 @@ internal static class NodeProse
             Example: "A spam-bot detector &rarr; ban the account on sight."),
         ["YouTube.CreatePoll"] = new(
             Summary: "Opens a poll in your YouTube live chat.",
-            Description: "<p><code>Choices</code> is a comma-separated list the wrapper action splits into options; <code>DurationSec</code> defaults to 60. Dispatched through <code>Phoenix: YT Create Poll</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). DoAction can't hand a poll id back, so pair it with <code>YouTube.EndPoll</code>, which acts on the active poll.</p>",
-            Example: "<b>!poll</b> &rarr; open a 60s \"which game next?\" poll from chat suggestions."),
+            Description: "<p><code>Title</code> is the poll question; <code>Choices</code> is a comma-separated list that the Hub splits into up to <b>4</b> options (YouTube's max). YouTube polls take no duration over Streamer.bot. Dispatched through <code>Phoenix: YT Create Poll</code> (Streamer.bot 1.0 or newer, YouTube action pack imported). DoAction can't hand a poll id back, so pair it with <code>YouTube.EndPoll</code>, which acts on the active poll.</p>",
+            Example: "<b>!poll</b> &rarr; open a \"which game next?\" poll from chat suggestions."),
         ["YouTube.EndPoll"] = new(
             Summary: "Ends the active YouTube poll.",
             Description: "<p>Acts on the currently running poll — Streamer.bot's YT End Poll sub-action takes no arguments, so there is no id to wire. Dispatched through <code>Phoenix: YT End Poll</code> (Streamer.bot 1.0 or newer, YouTube action pack imported).</p>",
             Example: "Close the poll once chat has clearly decided."),
 
         // ═══════════════════════════ PLATFORMS · KICK ═════════════════════════
-        ["Kick.SendChat"] = new(
-            Summary: "Posts a message to your Kick chat through Streamer.bot.",
-            Description: "<p>Dispatched through the <code>Phoenix: Kick Send Chat</code> action — connect Streamer.bot 1.0.2 or newer and import the Kick set from the action pack. Kick caps chat messages at <b>500 characters</b> (same as Twitch); a longer <code>Message</code> is dropped with a log line rather than sent truncated.</p>",
-            Example: "Reply to <b>!ping</b> on Kick with <code>\"@{user.name} pong\"</code>."),
         ["Kick.Reply"] = new(
             Summary: "Posts a threaded reply to a specific Kick chat message.",
-            Description: "<p><code>MessageId</code> names the chat line to reply under; <code>Message</code> is the reply body. A reply is still a chat message, so the same <b>500-character</b> cap as <code>Kick.SendChat</code> applies. Dispatched through <code>Phoenix: Kick Reply</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
+            Description: "<p><code>MessageId</code> names the chat line to reply under; <code>Message</code> is the reply body. A reply is still a chat message, so the same <b>500-character</b> Kick chat cap as <code>Chat.Send</code> applies. Dispatched through <code>Phoenix: Kick Reply</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
             Example: "Answer a <b>!so</b> request inline, right under the requester's message."),
         ["Kick.Timeout"] = new(
             Summary: "Times a user out of your Kick chat for a number of seconds.",
@@ -808,7 +802,7 @@ internal static class NodeProse
             Example: "Auto-timeout 300s on a banned-words match in Kick chat."),
         ["Kick.Ban"] = new(
             Summary: "Permanently bans a user from your Kick channel.",
-            Description: "<p>Dispatched through <code>Phoenix: Kick Ban</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). Unlike the YouTube side there is a reverse path — pair it with <code>Kick.Unban</code> for reversible, tested mod flows.</p>",
+            Description: "<p><code>Reason</code> is an optional note (Kick's ban action carries it — YouTube's does not). Dispatched through <code>Phoenix: Kick Ban</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). Unlike the YouTube side there is a reverse path — pair it with <code>Kick.Unban</code> for reversible, tested mod flows.</p>",
             Example: "A spam-bot detector &rarr; ban, with <code>Kick.Unban</code> wired to an appeal command."),
         ["Kick.Unban"] = new(
             Summary: "Lifts a ban on a Kick user.",
@@ -828,15 +822,15 @@ internal static class NodeProse
             Example: "Switch the category from a <b>!game</b> command."),
         ["Kick.DeleteMessage"] = new(
             Summary: "Removes one message from Kick chat by its MessageId.",
-            Description: "<p>Single-message moderation, dispatched through <code>Phoenix: Kick Delete Message</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported). An empty <code>MessageId</code> is skipped with a log line.</p>",
+            Description: "<p><b>Not available yet:</b> Streamer.bot 1.0.x has no Kick delete-message sub-action, so this node currently does nothing — keep it out of live moderation flows until Streamer.bot adds it. When available it will remove one message via <code>Phoenix: Kick Delete Message</code>; an empty <code>MessageId</code> is skipped with a log line.</p>",
             Example: "A link-filter flow &rarr; delete the offending line, then warn the chatter."),
         ["Kick.SetRewardCost"] = new(
             Summary: "Changes the price of a Kick channel reward.",
-            Description: "<p><code>RewardId</code> identifies the reward; <code>Cost</code> is the new price. The Kick twin of <code>Twitch.UpdateRewardCost</code>, dispatched through <code>Phoenix: Kick Set Reward Cost</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
+            Description: "<p><b>Not available yet:</b> Streamer.bot 1.0.x has no Kick set-reward-cost sub-action, so this node currently does nothing. When available it will set a reward's price via <code>Phoenix: Kick Set Reward Cost</code> — <code>RewardId</code> identifies the reward and <code>Cost</code> the new price.</p>",
             Example: "Double a reward's cost during a hype segment, restore it after."),
         ["Kick.SetRewardEnabled"] = new(
             Summary: "Turns a Kick channel reward on or off.",
-            Description: "<p><code>RewardId</code> identifies the reward; wire <code>Enabled</code> to a boolean to flip it from a script. The Kick twin of <code>Twitch.SetRewardEnabled</code>, dispatched through <code>Phoenix: Kick Set Reward Enabled</code> (Streamer.bot 1.0.2 or newer, Kick action pack imported).</p>",
+            Description: "<p><b>Not available yet:</b> Streamer.bot 1.0.x has no Kick set-reward-enabled sub-action, so this node currently does nothing. When available it will flip a reward on or off via <code>Phoenix: Kick Set Reward Enabled</code> — <code>RewardId</code> identifies the reward and <code>Enabled</code> the new state.</p>",
             Example: "Disable a \"pick my game\" reward while a fixed schedule runs."),
 
         // ═══════════════════════════ PLATFORMS · DISCORD ══════════════════════
@@ -889,7 +883,7 @@ internal static class NodeProse
             Summary: "Fires a Streamer.bot action directly by id or name, bypassing the Phoenix action pack.",
             Description: "<p>For actions you've built yourself in Streamer.bot. <code>ActionId</code> is a GUID or an action name (auto-detected). <code>{result.sb_dispatched}</code> reports whether it went out.</p>",
             Example: "Trigger one of your own custom Streamer.bot actions from a redeem."),
-        ["StreamerBot.GetUser"] = new(Summary: "Looks up a user through Streamer.bot and returns the data object.", Description: "<p>The object form of <code>Twitch.GetUser</code> — handy when you want the whole record on one <code>Data</code> pin.</p>", Example: "Fetch a viewer record for a custom profile card."),
+        ["StreamerBot.GetUser"] = new(Summary: "An alias of Twitch.GetUser — looks a user up through Streamer.bot.", Description: "<p>An alias of <code>Twitch.GetUser</code>. The <code>Data</code> output carries the <em>display name only</em>, not a full JSON record — don't <code>HTTP.ParseJson</code> it. The rest of the profile lands in the <code>{user.*}</code> tokens, same as <code>Twitch.GetUser</code>.</p>", Example: "Fetch a viewer's display name for a custom profile card."),
 
         // ══════════════════════════════ OBS ═══════════════════════════════════
         ["OBS.SetScene"] = new(Summary: "Switches OBS to a named scene.", Description: "<p>Dispatched through the Phoenix OBS action in Streamer.bot. The scene is matched by exact name.</p>", Example: "A \"BRB\" hotkey &rarr; switch to the break scene."),
@@ -902,6 +896,18 @@ internal static class NodeProse
         ["OBS.StartStreaming"] = new(Summary: "Tells OBS to start streaming.", Example: "A master \"go live\" hotkey."),
         ["OBS.StopStreaming"] = new(Summary: "Tells OBS to stop streaming.", Example: "An \"end stream\" hotkey after a goodbye."),
         ["OBS.SaveReplayBuffer"] = new(Summary: "Saves the OBS replay buffer to disk.", Description: "<p>The replay buffer must be running in OBS.</p>", Example: "<b>!replay</b> &rarr; save the last 30s clip locally."),
+        ["OBS.SetSourcePosition"] = new(
+            Summary: "Moves a scene item to an X / Y position in pixels from the top-left.",
+            Description: "<p><code>Scene</code> and <code>Source</code> name the scene item; <code>X</code> / <code>Y</code> are its new position in pixels from the scene's top-left corner. Fires <code>Done</code> when applied. Driven directly through Hub's own OBS WebSocket connection when it's enabled in config, falling back to the <code>Phoenix: OBS Source …</code> Streamer.bot action otherwise; <code>{result.obs_error}</code> is empty on success or a diagnostic on failure.</p>",
+            Example: "Slide the webcam into the corner for a segment, then move it back."),
+        ["OBS.SetSourceScale"] = new(
+            Summary: "Scales a scene item — 1.0 is original size, 2.0 double, 0.5 half.",
+            Description: "<p><code>Scene</code> and <code>Source</code> name the scene item; <code>ScaleX</code> / <code>ScaleY</code> are its scale factors (<code>1.0</code> = original, <code>2.0</code> = double, <code>0.5</code> = half). Fires <code>Done</code> when applied. Driven directly through Hub's own OBS WebSocket connection when it's enabled in config, falling back to the <code>Phoenix: OBS Source …</code> Streamer.bot action otherwise; <code>{result.obs_error}</code> is empty on success or a diagnostic on failure.</p>",
+            Example: "Punch a source up to 1.5&times; on a hype moment, then back to 1.0."),
+        ["OBS.SetSourceRotation"] = new(
+            Summary: "Rotates a scene item — 0 upright, 90 a quarter-turn clockwise.",
+            Description: "<p><code>Scene</code> and <code>Source</code> name the scene item; <code>Degrees</code> is the rotation (<code>0</code> upright, <code>90</code> a quarter-turn clockwise). Fires <code>Done</code> when applied. Driven directly through Hub's own OBS WebSocket connection when it's enabled in config, falling back to the <code>Phoenix: OBS Source …</code> Streamer.bot action otherwise; <code>{result.obs_error}</code> is empty on success or a diagnostic on failure.</p>",
+            Example: "Spin a prop 90&deg; as a gag on a redeem."),
 
         // ═════════════════════════════ VISUALS ════════════════════════════════
         ["Visual.Trigger"] = new(
@@ -927,12 +933,6 @@ internal static class NodeProse
             Summary: "Stops a running process instance by InstanceId.",
             Description: "<p>Ends the instance whose id is wired into <code>InstanceId</code> (from <code>Process.Start</code>): its live triggers go dormant and its schedule timers are cancelled. Unknown / already-stopped ids are a no-op.</p>",
             Example: "On stream-offline &rarr; stop the rotating-tips instance you started at go-live."),
-        // Deprecated (hidden) — superseded by Process.Start / Process.Stop.
-        ["Process.Spawn"] = new(
-            Summary: "Deprecated — use Process.Start. Spawns a process body once, fire-and-forget.",
-            Description: "<p>Legacy node, kept only so old graphs load. Runs the process body once on its own cancellation token. Replaced by <code>Process.Start</code> (live triggers) + <code>Process.Stop</code>.</p>",
-            Example: "Re-open and re-save the graph to upgrade this to Process.Start."),
-        ["Process.Terminate"] = new(Summary: "Deprecated — use Process.Stop. Cancels a running process by InstanceId.", Description: "<p>Legacy node, kept only so old graphs load. Superseded by <code>Process.Stop</code>.</p>", Example: "Re-open and re-save the graph to upgrade this to Process.Stop."),
         ["Process.Entry"] = new(Summary: "The 'on start' trigger of a process; declares its start params.", Description: "<p>Its flow output runs once when an instance starts. Drag <code>+ output</code> pins to declare start parameters — passed by <code>Process.Start</code> and read anywhere in the body as <code>{param.&lt;name&gt;}</code>.</p>", Example: "Declare a <code>message</code> param the loop posts each pass."),
         ["Process.Exit"] = new(Summary: "The 'on stop' trigger of a process (cleanup hook).", Description: "<p>Its <code>On Stop</code> output runs once when the instance is stopped — use it for cleanup. A live process never 'returns'.</p>", Example: "Post a goodbye line when the process stops."),
 
@@ -950,12 +950,16 @@ internal static class NodeProse
             Description: "<p>With <code>SetDefault</code> on, this becomes the active giveaway the other giveaway nodes (and the Hub panel) point at. The same engine the Hub Giveaway panel drives.</p>",
             Example: "<b>!giveaway start</b> &rarr; create \"Stream Deck\" as the active giveaway."),
         ["Giveaway.Ticket"] = new(
-            Summary: "Adds tickets for a user (or reads their count with Increment 0).",
-            Description: "<p>More tickets means better odds at the draw. <code>Role</code> records the entrant's badge (e.g. subscriber). Adding is ignored once the giveaway is closed, but reads still work. When the giveaway's per-user cap stops the entry from landing in full, the <code>Limit</code> flow output fires instead of <code>Done</code> — wire it to react (e.g. tell the user they already hold the maximum). Unwired, the node behaves exactly as before.</p>",
-            Example: "<b>!ticket</b> &rarr; add 1 ticket; at the cap &rarr; <code>Limit</code> replies \"you already have the max\"."),
+            Summary: "Adds tickets for a user (or reads their count with Increment 0) — optionally charging channel points per ticket.",
+            Description: "<p>More tickets means better odds at the draw. <code>IsSub</code> / <code>IsMod</code> record the entrant's badges (wire them from Chat.Message's outputs) — they feed the Subscriber/Moderator bonus weighting at draw time. Adding is ignored once the giveaway is closed, but reads still work. When the giveaway's per-user cap stops the entry from landing in full, the <code>Limit</code> flow output fires instead of <code>Done</code> — wire it to react (e.g. tell the user they already hold the maximum).</p><p><b>Price:</b> pick a currency table on <code>PriceTable</code> (columns <code>name</code> / <code>currency</code>; the ▾ picker offers a one-click <i>Create 'ChannelPoints' table</i>) and each ticket costs channel points. With <code>Public</code> on, the price comes from the targeted giveaway's <i>Ticket price</i> setting in the Hub panel; with <code>Public</code> off, the node's own <code>Price</code> pill applies. A user who can't afford the entry triggers the <code>NoFunds</code> flow output — nothing is charged or granted. <code>IsAll</code> ignores <code>Increment</code> and buys as many tickets as the user's points and the per-user cap allow. <code>Purchased</code> outputs how many tickets this call actually bought. Leave <code>PriceTable</code> empty and the node behaves exactly as before (free entry).</p>",
+            Example: "<b>!ticket</b> &rarr; buy 1 ticket for 100 points; <b>!ticket all</b> (IsAll) &rarr; convert the whole balance; broke &rarr; <code>NoFunds</code> replies \"you need 100 points\"."),
         ["Giveaway.Close"] = new(Summary: "Closes a giveaway to new entries and reports the totals.", Description: "<p>Outputs the combined <code>TotalTickets</code> and the number of unique <code>EntrantCount</code>.</p>", Example: "<b>!giveaway close</b> &rarr; announce \"42 entrants, 60 tickets\"."),
-        ["Giveaway.Winner"] = new(Summary: "Draws a winner weighted by ticket count.", Description: "<p>More tickets, higher chance. With a subscriber bonus set on the giveaway (Hub panel), each entrant's current sub status is checked via Streamer.bot right before the draw and a subscriber's tickets weigh &times;factor. Returns the <code>WinnerName</code> and their <code>WinnerTickets</code>.</p>", Example: "<b>!giveaway draw</b> &rarr; announce the weighted winner."),
+        ["Giveaway.Winner"] = new(Summary: "Draws a winner weighted by ticket count.", Description: "<p>More tickets, higher chance. With a subscriber bonus set on the giveaway (Hub panel), each entrant's current sub status is checked via Streamer.bot right before the draw and a subscriber's tickets weigh &times;factor. A Moderator bonus factor applies the same way — a moderator's tickets weigh &times;factor from the recorded <code>IsMod</code> flag, multiplicative with the subscriber factor. Returns the <code>WinnerName</code> and their <code>WinnerTickets</code>.</p>", Example: "<b>!giveaway draw</b> &rarr; announce the weighted winner."),
         ["Giveaway.Id"] = new(Summary: "Outputs the id of the current default giveaway. Pure data.", Description: "<p>Empty when no default is set — wire it into a giveaway node's selector to target it explicitly.</p>", Example: "Pass the active giveaway id into a logging branch."),
+        ["Giveaway.IsActive"] = new(
+            Summary: "Outputs true while a giveaway is open and accepting entries. Pure data.",
+            Description: "<p>The source of truth for a giveaway's live state. Leave the <code>Giveaway</code> selector empty to follow the app-wide default giveaway; the ▾ picker lists your giveaways (matched by id, key or title). Reads <code>false</code> once the giveaway is closed or drawn — or when nothing matches / no default is set.</p>",
+            Example: "Gate <b>!ticket</b> behind a Branch: IsActive &rarr; enter; else reply \"no giveaway running\"."),
 
         // ══════════════════════════════ SYSTEM ════════════════════════════════
         ["System.Log"] = new(
@@ -966,7 +970,7 @@ internal static class NodeProse
         ["System.GetDate"] = new(Summary: "Returns the current date broken into pieces. Pure data.", Description: "<p>Full <code>Date</code> string plus day / month / year and the month name.</p>", Example: "Post a special message on a stream anniversary."),
         ["Time.SecondsSinceLastFire"] = new(
             Summary: "Seconds since this Key was last checked — and stamps it fresh. Pure data.",
-            Description: "<p>A lightweight throttle keyed by any string. The first read for a key returns a huge value (\"never fired\"). Reading also resets the timer, so wire it once and cache with <code>Var.Set</code> if you need the value twice.</p>",
+            Description: "<p>A lightweight throttle keyed by any string. The first read for a key returns a huge value (\"never fired\"), and evaluating it stamps the key fresh. One node's output is evaluated once and shared by every consumer wired to it (a single stamp) — it only recomputes per node instance and per loop iteration, so drop a second node for an independent check.</p>",
             Example: "Throttle an alert to at most once per 60s with a per-alert key."),
         ["Time.StreamUptime"] = new(
             Summary: "How long the stream has been live, in several forms. Pure data.",
@@ -992,13 +996,13 @@ internal static class NodeProse
     {
         new TokenFamily("user.", "#C893BC", "Identity & event payload",
             "Bound by the trigger at the top of the flow — the field set varies per event (chat, sub, raid, cheer, redeem).",
-            new[] { "user.name", "user.message", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "user.tier", "user.bits", "user.viewers", "user.gifter", "user.recipient", "user.reward", "user.input" }),
+            new[] { "user.name", "user.platform", "user.message", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_anonymous", "user.color_hex", "user.sub_months", "user.tier", "user.bits", "user.points", "user.viewers", "user.count", "user.total_gifts", "user.gifter", "user.recipient", "user.reward", "user.input" }),
         new TokenFamily("event.", "#7FBED1", "Event metadata",
             "The shape of the firing event — webhook body, schedule tick, state change, bus message. <code>event.ret.*</code> / <code>event.arg.*</code> carry values across Event nodes.",
-            new[] { "event.iscommand", "event.payload", "event.body", "event.method", "event.path", "event.timestamp", "event.count", "event.type", "event.state", "event.oldvalue", "event.newvalue" }),
+            new[] { "event.iscommand", "event.payload", "event.body", "event.method", "event.path", "event.timestamp", "event.count", "event.type", "event.message", "event.combo", "event.text", "event.data", "state.name", "state.new_value", "state.old_value" }),
         new TokenFamily("result.", "#9CC97A", "Command outputs",
             "Written by the node that just ran — HTTP, file, Discord, JSON, clip and state lookups drop their return values here.",
-            new[] { "result.http_status", "result.http_body", "result.http_error", "result.api_response", "result.json_value", "result.file_content", "result.discord_message_id", "result.clip.url", "result.clip.ok", "result.state_value", "result.sb_dispatched" }),
+            new[] { "result.http_status", "result.http_body", "result.http_error", "result.api_response", "result.json_value", "result.file_content", "result.discord_message_id", "clip.url", "clip.ok", "result.state_value", "result.sb_dispatched" }),
         new TokenFamily("loop.", "#E5A24E", "Iterator",
             "Inside <code>Flow.ForLoop</code> / <code>Flow.ForEach</code> bodies — the current counter and item. Nested loops also expose a per-id <code>loop.index_xxxxxx</code> form.",
             new[] { "loop.index", "loop.item" }),
@@ -1006,14 +1010,20 @@ internal static class NodeProse
             "After a <code>Twitch.CheckRole</code> node resolves the chatter's permissions.",
             new[] { "role.is_mod", "role.is_sub", "role.is_vip", "role.is_broadcaster" }),
         new TokenFamily("follow.", "#7FBED1", "Follow age",
-            "After <code>Twitch.GetFollowAge</code>. <code>bus.*</code> (type / payload / source / target) binds the same way on <code>Bus.OnMessage</code>.",
-            new[] { "follow.days", "follow.formatted" }),
+            "After <code>Twitch.GetFollowAge</code> resolves the chatter's follow relationship.",
+            new[] { "follow.days", "follow.formatted", "follow.date", "follow.is_following" }),
+        new TokenFamily("param.", "#E5A24E", "Process start params",
+            "Values passed to <code>Process.Start</code> and read inside the process body. Declared as pins on <code>Process.Entry</code>.",
+            new[] { "param.<name>" }),
+        new TokenFamily("bus.", "#7FBED1", "Bus message",
+            "Bound on <code>Bus.OnMessage</code> when an internal bus message matches the filters.",
+            new[] { "bus.type", "bus.payload", "bus.source", "bus.target" }),
     };
 
     internal static readonly IReadOnlyList<StorageRoot> StorageRoots = new[]
     {
         new StorageRoot("global.", "Shared across every script — the databank. Survives restarts. Read / write with the DB.* nodes.", "global.raid_count"),
-        new StorageRoot("user.", "Per-Twitch-user and persistent. Custom keys live in the databank, keyed to the chatter on top of their live identity fields.", "user.points"),
+        new StorageRoot("user.", "Persistent databank keys. A write persists under the literal key you give it — one shared cell — so include {user.name} in the key for per-viewer data.", "user.{user.name}.points"),
         new StorageRoot("state.", "The state-machine namespace, persisted in the databank. Cross-script and survives restarts; written by the State.* nodes, watched by State.OnChange.", "state.stream_phase"),
     };
 
@@ -1021,6 +1031,9 @@ internal static class NodeProse
     {
         "system.time", "system.hours", "system.minutes", "system.seconds", "system.unix",
         "system.date", "system.day", "system.month", "system.monthname", "system.dayname", "system.year",
+        "system.local_time", "system.local_hours", "system.local_minutes", "system.local_seconds",
+        "system.local_date", "system.local_day", "system.local_month", "system.local_monthname",
+        "system.local_dayname", "system.local_year",
     };
 
     internal static readonly string[] StreamTokens =
@@ -1035,5 +1048,5 @@ internal static class NodeProse
     /// the registry colour the template assigned them.
     /// </summary>
     internal static readonly HashSet<string> UserSocketNames =
-        new(System.StringComparer.OrdinalIgnoreCase) { "User", "Gifter", "Recipient", "Raider", "To" };
+        new(System.StringComparer.OrdinalIgnoreCase) { "User", "Gifter", "Recipient" };
 }

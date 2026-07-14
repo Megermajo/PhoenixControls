@@ -587,6 +587,10 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         foreach (Link link in links)
         {
+            // Explicit-null link ids survive .phxlayer deserialization (the ""
+            // field initializer is overridden by a JSON null), and
+            // Dictionary.TryGetValue(null) throws ArgumentNullException.
+            if (link.FromNodeId is null || link.ToNodeId is null) continue;
             if (!_rerouteNodeIds.Contains(link.FromNodeId)
                 && !_rerouteNodeIds.Contains(link.ToNodeId))
                 continue;

@@ -237,11 +237,30 @@ namespace Phoenix.Controls.Hub.Core
             new SemaphoreSlim(OutboundHttpConcurrencyDefault, OutboundHttpConcurrencyDefault);
 
         // Per-key locks for read-modify-write sites (queue.push, db.increment).
-        // Lock per logical key keeps unrelated writers parallel.
-        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _rmwLocks =
-            new(StringComparer.Ordinal);
-        private static SemaphoreSlim GetRmwLock(string key) =>
-            _rmwLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        // Fixed 256-stripe pool: the previous per-key ConcurrentDictionary grew
+        // one SemaphoreSlim per distinct key (db.cell::{table}::{row}::{col},
+        // cooldown:{key}, …) with no eviction — hundreds of leaked handles over
+        // a long stream session. Striping bounds memory permanently; two keys
+        // sharing a stripe merely serialize against each other (correctness is
+        // unaffected — the lock is still held for the full RMW), and 256 stripes
+        // keep that collision rate negligible at realistic concurrency (≤ a few
+        // dozen simultaneous scripts).
+        private const int RmwStripeCount = 256; // power of two — mask instead of modulo
+        private static readonly SemaphoreSlim[] _rmwLocks = CreateRmwStripes();
+        private static SemaphoreSlim[] CreateRmwStripes()
+        {
+            var stripes = new SemaphoreSlim[RmwStripeCount];
+            for (int i = 0; i < stripes.Length; i++) stripes[i] = new SemaphoreSlim(1, 1);
+            return stripes;
+        }
+        private static SemaphoreSlim GetRmwLock(string key)
+        {
+            // Deterministic, cheap, well-distributed enough for lock striping.
+            // (string.GetHashCode is randomized per process — fine here, the
+            // mapping only needs to be stable within one process lifetime.)
+            int h = StringComparer.Ordinal.GetHashCode(key ?? string.Empty);
+            return _rmwLocks[h & (RmwStripeCount - 1)];
+        }
 
         // Hard cap on response body size for script-driven HTTP calls. 5 MB is
         // large enough for any realistic API payload but small enough that a runaway
@@ -494,23 +513,19 @@ namespace Phoenix.Controls.Hub.Core
             DisposeSharedConcurrencyPrimitives();
         }
 
-        // The static outbound-HTTP gate and the per-key
-        // RMW lock pool were never disposed — a process-lifetime resource leak (the
-        // RMW pool also grows unbounded with distinct keys). ScriptManager is a Hub
-        // singleton, so the Stop()/StopAsync() teardown path is the correct place to
-        // release them. Guarded + idempotent so a stray second construction within
-        // the same process can't double-dispose, and so each repeated Stop call is a
-        // cheap no-op.
+        // The static outbound-HTTP gate was never disposed — a process-lifetime
+        // resource leak. ScriptManager is a Hub singleton, so the Stop()/StopAsync()
+        // teardown path is the correct place to release it. Guarded + idempotent so
+        // a stray second construction within the same process can't double-dispose.
+        // The RMW stripe pool is deliberately NOT disposed: the stripes are a fixed
+        // 256-element array of SemaphoreSlims (no unmanaged resources — their
+        // AvailableWaitHandle is never touched), and disposing them would break any
+        // in-flight RMW as well as a ScriptManager restarted within the process.
         private static int _sharedConcurrencyDisposed;
         private static void DisposeSharedConcurrencyPrimitives()
         {
             if (Interlocked.Exchange(ref _sharedConcurrencyDisposed, 1) != 0) return;
             try { _outboundHttpSem.Dispose(); } catch (ObjectDisposedException) { } catch { }
-            foreach (var sem in _rmwLocks.Values)
-            {
-                try { sem.Dispose(); } catch { }
-            }
-            _rmwLocks.Clear();
         }
 
         // Backwards-compatible overload returning just a CTS. New call sites should
@@ -1834,6 +1849,11 @@ namespace Phoenix.Controls.Hub.Core
                 { "user.command",        cmdPart.ToLower() },
                 { "user.args",           argsPart },
                 { "event.iscommand",     parts[0].StartsWith("!").ToString().ToLower() },
+                // Triggering chat message's id (Twitch/YouTube/Kick), from the
+                // per-platform WS mappers. "" until a platform mapper supplies it;
+                // exposed to scripts as {event.message_id} and mapped from the
+                // Chat.Message node's MessageId output socket. Feeds reply / delete.
+                { "event.message_id",    chatData.MessageId ?? "" },
             };
         }
 
@@ -2513,6 +2533,10 @@ namespace Phoenix.Controls.Hub.Core
         internal static Dictionary<string, string> BuildGenericEventVars(string eventType, System.Text.Json.JsonElement data)
         {
             var vars = new Dictionary<string, string>();
+            // Both production callers pass non-null, but this is an internal
+            // seam tests (and future callers) reach directly — and this line
+            // sits ABOVE the try/catch, so a null here would escape unhandled.
+            eventType ??= string.Empty;
             // Source token for every SB-routed event ("Twitch.Follow" → "twitch",
             // "Kick.Follow" → "kick") so scripts can branch cross-platform without
             // string-slicing the event type themselves.

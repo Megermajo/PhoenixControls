@@ -304,6 +304,12 @@ namespace Phoenix.Controls.Architect.Core
         // ── Twitch (simple emits in the Platforms category) ────────────────
         private static void RegisterTwitchSimple(ExporterRegistry r)
         {
+            // The unified outbound chat node (Chat.Message's send-side mirror).
+            // Emission contract lives in ChatSendHandler: a single checked
+            // platform with no override collapses onto the legacy per-platform
+            // command byte-identically; everything else emits chat.send(...).
+            r.Register(new ChatSendHandler());
+
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Twitch.SendChat", "twitch.send_chat",
                 new[] { new SocketArg("Message", "\"Hello!\"") },
@@ -454,7 +460,19 @@ namespace Phoenix.Controls.Architect.Core
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Twitch.DeleteMessage", "twitch.delete_message",
-                new[] { new SocketArg("MessageId", "{message.id}") },
+                new[] { new SocketArg("MessageId", "{event.message_id}") },
+                FollowNamedOutput: "Done"));
+
+            // twitch.reply(messageId, message) — mirrors Kick.Reply. The unwired
+            // MessageId default is {event.message_id} (the Chat.Message trigger's
+            // own id), so a bare Twitch.Reply replies to the triggering message.
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Twitch.Reply", "twitch.reply",
+                new[]
+                {
+                    new SocketArg("MessageId", "{event.message_id}"),
+                    new SocketArg("Message",   "\"\""),
+                },
                 FollowNamedOutput: "Done"));
 
             // Channel-mode toggles. Sentinels: SlowMode 0 = off, FollowerMode -1 = off.
@@ -978,9 +996,8 @@ namespace Phoenix.Controls.Architect.Core
                 "YouTube.CreatePoll", "youtube.create_poll",
                 new[]
                 {
-                    new SocketArg("Title",       "\"\""),
-                    new SocketArg("Choices",     "\"\""),
-                    new SocketArg("DurationSec", "60"),
+                    new SocketArg("Title",   "\"\""),
+                    new SocketArg("Choices", "\"\""),
                 },
                 FollowNamedOutput: "Done"));
 
@@ -999,7 +1016,7 @@ namespace Phoenix.Controls.Architect.Core
                 "Kick.Reply", "kick.reply",
                 new[]
                 {
-                    new SocketArg("MessageId", "{message.id}"),
+                    new SocketArg("MessageId", "{event.message_id}"),
                     new SocketArg("Message",   "\"\""),
                 },
                 FollowNamedOutput: "Done"));
@@ -1015,7 +1032,11 @@ namespace Phoenix.Controls.Architect.Core
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Kick.Ban", "kick.ban",
-                new[] { new SocketArg("User", "{user.name}") },
+                new[]
+                {
+                    new SocketArg("User",   "{user.name}"),
+                    new SocketArg("Reason", "\"no reason\""),
+                },
                 FollowNamedOutput: "Done"));
 
             r.RegisterSimple(new SimpleEmitDescriptor(
@@ -1040,7 +1061,7 @@ namespace Phoenix.Controls.Architect.Core
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Kick.DeleteMessage", "kick.delete_message",
-                new[] { new SocketArg("MessageId", "{message.id}") },
+                new[] { new SocketArg("MessageId", "{event.message_id}") },
                 FollowNamedOutput: "Done"));
 
             r.RegisterSimple(new SimpleEmitDescriptor(
@@ -1093,5 +1114,84 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
         }
+    }
+
+    /// <summary>
+    /// Chat.Send — the unified outbound chat node. Platform selection:
+    ///   1. The Platforms input, when wired or carrying a non-empty pill,
+    ///      OVERRIDES everything at runtime (single name or comma list) —
+    ///      emitted as chat.send(msg, &lt;override&gt;, "&lt;checkmark csv&gt;") so an
+    ///      override that resolves EMPTY at runtime falls back to the
+    ///      checkmarks instead of silently sending nowhere.
+    ///   2. No override + exactly ONE platform checked → the legacy
+    ///      per-platform command (twitch.send_chat / youtube.send_chat /
+    ///      kick.send_chat), resolved through the same ctx.Resolve path the
+    ///      old SimpleEmitDescriptors used — migrated single-platform graphs
+    ///      (and every golden) export byte-identically.
+    ///   3. No override + several checked → chat.send(msg, "a, b") with the
+    ///      baked CSV quoted (a bare comma would split the arg list).
+    ///   4. Nothing checked, no override → warning comment, nothing sent.
+    /// </summary>
+    internal sealed class ChatSendHandler : IExporterHandler
+    {
+        public string NodeTitle => "Chat.Send";
+
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            bool twitch  = ParseBoolAttr(node.GetAttr("Twitch",  "true"));
+            bool youtube = ParseBoolAttr(node.GetAttr("YouTube", "true"));
+            bool kick    = ParseBoolAttr(node.GetAttr("Kick",    "true"));
+
+            // Wired upstream → Materialize hoists the expression; a non-empty
+            // pill → its literal. Both count as "override present".
+            string overrideExpr = ctx.Materialize(node, "Platforms", "\"\"");
+            bool hasOverride = !IsEmptyLiteral(overrideExpr);
+
+            var check = new System.Collections.Generic.List<string>(3);
+            if (twitch)  check.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch);
+            if (youtube) check.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube);
+            if (kick)    check.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Kick);
+
+            if (!hasOverride)
+            {
+                if (check.Count == 0)
+                {
+                    ctx.Emit($"{prefix}# WARNING: Chat.Send has no platform selected — nothing sent");
+                    ctx.FollowNamed(node, "Done", indent);
+                    return;
+                }
+                if (check.Count == 1)
+                {
+                    // Legacy single-platform collapse. The Message fallbacks
+                    // mirror the retired per-platform descriptors exactly
+                    // (Twitch's was "Hello!", YouTube/Kick's "Hello chat!") so
+                    // the migrated emission stays byte-identical.
+                    (string cmd, string fb) = check[0] switch
+                    {
+                        Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch  => ("twitch.send_chat", "\"Hello!\""),
+                        Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube => ("youtube.send_chat", "\"Hello chat!\""),
+                        _                                                  => ("kick.send_chat", "\"Hello chat!\""),
+                    };
+                    ctx.Emit($"{prefix}{cmd}({ctx.Resolve(node, "Message", fb)})");
+                    ctx.FollowNamed(node, "Done", indent);
+                    return;
+                }
+
+                string csv = string.Join(", ", check);
+                ctx.Emit($"{prefix}chat.send({ctx.Resolve(node, "Message", "\"Hello chat!\"")}, \"{csv}\")");
+                ctx.FollowNamed(node, "Done", indent);
+                return;
+            }
+
+            string fallbackCsv = string.Join(", ", check);
+            ctx.Emit($"{prefix}chat.send({ctx.Resolve(node, "Message", "\"Hello chat!\"")}, {overrideExpr}, \"{fallbackCsv}\")");
+            ctx.FollowNamed(node, "Done", indent);
+        }
+
+        private static bool ParseBoolAttr(string v)
+            => v.Trim().ToLowerInvariant() is "true" or "1" or "yes";
+
+        private static bool IsEmptyLiteral(string v)
+            => string.IsNullOrWhiteSpace(v) || v == "\"\"";
     }
 }

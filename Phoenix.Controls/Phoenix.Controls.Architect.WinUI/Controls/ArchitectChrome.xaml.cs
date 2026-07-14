@@ -282,7 +282,7 @@ public sealed partial class ArchitectChrome : UserControl
     /// which control holds keyboard focus — so typing plain letters like "f"
     /// into a value pill / rename box / databank cell also framed the
     /// viewport, and Ctrl+Z inside a pill ran the GRAPH undo instead of the
-    /// text box's own undo (user report: "hotkeys still affect the canvas when typed
+    /// text box's own undo (Majo: "hotkeys still affect the canvas when typed
     /// into a pill or other text-panel"). While a text-input control has
     /// focus, <c>args.Handled = true</c> suppresses the menu item's default
     /// invoke; the keystroke itself still reaches the focused control through

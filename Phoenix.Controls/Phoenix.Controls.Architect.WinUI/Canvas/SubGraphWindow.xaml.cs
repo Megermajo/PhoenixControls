@@ -463,7 +463,7 @@ public sealed partial class SubGraphWindow : Window
             // open from a different canvas (multi-window Architect) should refocus
             // that canvas on close, not the older one.
             if (originCanvas is not null) existing.OriginCanvas = originCanvas;
-            existing.Activate();
+            WindowFront.Show(existing);
             return;
         }
         var win = new SubGraphWindow();
@@ -518,7 +518,7 @@ public sealed partial class SubGraphWindow : Window
         win.WireDockedInspector(vm);
 
         s_open[win._trackingKey] = win;
-        win.Activate();
+        WindowFront.Show(win);
     }
 
     /// <summary>Show (or focus) a process editor for the given <paramref name="process"/>.
@@ -532,7 +532,7 @@ public sealed partial class SubGraphWindow : Window
         {
             // See OpenMacroEditor's origin-canvas refresh comment.
             if (originCanvas is not null) existing.OriginCanvas = originCanvas;
-            existing.Activate();
+            WindowFront.Show(existing);
             return;
         }
         var win = new SubGraphWindow();
@@ -572,7 +572,7 @@ public sealed partial class SubGraphWindow : Window
         win.WireDockedInspector(vm);
 
         s_open[win._trackingKey] = win;
-        win.Activate();
+        WindowFront.Show(win);
     }
 
     // ─── 0.11.x polish — per-window docked LogicInspector ───────────────

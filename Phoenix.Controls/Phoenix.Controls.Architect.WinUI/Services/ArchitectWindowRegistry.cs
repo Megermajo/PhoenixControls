@@ -116,7 +116,7 @@ public static class ArchitectWindowRegistry
             // HWND. Pre-fix that throw was swallowed and a dead reference
             // returned, so re-opening the file silently did nothing. Now we
             // evict the zombie and fall through to recreate a fresh window.
-            try { existing.Activate(); return existing; }
+            try { WindowFront.Show(existing); return existing; }
             catch
             {
                 s_open.TryRemove(key, out _);
@@ -157,7 +157,7 @@ public static class ArchitectWindowRegistry
             }
 
             Register(window, key);
-            try { window.Activate(); } catch { /* best-effort */ }
+            try { WindowFront.Show(window); } catch { /* best-effort */ }
             return window;
         }
         finally
@@ -180,7 +180,7 @@ public static class ArchitectWindowRegistry
         var window = new ArchitectSiblingWindow();
         string key = UntitledKeyPrefix + Guid.NewGuid().ToString("N");
         Register(window, key);
-        try { window.Activate(); } catch { /* best-effort */ }
+        try { WindowFront.Show(window); } catch { /* best-effort */ }
         return window;
     }
 
@@ -247,7 +247,7 @@ public static class ArchitectWindowRegistry
                 {
                     if (ReferenceEquals(kvp.Value.GetViewModelForRegistry(), vm))
                     {
-                        try { kvp.Value.Activate(); } catch { /* best-effort */ }
+                        try { WindowFront.Show(kvp.Value); } catch { /* best-effort */ }
                         return;
                     }
                 }

@@ -38,7 +38,7 @@
 <div class="repo-bar">
   <div class="repo-bar-inner">
     <span class="crumb"><b>megermajo</b><span class="slash">/</span><b>phoenix-controls</b><span class="slash">/</span><b>README</b></span>
-    <span class="repo-actions"><span>A professional-grade stream suite for Twitch</span></span>
+    <span class="repo-actions"><span>A professional-grade stream suite for Twitch, YouTube &amp; Kick</span></span>
   </div>
 </div>
 
@@ -48,17 +48,17 @@
     <div>
       <h1>Phoenix <em>Controls</em></h1>
       <p class="rm-lede">
-        <strong>A professional-grade stream management suite for Twitch streamers.</strong>
+        <strong>A professional-grade stream management suite for Twitch, YouTube &amp; Kick streamers.</strong>
         Phoenix Controls replaces a stack of fragmented overlay tools, chatbot helpers, and one-off scripts
-        with a single coordinated trio of apps that share an IPC bus and a SQLite databank. You design your
+        with a single coordinated app that shares an IPC bus and a SQLite databank. You design your
         bot logic visually in <strong>Architect</strong>, design your OBS overlays visually in
         <strong>Visualist</strong>, and let <strong>Hub</strong> run everything live while you stream.
       </p>
     </div>
   </section>
 
-  <h2 class="rm-h2">The three apps</h2>
-  <p class="rm-p">Three independent processes that run side-by-side and talk over a local WebSocket bus.</p>
+  <h2 class="rm-h2">The three pillars</h2>
+  <p class="rm-p">Three pillars in one app: Hub is the running process, and Architect and Visualist are design-time pillars hosted as tabs inside it. They share a local WebSocket bus and a SQLite databank.</p>
   <div class="pillars">
     <div class="pillar">
       <div class="tag" style="color:#C9533C;">The runtime</div>
@@ -69,13 +69,13 @@
     <div class="pillar">
       <div class="tag" style="color:#E5A24E;">The logic builder</div>
       <h3>Architect</h3>
-      <div class="ex">Phoenix.Controls.Architect.WinUI.exe</div>
+      <div class="ex">A pillar tab inside Hub</div>
       <p>Where you build bot behaviour. Drop nodes on a canvas, wire them Unreal-Blueprints style, and Architect compiles the graph into a <code>.phx</code> script Hub picks up automatically. Never talks to Twitch directly — bus only, for live debug.</p>
     </div>
     <div class="pillar">
       <div class="tag" style="color:#C893BC;">The compositor</div>
       <h3>Visualist</h3>
-      <div class="ex">Phoenix.Controls.Visualist.WinUI.exe</div>
+      <div class="ex">A pillar tab inside Hub</div>
       <p>Where you build OBS overlays. Each <code>.phxlayer</code> is one OBS browser source; place widgets and author per-trigger behaviour as a node graph. Triggers fire from Architect via <code>Visual.Trigger</code> and run in OBS.</p>
     </div>
   </div>
@@ -84,8 +84,8 @@
   <p class="rm-p">A minimal "type a chat command, see the bot reply" loop — the whole thing in six moves.</p>
   <ol class="rm-steps">
     <li class="rm-li">In <strong>Architect</strong>, <strong>File → New</strong> and save <code>hello.phxg</code> into Hub's logic folder.</li>
-    <li class="rm-li">Press <strong>Space</strong> (or right-click) and spawn <code>Twitch.ChatMessage</code>, <code>Logic.If</code> and <code>Twitch.SendChat</code>.</li>
-    <li class="rm-li">Wire the flow through, set <code>Logic.If</code> so <code>{message}</code> equals <code>!hello</code>, and set <code>Twitch.SendChat</code>'s message to <code>Hello, {user.name}!</code>.</li>
+    <li class="rm-li">Press <strong>Space</strong> (or right-click) and spawn <code>Chat.Message</code>, <code>Logic.If</code> and <code>Chat.Send</code>.</li>
+    <li class="rm-li">Wire the flow through, set <code>Logic.If</code> so <code>{user.command}</code> equals <code>hello</code>, and set <code>Chat.Send</code>'s message to <code>Hello, {user.name}!</code>.</li>
     <li class="rm-li"><strong>Save</strong> — Architect exports <code>hello.phx</code> and Hub hot-reloads it within ~250&nbsp;ms (watch the Script Monitor).</li>
     <li class="rm-li">Type <code>!hello</code> in your chat — a green pulse flashes through the nodes and the bot replies.</li>
     <li class="rm-li">Make it visible: fire a <code>Visual.Trigger</code> into a Visualist layer and add a browser source at <code>http://127.0.0.1:18080/layer/main</code>.</li>

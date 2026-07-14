@@ -154,8 +154,8 @@ namespace Phoenix.Controls.Architect.Core
                 // Twitch.ChatMessage's set + the platform discriminator. The
                 // legacy titles below stay listed for graphs not yet re-saved
                 // through migration.
-                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform" },
-                ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand" },
+                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform", "event.message_id" },
+                ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand", "event.message_id" },
                 ["Twitch.Subscription"]     = new[] { "user.name", "user.sub_months", "user.tier" },
                 // user.tier added: Twitch.Resub's template exposes a Tier output
                 // (maps to {user.tier}); the analyzer was missing it.

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
+using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Hub.Core
@@ -94,7 +95,21 @@ namespace Phoenix.Controls.Hub.Core
                 try
                 {
                     string currentStr = await DB.Instance.GetCellAsync(table, rowId, column);
-                    int.TryParse(currentStr, out int current);
+                    // Blank cell increments from 0 (documented engine semantic).
+                    // A NON-blank cell that doesn't parse as an integer is user
+                    // data this command must not clobber: the old ignored-TryParse
+                    // silently rebased such cells to `amt` (data corruption with a
+                    // success-shaped return). Refuse the write, log loudly, and
+                    // hand the unchanged value back so callers see the real state.
+                    int current = 0;
+                    if (!string.IsNullOrWhiteSpace(currentStr)
+                        && !int.TryParse(currentStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out current))
+                    {
+                        GlobalLogger.Log(
+                            $"db.increment_cell skipped: [{table}] row {rowId} col [{column}] holds non-numeric value '{currentStr}' — increment would destroy it",
+                            "ScriptManager", LogLevel.CriticalError);
+                        return currentStr;
+                    }
                     int newValue = current + amt;
                     await DB.Instance.SetCellAsync(table, rowId, column, newValue.ToString(CultureInfo.InvariantCulture));
                     return newValue.ToString(CultureInfo.InvariantCulture);

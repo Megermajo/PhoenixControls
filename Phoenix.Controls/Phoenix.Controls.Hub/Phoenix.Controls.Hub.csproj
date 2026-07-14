@@ -33,6 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Runtime" Version="4.0.732401" />
     <PackageReference Include="Websocket.Client" Version="5.3.0" />
     <!-- System.Speech: needed by Core/AudioService.cs for audio.play_tts (Windows TTS). -->
     <PackageReference Include="System.Speech" Version="8.0.0" />
@@ -53,8 +54,7 @@
     so Hub.WinUI's bin/ inherits the same data/ tree.
   -->
   <ItemGroup>
-    <Content Include="data\**\*"
-             Exclude="data\logic\script_states.json;data\logic\*.phx.bak*;data\**\*.tmp">
+    <Content Include="data\**\*" Exclude="data\logic\script_states.json;data\logic\*.phx.bak*;data\**\*.tmp">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

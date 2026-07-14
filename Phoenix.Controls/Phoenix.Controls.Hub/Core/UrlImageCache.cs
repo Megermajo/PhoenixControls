@@ -146,14 +146,11 @@ namespace Phoenix.Controls.Hub.Core
             {
                 try { _http.Dispose(); } catch { }
             }
-            // Release any semaphores still in the dict (process
-            // shutdown or test teardown). Refcount tracking normally evicts
-            // them on the last release, but a fault inside the critical
-            // section can leave one behind.
-            foreach (var kv in _fetchLocks)
-            {
-                try { kv.Value.Sem.Dispose(); } catch { }
-            }
+            // Drop any gates still in the dict (process shutdown or test
+            // teardown). Deliberately no Sem.Dispose: a fetch still in flight
+            // would hit ObjectDisposedException on its WaitAsync/Release, and a
+            // SemaphoreSlim whose AvailableWaitHandle is never touched carries
+            // no unmanaged resources — clearing the references is sufficient.
             _fetchLocks.Clear();
             _negativeCache.Clear();
             _lastAccessUtc.Clear();
@@ -263,6 +260,14 @@ namespace Phoenix.Controls.Hub.Core
             {
                 // Refcount drop + dict eviction on zero. Avoids leaking one
                 // SemaphoreSlim per unique URL ever fetched.
+                //
+                // Deliberately NO Dispose on eviction: a concurrent caller can
+                // GetOrAdd this same gate and increment its refcount between our
+                // decrement-to-zero and the TryRemove — disposing here made that
+                // caller's WaitAsync throw ObjectDisposedException. A SemaphoreSlim
+                // whose AvailableWaitHandle is never touched holds no unmanaged
+                // resources, so dropping the dictionary reference is enough; the
+                // GC reclaims it once the last in-flight caller releases.
                 if (Interlocked.Decrement(ref gate.RefCount) == 0)
                 {
                     if (_fetchLocks.TryRemove(sha, out var removed) && !ReferenceEquals(removed, gate))
@@ -272,7 +277,6 @@ namespace Phoenix.Controls.Hub.Core
                         // RefCount is already incremented.
                         _fetchLocks[sha] = removed;
                     }
-                    try { gate.Sem.Dispose(); } catch { }
                 }
             }
         }

@@ -2571,7 +2571,7 @@ public sealed partial class WidgetEditorView : UserControl
 
         if (_widgetPreviewWindow is not null)
         {
-            try { _widgetPreviewWindow.Activate(); return; }
+            try { Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(_widgetPreviewWindow); return; }
             catch { _widgetPreviewWindow = null; }
         }
 
@@ -2583,7 +2583,7 @@ public sealed partial class WidgetEditorView : UserControl
                 widget.Name, layerId, widget.Id, w, h);
             win.Closed += (_, _) => _widgetPreviewWindow = null;
             _widgetPreviewWindow = win;
-            win.Activate();
+            Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(win);
             SetStatus("Opened widget preview.");
         }
         catch (Exception ex)

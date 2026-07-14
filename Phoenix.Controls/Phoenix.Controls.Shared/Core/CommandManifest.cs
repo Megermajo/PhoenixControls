@@ -129,8 +129,16 @@ namespace Phoenix.Controls.Shared.Core
             AddT("bus.send",      new ArgSpec("Target", ArgType.String), new ArgSpec("Type", ArgType.String), new ArgSpec("Payload", ArgType.String));
             AddT("bus.broadcast", new ArgSpec("Type",   ArgType.String), new ArgSpec("Payload", ArgType.String));
 
+            // Chat — the unified multi-platform sender behind the Chat.Send
+            // node. Platforms = the runtime override (single name or comma
+            // list); Fallback = the exporter-baked checkmark CSV applied when
+            // the override resolves empty. Imperative Hub handler (fans out to
+            // the per-platform send cores) — no SimpleEmitDescriptor.
+            AddT("chat.send", new ArgSpec("Message", ArgType.String), new ArgSpec("Platforms", ArgType.String, Optional: true, Default: ""), new ArgSpec("Fallback", ArgType.String, Optional: true, Default: ""));
+
             // Twitch — simple emits
             AddT("twitch.send_chat",            new ArgSpec("Message", ArgType.String));
+            AddT("twitch.reply",                new ArgSpec("MessageId", ArgType.String), new ArgSpec("Message", ArgType.String));
             AddT("twitch.timeout",              new ArgSpec("User", ArgType.String), new ArgSpec("Sec", ArgType.Int, Optional: true, Default: "60"));
             AddT("twitch.ban",                  new ArgSpec("User", ArgType.String), new ArgSpec("Reason", ArgType.String, Optional: true, Default: ""));
             AddT("twitch.shoutout",             new ArgSpec("User", ArgType.String));
@@ -313,7 +321,10 @@ namespace Phoenix.Controls.Shared.Core
             AddT("youtube.set_description", new ArgSpec("Description", ArgType.String));
             AddT("youtube.timeout",         new ArgSpec("User", ArgType.String), new ArgSpec("Sec", ArgType.Int, Optional: true, Default: "300"));
             AddT("youtube.ban",             new ArgSpec("User", ArgType.String));
-            AddT("youtube.create_poll",     new ArgSpec("Title", ArgType.String), new ArgSpec("Choices", ArgType.String), new ArgSpec("DurationSec", ArgType.Int, Optional: true, Default: "60"));
+            // No DurationSec — the "Phoenix: YT Create Poll" action binds only
+            // %question% + %choice1%..%choice4% (Hub splits Choices into 4); YouTube
+            // polls take no duration over Streamer.bot.
+            AddT("youtube.create_poll",     new ArgSpec("Title", ArgType.String), new ArgSpec("Choices", ArgType.String));
             AddT("youtube.end_poll");
             AddT("youtube.get_user",        new ArgSpec("Username", ArgType.String));
 
@@ -325,7 +336,7 @@ namespace Phoenix.Controls.Shared.Core
             AddT("kick.send_chat",          new ArgSpec("Message", ArgType.String));
             AddT("kick.reply",              new ArgSpec("MessageId", ArgType.String), new ArgSpec("Message", ArgType.String));
             AddT("kick.timeout",            new ArgSpec("User", ArgType.String), new ArgSpec("Sec", ArgType.Int, Optional: true, Default: "300"));
-            AddT("kick.ban",                new ArgSpec("User", ArgType.String));
+            AddT("kick.ban",                new ArgSpec("User", ArgType.String), new ArgSpec("Reason", ArgType.String, Optional: true, Default: ""));
             AddT("kick.unban",              new ArgSpec("User", ArgType.String));
             AddT("kick.untimeout",          new ArgSpec("User", ArgType.String));
             AddT("kick.set_title",          new ArgSpec("Title", ArgType.String));
@@ -413,13 +424,29 @@ namespace Phoenix.Controls.Shared.Core
             // (the trailing "ResultBase" arg the exporter injects) so their value
             // output sockets resolve to {<base>_<socket>}. See
             // ExporterRegistry giveaway handlers + ScriptManager.Giveaway.cs.
+            // ticket's price trio (PriceTable/Price/IsAll) trails ResultBase so
+            // pre-price 6-arg exports keep binding positionally — never reorder.
+            // The trio is Optional+defaulted: the exporter only emits it when
+            // PriceTable is set, so every legacy/non-priced 6-arg call would
+            // otherwise log three missing-required-arg binder complaints per
+            // ticket entry.
             AddT("giveaway.create", new ArgSpec("Title", ArgType.String), new ArgSpec("SetDefault", ArgType.Bool));
             AddT("giveaway.close",  new ArgSpec("Giveaway", ArgType.String), new ArgSpec("Public", ArgType.Bool), new ArgSpec("ResultBase", ArgType.String));
-            AddT("giveaway.ticket", new ArgSpec("Giveaway", ArgType.String), new ArgSpec("Public", ArgType.Bool), new ArgSpec("User", ArgType.String), new ArgSpec("Increment", ArgType.Int), new ArgSpec("Role", ArgType.String), new ArgSpec("ResultBase", ArgType.String));
+            // ticket's Role STRING was replaced by the IsSub/IsMod pair at the
+            // same positions (4-5). Both are typed String (not Bool) and
+            // Optional, and ResultBase turned Optional, so a LEGACY 6-arg call
+            // — role badge at 4, base at 5, nothing after — still binds with
+            // zero missing-required/coercion complaints; the Hub handler
+            // detects the old shape from the raw args and translates it.
+            AddT("giveaway.ticket", new ArgSpec("Giveaway", ArgType.String), new ArgSpec("Public", ArgType.Bool), new ArgSpec("User", ArgType.String), new ArgSpec("Increment", ArgType.Int), new ArgSpec("IsSub", ArgType.String, Optional: true, Default: "false"), new ArgSpec("IsMod", ArgType.String, Optional: true, Default: "false"), new ArgSpec("ResultBase", ArgType.String, Optional: true, Default: ""), new ArgSpec("PriceTable", ArgType.String, Optional: true, Default: ""), new ArgSpec("Price", ArgType.Int, Optional: true, Default: "0"), new ArgSpec("IsAll", ArgType.Bool, Optional: true, Default: "false"));
             AddT("giveaway.winner", new ArgSpec("Giveaway", ArgType.String), new ArgSpec("Public", ArgType.Bool), new ArgSpec("ResultBase", ArgType.String));
             // giveaway.default_id() — no-arg inline pure-data probe backing the
             // Giveaway.Id node; resolved inline by ScriptExporter, no descriptor.
             AddT("giveaway.default_id");
+            // giveaway.is_active(<selector>) — inline pure-data probe backing the
+            // Giveaway.IsActive node. Returns "true" while the targeted giveaway
+            // (empty selector = the default one) is open; "false" otherwise.
+            AddT("giveaway.is_active", new ArgSpec("Giveaway", ArgType.String, Optional: true, Default: ""));
 
             // text.* command family (was bypassing the three-way contract).
             // text.format gains ArgSpec.Variadic on the placeholder list — the

@@ -90,27 +90,50 @@ namespace Phoenix.Controls.Shared.Services
         public static IDisposable Begin(string name)
         {
             var prior = _currentActivity;
+            long priorStartTicks = Volatile.Read(ref _lastActivityStartedAtUtcTicks);
             _currentActivity = name;
             Volatile.Write(ref _lastActivity, name);
             Volatile.Write(ref _lastActivityStartedAtUtcTicks, DateTime.UtcNow.Ticks);
             Interlocked.Increment(ref _openScopeDepth);
-            return new Scope(prior);
+            return new Scope(prior, priorStartTicks);
         }
 
         private sealed class Scope : IDisposable
         {
             private readonly string? _prior;
+            private readonly long _priorStartTicks;
             private bool _disposed;
-            public Scope(string? prior) { _prior = prior; }
+            public Scope(string? prior, long priorStartTicks)
+            {
+                _prior = prior;
+                _priorStartTicks = priorStartTicks;
+            }
             public void Dispose()
             {
                 if (_disposed) return;
                 _disposed = true;
                 _currentActivity = _prior;
                 Interlocked.Decrement(ref _openScopeDepth);
-                // Deliberately leave _lastActivity at whatever it was —
-                // the watchdog wants the last-touched name, not "now
-                // we're back in the parent scope".
+                if (_prior is not null)
+                {
+                    // A parent scope on this thread is still open — re-latch it.
+                    // Pre-fix, a nested scope's name outlived its own Dispose, so
+                    // the watchdog's "scope STILL OPEN — this activity is the
+                    // blocker" verdict could confidently name an already-CLOSED
+                    // nested scope while the parent was the one actually stuck
+                    // (e.g. EnterImmediateEdit's heavy mount reported as
+                    // ExitImmediateEdit). The restored start-ticks are the latch
+                    // value captured at Begin — exact for same-thread nesting,
+                    // approximate under cross-thread interleaving, which matches
+                    // this tracer's stated coarse tolerance.
+                    Volatile.Write(ref _lastActivity, _prior);
+                    Volatile.Write(ref _lastActivityStartedAtUtcTicks, _priorStartTicks);
+                }
+                // When _prior is null this was the OUTERMOST scope: deliberately
+                // leave _lastActivity latched — the watchdog wants the
+                // last-touched name for the depth==0 "scope already CLOSED /
+                // stall is in uninstrumented code after it" case (the fingerprint
+                // both recorded freezes relied on).
             }
         }
     }

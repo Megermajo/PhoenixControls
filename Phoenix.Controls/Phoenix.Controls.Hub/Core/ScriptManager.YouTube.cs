@@ -36,6 +36,24 @@ namespace Phoenix.Controls.Hub.Core
             _engine.SetLocalResultVar("user.is_broadcaster", NormBool(G("phx_yt_is_owner")));
         }
 
+        /// <summary>
+        /// The YouTube chat-send core — youtube.send_chat and the unified
+        /// chat.send dispatcher both route here. YouTube live chat caps
+        /// messages at 200 chars (tighter than Twitch's 500); anything longer
+        /// is rejected upstream silently, so drop with a clear log up-front.
+        /// </summary>
+        internal void SendYouTubeChatCore(string message, string commandLabel)
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            if (message.Length > 200)
+            {
+                GlobalLogger.Log($"{commandLabel} → DROPPED: message length {message.Length} exceeds 200-char YouTube live-chat cap.",
+                    "Script", LogLevel.CriticalError);
+                return;
+            }
+            DispatchNamedAction(commandLabel, PhxSbActions.YtSendChat, new { message });
+        }
+
         private void RegisterYouTubeCommands()
         {
             // youtube.send_chat("message")
@@ -46,14 +64,7 @@ namespace Phoenix.Controls.Hub.Core
             _engine.RegisterCommand("youtube.send_chat", async (args) =>
             {
                 string message = _engine.CurrentBoundArgs?.GetOrDefault<string>("Message", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                if (string.IsNullOrEmpty(message)) return null;
-                if (message.Length > 200)
-                {
-                    GlobalLogger.Log($"youtube.send_chat → DROPPED: message length {message.Length} exceeds 200-char YouTube live-chat cap.",
-                        "Script", LogLevel.CriticalError);
-                    return null;
-                }
-                DispatchNamedAction("youtube.send_chat", PhxSbActions.YtSendChat, new { message });
+                SendYouTubeChatCore(message, "youtube.send_chat");
                 return null;
             });
 
@@ -138,26 +149,38 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // youtube.create_poll(title, choices, durationSec)
-            // Mirrors twitch.create_poll: raw comma-separated choices pass through;
-            // the SB wrapper action's YouTube Create Poll sub-action splits them.
-            // DoAction can't return a value, so no poll id surfaces here either.
+            // youtube.create_poll(title, choices)
+            // The "Phoenix: YT Create Poll" action binds %question% +
+            // %choice1%..%choice4% (YouTube caps a poll at 4 options) and takes NO
+            // duration — so Hub sends title as the question and splits the
+            // comma-separated choices into up to 4 discrete choiceN args (blank
+            // entries dropped, extras beyond 4 ignored). DoAction can't return a
+            // value, so no poll id surfaces here.
             _engine.RegisterCommand("youtube.create_poll", async (args) =>
             {
                 var bound = _engine.CurrentBoundArgs;
                 string title   = bound?.GetOrDefault<string>("Title", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 string choices = bound?.GetOrDefault<string>("Choices", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
-                int    dur     = (bound != null && bound.ContainsKey("DurationSec"))
-                    ? bound.Get<int>("DurationSec")
-                    : (int.TryParse(ArgOrEmpty(args, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out int d) ? d : 60);
                 if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(choices)) return null;
+                // Split the CSV, drop blank entries, cap at 4 (YouTube's max).
+                var opts = new List<string>(4);
+                foreach (var rawOpt in choices.Split(','))
+                {
+                    string opt = rawOpt.Trim();
+                    if (opt.Length == 0) continue;
+                    opts.Add(opt);
+                    if (opts.Count == 4) break;
+                }
+                if (opts.Count == 0) return null;   // choices were all blanks/commas
                 DispatchNamedAction("youtube.create_poll", PhxSbActions.YtCreatePoll, new
                 {
-                    title,
-                    choices,
-                    duration = dur.ToString(CultureInfo.InvariantCulture)
+                    question = title,
+                    choice1  = opts.Count > 0 ? opts[0] : "",
+                    choice2  = opts.Count > 1 ? opts[1] : "",
+                    choice3  = opts.Count > 2 ? opts[2] : "",
+                    choice4  = opts.Count > 3 ? opts[3] : "",
                 });
-                GlobalLogger.Log($"YouTube Poll: {title}", "Script", LogLevel.Communication);
+                GlobalLogger.Log($"YouTube Poll: {title} ({opts.Count} options)", "Script", LogLevel.Communication);
                 return null;
             });
 

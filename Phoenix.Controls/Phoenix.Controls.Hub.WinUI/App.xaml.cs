@@ -364,6 +364,20 @@ public partial class App : Application
                 GlobalLogger.Log(
                     $"Last update: {label}{trail} (timestamp {prev.Timestamp ?? "—"})",
                     "App", LogLevel.System);
+
+                // First launch after a COMPLETED auto-update: pop the bundled
+                // changelog so the user sees what changed. The result file is
+                // read-once (deleted by the reader above), so this fires exactly
+                // once per applied update — no extra "already shown" flag needed.
+                if (string.Equals(prev.Outcome, "Success", StringComparison.OrdinalIgnoreCase))
+                {
+                    string versionTail = string.IsNullOrWhiteSpace(prev.NewSha)
+                        ? string.Empty
+                        : $" — v{prev.NewSha}";
+                    DocViewerWindow.OpenOrFocus(new DocViewRequest(
+                        "changelog.html",
+                        Title: $"Phoenix Controls — What's new{versionTail}"));
+                }
             }
         }
         catch (Exception ex)
@@ -587,7 +601,7 @@ public partial class App : Application
             }
 
             var viewer = new ReadOnlyPhxWindow(phxPath, openGraph);
-            viewer.Activate();
+            WindowFront.Show(viewer);
             GlobalLogger.Log(
                 $"Opened read-only viewer for {phxPath}",
                 "App", LogLevel.System);

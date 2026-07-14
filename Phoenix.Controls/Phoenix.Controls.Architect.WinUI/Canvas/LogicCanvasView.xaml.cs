@@ -232,7 +232,11 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
             if (n.Title is not ("Event.Trigger" or "Event.Executor" or "Event.Return")) continue;
             if (n.Attributes is null || !n.Attributes.TryGetValue("EventName", out var e2)) continue;
             if (!e2.Equals(ev, StringComparison.OrdinalIgnoreCase)) continue;
-            if (n.Sockets.Any(s => !s.IsPlaceholder && s.Name != "Flow" && s.Name != "EventName"))
+            // Sockets guard mirrors the Attributes guard above — safe today only
+            // via the load-time `Sockets ??= new` heal; keep it explicit so a
+            // future non-load insertion path can't NRE here.
+            if (n.Sockets is not null
+                && n.Sockets.Any(s => !s.IsPlaceholder && s.Name != "Flow" && s.Name != "EventName"))
                 return true;
         }
         return false;
@@ -4338,6 +4342,7 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         {
             if (!unpaired.Contains(n.Id)) continue;
             if (n.Model.Title is "Event.Trigger" or "Event.Executor"
+                && n.Model.Attributes is not null
                 && n.Model.Attributes.TryGetValue("EventName", out var ev)
                 && !string.IsNullOrWhiteSpace(ev))
             {

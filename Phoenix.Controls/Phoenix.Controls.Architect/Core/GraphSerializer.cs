@@ -677,15 +677,26 @@ namespace Phoenix.Controls.Architect.Core
             if (graph.Macros != null)
             {
                 foreach (var macro in graph.Macros)
-                    if (macro?.Graph != null)
-                        MigrateNodesRecursiveCore(macro.Graph, visited, depth + 1);
+                {
+                    if (macro is null) continue;
+                    // An explicit `"Graph": null` overrides the model's `= new Graph()`
+                    // initializer; downstream consumers (MacroCallHandler,
+                    // ResolveOutputFromNode's return arm) deref macro.Graph.Nodes.
+                    // Heal to an empty body instead of skipping — same philosophy
+                    // as the node Attributes/Sockets heal: fix once at load.
+                    macro.Graph ??= new Graph();
+                    MigrateNodesRecursiveCore(macro.Graph, visited, depth + 1);
+                }
             }
 
             if (graph.Processes != null)
             {
                 foreach (var proc in graph.Processes)
-                    if (proc?.Graph != null)
-                        MigrateNodesRecursiveCore(proc.Graph, visited, depth + 1);
+                {
+                    if (proc is null) continue;
+                    proc.Graph ??= new Graph();
+                    MigrateNodesRecursiveCore(proc.Graph, visited, depth + 1);
+                }
             }
         }
 
@@ -801,6 +812,18 @@ namespace Phoenix.Controls.Architect.Core
                 node.Attributes ??= new Dictionary<string, string>();
                 node.Sockets    ??= new List<Socket>();
             }
+            // Link id fields default to "" but an explicit JSON null overrides
+            // the initializer, and the dangling-link sweep's Dictionary
+            // .ContainsKey(null) then throws ArgumentNullException — failing the
+            // WHOLE graph load. Heal to "" so the sweep simply prunes the link.
+            foreach (var link in graph.Links)
+            {
+                if (link is null) continue;
+                link.FromNodeId   ??= string.Empty;
+                link.ToNodeId     ??= string.Empty;
+                link.FromSocketId ??= string.Empty;
+                link.ToSocketId   ??= string.Empty;
+            }
 
             // Live-processes migration — upgrade the legacy fire-and-forget
             // process nodes to the live-instance model. Process.Spawn → Process.Start
@@ -847,6 +870,61 @@ namespace Phoenix.Controls.Architect.Core
                     node.Attributes.TryAdd("YouTube", "true");
                     node.Attributes.TryAdd("Kick",    "false");
                 }
+                // Outbound mirror of the trigger unification above: the three
+                // per-platform send nodes collapse into Chat.Send. Same
+                // behavior-preservation contract — each legacy node migrates
+                // with ONLY its own platform checked (a single-platform
+                // Chat.Send with no override emits the identical legacy
+                // command), and TryAdd keeps a user's later unchecks. The
+                // Platforms override socket + attr arrive via the template
+                // back-fill below.
+                else if (node.Title == "Twitch.SendChat")
+                {
+                    node.Title = "Chat.Send";
+                    node.Attributes.TryAdd("Twitch",  "true");
+                    node.Attributes.TryAdd("YouTube", "false");
+                    node.Attributes.TryAdd("Kick",    "false");
+                }
+                else if (node.Title == "YouTube.SendChat")
+                {
+                    node.Title = "Chat.Send";
+                    node.Attributes.TryAdd("Twitch",  "false");
+                    node.Attributes.TryAdd("YouTube", "true");
+                    node.Attributes.TryAdd("Kick",    "false");
+                }
+                else if (node.Title == "Kick.SendChat")
+                {
+                    node.Title = "Chat.Send";
+                    node.Attributes.TryAdd("Twitch",  "false");
+                    node.Attributes.TryAdd("YouTube", "false");
+                    node.Attributes.TryAdd("Kick",    "true");
+                }
+            }
+
+            // Giveaway.Ticket role rework: the free-text Role badge input was
+            // replaced by the IsSub/IsMod Bool pair (wire them from
+            // Chat.Message's outputs). Drop the retired Role socket — a wire
+            // into it is swept by the dangling-link cleanup at the end of this
+            // pass — and translate a legacy Role PILL value into the new
+            // checkbox defaults so "sub"/"mod" entries keep their meaning.
+            // TryAdd keeps re-loads idempotent and never clobbers a user's
+            // later checkbox choice; the IsSub/IsMod sockets themselves are
+            // appended by the template back-fill below.
+            foreach (var node in graph.Nodes)
+            {
+                if (node.Title != "Giveaway.Ticket" || node.Sockets == null) continue;
+                var roleSocket = node.Sockets.Find(s => s.Type == SocketType.Input && s.Name == "Role");
+                if (roleSocket is null && !node.Attributes.ContainsKey("Role")) continue;
+
+                if (roleSocket is not null)
+                    node.Sockets.Remove(roleSocket);
+
+                string legacyRole = node.Attributes.TryGetValue("Role", out var rv)
+                    ? rv.Trim().ToLowerInvariant()
+                    : "";
+                node.Attributes.TryAdd("IsSub", legacyRole is "sub" or "subscriber" ? "true" : "false");
+                node.Attributes.TryAdd("IsMod", legacyRole is "mod" or "moderator" ? "true" : "false");
+                node.Attributes.Remove("Role");
             }
 
             // Adjacency prebuild. The downstream
@@ -918,7 +996,10 @@ namespace Phoenix.Controls.Architect.Core
             // place — preserving its Id keeps existing wires intact, so the later
             // template back-fill sees a socket already named "Done" and skips the
             // remove-and-readd path that would orphan the links.
-            var sentToDoneTitles = new HashSet<string> { "Bus.Send", "Bus.Broadcast", "Twitch.SendChat" };
+            // Chat.Send is in the set because the retitle loop above runs FIRST —
+            // a pre-rename Twitch.SendChat with a "Sent" socket reaches this
+            // sweep already retitled.
+            var sentToDoneTitles = new HashSet<string> { "Bus.Send", "Bus.Broadcast", "Twitch.SendChat", "Chat.Send" };
             foreach (var node in graph.Nodes)
             {
                 if (!sentToDoneTitles.Contains(node.Title)) continue;

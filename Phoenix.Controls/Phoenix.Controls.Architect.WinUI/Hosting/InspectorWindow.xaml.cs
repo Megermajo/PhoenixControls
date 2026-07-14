@@ -84,7 +84,7 @@ public sealed partial class InspectorWindow : Window
             {
                 s_instance = new InspectorWindow();
                 s_instance.BindTo(viewModel);
-                s_instance.Activate();
+                WindowFront.Show(s_instance);
                 return s_instance;
             }
 
@@ -92,7 +92,7 @@ public sealed partial class InspectorWindow : Window
             if (!ReferenceEquals(s_instance._viewModel, viewModel))
                 s_instance.BindTo(viewModel);
 
-            try { s_instance.Activate(); }
+            try { WindowFront.Show(s_instance); }
             catch (Exception ex)
             {
                 GlobalLogger.Error("InspectorWindow", "OpenFor → Activate", ex);

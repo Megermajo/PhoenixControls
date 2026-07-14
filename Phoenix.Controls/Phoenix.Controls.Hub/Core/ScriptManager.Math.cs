@@ -37,7 +37,7 @@ namespace Phoenix.Controls.Hub.Core
     {
         private void RegisterMathCommands()
         {
-            // math.random(min, max) — returns a random integer in [min, max]
+            // math.random(min, max) — returns a random integer in [min, max)
             _engine.RegisterCommand("math.random", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
                 int? min = (bound != null && bound.ContainsKey("Min"))

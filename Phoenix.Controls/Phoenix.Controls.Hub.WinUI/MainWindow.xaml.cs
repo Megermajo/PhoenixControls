@@ -946,7 +946,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // Single-instance: focus the existing window if one is already open.
         if (_giveawayWindow is not null)
         {
-            try { _giveawayWindow.Activate(); }
+            try { WindowFront.Show(_giveawayWindow); }
             catch (Exception ex) { GlobalLogger.Error("MainWindow", "Activate existing Giveaway window", ex); }
             return;
         }
@@ -986,7 +986,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 catch (Exception ex) { GlobalLogger.Error("MainWindow", "Giveaway window dispose failed", ex); }
             };
 
-            window.Activate();
+            WindowFront.Show(window);
         }
         catch (Exception ex)
         {

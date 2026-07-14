@@ -161,12 +161,12 @@
       colLabel(322, 178, "2", "Logic", "branch / transform"),
       colLabel(612, 200, "3", "Action", "something fires"),
       svg,
-      miniNode({ x: chat.x, y: chat.y, w: chat.w, title: "Twitch.ChatMessage", category: "Events", color: "#7A2E2E", ins: [], outs: [{ k: "flow", n: "" }, { k: "string", n: "Message" }, { k: "user", n: "User" }, { k: "bool", n: "IsCommand" }] }),
+      miniNode({ x: chat.x, y: chat.y, w: chat.w, title: "Chat.Message", category: "Events", color: "#7A2E2E", ins: [], outs: [{ k: "flow", n: "" }, { k: "string", n: "Message" }, { k: "user", n: "User" }, { k: "bool", n: "IsCommand" }] }),
       miniNode({ x: sw.x, y: sw.y, w: sw.w, title: "Logic.Switch", category: "Flow Control", color: "#3A4257", ins: [{ k: "flow", n: "" }, { k: "string", n: "Value" }], outs: [{ k: "flow", n: "Case A" }, { k: "flow", n: "Default" }] }),
-      miniNode({ x: send.x, y: send.y, w: send.w, selected: true, title: "Twitch.SendChat", category: "Platforms", color: "#7A4710", ins: [{ k: "flow", n: "" }, { k: "string", n: "Message", v: "@{user} pong" }], outs: [{ k: "flow", n: "" }] }));
+      miniNode({ x: send.x, y: send.y, w: send.w, selected: true, title: "Chat.Send", category: "Platforms", color: "#7A4710", ins: [{ k: "flow", n: "" }, { k: "string", n: "Message", v: "@{user.name} pong" }], outs: [{ k: "flow", n: "" }] }));
     var cap = h("p", { class: "pr-cap", html:
       'The whole suite reads <b>left &rarr; right</b>: an event fires on the left, logic in the middle decides what matters, ' +
-      'an action on the right does the thing. This is the <b>!ping &rarr; pong</b> flow from the Quickstart &mdash; the white ' +
+      'an action on the right does the thing. This is the <b>!ping &rarr; pong</b> flow &mdash; the white ' +
       '<span class="pr-inline-pin" data-pin="flow"></span><b>flow</b> wire carries execution; the amber ' +
       '<span class="pr-inline-pin" data-pin="string"></span><b>string</b> wire carries the message text into the branch.' });
     inlinePins(cap);
@@ -183,17 +183,17 @@
     }
     var stage = h("div", { class: "pr-anatomy-stage" },
       h("div", { style: "position:relative;width:350px;height:200px" },
-        miniNode({ x: node.x, y: node.y, w: node.w, selected: true, title: "Twitch.SendChat", category: "Platforms", color: "#7A4710", ins: [{ k: "flow", n: "" }, { k: "string", n: "Message", v: "@{user} pong" }], outs: [{ k: "flow", n: "" }] }),
+        miniNode({ x: node.x, y: node.y, w: node.w, selected: true, title: "Chat.Send", category: "Platforms", color: "#7A4710", ins: [{ k: "flow", n: "" }, { k: "string", n: "Message", v: "@{user.name} pong" }], outs: [{ k: "flow", n: "" }] }),
         badge(node.x + node.w - 26, node.y + 2, "1"),
         badge(node.x + node.w - 26, node.y + MN.HEADER + 6, "2"),
         badge(node.x - 24, node.y + rowCY(1) - 9, "3"),
         badge(node.x + 86, node.y + rowCY(1) - 9, "4"),
         badge(node.x + node.w + 4, node.y + rowCY(0) - 9, "5")));
     var keyLi = [
-      ["1", "<b>Category strip</b> &mdash; colour-coded family (red = Twitch events, bronze = Twitch actions, slate = Logic). Tells you at a glance what a node belongs to."],
+      ["1", "<b>Category strip</b> &mdash; colour-coded family (red = event triggers, bronze = outbound actions, slate = logic). Tells you at a glance what a node belongs to."],
       ["2", "<b>Node title</b> &mdash; the <code>Namespace.Name</code> you spawn. Search it in the spawn palette or this reference."],
       ["3", "<b>Inputs (left)</b> &mdash; wire data and execution <em>in</em>. A solid pin is required; a hollow one is optional."],
-      ["4", "<b>Default chip</b> &mdash; a literal value typed in the inspector when nothing is wired. Templates like <code>{user}</code> resolve at run-time."],
+      ["4", "<b>Default chip</b> &mdash; a literal value typed in the inspector when nothing is wired. Templates like <code>{user.name}</code> resolve at run-time."],
       ["5", "<b>Outputs (right)</b> &mdash; wire execution and results <em>out</em> to the next node."]
     ].map(function (r) { return h("li", null, h("span", { class: "pr-k-num" }, r[0]), h("div", { html: r[1] })); });
     return h("div", { class: "pr-card pr-anatomy" }, stage, h("ol", { class: "pr-anatomy-key" }, keyLi));
@@ -203,11 +203,11 @@
       s("rect", { x: 1, y: 1, width: 118, height: 78, rx: 4, fill: "none", stroke: "var(--coal-4)", "stroke-dasharray": "3 4" }),
       s("g", { "font-family": "var(--font-mono)", "font-size": "8", fill: "var(--coal-8)" },
         s("rect", { x: 40, y: 18, width: 58, height: 13, rx: 2, fill: "var(--coal-2)", stroke: "var(--ember-400)" }),
-        s("text", { x: 46, y: 27, fill: "var(--ember-200)" }, "Twitch.Sen…"),
+        s("text", { x: 46, y: 27, fill: "var(--ember-200)" }, "Chat.Se…"),
         s("rect", { x: 40, y: 33, width: 58, height: 11, rx: 2, fill: "var(--coal-3)" }),
-        s("text", { x: 46, y: 41 }, "SendChat"),
+        s("text", { x: 46, y: 41 }, "Chat.Send"),
         s("rect", { x: 40, y: 44, width: 58, height: 11, rx: 2, fill: "var(--coal-2)" }),
-        s("text", { x: 46, y: 52 }, "Whisper")),
+        s("text", { x: 46, y: 52 }, "Chat.Message")),
       s("circle", { cx: 34, cy: 24, r: 3, fill: "var(--ember-300)" }),
       s("text", { x: 6, y: 68, "font-family": "var(--font-mono)", "font-size": "8", fill: "var(--coal-7)" }, "right-click ↑"));
   }
@@ -232,7 +232,7 @@
     var moves = [
       { glyph: glyphSpawn(), key: "Space", t: "Spawn", d: 'Press <kbd class="pr-kbd">Space</kbd> &mdash; or right-click the canvas &mdash; to open the spawn palette, then type to filter by name. Pick a trigger, a logic node, an action.' },
       { glyph: glyphWire(), key: "drag", t: "Wire", d: 'Drag from an output pin to a compatible input pin. Colours and shapes must match &mdash; Phoenix refuses a string-into-bool connection.' },
-      { glyph: glyphSave(), key: "Ctrl+S", t: "Save", d: 'Save the <code>.phx</code> file and it goes live instantly &mdash; Hub hot-reloads it, no restart. Type your command in chat to watch it run.' }
+      { glyph: glyphSave(), key: "Ctrl+S", t: "Save", d: 'Save the graph (<code>.phxg</code>) &mdash; Architect exports the generated <code>.phx</code> and Hub hot-reloads it instantly, no restart. Type your command in chat to watch it run.' }
     ];
     return h("div", { class: "pr-moves" }, moves.map(function (m, i) {
       return h("div", { class: "pr-move" },
@@ -242,7 +242,7 @@
     }));
   }
   function keyStrip() {
-    var keys = [["Space", "Spawn node"], ["Ctrl+F", "Find"], ["F", "Frame selection"], ["Ctrl+S", "Save · go live"], ["F1", "Node docs"]];
+    var keys = [["Space", "Spawn node"], ["Ctrl+F", "Find"], ["F", "Frame selection"], ["Ctrl+S", "Save · go live"], ["F1", "Node docs (on a selected node)"]];
     var wrap = h("div", { class: "pr-keys" }, h("span", { class: "h-eyebrow", style: "margin-right:4px" }, "Quick keys"));
     keys.forEach(function (kd) { wrap.appendChild(h("span", { class: "pr-key-item" }, h("kbd", { class: "pr-kbd" }, kd[0]), kd[1])); });
     wrap.appendChild(h("span", { class: "pr-key-item", style: "margin-left:auto;color:var(--coal-7)" }, h("kbd", { class: "pr-kbd" }, "F1"), "opens the full list in-app"));
@@ -251,7 +251,7 @@
   function leftRail() {
     var rows = [
       { dot: "#7FBED1", t: "Variables", hint: "value store", d: 'Named values you read and write across a flow. Scoped <b>Var</b> (graph-local, saved to the databank), <b>Public</b> (run-local, crosses parallel branches), or the databank-backed <b>global</b> store.' },
-      { dot: "#9CC97A", t: "Processes", hint: "long-running", d: 'Async loops that run until stopped &mdash; chat collectors, rotating-tip timers, rate limiters. Kick them off from <code>System.Startup</code>.' },
+      { dot: "#9CC97A", t: "Processes", hint: "long-running", d: 'Async loops that run until stopped &mdash; chat collectors, rotating-tip timers, rate limiters. Start and stop them with <code>Process.Start</code> / <code>Process.Stop</code> (often from <code>System.Startup</code>); a running process fires its own triggers (schedules, on_chat, …) until stopped, and reads its parameters as <code>{param.&lt;name&gt;}</code>.' },
       { dot: "#E5A24E", t: "Macros", hint: "reusable subgraphs", d: 'A graph you call like a single node. Build once, reuse everywhere; publish a macro globally to share it across files.' }
     ];
     return h("div", { class: "pr-rail" }, rows.map(function (r) {
@@ -278,7 +278,7 @@
     var streamToks = P.streamToks || [];
     return h("div", null,
       h("p", { class: "pr-section-lede", html:
-        'Anywhere a socket takes a value you can type <code>{namespace.key}</code>, and Architect resolves it ' +
+        'Anywhere a socket takes a value you can type <code>{namespace.key}</code>, and the engine resolves it ' +
         'at run-time in a single left-to-right pass &mdash; <b>local values win over system ones</b>. There are three ' +
         'kinds: <b>runtime tokens</b> an upstream node bound for you, <b>persistent stores</b> you read and write, ' +
         'and the <b>always-on</b> clock catalogue.' }),
@@ -322,7 +322,8 @@
         h("p", { class: "pr-lede", html:
           'The Architect is where you author everything that happens off-screen &mdash; a node graph that turns ' +
           'stream events into actions. Drag nodes onto the canvas, wire them together, and save. Hub picks the ' +
-          'file up immediately and runs it live. Below: how a flow is shaped, how to read a node, and the three ' +
+          'file up immediately and runs it live. Nothing fires, though, until Hub is running with Streamer.bot ' +
+          'connected and the Phoenix action pack imported. Below: how a flow is shaped, how to read a node, and the three ' +
           'moves you’ll repeat for every flow you ever build. Then the full node catalog follows.' })),
       primerBlock("primer-flow", "The shape of every flow", "Anatomy of a flow", flowDiagram()),
       primerBlock("primer-node", "Read it at a glance", "Anatomy of a node", nodeAnatomy()),
@@ -444,7 +445,7 @@
   // ── socket legend ─────────────────────────────────────────────────
   var LEGEND_LABELS = {
     flow: ["flow", "execution edge"], string: ["string", "text"], number: ["number", "int / float"],
-    bool: ["bool", "true / false"], user: ["user", "Twitch identity"], object: ["object", "JSON / blob"]
+    bool: ["bool", "true / false"], user: ["user", "chatter identity"], object: ["object", "JSON / blob"]
   };
   function buildLegend() {
     var row = document.getElementById("legend-row");

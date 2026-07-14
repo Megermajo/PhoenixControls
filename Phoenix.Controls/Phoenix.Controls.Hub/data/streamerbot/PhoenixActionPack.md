@@ -23,11 +23,14 @@ native sub-action's fields.
 > platform connected. The Kick set needs Streamer.bot **1.0.2+** with Kick
 > connected (app OAuth + streamer.bot website account link).
 
-> **The shipped `PhoenixActionPack.sb` does not yet contain the YouTube or Kick
-> actions.** Importing the pack creates the 29 Twitch/OBS actions only. Until
-> the pack is re-exported with the new sets (a maintainer step — a future
-> release will refresh the `.sb`), the YouTube and Kick actions must be added
-> in Streamer.bot by hand from their tables below, Option-B style.
+> **The shipped `PhoenixActionPack.sb` now includes the YouTube and Kick sets.**
+> Importing the pack creates all **46** `Phoenix: …` actions in one go. Three
+> documented actions are **deliberately not** in the pack because Streamer.bot
+> 1.0.x can't back them — `Phoenix: YT Get User`, `Phoenix: Kick Set Reward
+> Cost`, `Phoenix: Kick Set Reward Enabled`. Their Architect nodes are hidden
+> from the palette; they're kept in the tables below only for reference. (A
+> fourth, `Phoenix: Kick Delete Message`, imports as an empty placeholder — see
+> its row.)
 
 ---
 
@@ -36,10 +39,12 @@ native sub-action's fields.
 **Option A — import the pack (recommended).**
 The pack ships with the app at **`data/streamerbot/PhoenixActionPack.sb`** (next
 to this file). Open it, copy its **entire** contents, then in Streamer.bot:
-**Import** → paste → review → **Import**. All 29 Twitch/OBS `Phoenix: …` actions
-are created with the correct names, field bindings, and the data-action C# /
-globals wiring — nothing to build by hand. (The YouTube and Kick actions are
-**not** in the `.sb` yet — build those by hand from their tables below.)
+**Import** → paste → review → **Import**. All **46** `Phoenix: …` actions
+(Twitch, OBS, YouTube, and Kick) are created with the correct names, field
+bindings, and the data-action C# / globals wiring — nothing to build by hand.
+(Three documented actions Streamer.bot 1.0.x can't back are omitted on purpose —
+`Phoenix: YT Get User`, `Phoenix: Kick Set Reward Cost`, `Phoenix: Kick Set
+Reward Enabled`; their nodes are hidden in Architect.)
 
 **Option B — build by hand.**
 For each row in the table: create an Action with the **exact** name shown, add
@@ -66,6 +71,7 @@ found — and names any that are missing.
 | `Phoenix: VIP` | `user` | Twitch → Add VIP | User = `%user%` |
 | `Phoenix: Unvip` | `user` | Twitch → Remove VIP | User = `%user%` |
 | `Phoenix: Delete Message` | `messageId` | Twitch → Delete Message | Message Id = `%messageId%` |
+| `Phoenix: Reply` | `messageId`, `message` | Twitch → Send Chat Message (reply) | Message = `%message%`, Reply-To Message Id = `%messageId%` |
 | `Phoenix: Slow Mode` | `seconds` (0 = off) | Twitch → Chat Modes → Slow Mode | Duration = `%seconds%` (0 ⇒ set State = Off) |
 | `Phoenix: Follower Mode` | `minutes` (-1 = off) | Twitch → Chat Modes → Follow Mode | Duration = `%minutes%` (-1 ⇒ set State = Off) |
 | `Phoenix: Sub-Only Mode` | `enabled` (`true`/`false`) | Twitch → Chat Modes → Subscriber Mode | State = On when `%enabled%` = `true`, else Off |
@@ -139,15 +145,17 @@ and in the project docs.
 
 ---
 
-## YouTube actions (8) — requires Streamer.bot ≥ 1.0 with the YouTube platform connected
+## YouTube actions (7 in the pack) — requires Streamer.bot ≥ 1.0 with the YouTube platform connected
 
 The YouTube nodes work exactly like the Twitch set: each node calls a **named
 Streamer.bot action that you create once**, and the `args` arrive inside the
 action as `%variable%` references you wire into the native YouTube sub-action's
 fields.
 
-> These actions are **not in the shipped `PhoenixActionPack.sb` yet** — build
-> them by hand from this table (Option B) until the pack is re-exported.
+> These 7 actions **ship in `PhoenixActionPack.sb`** — importing the pack creates
+> them. The 8th, `Phoenix: YT Get User`, is **not available**: Streamer.bot 1.0.x
+> exposes no YouTube user-info sub-action, so its node is hidden in Architect and
+> the row below is reference-only.
 
 | Phoenix action name (exact) | Hub command | Hub sends `args` | Streamer.bot native sub-action | Field bindings |
 |---|---|---|---|---|
@@ -155,58 +163,49 @@ fields.
 | `Phoenix: YT Set Title` | `youtube.set_title` | `title` | YouTube → Set Title | Title = `%title%` |
 | `Phoenix: YT Set Description` | `youtube.set_description` | `description` | YouTube → Set Description | Description = `%description%` |
 | `Phoenix: YT Timeout` | `youtube.timeout` | `user`, `duration` (seconds) | YouTube → Timeout User | User = `%user%` (by name), Duration = `%duration%` |
-| `Phoenix: YT Ban` | `youtube.ban` | `user` | YouTube → Ban User | User = `%user%` |
-| `Phoenix: YT Create Poll` | `youtube.create_poll` | `title`, `choices` (comma list), `duration` | YouTube → Create Poll | Title = `%title%`, Choices = `%choices%`, Duration = `%duration%` |
+| `Phoenix: YT Ban` | `youtube.ban` | `user` | YouTube → Ban User | User = `%user%` (YouTube's ban carries **no reason** — user only) |
+| `Phoenix: YT Create Poll` | `youtube.create_poll` | `question`, `choice1`…`choice4` | YouTube → Create Poll | Question = `%question%`, Choices = `%choice1%`…`%choice4%`. Hub splits the node's comma-separated **Choices** into up to 4 `choiceN` args; YouTube polls take **no duration** |
 | `Phoenix: YT End Poll` | `youtube.end_poll` | — | YouTube → End Poll | acts on the active poll |
-| `Phoenix: YT Get User` | `youtube.get_user` | `user`, `req` | **data action** — see below | writes the `phx_yt_*` globals |
+| `Phoenix: YT Get User` — **NOT AVAILABLE** | `youtube.get_user` | `user`, `req` | *(no YouTube user-info sub-action in SB 1.0.x)* | node hidden; not in the pack |
 
-### YouTube data action
+### YouTube data action — NOT AVAILABLE
 
-`Phoenix: YT Get User` follows the **same contract as `Phoenix: Get User`**:
-`DoAction` is fire-and-forget — its reply is just an ack and carries no action
-output — so the action **fetches the data, writes it into non-persisted globals
-named `phx_*`, and echoes Hub's per-call token into `phx_req` as its LAST
-sub-action.** Hub fires the action, then polls `GetGlobals(persisted:false)`
-until `phx_req` matches its token; because `phx_req` is written last, every
-other `phx_yt_*` value is guaranteed present by then.
-
-The same two rules apply to every `phx_yt_*` Set-Global sub-action —
-**Persisted = OFF** and **Auto Type = OFF** — and **`phx_req` must be the LAST
-sub-action**, its value exactly `%req%`.
-
-| Phoenix action name (exact) | Hub sends `args` | Fetch sub-action | Globals written (Variable = Value) |
-|---|---|---|---|
-| `Phoenix: YT Get User` | `user`, `req` | YouTube → **User Info** for `%user%` | `phx_yt_id` = user/channel id, `phx_yt_display_name` = display name, `phx_yt_profile_image` = profile image URL, `phx_yt_is_mod` = moderator flag, `phx_yt_is_sponsor` = sponsor/member flag, `phx_yt_is_owner` = channel-owner flag, then `phx_req`=`%req%` |
-
-The exact `%variable%` names the YouTube user-info sub-action populates vary by
-Streamer.bot version — check the sub-action's output variables in your install
-and bind each `phx_yt_*` global to the matching one.
+`Phoenix: YT Get User` **has no live path in Streamer.bot 1.0.x**: unlike Twitch
+and Kick, YouTube has no "Get User Info for Target" sub-action, so there is
+nothing for the action to read. The `youtube.get_user` node is therefore hidden
+in Architect and the action is **not** shipped in the pack. If a future
+Streamer.bot adds a YouTube user-info sub-action, the node can be un-hidden and
+the `phx_yt_*` global round-trip (identical to the Kick one below) wired up.
 
 ---
 
-## Kick actions (12) — requires Streamer.bot ≥ 1.0.2 with Kick connected (app OAuth + streamer.bot website account link)
+## Kick actions (10 in the pack) — requires Streamer.bot ≥ 1.0.2 with Kick connected (app OAuth + streamer.bot website account link)
 
 The Kick nodes follow the same pattern: each node calls a **named Streamer.bot
 action that you create once**, and the `args` arrive inside the action as
 `%variable%` references you wire into the native Kick sub-action's fields.
 
-> These actions are **not in the shipped `PhoenixActionPack.sb` yet** — build
-> them by hand from this table (Option B) until the pack is re-exported.
+> The 10 working actions below **ship in `PhoenixActionPack.sb`**. Three more are
+> reference-only: **`Phoenix: Kick Set Reward Cost`** / **`Set Reward Enabled`**
+> can't work (Kick rewards are fixed at Streamer.bot config time — no `%rewardId%`
+> binding), and **`Phoenix: Kick Delete Message`** imports as an empty placeholder
+> (Streamer.bot 1.0.x has no Kick delete-message sub-action). All three nodes are
+> hidden in Architect.
 
 | Phoenix action name (exact) | Hub command | Hub sends `args` | Streamer.bot native sub-action | Field bindings |
 |---|---|---|---|---|
 | `Phoenix: Kick Send Chat` | `kick.send_chat` | `message` | Kick → Send Message to Channel | Message = `%message%` |
 | `Phoenix: Kick Reply` | `kick.reply` | `messageId`, `message` | Kick → Reply To Message | Message Id = `%messageId%`, Message = `%message%` |
 | `Phoenix: Kick Timeout` | `kick.timeout` | `user`, `duration` (seconds) | Kick → Timeout User | User = `%user%`, Duration = `%duration%` |
-| `Phoenix: Kick Ban` | `kick.ban` | `user` | Kick → Ban User | User = `%user%` |
+| `Phoenix: Kick Ban` | `kick.ban` | `user`, `reason` | Kick → Ban User | User = `%user%`, Reason = `%reason%` |
 | `Phoenix: Kick Unban` | `kick.unban` | `user` | Kick → Unban User | User = `%user%` |
 | `Phoenix: Kick Untimeout` | `kick.untimeout` | `user` | Kick → UnTimeout User | User = `%user%` |
 | `Phoenix: Kick Set Title` | `kick.set_title` | `title` | Kick → Set Channel Title | Title = `%title%` |
 | `Phoenix: Kick Set Category` | `kick.set_category` | `category` | Kick → Set Channel Category | Category = `%category%` |
-| `Phoenix: Kick Delete Message` | `kick.delete_message` | `messageId` | Kick → Delete Chat Message | Message Id = `%messageId%` |
-| `Phoenix: Kick Set Reward Cost` | `kick.set_reward_cost` | `rewardId`, `cost` | Kick → reward management → Set Cost | Reward = `%rewardId%`, Cost = `%cost%` |
-| `Phoenix: Kick Set Reward Enabled` | `kick.set_reward_enabled` | `rewardId`, `enabled` (`true`/`false`) | Kick → reward management → Set Enabled State | Reward = `%rewardId%`, Enabled = `%enabled%` |
 | `Phoenix: Kick Get User` | `kick.get_user` | `user`, `req` | **data action** — see below | writes the `phx_kick_*` globals |
+| `Phoenix: Kick Delete Message` — **placeholder** | `kick.delete_message` | `messageId` | *(no Kick delete-message sub-action in SB 1.0.x)* | ships as an empty action; node hidden |
+| `Phoenix: Kick Set Reward Cost` — **NOT AVAILABLE** | `kick.set_reward_cost` | `rewardId`, `cost` | *(Kick rewards fixed at config time — no `%rewardId%`)* | not in the pack; node hidden |
+| `Phoenix: Kick Set Reward Enabled` — **NOT AVAILABLE** | `kick.set_reward_enabled` | `rewardId`, `enabled` | *(Kick rewards fixed at config time — no `%rewardId%`)* | not in the pack; node hidden |
 
 ### Kick data action
 
@@ -228,6 +227,12 @@ sub-action**, its value exactly `%req%`.
 The exact `%variable%` names the Kick user-info sub-action populates vary by
 Streamer.bot version — check the sub-action's output variables in your install
 and bind each `phx_kick_*` global to the matching one.
+
+> **Kick has no mod/sub flags.** Streamer.bot's *Kick → Get User Info for Target*
+> outputs id, login, display name and profile image, but **no** moderator or
+> subscriber flag. Leave `phx_kick_is_mod` / `phx_kick_is_sub` unbound (or set to
+> `false`); `kick.get_user` will always report `user.is_mod` / `user.is_sub` as
+> `false`. Use Twitch's `check_role` where you need those flags.
 
 ---
 
@@ -274,12 +279,22 @@ and bind each `phx_kick_*` global to the matching one.
 
 ## Status
 
-This sheet defines **49** `Phoenix: …` actions in total — 29 Twitch/OBS,
-8 YouTube, and 12 Kick. The action pack **ships with the app** at
-`data/streamerbot/PhoenixActionPack.sb` — the **29 Twitch/OBS** actions exported
-from and verified against a live Streamer.bot (exported from 1.0.4; minimum
-1.0.0). The **YouTube and Kick actions are not in the `.sb` yet** — build them
-by hand from their tables until the pack is re-exported (a maintainer step).
+The action pack **ships with the app** at
+`data/streamerbot/PhoenixActionPack.sb` and creates **46 `Phoenix: …` actions**
+on import — the full Twitch, OBS, YouTube, and Kick surface that has a working
+Streamer.bot 1.0.x path — exported from and verified against a live Streamer.bot
+(exported from 1.0.4; minimum Streamer.bot 1.0.0 for Twitch/OBS, 1.0 for YouTube,
+1.0.2 for Kick).
+
+A few documented actions are **reference-only** because Streamer.bot 1.0.x can't
+back them — `Phoenix: YT Get User`, `Phoenix: Kick Set Reward Cost`, and
+`Phoenix: Kick Set Reward Enabled` (plus `Phoenix: Kick Delete Message`, which
+imports as an empty placeholder). Their Architect nodes are hidden and the
+connect-probe does not expect them. The OBS *Source Position / Scale / Rotation*
+nodes also aren't in the pack — Hub drives those over its own OBS-WebSocket
+connection, falling back to a Streamer.bot relay only if you add those actions
+yourself.
+
 The names and argument variables are compiled into Hub
 (`ScriptManager.PhxSbActions`) and are what the connect-probe checks for, so the
 import and Hub stay in lockstep. Import the `.sb` (Option A) or build the

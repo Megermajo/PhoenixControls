@@ -7,6 +7,45 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607143 - 2026.07.14
+
+**New**
+- Hub: giveaways can charge channel points per ticket - pick the currency table on the ticket node, set the price in the giveaway's settings, and entries are paid automatically.
+- Architect: a "Buy as many as possible" switch on the Giveaway Ticket node converts a viewer's points into tickets, up to their points and the per-user limit.
+- Architect: the Giveaway Ticket node reports how many tickets a call actually bought, and a dedicated branch fires when a viewer cannot afford the entry.
+- Architect: the ticket node's table picker can create the standard "ChannelPoints" currency table with one click.
+- Hub: the Giveaway settings gained a "Ticket price" field (0 = free).
+- Architect: one "Chat Send" node replaces the per-platform send nodes - Twitch/YouTube/Kick checkmarks pick the targets, and a Platforms input can override them at runtime.
+- Architect: the Giveaway Ticket node reads the entrant's subscriber and moderator status through new IsSub/IsMod inputs.
+- Hub: giveaways gained a "Moderator bonus" draw weight next to the subscriber bonus.
+- Architect: a new "Giveaway Is Active" node tells scripts whether a giveaway is currently open.
+- Architect: "Var Set" nodes pass their stored value onward through a new Value output.
+- Hub: after an update, the changelog opens once on first start so you can see what changed.
+- Streamer.bot: the bundled action pack now includes ready-made YouTube and Kick actions - no more building them by hand.
+- Architect: a "Twitch Reply" node and a MessageId output on the Chat Message trigger lay the groundwork for replying to specific chat messages. Live chat does not fill the message ID yet, so replies activate in a coming update.
+- Architect: the Kick Ban node accepts an optional reason.
+- Hub: hovering any pin on a giveaway node shows an explanation of what it does.
+
+**Fixed**
+- Architect: reroute knots can be moved again - the left half drags the knot, the right half starts a wire.
+- Hub: giveaway, graph-editor, and preview windows open in front of the main window instead of behind it.
+- Hub: older exported scripts calling the Giveaway Ticket with unfilled values no longer mix up their result branches.
+- Hub: the app records diagnostic details when the interface freezes, to help pin down hangs.
+- Hub: closed a series of rare crash paths across the Hub, the script exporter, and the overlay, found in an internal stability review.
+- Architect: the YouTube Create Poll node now sends the question and up to four choices the way Streamer.bot expects.
+- Architect: freshly placed user-lookup nodes (Get User, Check Role, Follow Age, Last Active) now look up the chatting user instead of sending a placeholder.
+- Architect: the State "On Change" trigger's Name, OldValue, and NewValue outputs now carry the real values instead of staying empty.
+- Architect: OBS position, scale, and rotation nodes accept decimal values on their pins.
+- Hub: no more warnings about action-pack entries that cannot exist, after connecting to Streamer.bot.
+- Hub: scripts no longer wait several seconds when asking for data from an action the pack does not provide.
+- Architect: many corrections across the built-in node reference, node tooltips, and first-run tips.
+
+**Gone**
+- Architect: the Giveaway Ticket node's free-text "Role" input was replaced by the IsSub/IsMod inputs - saved graphs convert automatically.
+- Architect: the separate Twitch/YouTube/Kick "Send Chat" nodes merged into "Chat Send" - saved graphs convert automatically.
+- Architect: the YouTube Create Poll node's Duration input was removed - Streamer.bot sets the poll length.
+- Architect: YouTube Get User, Kick Delete Message, and the Kick reward nodes left the node menu - Streamer.bot cannot perform them. Saved graphs still load.
+
 ## Hotfix - 1.0.2607142 - 2026.07.14
 
 **Fixed**

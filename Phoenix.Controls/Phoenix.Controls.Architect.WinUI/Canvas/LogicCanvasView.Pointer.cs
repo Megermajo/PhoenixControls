@@ -322,6 +322,24 @@ public sealed partial class LogicCanvasView
             return;
         }
 
+        // Flow.Reroute split hitbox. The knot is a 20×20 diamond whose In/Out
+        // pins sit on its W/E midpoints — every press inside the body is within
+        // the 14px pin radius of BOTH pins, so pre-fix the wire-drop branch
+        // swallowed every press and the knot had no move hitbox at all. Split at
+        // the vertical centre line: LEFT half moves the node (pinSock cleared so
+        // the press falls through to the node-drag branch), RIGHT half always
+        // starts an OUTPUT wire. Presses outside the body (near-pin slack) keep
+        // the plain nearest-pin behavior, and wire DROPS onto the knot are
+        // unaffected (drop resolution happens in HandlePointerEnd, not here).
+        if (left && !altPressed && hit is NodeViewModel rerouteNode && rerouteNode.IsReroute)
+        {
+            var reroutePt = HostToCanvas(point);
+            if (reroutePt.X < rerouteNode.X + rerouteNode.Width / 2.0)
+                pinSock = null;
+            else
+                pinSock = rerouteNode.Outputs.Count > 0 ? rerouteNode.Outputs[0] : pinSock;
+        }
+
         // Direct inline-pill editing. A left-press
         // squarely on an editable value pill of a GPU-drawn node enters edit mode
         // in ONE click — TryBeginInlineEditAtCanvasPoint materializes the node's real
@@ -801,6 +819,11 @@ public sealed partial class LogicCanvasView
 
     private void OnHostPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        // Breadcrumb the release path — HandlePointerEnd runs the wire-drop
+        // resolution / link creation / gesture settle synchronously on the UI
+        // thread, none of which the PointerPressed or render-tick scopes cover.
+        using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
+            .Begin("Architect.PointerReleased");
         // Refresh the cursor anchor with the actual release position. The
         // Move handler updates _lastHostPoint on every Moved, but if the user
         // releases without moving (a quick click-drop on a tiny socket), the
@@ -1031,6 +1054,13 @@ public sealed partial class LogicCanvasView
         var pp = e.GetCurrentPoint(HostRoot);
         int delta = pp.Properties.MouseWheelDelta;
         if (delta == 0) return;
+
+        // Breadcrumb the zoom/pan input edge — the 2026-07-14 freeze hit while
+        // panning/zooming, and input handlers dispatch in the uninstrumented
+        // window between frames. Cheap (flag writes below; the heavy flushes
+        // run inside the traced render tick).
+        using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
+            .Begin("Architect.PointerWheel");
 
         bool ctrl  = ModifierDown(Windows.System.VirtualKey.Control);
         bool shift = ModifierDown(Windows.System.VirtualKey.Shift);

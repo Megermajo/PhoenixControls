@@ -46,6 +46,10 @@ namespace Phoenix.Controls.Hub.Core
             public const string Vip               = "Phoenix: VIP";
             public const string Unvip             = "Phoenix: Unvip";
             public const string DeleteMessage     = "Phoenix: Delete Message";
+            // twitch.reply — threaded reply-to-message (SB's Send Chat Message with
+            // a reply target). Binds %messageId% + %message%. Added 2026-07-14 with
+            // Majo's re-exported pack (which now ships "Phoenix: Reply").
+            public const string Reply             = "Phoenix: Reply";
             public const string SlowMode          = "Phoenix: Slow Mode";
             public const string FollowerMode      = "Phoenix: Follower Mode";
             public const string SubOnlyMode       = "Phoenix: Sub-Only Mode";
@@ -121,16 +125,26 @@ namespace Phoenix.Controls.Hub.Core
             public const string KickSetRewardEnabled = "Phoenix: Kick Set Reward Enabled";
             public const string KickGetUser          = "Phoenix: Kick Get User";
 
-            // Authoritative set the connect-probe checks against (and that the
-            // action pack must define). twitch.resolve_prediction is intentionally
-            // absent — it has no live path (see its handler).
+            // Authoritative set the connect-probe checks against — the actions the
+            // shipped PhoenixActionPack.sb actually DEFINES, so a correct install
+            // probes clean (no false "re-import the pack" nag). Deliberately absent:
+            //   • twitch.resolve_prediction — no live path (see its handler).
+            //   • DeleteMessage / Whisper / CreatePoll / SubOnlyMode /
+            //     UpdateRewardCost / SetRewardEnabled / Fulfill/RejectRedemption —
+            //     their nodes are HIDDEN (NodeRegistry.HiddenFromPalette): no usable
+            //     Streamer.bot 1.0.x sub-action, so the pack omits them and a user
+            //     can't place those nodes. Their consts stay defined and their
+            //     handlers keep the fire-time _knownSbActions check, so a legacy
+            //     placed node still warns loudly if fired against a pack without it.
+            // (OBS Source Position/Scale/Rotation stay listed: their nodes are
+            //  VISIBLE and use the Streamer.bot relay as a fallback to Hub's direct
+            //  OBS-WebSocket path.)
             public static readonly string[] All =
             {
                 Shoutout, Timeout, Ban, Unban, Mod, Unmod, Vip, Unvip,
-                DeleteMessage, SlowMode, FollowerMode, SubOnlyMode, Marker,
-                Whisper, UpdateChannel, Announcement, CreateClip, CreatePoll,
-                EndPoll, CreatePrediction, UpdateRewardCost, SetRewardEnabled,
-                FulfillRedemption, RejectRedemption,
+                Reply, SlowMode, FollowerMode, Marker,
+                UpdateChannel, Announcement, CreateClip,
+                EndPoll, CreatePrediction,
                 GetUser, GetFollowAge,
                 ObsSetScene, ObsSourceVisible, ObsRefreshBrowser, ObsStartRecording,
                 ObsStopRecording, ObsStartStreaming, ObsStopStreaming, ObsSaveReplay,
@@ -142,17 +156,27 @@ namespace Phoenix.Controls.Hub.Core
             // SEPARATELY so the report stays one grouped Communication-tier line
             // per platform: a Twitch-only setup lacking every YT/Kick wrapper is
             // normal, not a CriticalError, and must not be spammed per action.
+            // YtGetUser is intentionally absent: SB 1.0.x exposes no YouTube
+            // user-info sub-action, so "Phoenix: YT Get User" can never exist —
+            // probing for it would spam a permanent false "missing action" line.
+            // The YouTube.GetUser node is hidden from the palette for the same
+            // reason (NodeRegistry.HiddenFromPalette).
             public static readonly string[] YouTubeAll =
             {
                 YtSendChat, YtSetTitle, YtSetDescription, YtTimeout, YtBan,
-                YtCreatePoll, YtEndPoll, YtGetUser,
+                YtCreatePoll, YtEndPoll,
             };
 
+            // KickDeleteMessage / KickSetRewardCost / KickSetRewardEnabled are
+            // intentionally absent: SB 1.0.x has no Kick delete-message sub-action
+            // and Kick rewards are fixed at config time (no %rewardId% binding), so
+            // those wrappers can't do real work — probing for them would spam a
+            // permanent false "missing action" line. Their nodes are hidden from the
+            // palette for the same reason (NodeRegistry.HiddenFromPalette).
             public static readonly string[] KickAll =
             {
                 KickSendChat, KickReply, KickTimeout, KickBan, KickUnban,
-                KickUntimeout, KickSetTitle, KickSetCategory, KickDeleteMessage,
-                KickSetRewardCost, KickSetRewardEnabled, KickGetUser,
+                KickUntimeout, KickSetTitle, KickSetCategory, KickGetUser,
             };
         }
 
@@ -342,13 +366,20 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             }
             var known = _knownSbActions;
-            if (known != null && !known.Contains(actionName)
-                && _missingSbActionWarned.TryAdd(actionName, 0))
+            if (known != null && !known.Contains(actionName))
             {
-                GlobalLogger.Log(
-                    $"{command} → Streamer.bot action \"{actionName}\" not found. " +
-                    "Import the Phoenix Controls action pack so this node can run.",
-                    "Script", LogLevel.CriticalError);
+                if (_missingSbActionWarned.TryAdd(actionName, 0))
+                    GlobalLogger.Log(
+                        $"{command} → Streamer.bot action \"{actionName}\" not found. " +
+                        "Import the Phoenix Controls action pack so this node can run.",
+                        "Script", LogLevel.CriticalError);
+                // Fast-return: the probe has run and this data action is definitively
+                // absent (e.g. youtube.get_user against a pack without "Phoenix: YT
+                // Get User"), so skip the DoAction + full GetGlobals poll that would
+                // only ever burn timeoutMs before returning null anyway. When the
+                // probe hasn't run yet (known == null) we stay permissive and try —
+                // the action may exist but not be enumerated yet.
+                return null;
             }
 
             string token = WS.NewRequestId("phxq");
@@ -1014,6 +1045,102 @@ namespace Phoenix.Controls.Hub.Core
         //   * twitch.ban (H28 JSON-safe payload, M32 reason cap)
         //   * twitch.create_clip
         //   * twitch.announcement (M32 cap)
+        /// <summary>
+        /// The Twitch chat-send core — twitch.send_chat and the unified
+        /// chat.send dispatcher both route here so the 500-char cap, chat-action
+        /// config guard and WS-link guard live once. <paramref name="commandLabel"/>
+        /// names the calling command in the log lines.
+        /// </summary>
+        internal void SendTwitchChatCore(string message, string commandLabel)
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            try
+            {
+                // Twitch chat messages are capped at 500 chars by the IRC
+                // backend; anything longer is rejected upstream silently.
+                if (message.Length > 500)
+                {
+                    GlobalLogger.Log($"{commandLabel} → DROPPED: message length {message.Length} exceeds 500-char Twitch cap.",
+                        "Script", LogLevel.CriticalError);
+                    return;
+                }
+                // Same explicit guards as ChatSource.SendAsBotAsync
+                // (Hub.WinUI/Services/ChatSource.cs). A blank chat action or
+                // a dropped WS link previously failed silently from a
+                // user-visible perspective; surface them at CriticalError
+                // tagged "Chat" so the System Log shows the failure beside
+                // the panel's own sends.
+                string actionName = (ConfigManager.Current.StreamerBotChatAction ?? string.Empty).Trim();
+                if (actionName.Length == 0)
+                {
+                    GlobalLogger.Log(
+                        $"{commandLabel} → DROPPED: Streamer.bot Chat Action name is not configured. " +
+                        "Set it in Hub Settings → Connection → Chat Action Name.",
+                        "Chat", LogLevel.CriticalError);
+                    return;
+                }
+                if (!WS.Instance.IsConnected)
+                {
+                    GlobalLogger.Log(
+                        $"{commandLabel} → DROPPED: Streamer.bot WebSocket is not connected (action='{actionName}', msg=\"{message}\").",
+                        "Chat", LogLevel.CriticalError);
+                    return;
+                }
+                string reqId = WS.NewRequestId("chat");
+                WS.Instance.Send(JsonSerializer.Serialize(new
+                {
+                    request = "DoAction",
+                    id      = reqId,
+                    action  = new { name = actionName },
+                    args    = new { message }
+                }));
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Log($"{commandLabel} failed: {ex.Message}", "ScriptEngine", LogLevel.CriticalError);
+            }
+        }
+
+        /// <summary>
+        /// Normalizes chat.send's platform list — a single name or a comma
+        /// list, case-insensitive, quotes tolerated, "yt" accepted for
+        /// youtube — into the canonical twitch/youtube/kick dispatch order
+        /// with duplicates collapsed. Unrecognized tokens come back in
+        /// <paramref name="unknownTokens"/> so the caller can log them.
+        /// </summary>
+        internal static IReadOnlyList<string> ParseChatPlatformTargets(
+            string? csv, out IReadOnlyList<string> unknownTokens)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unknown = new List<string>();
+            if (!string.IsNullOrWhiteSpace(csv))
+            {
+                foreach (var raw in csv.Split(','))
+                {
+                    string token = raw.Trim().Trim('"').Trim();
+                    if (token.Length == 0) continue;
+                    switch (token.ToLowerInvariant())
+                    {
+                        case Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch:
+                            seen.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch);
+                            break;
+                        case Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube:
+                        case "yt":
+                            seen.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube);
+                            break;
+                        case Phoenix.Controls.Shared.Core.ChatPlatforms.Kick:
+                            seen.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Kick);
+                            break;
+                        default:
+                            unknown.Add(token);
+                            break;
+                    }
+                }
+            }
+            unknownTokens = unknown;
+            return Phoenix.Controls.Shared.Core.ChatPlatforms.All.Where(seen.Contains).ToList();
+        }
+
         private void RegisterTwitchChatCommands()
         {
             // twitch.send_chat("message")
@@ -1023,49 +1150,88 @@ namespace Phoenix.Controls.Hub.Core
             // a clear log instead of debugging a no-op.
             _engine.RegisterCommand("twitch.send_chat", async (args) => {
                 string message = _engine.CurrentBoundArgs?.GetOrDefault<string>("Message", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                if (string.IsNullOrEmpty(message)) return null;
-                try
+                SendTwitchChatCore(message, "twitch.send_chat");
+                return null;
+            });
+
+            // twitch.reply(messageId, message) — threaded reply to a specific chat
+            // line via "Phoenix: Reply" (SB's Send Chat Message with a reply
+            // target). MessageId comes from the Chat.Message trigger's MessageId
+            // output ({event.message_id}). A reply is still a chat message, so the
+            // same 500-char cap as twitch.send_chat applies. Mirrors kick.reply.
+            _engine.RegisterCommand("twitch.reply", async (args) =>
+            {
+                var bound = _engine.CurrentBoundArgs;
+                string messageId = bound?.GetOrDefault<string>("MessageId", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
+                string message   = bound?.GetOrDefault<string>("Message", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
+                if (string.IsNullOrWhiteSpace(messageId))
                 {
-                    if (message.Length > 500)
-                    {
-                        GlobalLogger.Log($"twitch.send_chat → DROPPED: message length {message.Length} exceeds 500-char Twitch cap.",
-                            "Script", LogLevel.CriticalError);
-                        return null;
-                    }
-                    // Same explicit guards as ChatSource.SendAsBotAsync
-                    // (Hub.WinUI/Services/ChatSource.cs). A blank chat action or
-                    // a dropped WS link previously failed silently from a
-                    // user-visible perspective; surface them at CriticalError
-                    // tagged "Chat" so the System Log shows the failure beside
-                    // the panel's own sends.
-                    string actionName = (ConfigManager.Current.StreamerBotChatAction ?? string.Empty).Trim();
-                    if (actionName.Length == 0)
-                    {
-                        GlobalLogger.Log(
-                            "twitch.send_chat → DROPPED: Streamer.bot Chat Action name is not configured. " +
-                            "Set it in Hub Settings → Connection → Chat Action Name.",
-                            "Chat", LogLevel.CriticalError);
-                        return null;
-                    }
-                    if (!WS.Instance.IsConnected)
-                    {
-                        GlobalLogger.Log(
-                            $"twitch.send_chat → DROPPED: Streamer.bot WebSocket is not connected (action='{actionName}', msg=\"{message}\").",
-                            "Chat", LogLevel.CriticalError);
-                        return null;
-                    }
-                    string reqId = WS.NewRequestId("chat");
-                    WS.Instance.Send(JsonSerializer.Serialize(new
-                    {
-                        request = "DoAction",
-                        id      = reqId,
-                        action  = new { name = actionName },
-                        args    = new { message }
-                    }));
+                    GlobalLogger.Log("twitch.reply: empty messageId — skipping.",
+                        "Script", LogLevel.Communication);
+                    return null;
                 }
-                catch (Exception ex)
+                if (string.IsNullOrEmpty(message))
                 {
-                    GlobalLogger.Log($"twitch.send_chat failed: {ex.Message}", "ScriptEngine", LogLevel.CriticalError);
+                    GlobalLogger.Log("twitch.reply: empty message — skipping.",
+                        "Script", LogLevel.Communication);
+                    return null;
+                }
+                if (message.Length > 500)
+                {
+                    GlobalLogger.Log($"twitch.reply → DROPPED: message length {message.Length} exceeds 500-char Twitch chat cap.",
+                        "Script", LogLevel.CriticalError);
+                    return null;
+                }
+                DispatchNamedAction("twitch.reply", PhxSbActions.Reply, new { messageId, message });
+                return null;
+            });
+
+            // chat.send(Message, Platforms, Fallback) — the unified Chat.Send
+            // node's runtime dispatcher. Platforms is the node's override input
+            // (single name or comma list); when it resolves EMPTY at runtime the
+            // exporter-baked Fallback (the node's checkmark CSV) applies, so a
+            // blank upstream value never silently sends nowhere. Each resolved
+            // platform routes through the SAME core the per-platform command
+            // uses — the caps and guards (500/200/500 chars, action config,
+            // WS link) live exactly once.
+            _engine.RegisterCommand("chat.send", async (args) =>
+            {
+                var bound = _engine.CurrentBoundArgs;
+                string message = bound?.GetOrDefault<string>("Message", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
+                if (string.IsNullOrEmpty(message)) return null;
+                string platforms = StripBareQuotes(bound?.GetOrDefault<string>("Platforms", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1));
+                string fallback  = StripBareQuotes(bound?.GetOrDefault<string>("Fallback", ArgOrEmpty(args, 2)) ?? ArgOrEmpty(args, 2));
+                string list = string.IsNullOrWhiteSpace(platforms) ? fallback : platforms;
+
+                var targets = ParseChatPlatformTargets(list, out var unknown);
+                if (unknown.Count > 0)
+                {
+                    GlobalLogger.Log(
+                        $"chat.send: unknown platform token(s) '{string.Join(", ", unknown)}' ignored — valid: twitch, youtube, kick.",
+                        "Script", LogLevel.CriticalError);
+                }
+                if (targets.Count == 0)
+                {
+                    GlobalLogger.Log(
+                        "chat.send → DROPPED: no valid platform resolved (override and checkmark fallback both empty).",
+                        "Script", LogLevel.CriticalError);
+                    return null;
+                }
+
+                foreach (var platform in targets)
+                {
+                    switch (platform)
+                    {
+                        case Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch:
+                            SendTwitchChatCore(message, "chat.send(twitch)");
+                            break;
+                        case Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube:
+                            SendYouTubeChatCore(message, "chat.send(youtube)");
+                            break;
+                        case Phoenix.Controls.Shared.Core.ChatPlatforms.Kick:
+                            SendKickChatCore(message, "chat.send(kick)");
+                            break;
+                    }
                 }
                 return null;
             });

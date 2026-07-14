@@ -57,7 +57,13 @@ namespace Phoenix.Controls.Architect.Core
                     ("IsVip",         ColBool),
                     ("SubMonths",     ColNumber),
                     ("ColorHex",      ColString),
-                    ("Platform",      ColString)
+                    ("Platform",      ColString),
+                    // MessageId (→ {event.message_id}) appended LAST 2026-07-14 for
+                    // the same order-preservation reason as Platform: migrated /
+                    // already-saved graphs keep their existing socket order and
+                    // MigrateNodes back-fills this output additively. Feeds the
+                    // reply / delete-message nodes with the triggering message's id.
+                    ("MessageId",     ColString)
                 },
                 new Dictionary<string, string>
                 {

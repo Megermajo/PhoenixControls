@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using Phoenix.Controls.Hub.Core;
+using Phoenix.Controls.Hub.WinUI.Services;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI.Contracts;
@@ -86,7 +87,7 @@ public sealed class DocViewerWindow : Window
         // EnsureCoreWebView2Async — a never-activated / collapsed WebView2 gets
         // no compositor surface and returns a null CoreWebView2 (the trap the
         // Visualist preview panels document). Then kick the async core init.
-        Activate();
+        WindowFront.Show(this);
         _ = AsyncErrorBoundary.SafeRunAsync(InitCoreAsync, "DocViewerWindow", "InitCore");
     }
 
@@ -104,7 +105,7 @@ public sealed class DocViewerWindow : Window
                 s_instance = new DocViewerWindow(request);
                 return;
             }
-            s_instance.Activate();
+            WindowFront.Show(s_instance);
             s_instance.NavigateTo(request);
         }
         catch (Exception ex)

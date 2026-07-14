@@ -155,34 +155,22 @@ public static class HubBootstrapper
         HubHost.HUD = hudServer;
         LayerRuntime.Instance.Dispatcher = hudServer.SendToLayerAsync;
 
-        // Auto-sync to OBS: when LayerWatcher (re)registers a .phxlayer, push
-        // LAYER_RELOADED to every connected /hud/<id> browser so OBS browser
-        // sources — and Visualist's live canvas preview — refresh WITHOUT a
-        // manual OBS "Refresh cache of current page". LayerRegistry raises
-        // LayerReloaded on every register/replace; HUDServer.PushLayerReloadedAsync
-        // stamps the reload grace-window and broadcasts. The method, the event,
-        // and compositor.js's LAYER_RELOADED handler all existed — this single
-        // subscription, which both HUDServer and LayerRegistry XML-doc reference as
-        // "HubBootstrapper wires LayerRegistry.LayerReloaded to this", was never
-        // actually made, so saves only reached OBS after a manual refresh. Wired
-        // BEFORE LayerWatcher.Start() below so the startup scan's registrations are
-        // covered too (no /hud clients are connected yet, so they no-op harmlessly).
+        // Auto-sync to OBS: when LayerWatcher (re)registers a .phxlayer, the
+        // connected /hud/<id> browsers must refresh WITHOUT a manual OBS
+        // "Refresh cache of current page". The /hud broadcast half is owned by
+        // HUDServer itself (ctor subscribes LayerRegistry.LayerReloaded →
+        // PushLayerReloadedAsync, Stop() unhooks) — subscribing it here as an
+        // anonymous lambda pinned every disposed HUDServer on the singleton
+        // registry for the rest of the session. Only the bus half stays here:
+        // Bus.Instance is itself process-lifetime, so this subscription pins
+        // nothing disposable. Wired BEFORE LayerWatcher.Start() below so the
+        // startup scan's registrations are covered too.
         LayerRegistry.Instance.LayerReloaded += layerId =>
         {
-            // (a) OBS browser sources AND Visualist's hidden capture-page WebView2
-            //     (both connected to /hud/<id>) reload via compositor.js's
-            //     LAYER_RELOADED handler → location.reload().
-            _ = AsyncErrorBoundary.SafeRunAsync(
-                () => hudServer.PushLayerReloadedAsync(layerId),
-                "HubBootstrapper", "PushLayerReloadedAsync");
-
-            // (b) Visualist's design-time pillar (VisualistBusClient → LayerCanvasView.
-            //     OnBusLayerReloaded) forces an off-cadence canvas-preview capture and
-            //     recovers a preview whose last navigation failed. The handler already
-            //     existed but nothing was sending this bus message (same missing wire
-            //     as the /hud broadcast above), so the live canvas preview previously
-            //     only refreshed via the capture page's own /hud reload, lagging up to
-            //     a capture interval. Target="*" is harmless for Architect (ignores it).
+            // Visualist's design-time pillar (VisualistBusClient → LayerCanvasView.
+            // OnBusLayerReloaded) forces an off-cadence canvas-preview capture and
+            // recovers a preview whose last navigation failed. Target="*" is
+            // harmless for Architect (ignores it).
             _ = AsyncErrorBoundary.SafeRunAsync(
                 () => Bus.Instance.BroadcastAsync(new BusMessage
                 {

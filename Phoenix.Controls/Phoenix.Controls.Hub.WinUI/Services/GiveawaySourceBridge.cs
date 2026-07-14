@@ -86,7 +86,7 @@ internal sealed class GiveawaySourceBridge : IGiveawaySource, IDisposable
     private static GiveawayInfo ToInfo(RuntimeGiveaway g) => new(
         g.Id, g.Key, g.Title, ParseStatus(g.Status), g.OpenedAt, g.ClosedAt, g.OpenedBy, g.IsDefault,
         g.Entrants, g.Tickets, FormatAvg(g.Tickets, g.Entrants), FormatLastEntry(g.LastEntry),
-        g.SubscriberBonusFactor, g.CapPerUser, g.Winners);
+        g.SubscriberBonusFactor, g.ModBonusFactor, g.CapPerUser, g.TicketPrice, g.Winners);
 
     private static GiveawayEntrantInfo ToEntrant(RuntimeEntrant e)
         => new(e.Username, ParseRole(e.Role), e.Tickets, FormatLastEntry(e.LastEntry));

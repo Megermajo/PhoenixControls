@@ -136,7 +136,7 @@ namespace Phoenix.Controls.Architect.Core
                         "user.message", "user.name", "user.command", "user.args",
                         "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster",
                         "user.color_hex", "user.sub_months",
-                        "event.iscommand", "user.platform");
+                        "event.iscommand", "user.platform", "event.message_id");
                     return;
 
                 // ── Other event sources.

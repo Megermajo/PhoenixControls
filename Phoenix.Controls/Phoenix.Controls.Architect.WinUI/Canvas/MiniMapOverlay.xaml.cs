@@ -220,12 +220,17 @@ public sealed partial class MiniMapOverlay : UserControl
     /// </summary>
     private void OnRenderingTick(object? sender, object e)
     {
+        // The work branches carry UiActivityTrace breadcrumbs because this is a
+        // SECOND CompositionTarget.Rendering handler running outside the canvas's
+        // traced render tick — exactly the uninstrumented post-tick window the
+        // 2026-07 freeze captures pointed into. Idle ticks stay scope-free.
         if (_rebuildDirty)
         {
             _rebuildDirty = false;
             _viewportRectDirty = false;
             _colorDirty = false; // a full rebuild repaints every rect with its current colour
-            Rebuild();
+            using (Phoenix.Controls.Shared.Services.UiActivityTrace.Begin("Architect.MiniMap.Rebuild"))
+                Rebuild();
         }
         else if (_colorDirty)
         {
@@ -233,12 +238,14 @@ public sealed partial class MiniMapOverlay : UserControl
             // Runs only when no geometry rebuild is pending (checked first), so
             // the rect caches still match the live node/frame set.
             _colorDirty = false;
-            UpdateNodeAndFrameColors();
+            using (Phoenix.Controls.Shared.Services.UiActivityTrace.Begin("Architect.MiniMap.Colors"))
+                UpdateNodeAndFrameColors();
         }
         else if (_viewportRectDirty)
         {
             _viewportRectDirty = false;
-            UpdateViewportRect();
+            using (Phoenix.Controls.Shared.Services.UiActivityTrace.Begin("Architect.MiniMap.Viewport"))
+                UpdateViewportRect();
         }
     }
 

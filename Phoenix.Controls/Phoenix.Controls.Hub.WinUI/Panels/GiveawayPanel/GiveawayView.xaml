@@ -542,10 +542,55 @@
                                                    Text="× ticket weight for subs at draw · 1 = no bonus" />
                                     </Grid>
                                 </Border>
+                                <!-- Moderator bonus — mirror of the subscriber row.
+                                     Mod status comes from the IsSub/IsMod flags the
+                                     entry script recorded (no live re-check); factors
+                                     multiply for entrants who are both. -->
+                                <Border BorderBrush="{StaticResource CoalCardBrush}"
+                                        BorderThickness="0,0,0,1"
+                                        Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="130" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11" CharacterSpacing="40"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="Moderator bonus" />
+                                        <TextBox Grid.Column="1"
+                                                 x:Name="ModBonusBox"
+                                                 Width="72"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                                 BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}"
+                                                 FontSize="11"
+                                                 TextAlignment="Right"
+                                                 VerticalAlignment="Center"
+                                                 IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                 KeyDown="OnModBonusKeyDown"
+                                                 LostFocus="OnModBonusLostFocus"
+                                                 AutomationProperties.Name="Moderator ticket-weight factor (1 = no bonus)"
+                                                 Text="{x:Bind ViewModel.ModBonusDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="× ticket weight for mods at draw · 1 = no bonus" />
+                                    </Grid>
+                                </Border>
                                 <!-- Max tickets per user — 0 = unlimited; saves on
-                                     Enter / focus loss, Escape reverts. Last row →
-                                     no bottom divider. -->
-                                <Border BorderThickness="0"
+                                     Enter / focus loss, Escape reverts. -->
+                                <Border BorderBrush="{StaticResource CoalCardBrush}"
+                                        BorderThickness="0,0,0,1"
                                         Padding="0,5">
                                     <Grid ColumnSpacing="10">
                                         <Grid.ColumnDefinitions>
@@ -582,6 +627,52 @@
                                                    Foreground="{StaticResource CoalSecondaryTextBrush}"
                                                    VerticalAlignment="Center"
                                                    Text="0 = unlimited" />
+                                    </Grid>
+                                </Border>
+                                <!-- Ticket price — channel points per ticket charged by
+                                     Giveaway.Ticket nodes that carry a currency table and
+                                     follow this giveaway (Public on); 0 = free. Saves on
+                                     Enter / focus loss, Escape reverts. Last row → no
+                                     bottom divider. -->
+                                <Border BorderThickness="0"
+                                        Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="130" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11" CharacterSpacing="40"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="Ticket price" />
+                                        <TextBox Grid.Column="1"
+                                                 x:Name="TicketPriceBox"
+                                                 Width="72"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                                 BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}"
+                                                 FontSize="11"
+                                                 TextAlignment="Right"
+                                                 VerticalAlignment="Center"
+                                                 IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                 KeyDown="OnTicketPriceKeyDown"
+                                                 LostFocus="OnTicketPriceLostFocus"
+                                                 ToolTipService.ToolTip="Channel points one ticket costs in THIS giveaway. Charged by Giveaway.Ticket entry nodes that have a currency table set and Public on; a Public-off node uses its own Price pill instead. 0 = free entry."
+                                                 AutomationProperties.Name="Ticket price in channel points (0 = free)"
+                                                 Text="{x:Bind ViewModel.TicketPriceDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="channel points per ticket · 0 = free · charged by entry nodes with a currency table" />
                                     </Grid>
                                 </Border>
                             </StackPanel>

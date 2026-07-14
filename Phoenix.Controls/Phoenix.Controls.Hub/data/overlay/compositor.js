@@ -1748,7 +1748,10 @@
         }
 
         if (msg.type === 'RUN_TRIGGER') {
-            handleRunTrigger(msg);
+            // Un-awaited by design (onMessage stays synchronous) — a rejection
+            // must not surface as an unhandled promise rejection.
+            Promise.resolve(handleRunTrigger(msg))
+                .catch(err => console.warn('RUN_TRIGGER failed:', err));
             return;
         }
 
@@ -1771,7 +1774,7 @@
         // cycle through LayerWatcher. Production OBS sources never receive
         // this message (Visualist only posts it to the embedded WebView2).
         if (msg.type === 'WIDGET_UPDATE') {
-            if (!layer || !msg.widgetId) return;
+            if (!layer || !layer.widgets || !msg.widgetId) return;
             const w = layer.widgets.find(x => x.id === msg.widgetId);
             if (!w) return;
             if (msg.rect) {
@@ -1837,7 +1840,13 @@
                     resolve(text);
                 }
             }, 5000);
-            socket.send(JSON.stringify({ type: 'TRANSLATE_REQUEST', reqId, text, targetLang }));
+            try {
+                socket.send(JSON.stringify({ type: 'TRANSLATE_REQUEST', reqId, text, targetLang }));
+            } catch {
+                // Send failed (socket closing mid-frame) — fall back to the
+                // original text immediately instead of waiting the 5 s timeout.
+                if (pendingTranslate.has(reqId)) { pendingTranslate.delete(reqId); resolve(text); }
+            }
         });
     }
 
@@ -1989,14 +1998,17 @@
     }
 
     function sendComplete(msg) {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        socket.send(JSON.stringify({
+        // Route through the control outbox: a bare socket.send silently dropped
+        // VISUAL_COMPLETE acks emitted during a disconnect — the exact cargo the
+        // control queue exists to preserve — and Hub-side wait_for_visual then
+        // stalled to its full timeout.
+        sendSocket({
             type: 'VISUAL_COMPLETE',
             layerId,
             widgetId:    msg.widgetId,
             triggerName: msg.triggerName,
             waitId:      msg.waitId || '',
-        }));
+        }, { control: true });
     }
 
     // ── Sweep 21 — design-time scrub / play handlers ────────────────────────
@@ -2060,34 +2072,41 @@
         if (_playState.durationMs <= 0) { _playState = null; return; }
 
         const tick = async () => {
-            if (!_playState) return;
-            const elapsed = performance.now() - _playState.startWall;
-            let timeMs = _playState.startMs + elapsed;
-            if (timeMs >= _playState.durationMs) {
-                if (_playState.loop) {
-                    timeMs = timeMs % _playState.durationMs;
+            // Capture the session once: STOP_PLAY / SET_ACTIVE_TRIGGER arrive
+            // synchronously from onMessage and null the module-global while this
+            // tick is suspended inside withWidgetLock — every later read must go
+            // through `ps`, and session identity is re-checked after each await.
+            const ps = _playState;
+            if (!ps) return;
+            const elapsed = performance.now() - ps.startWall;
+            let timeMs = ps.startMs + elapsed;
+            if (timeMs >= ps.durationMs) {
+                if (ps.loop) {
+                    timeMs = timeMs % ps.durationMs;
                     // Reset start so the modulo stays sensible across long loops.
-                    _playState.startWall = performance.now();
-                    _playState.startMs   = timeMs;
+                    ps.startWall = performance.now();
+                    ps.startMs   = timeMs;
                 } else {
-                    timeMs = _playState.durationMs;
+                    timeMs = ps.durationMs;
                     triggerContext.timeMs = timeMs;
-                    await withWidgetLock(_playState.widget.id, async () => {
-                        try { await renderWidgetTrigger(_playState.widget, _playState.trigger); bumpRenderCount(); }
+                    await withWidgetLock(ps.widget.id, async () => {
+                        if (_playState !== ps) return; // session ended/replaced while awaiting the lock
+                        try { await renderWidgetTrigger(ps.widget, ps.trigger); bumpRenderCount(); }
                         catch (e) { console.warn('[Visualist] play final-frame render failed:', e); }
                     });
                     drawManipulator();  // #4 — repaint handles after the final-frame render
-                    handleStopPlay();
+                    if (_playState === ps) handleStopPlay();
                     return;
                 }
             }
             triggerContext.timeMs = timeMs;
-            await withWidgetLock(_playState.widget.id, async () => {
-                try { await renderWidgetTrigger(_playState.widget, _playState.trigger); bumpRenderCount(); }
+            await withWidgetLock(ps.widget.id, async () => {
+                if (_playState !== ps) return; // session ended/replaced while awaiting the lock
+                try { await renderWidgetTrigger(ps.widget, ps.trigger); bumpRenderCount(); }
                 catch (e) { console.warn('[Visualist] play frame render failed:', e); }
             });
             drawManipulator();  // #4 — repaint handles after each play frame
-            if (_playState) _playState.raf = requestAnimationFrame(tick);
+            if (_playState === ps) ps.raf = requestAnimationFrame(tick);
         };
         _playState.raf = requestAnimationFrame(tick);
     }
@@ -2314,7 +2333,7 @@
         for (const widget of layer.widgets) {
             if (!isWidgetVisible(widget)) continue;
             if (!widgetConsumesCaption(widget)) continue;
-            const trig = widget.triggers.find(t => t.name === 'onStartup');
+            const trig = (widget.triggers || []).find(t => t.name === 'onStartup');
             if (!trig) continue;
             await withWidgetLock(widget.id, async () => {
                 try { await renderWidgetTrigger(widget, trig); bumpRenderCount(); }
@@ -3248,7 +3267,7 @@
         findLinkTo(nodeId, socketName) {
             const node = this.graph.Nodes.find(n => n.Id === nodeId);
             if (!node) return null;
-            const sock = node.Sockets.find(s => s.Name === socketName && s.Type === 0); // 0 = Input
+            const sock = (node.Sockets || []).find(s => s.Name === socketName && s.Type === 0); // 0 = Input
             if (!sock) return null;
             return this.graph.Links.find(l => l.ToNodeId === nodeId && l.ToSocketId === sock.Id);
         }
@@ -3707,7 +3726,7 @@
         /// CAPTION_SOCKETS so a C# rename can be tracked in one place; an unrecognized socket
         /// name is warned about (once per name) instead of silently falling through.
         evalCaptionLive(node, socketId) {
-            const sock = node.Sockets.find(s => s.Id === socketId);
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
             if (!sock) return captionState.original;
             if (sock.Name === CAPTION_SOCKETS.TRANSLATED) {
                 return captionState.translated || captionState.original;

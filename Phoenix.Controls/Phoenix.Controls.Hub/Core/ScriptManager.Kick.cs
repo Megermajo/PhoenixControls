@@ -56,6 +56,24 @@ namespace Phoenix.Controls.Hub.Core
             });
         }
 
+        /// <summary>
+        /// The Kick chat-send core — kick.send_chat and the unified chat.send
+        /// dispatcher both route here. Kick chat messages are capped at 500
+        /// chars (same as Twitch); anything longer is rejected upstream
+        /// silently, so drop with a clear log up-front.
+        /// </summary>
+        internal void SendKickChatCore(string message, string commandLabel)
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            if (message.Length > 500)
+            {
+                GlobalLogger.Log($"{commandLabel} → DROPPED: message length {message.Length} exceeds 500-char Kick chat cap.",
+                    "Script", LogLevel.CriticalError);
+                return;
+            }
+            DispatchNamedAction(commandLabel, PhxSbActions.KickSendChat, new { message });
+        }
+
         private void RegisterKickCommands()
         {
             // kick.send_chat("message")
@@ -66,14 +84,7 @@ namespace Phoenix.Controls.Hub.Core
             _engine.RegisterCommand("kick.send_chat", async (args) =>
             {
                 string message = _engine.CurrentBoundArgs?.GetOrDefault<string>("Message", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                if (string.IsNullOrEmpty(message)) return null;
-                if (message.Length > 500)
-                {
-                    GlobalLogger.Log($"kick.send_chat → DROPPED: message length {message.Length} exceeds 500-char Kick chat cap.",
-                        "Script", LogLevel.CriticalError);
-                    return null;
-                }
-                DispatchNamedAction("kick.send_chat", PhxSbActions.KickSendChat, new { message });
+                SendKickChatCore(message, "kick.send_chat");
                 return null;
             });
 
@@ -145,10 +156,40 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // kick.ban / kick.unban / kick.untimeout — user-only moderation proxies.
-            RegisterUserOnlyKickProxy("kick.ban",       PhxSbActions.KickBan);
+            // kick.unban / kick.untimeout — user-only moderation proxies. kick.ban
+            // is registered separately (below) because its "Phoenix: Kick Ban"
+            // action binds a %reason% — unlike YouTube, whose ban API has no reason
+            // field, so youtube.ban stays user-only.
             RegisterUserOnlyKickProxy("kick.unban",     PhxSbActions.KickUnban);
             RegisterUserOnlyKickProxy("kick.untimeout", PhxSbActions.KickUntimeout);
+
+            // kick.ban(user, reason?) — mirrors twitch.ban. Reason is Optional
+            // Default "" (→ "no reason" fallback prose); the SB "Phoenix: Kick Ban"
+            // action binds %user% + %reason%. Same 500-char reason cap as twitch.ban.
+            _engine.RegisterCommand("kick.ban", async (args) =>
+            {
+                var bound = _engine.CurrentBoundArgs;
+                string user = bound?.GetOrDefault<string>("User", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
+                string reason;
+                if (bound != null && bound.ContainsKey("Reason")) reason = bound.Get<string>("Reason");
+                else reason = args.Length >= 2 ? args[1] : "no reason";
+                if (string.IsNullOrEmpty(reason)) reason = "no reason";  // Optional Default "" → fallback prose.
+                if (string.IsNullOrWhiteSpace(user))
+                {
+                    GlobalLogger.Log("kick.ban: empty user — skipping.",
+                        "Script", LogLevel.Communication);
+                    return null;
+                }
+                if (reason.Length > 500)
+                {
+                    GlobalLogger.Log($"kick.ban: reason length {reason.Length} exceeds 500-char cap — skipping.",
+                        "Script", LogLevel.Communication);
+                    return null;
+                }
+                DispatchNamedAction("kick.ban", PhxSbActions.KickBan, new { user, reason });
+                GlobalLogger.Log($"Kick ban: {user}: {reason}", "Script", LogLevel.LogicExecution);
+                return null;
+            });
 
             // kick.set_title(title) — updates the channel's stream title.
             _engine.RegisterCommand("kick.set_title", async (args) =>

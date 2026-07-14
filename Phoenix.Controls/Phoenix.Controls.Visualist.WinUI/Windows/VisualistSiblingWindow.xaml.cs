@@ -349,7 +349,7 @@ public sealed partial class VisualistSiblingWindow : Window
                     item.Text = "• " + item.Text;
                 item.Click += (_, _) =>
                 {
-                    try { captured.Activate(); }
+                    try { WindowFront.Show(captured); }
                     catch (Exception ex)
                     {
                         GlobalLogger.Error("VisualistSiblingWindow", "Window switch", ex);

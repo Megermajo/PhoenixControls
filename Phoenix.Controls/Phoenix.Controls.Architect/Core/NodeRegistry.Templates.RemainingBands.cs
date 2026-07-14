@@ -53,7 +53,7 @@ namespace Phoenix.Controls.Architect.Core
             // username (e.g. for a one-off mod-status check) without first
             // wiring an event payload. SocketViewModel.IsFallbackPillNode
             // gates the wired-but-still-editable behaviour; the literal here
-            // seeds the pill so new nodes render with "{user}" rather than a
+            // seeds the pill so new nodes render with "{user.name}" rather than a
             // bare "—" emptiness. Exporters fall back to the same literal
             // when the Username socket has no wired source.
             // 0.13.9 — Twitch.GetUser reads back the full "Get User Info for
@@ -75,19 +75,19 @@ namespace Phoenix.Controls.Architect.Core
                         ("AccountCreated", ColString), ("Game", ColString),
                         ("ChannelTitle", ColString), ("IsMod", ColBool),
                         ("IsSub", ColBool), ("IsVip", ColBool) },
-                new Dictionary<string, string> { { "Username", "{user}" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             AddTemplate("Twitch.GetStream",     "Twitch Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.twitch_getstream"),
                 new[] { ("Flow", ColExec), ("Username", ColString) },
                 new[] { ("Flow", ColExec), ("Title", ColString), ("Category", ColString), ("ViewerCount", ColNumber), ("Uptime", ColString) },
-                new Dictionary<string, string> { { "Username", "{user}" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             AddTemplate("Twitch.CheckRole",     "Twitch Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.twitch_checkrole"),
                 new[] { ("Flow", ColExec), ("Username", ColString) },
                 new[] { ("Flow", ColExec), ("IsMod", ColBool), ("IsSub", ColBool), ("IsVip", ColBool), ("IsBroadcaster", ColBool) },
-                new Dictionary<string, string> { { "Username", "{user}" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             // Twitch.IsOnline — flow probe: is the stream live? Channel is
             // optional; blank checks the configured broadcaster's own channel.
@@ -105,13 +105,13 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Username", ColString) },
                 new[] { ("Flow", ColExec), ("Days", ColNumber), ("Formatted", ColString),
                         ("FollowDate", ColString), ("IsFollowing", ColBool) },
-                new Dictionary<string, string> { { "Username", "{user}" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             AddTemplate("Twitch.LastActive", "Twitch Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.twitch_lastactive"),
                 new[] { ("Flow", ColExec), ("Username", ColString), ("Minutes", ColNumber) },
                 new[] { ("Inactive", ColExec), ("Active", ColExec), ("MinutesAgo", ColNumber) },
-                new Dictionary<string, string> { { "Username", "{user}" }, { "Minutes", "5" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" }, { "Minutes", "5" } });
 
             AddTemplate("Twitch.GetViewers", "Twitch Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.twitch_getviewers"),
@@ -126,7 +126,7 @@ namespace Phoenix.Controls.Architect.Core
             // family. Both nodes follow the Twitch.GetUser round-trip shape:
             // DoAction → poll GetGlobals (ScriptManager.FetchActionGlobalsAsync,
             // phx_yt_* / phx_kick_* prefixes). Username carries the same
-            // fallback-pill semantics as the Twitch lookups (seeded "{user}").
+            // fallback-pill semantics as the Twitch lookups (seeded "{user.name}").
             //
             // NOTE: the output sockets' result-var mapping (Id → {user.id},
             // DisplayName → {user.display_name}, etc.) lives in
@@ -138,7 +138,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Id", ColString), ("DisplayName", ColString),
                         ("ProfileImage", ColString), ("IsMod", ColBool),
                         ("IsSub", ColBool), ("IsBroadcaster", ColBool) },
-                new Dictionary<string, string> { { "Username", "{user}" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             AddTemplate("Kick.GetUser",         "Platform Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.kick_getuser"),
@@ -146,7 +146,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("Id", ColString), ("Login", ColString),
                         ("DisplayName", ColString), ("ProfileImage", ColString),
                         ("IsMod", ColBool), ("IsSub", ColBool) },
-                new Dictionary<string, string> { { "Username", "{user}" } });
+                new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             // ─────────────────────────────────────────────────────────────
             // VISUALS
@@ -209,6 +209,32 @@ namespace Phoenix.Controls.Architect.Core
             // ─────────────────────────────────────────────────────────────
             // PLATFORM ACTIONS
             // ─────────────────────────────────────────────────────────────
+            // Chat.Send — the ONE outbound chat node, mirror of the unified
+            // Chat.Message trigger: per-platform checkmark attributes pick the
+            // default targets, and the optional Platforms String input
+            // OVERRIDES them at runtime (a single name or a comma list, e.g.
+            // "twitch" or "twitch, kick"). Twitch-only with no override emits
+            // the legacy twitch.send_chat(...) byte-identically (goldens +
+            // existing .phx keep their meaning); same for the YouTube-/Kick-
+            // only shapes. Anything else emits chat.send(...), dispatched
+            // per-platform by the Hub with each platform's own caps/guards.
+            // The legacy Twitch.SendChat / YouTube.SendChat / Kick.SendChat
+            // templates below stay REGISTERED (tests + mid-migration graphs)
+            // but are HiddenFromPalette; MigrateNodes retitles them onto
+            // Chat.Send with only their own platform checked.
+            AddTemplate("Chat.Send",             "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.chat_send"),
+                new[] { ("Flow", ColExec), ("Message", ColString), ("Platforms", ColString) },
+                new[] { ("Done", ColExec) },
+                new Dictionary<string, string>
+                {
+                    { "Message",   "Hello chat!" },
+                    { "Platforms", "" },
+                    { "Twitch",    "true" },
+                    { "YouTube",   "true" },
+                    { "Kick",      "true" }
+                });
+
             // Twitch.SendChat Message fallback pill. Same fallback
             // semantics as the other fallback pills (wired wins at export;
             // literal is the runtime fallback for null upstream values).
@@ -237,6 +263,14 @@ namespace Phoenix.Controls.Architect.Core
             AddTemplate("Twitch.Ban",            "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.twitch_ban"),
                 new[] { ("Flow", ColExec), ("User", ColString), ("Reason", ColString) },
+                new[] { ("Done", ColExec) });
+
+            // twitch.reply — threaded reply-to-message via "Phoenix: Reply".
+            // Mirrors Kick.Reply. MessageId defaults to {event.message_id} in the
+            // exporter (the triggering Chat.Message's own id) when left unwired.
+            AddTemplate("Twitch.Reply",          "Platforms", Color.DarkViolet,
+                Localizer.T("architect.node.bubble.twitch_reply"),
+                new[] { ("Flow", ColExec), ("MessageId", ColString), ("Message", ColString) },
                 new[] { ("Done", ColExec) });
 
             // 0.13.9 — CreateClip is now a data action. The "Phoenix: Create Clip"
@@ -375,11 +409,14 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("User", ColString) },
                 new[] { ("Done", ColExec) });
 
+            // DurationSec socket dropped 2026-07-14 — the "Phoenix: YT Create Poll"
+            // action binds only %question% + %choice1%..%choice4% (no duration).
+            // Title → the poll question; Choices → a comma-separated list the Hub
+            // splits into up to 4 discrete choiceN args.
             AddTemplate("YouTube.CreatePoll",    "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.youtube_createpoll"),
-                new[] { ("Flow", ColExec), ("Title", ColString), ("Choices", ColString), ("DurationSec", ColNumber) },
-                new[] { ("Done", ColExec) },
-                new Dictionary<string, string> { { "DurationSec", "60" } });
+                new[] { ("Flow", ColExec), ("Title", ColString), ("Choices", ColString) },
+                new[] { ("Done", ColExec) });
 
             AddTemplate("YouTube.EndPoll",       "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.youtube_endpoll"),
@@ -408,9 +445,12 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) },
                 new Dictionary<string, string> { { "Sec", "300" } });
 
+            // Reason socket appended 2026-07-14 (additive — existing graphs keep
+            // their socket order): "Phoenix: Kick Ban" binds %reason% (unlike
+            // YouTube.Ban, whose action + platform API carry no reason field).
             AddTemplate("Kick.Ban",              "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.kick_ban"),
-                new[] { ("Flow", ColExec), ("User", ColString) },
+                new[] { ("Flow", ColExec), ("User", ColString), ("Reason", ColString) },
                 new[] { ("Done", ColExec) });
 
             AddTemplate("Kick.Unban",            "Platforms", Color.DarkViolet,
@@ -506,17 +546,17 @@ namespace Phoenix.Controls.Architect.Core
 
             AddTemplate("OBS.SetSourcePosition",    "OBS", ObsBlue,
                 Localizer.T("architect.node.bubble.obs_setsourceposition"),
-                new[] { ("Flow", ColExec), ("Scene", ColString), ("Source", ColString), ("X", ColNumber), ("Y", ColNumber) },
+                new[] { ("Flow", ColExec), ("Scene", ColString), ("Source", ColString), ("X", ColFloat), ("Y", ColFloat) },
                 new[] { ("Done", ColExec) });
 
             AddTemplate("OBS.SetSourceScale",       "OBS", ObsBlue,
                 Localizer.T("architect.node.bubble.obs_setsourcescale"),
-                new[] { ("Flow", ColExec), ("Scene", ColString), ("Source", ColString), ("ScaleX", ColNumber), ("ScaleY", ColNumber) },
+                new[] { ("Flow", ColExec), ("Scene", ColString), ("Source", ColString), ("ScaleX", ColFloat), ("ScaleY", ColFloat) },
                 new[] { ("Done", ColExec) });
 
             AddTemplate("OBS.SetSourceRotation",    "OBS", ObsBlue,
                 Localizer.T("architect.node.bubble.obs_setsourcerotation"),
-                new[] { ("Flow", ColExec), ("Scene", ColString), ("Source", ColString), ("Degrees", ColNumber) },
+                new[] { ("Flow", ColExec), ("Scene", ColString), ("Source", ColString), ("Degrees", ColFloat) },
                 new[] { ("Done", ColExec) });
 
             AddTemplate("OBS.SetFilterVisible",     "OBS", ObsBlue,
@@ -921,10 +961,17 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Value", ColObject) },
                 new Dictionary<string, string> { { "VariableName", "myVar" } });
 
+            // The Value OUTPUT relays whatever the node just stored (wired input
+            // or inline pill) so downstream data pins can consume it without a
+            // separate Var.Get — UE-Blueprints "Set returns the value" idiom.
+            // Appended after Flow; the type-aware MigrateNodes back-fill adds it
+            // to already-saved graphs on load (input "Value" and output "Value"
+            // are tracked in separate per-direction name sets, so the names may
+            // legally collide).
             AddTemplate("Var.Set", "Variables", Color.FromArgb(60, 110, 160),
                 Localizer.T("architect.node.bubble.var_set"),
                 new[] { ("Flow", ColExec), ("Value", ColObject) },
-                new[] { ("Flow", ColExec) },
+                new[] { ("Flow", ColExec), ("Value", ColObject) },
                 new Dictionary<string, string> { { "VariableName", "myVar" } });
 
             // Public.Get / Public.Set — script-run-wide variable tier. Same lifetime

@@ -1004,9 +1004,12 @@ namespace Phoenix.Controls.Architect.Core
 
             var macro = string.IsNullOrEmpty(macroId)
                 ? null
-                : ctx.Graph.Macros.FirstOrDefault(m => m.MacroId == macroId);
+                : ctx.Graph.Macros?.FirstOrDefault(m => m.MacroId == macroId);
 
-            if (macro == null)
+            // macro.Graph is load-healed (`??= new Graph()` in MigrateNodes), but
+            // the exporter also runs on programmatic graphs that never pass
+            // through a load — a null body takes the same comment-skip path.
+            if (macro == null || macro.Graph == null)
             {
                 ctx.Emit($"{prefix}# MACRO_CALL:{macroName} (not found — inline expansion skipped)");
                 ctx.FollowNamed(node, "Flow", indent);
@@ -1210,7 +1213,7 @@ namespace Phoenix.Controls.Architect.Core
 
             var process = string.IsNullOrEmpty(processId)
                 ? null
-                : ctx.Graph.Processes.FirstOrDefault(p => p.ProcessId == processId);
+                : ctx.Graph.Processes?.FirstOrDefault(p => p.ProcessId == processId);
 
             string idSlot = $"global._proc_inst_{ctx.IdPrefix(node)}";
             ctx.NodeResultVars[$"{node.Id}_InstanceId"] = $"{{{idSlot}}}";
@@ -1269,7 +1272,7 @@ namespace Phoenix.Controls.Architect.Core
 
             var process = string.IsNullOrEmpty(processId)
                 ? null
-                : ctx.Graph.Processes.FirstOrDefault(p => p.ProcessId == processId);
+                : ctx.Graph.Processes?.FirstOrDefault(p => p.ProcessId == processId);
 
             // Per-call-site instance var so the InstanceId output resolves and
             // two Process.Spawn nodes don't share the same instance id.
@@ -1283,7 +1286,11 @@ namespace Phoenix.Controls.Architect.Core
             string instanceLiteral = "\"" + Guid.NewGuid().ToString() + "\"";
             ctx.Emit($"{prefix}{idSlot} = {instanceLiteral}");
 
-            if (process == null)
+            // A null Graph (explicit `"Graph": null` on an unhealed/programmatic
+            // graph) gets the same comment-skip as a missing process — the sibling
+            // ProcessStartHandler already guards Graph with `?.`; this handler
+            // deref'd it bare.
+            if (process == null || process.Graph == null)
             {
                 ctx.Emit($"{prefix}# PROCESS_SPAWN:{processName} (not found — body skipped)");
                 ctx.FollowNamed(node, "Done", indent);

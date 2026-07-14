@@ -47,8 +47,26 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public double SubscriberBonusFactor { get; set; } = 1.0;
 
+        /// <summary>
+        /// Moderator ticket-weight factor applied at DRAW time: a moderator's
+        /// tickets count ×factor in the weighted draw. 1 = no bonus (default).
+        /// Mod status comes from the flags recorded at entry (the
+        /// Giveaway.Ticket node's IsMod input, or a legacy "mod" role badge) —
+        /// unlike sub status it is not re-gathered live before the draw.
+        /// Multiplies with the subscriber factor for entrants who are both.
+        /// </summary>
+        public double ModBonusFactor { get; set; } = 1.0;
+
         /// <summary>Max tickets per user; 0 = unlimited.</summary>
         public int CapPerUser { get; set; } = 0;
+
+        /// <summary>
+        /// Channel-point price per ticket; 0 = free entry (default). Charged by
+        /// Giveaway.Ticket nodes that carry a currency table (PriceTable) and
+        /// follow this giveaway's settings (Public = true). A Public = false
+        /// node uses its own Price pill instead of this setting.
+        /// </summary>
+        public int TicketPrice { get; set; } = 0;
 
         /// <summary>Comma-separated winner name(s), appended per draw.</summary>
         public string Winners { get; set; } = "";
@@ -59,6 +77,28 @@ namespace Phoenix.Controls.Shared.Models
         public string LastEntry { get; set; } = "";
     }
 
+    /// <summary>
+    /// Outcome of one priced/free ticket purchase (DB.PurchaseGiveawayTicketsAsync).
+    /// Exactly one of <see cref="Capped"/> / <see cref="NoFunds"/> /
+    /// <see cref="TableMissing"/> is set when nothing was granted; all three are
+    /// false on a successful (possibly cap-truncated w/ Capped) grant or a read.
+    /// </summary>
+    /// <param name="Tickets">The user's ticket total after the call.</param>
+    /// <param name="Purchased">Tickets actually granted by this call.</param>
+    /// <param name="Charged">Channel points deducted from the currency table.</param>
+    /// <param name="Balance">Balance after the call; -1 when no balance was read (free entry).</param>
+    /// <param name="Capped">The per-user cap blocked or truncated the request.</param>
+    /// <param name="NoFunds">The balance blocked the (cap-clamped) request entirely.</param>
+    /// <param name="TableMissing">The currency table (or its name/currency columns) is missing — nothing changed.</param>
+    public readonly record struct GiveawayPurchaseResult(
+        int Tickets,
+        int Purchased,
+        long Charged,
+        long Balance,
+        bool Capped,
+        bool NoFunds,
+        bool TableMissing);
+
     /// <summary>One row in a giveaway's ticket pool (GiveawayTickets table).</summary>
     public sealed class GiveawayEntrant
     {
@@ -66,6 +106,13 @@ namespace Phoenix.Controls.Shared.Models
 
         /// <summary>"broadcaster" · "mod" · "vip" · "sub" · "viewer" — for the role badge.</summary>
         public string Role { get; set; } = "viewer";
+
+        /// <summary>
+        /// Moderator flag recorded at entry (Giveaway.Ticket's IsMod input).
+        /// Separate from <see cref="Role"/> so a subscriber-moderator keeps
+        /// both facts; the draw's mod bonus also honors a legacy Role == "mod".
+        /// </summary>
+        public bool IsMod { get; set; }
 
         public int Tickets { get; set; }
 

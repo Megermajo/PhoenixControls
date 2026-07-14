@@ -550,12 +550,19 @@ public sealed class SocketViewModel : ObservableObject
         None,
         Tables,
         Columns,
+        // Giveaway selector drop-down (Giveaway.IsActive): lists the giveaways
+        // from the shared databank plus a "(default giveaway)" entry that
+        // clears the pill — an empty selector means "follow the default".
+        Giveaways,
     }
 
     /// <summary>
-    /// Resolve the databank-picker affordance kind for this socket. Only
-    /// fires for input sockets on DB.* nodes whose name is one of the
-    /// well-known databank attribute keys. The picker is independent of
+    /// Resolve the databank-picker affordance kind for this socket. Fires
+    /// for input sockets on DB.* nodes whose name is one of the well-known
+    /// databank attribute keys, plus Giveaway.Ticket's PriceTable (the
+    /// currency table channel points are charged from — same Tables list,
+    /// with an extra one-click "Create 'ChannelPoints' table" item appended
+    /// by NodeView's picker population). The picker is independent of
     /// IsEditablePill — a wired socket still benefits from the dropdown
     /// so the author can correct a typo without disconnecting the wire.
     /// </summary>
@@ -566,6 +573,14 @@ public sealed class SocketViewModel : ObservableObject
             if (_socket.Type != SocketType.Input) return DatabankPickerKindValue.None;
             if (string.IsNullOrEmpty(_socket.Name)) return DatabankPickerKindValue.None;
             var title = _parentNode.Title ?? string.Empty;
+            if (title == "Giveaway.Ticket")
+                return _socket.Name == "PriceTable"
+                    ? DatabankPickerKindValue.Tables
+                    : DatabankPickerKindValue.None;
+            if (title == "Giveaway.IsActive")
+                return _socket.Name == "Giveaway"
+                    ? DatabankPickerKindValue.Giveaways
+                    : DatabankPickerKindValue.None;
             if (!title.StartsWith("DB.", System.StringComparison.Ordinal))
                 return DatabankPickerKindValue.None;
             return _socket.Name switch
@@ -614,8 +629,10 @@ public sealed class SocketViewModel : ObservableObject
                 or "Math.Floor" or "Math.Ceil" or "Math.Abs" => true,
             // Math.Random / Math.Chance min/max bounds.
             "Math.Random" or "Math.Chance" => true,
-            // Twitch lookup + sender nodes (Username / Message fallbacks).
-            "Twitch.SendChat" or "Twitch.GetUser" or "Twitch.GetStream"
+            // Chat sender (unified) + Twitch lookup + legacy sender nodes
+            // (Username / Message fallbacks).
+            "Chat.Send"
+                or "Twitch.SendChat" or "Twitch.GetUser" or "Twitch.GetStream"
                 or "Twitch.CheckRole" or "Twitch.GetFollowAge"
                 or "Twitch.LastActive" or "Twitch.GetViewers" => true,
             // Discord channel / guild / user / message fallbacks.

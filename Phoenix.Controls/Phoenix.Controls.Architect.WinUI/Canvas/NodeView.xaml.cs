@@ -775,7 +775,12 @@ public sealed partial class NodeView : UserControl
                 case SocketViewModel.DatabankPickerKindValue.Tables:
                 {
                     var tables = await db.GetAllTableNamesAsync().ConfigureAwait(true);
-                    if (tables.Count == 0)
+                    // Giveaway.Ticket's PriceTable is a convenience surface — the
+                    // picker offers the standard currency table as a one-click
+                    // create (columns name/currency) when it doesn't exist yet.
+                    bool offerCreate = s.ParentNode.Title == "Giveaway.Ticket"
+                        && !tables.Contains(ChannelPointsTableName, System.StringComparer.OrdinalIgnoreCase);
+                    if (tables.Count == 0 && !offerCreate)
                     {
                         flyout.Items.Add(new MenuFlyoutItem
                         {
@@ -790,6 +795,48 @@ public sealed partial class NodeView : UserControl
                             var name = t;
                             var item = new MenuFlyoutItem { Text = name };
                             item.Click += (_, _) => s.ValuePill = name;
+                            flyout.Items.Add(item);
+                        }
+                        if (offerCreate)
+                        {
+                            if (tables.Count > 0) flyout.Items.Add(new MenuFlyoutSeparator());
+                            var create = new MenuFlyoutItem
+                            {
+                                Text = $"Create '{ChannelPointsTableName}' table",
+                                Icon = new FontIcon { Glyph = "" },   // Segoe MDL2 "Add"
+                            };
+                            ToolTipService.SetToolTip(create,
+                                $"Creates the standard currency table '{ChannelPointsTableName}' with the columns " +
+                                "name + currency — the shape this node charges channel points from — and selects it here.");
+                            create.Click += async (_, _) => await CreateChannelPointsTableAsync(s);
+                            flyout.Items.Add(create);
+                        }
+                    }
+                    break;
+                }
+                case SocketViewModel.DatabankPickerKindValue.Giveaways:
+                {
+                    // Giveaway.IsActive's selector drop-down. First entry clears
+                    // the pill (empty selector = follow the app-wide default
+                    // giveaway); the rest list every giveaway in the databank —
+                    // the pill is set to the KEY, which ResolveTargetAsync
+                    // matches unambiguously (titles may repeat).
+                    var defaultItem = new MenuFlyoutItem { Text = "(default giveaway)" };
+                    ToolTipService.SetToolTip(defaultItem,
+                        "Clears the selector — the node then follows the app-wide default giveaway from the Hub Giveaway page.");
+                    defaultItem.Click += (_, _) => s.ValuePill = "";
+                    flyout.Items.Add(defaultItem);
+
+                    var giveaways = await db.GetGiveawaysAsync().ConfigureAwait(true);
+                    if (giveaways.Count > 0)
+                    {
+                        flyout.Items.Add(new MenuFlyoutSeparator());
+                        foreach (var g in giveaways)
+                        {
+                            var key = g.Key;
+                            string title = string.IsNullOrWhiteSpace(g.Title) ? key : g.Title;
+                            var item = new MenuFlyoutItem { Text = $"{title} — {key} · {g.Status}" };
+                            item.Click += (_, _) => s.ValuePill = key;
                             flyout.Items.Add(item);
                         }
                     }
@@ -856,6 +903,43 @@ public sealed partial class NodeView : UserControl
             catch { /* flyout already disposed */ }
             Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                 "NodeView", "PopulateDatabankPickerAsync", ex);
+        }
+    }
+
+    /// <summary>
+    /// The standard currency table Giveaway.Ticket charges channel points
+    /// from. Fixed name + shape (columns <c>name</c> / <c>currency</c>) so the
+    /// node, the Hub-side purchase SQL, and user banking scripts all agree.
+    /// </summary>
+    internal const string ChannelPointsTableName = "ChannelPoints";
+
+    /// <summary>
+    /// One-click create for the standard currency table (picker item on
+    /// Giveaway.Ticket's PriceTable ▾). CREATE IF NOT EXISTS underneath, so a
+    /// concurrent/repeat click is harmless; on success the pill is set to the
+    /// table name. Failures land in the system log — the guardrail-style
+    /// no-modal rule applies (repeat-fire surface).
+    /// </summary>
+    private static async System.Threading.Tasks.Task CreateChannelPointsTableAsync(SocketViewModel s)
+    {
+        try
+        {
+            await Phoenix.Controls.Shared.Services.DB.Instance.CreateUserTableAsync(
+                ChannelPointsTableName,
+                new System.Collections.Generic.List<(string, string)>
+                {
+                    ("name", "TEXT"),
+                    ("currency", "INTEGER"),
+                }).ConfigureAwait(true);
+            s.ValuePill = ChannelPointsTableName;
+            Phoenix.Controls.Shared.Services.GlobalLogger.Log(
+                $"Databank: created table '{ChannelPointsTableName}' (name, currency) for Giveaway.Ticket.",
+                "Architect", Phoenix.Controls.Shared.Models.LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                "NodeView", "CreateChannelPointsTableAsync", ex);
         }
     }
 

@@ -88,8 +88,11 @@ function startTimers(ws, state, ui) {
 export function renderConnected(root, ctx) {
   // Retire any previous connection chain before repainting — its socket,
   // handlers, and pending reconnects all see a stale generation and no-op.
+  // Close the retired socket too (like the Disconnect/auth paths do) so it
+  // doesn't linger half-open until the network times it out.
   const gen = ++connectionGen;
   stopTimers();
+  try { activeWs?.close(); } catch { /* already closed */ }
   root.innerHTML = "";
   root.appendChild(el("div", "viewer-watermark"));
   const topbar = topbarMarkup(ctx.channel, "lan", null);

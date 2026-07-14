@@ -66,11 +66,26 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // giveaway.ticket(Giveaway, Public, User, Increment, Role, ResultBase) → Tickets
+            // giveaway.ticket(Giveaway, Public, User, Increment, IsSub, IsMod,
+            //                 ResultBase, PriceTable, Price, IsAll) → Tickets, Purchased
             // Increment <= 0 (or a closed giveaway) makes this read-only — it returns
-            // the user's current ticket count without adding. Also writes
-            // "{base}_limit" = "true"/"false" (per-user cap truncated the entry);
-            // the exporter's Limit-flow branch reads it as {<base>_limit}.
+            // the user's current ticket count without adding. Writes
+            // "{base}_limit" (per-user cap truncated the entry) and
+            // "{base}_nofunds" (channel-point balance blocked it) — the exporter's
+            // Limit/NoFunds flow branches read them braced. When PriceTable is
+            // set, each ticket costs channel points from that user table
+            // (columns name/currency). Price source follows the Public toggle:
+            // Public = true → the giveaway's TicketPrice setting; Public = false
+            // → the node's Price pill. IsAll buys the maximum the balance + cap
+            // allow instead of the fixed increment.
+            //
+            // LEGACY SHIM — the pre-rework node emitted
+            //   giveaway.ticket(g, pub, user, inc, ROLE, "base"[, table, price, isAll])
+            // with a role STRING at position 4 and the result base at 5. Those
+            // .phx files keep running unless re-exported, so the handler detects
+            // the old shape from the RAW positional args (under the new manifest
+            // the binder mis-names them) and translates: role → IsSub/IsMod
+            // flags, positions 5-8 shift back onto base/table/price/isAll.
             _engine.RegisterCommand("giveaway.ticket", async (args) =>
             {
                 var bound = _engine.CurrentBoundArgs;
@@ -82,16 +97,54 @@ namespace Phoenix.Controls.Hub.Core
                 int increment = (bound != null && bound.ContainsKey("Increment"))
                     ? bound.Get<int>("Increment")
                     : (int.TryParse(StripBareQuotes(ArgOrEmpty(args, 3)), NumberStyles.Integer, CultureInfo.InvariantCulture, out var inc) ? inc : 1);
-                string role = StripBareQuotes(bound?.GetOrDefault<string>("Role", ArgOrEmpty(args, 4)) ?? ArgOrEmpty(args, 4));
-                string baseVar = StripBareQuotes(bound?.GetOrDefault<string>("ResultBase", ArgOrEmpty(args, 5)) ?? ArgOrEmpty(args, 5));
+
+                string rawA4 = StripBareQuotes(ArgOrEmpty(args, 4));
+                string rawA5 = StripBareQuotes(ArgOrEmpty(args, 5));
+
+                string role;
+                bool isSub, isMod;
+                string baseVar, priceTable;
+                int price;
+                bool isAll;
+
+                if (LooksLikeLegacyTicketRoleShape(rawA4, rawA5))
+                {
+                    role = string.IsNullOrWhiteSpace(rawA4) ? "viewer" : rawA4;
+                    isSub = IsSubRoleToken(role);
+                    isMod = IsModRoleToken(role);
+                    baseVar = rawA5;
+                    priceTable = StripBareQuotes(ArgOrEmpty(args, 6));
+                    price = int.TryParse(StripBareQuotes(ArgOrEmpty(args, 7)), NumberStyles.Integer, CultureInfo.InvariantCulture, out var lpr) ? lpr : 0;
+                    isAll = ParseBoolArg(ArgOrEmpty(args, 8), false);
+                }
+                else
+                {
+                    isSub = ParseBoolArg(StripBareQuotes(bound?.GetOrDefault<string>("IsSub", rawA4) ?? rawA4), false);
+                    isMod = ParseBoolArg(StripBareQuotes(bound?.GetOrDefault<string>("IsMod", rawA5) ?? rawA5), false);
+                    // The Role badge column keeps its viewer/sub semantics — the
+                    // mod flag lives in its own GiveawayTickets.IsMod column so a
+                    // subscriber-moderator keeps both facts.
+                    role = isSub ? "sub" : "viewer";
+                    baseVar = StripBareQuotes(bound?.GetOrDefault<string>("ResultBase", ArgOrEmpty(args, 6)) ?? ArgOrEmpty(args, 6));
+                    priceTable = StripBareQuotes(bound?.GetOrDefault<string>("PriceTable", ArgOrEmpty(args, 7)) ?? ArgOrEmpty(args, 7));
+                    price = (bound != null && bound.ContainsKey("Price"))
+                        ? bound.Get<int>("Price")
+                        : (int.TryParse(StripBareQuotes(ArgOrEmpty(args, 8)), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pr) ? pr : 0);
+                    isAll = (bound != null && bound.ContainsKey("IsAll"))
+                        ? bound.Get<bool>("IsAll")
+                        : ParseBoolArg(ArgOrEmpty(args, 9), false);
+                }
 
                 long? id = await GiveawayService.Instance.ResolveTargetAsync(selector, isPublic);
                 if (id is null) return null;
-                var (count, capped) = await GiveawayService.Instance.AddTicketAsync(id.Value, user, role, increment);
+                var (count, purchased, capped, noFunds) = await GiveawayService.Instance.PurchaseTicketAsync(
+                    id.Value, user, role, increment, isAll, isPublic, price, priceTable, isMod);
                 if (!string.IsNullOrEmpty(baseVar))
                 {
                     _engine.SetLocalResultVar($"{baseVar}_tickets", count.ToString(CultureInfo.InvariantCulture));
                     _engine.SetLocalResultVar($"{baseVar}_limit", capped ? "true" : "false");
+                    _engine.SetLocalResultVar($"{baseVar}_nofunds", noFunds ? "true" : "false");
+                    _engine.SetLocalResultVar($"{baseVar}_purchased", purchased.ToString(CultureInfo.InvariantCulture));
                 }
                 return null;
             });
@@ -131,7 +184,76 @@ namespace Phoenix.Controls.Hub.Core
                 var id = await GiveawayService.Instance.GetDefaultIdAsync().ConfigureAwait(false);
                 return id?.ToString(CultureInfo.InvariantCulture) ?? "";
             });
+
+            // giveaway.is_active(<selector>) → "true" while the targeted
+            // giveaway is open (accepting entries), else "false". Empty selector
+            // follows the app-wide default giveaway; a named selector resolves
+            // by id/key/title. Inline pure-data: the exporter emits the call and
+            // the engine round-trips this return value into the
+            // Giveaway.IsActive node's Bool output (mirrors giveaway.default_id).
+            // Missing giveaway / no default set = "false", never an error.
+            _engine.RegisterCommand("giveaway.is_active", async (args) =>
+            {
+                var bound = _engine.CurrentBoundArgs;
+                string selector = StripBareQuotes(
+                    bound?.GetOrDefault<string>("Giveaway", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0));
+                bool followDefault = string.IsNullOrWhiteSpace(selector);
+                long? id = await GiveawayService.Instance
+                    .ResolveTargetAsync(selector, followDefault).ConfigureAwait(false);
+                if (id is null) return "false";
+                bool open = await GiveawayService.Instance.IsOpenAsync(id.Value).ConfigureAwait(false);
+                return open ? "true" : "false";
+            });
         }
+
+        // ── giveaway.ticket legacy-shape detection ──────────────────────────
+        // New emissions carry a Bool literal ("true"/"false" — wired IsSub/IsMod
+        // expressions are substituted to their values BEFORE the args reach the
+        // handler) at position 4; legacy emissions carry a free-text role badge
+        // there ("viewer", "sub", "mod", …) with the result base at position 5.
+        // Empty a4 (hand-authored short calls) disambiguates via a5: a Bool
+        // token there is the new IsMod, anything else non-empty is a legacy
+        // result base. Both empty = new form with all defaults (harmless).
+        //
+        // UNRESOLVED {brace} tokens (a wired socket whose var never populated —
+        // SubstituteVars passes unknown refs through literally) can appear at
+        // position 4 in BOTH shapes: a new-form wired IsSub or a legacy wired
+        // Role. a4 alone can't discriminate then, so fall to a5 — the legacy
+        // shape carries the result base there ("_gw_…", never a bool or brace
+        // token) while the new shape carries IsMod (bool/brace/empty). Getting
+        // this wrong would silently shift the result base and starve the
+        // Limit/NoFunds branches, so the tie-break errs on preserving it.
+        internal static bool LooksLikeLegacyTicketRoleShape(string a4, string a5)
+        {
+            if (!string.IsNullOrEmpty(a4))
+            {
+                if (IsBoolToken(a4)) return false;
+                if (IsBraceToken(a4))
+                    return !(string.IsNullOrEmpty(a5) || IsBoolToken(a5) || IsBraceToken(a5));
+                return true;
+            }
+            if (!string.IsNullOrEmpty(a5))
+                return !IsBoolToken(a5) && !IsBraceToken(a5);
+            return false;
+        }
+
+        private static bool IsBraceToken(string s) =>
+            s.StartsWith("{", StringComparison.Ordinal);
+
+        private static bool IsBoolToken(string s) =>
+            s.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            s.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+            s is "1" or "0" ||
+            s.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+            s.Equals("no", StringComparison.OrdinalIgnoreCase);
+
+        internal static bool IsSubRoleToken(string role) =>
+            role.Equals("sub", StringComparison.OrdinalIgnoreCase) ||
+            role.Equals("subscriber", StringComparison.OrdinalIgnoreCase);
+
+        internal static bool IsModRoleToken(string role) =>
+            role.Equals("mod", StringComparison.OrdinalIgnoreCase) ||
+            role.Equals("moderator", StringComparison.OrdinalIgnoreCase);
 
         // ── Pre-draw subscriber gather ───────────────────────────────────────
         // Resolves the CURRENT subscription status of the given entrants for

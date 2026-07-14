@@ -1,0 +1,830 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phoenix Controls — Changelog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Phoenix Controls — Forged & Physical design tokens (inlined for self-contained rendering) */
+  :root {
+    --ember-50:  #FFF4E0;
+    --ember-100: #FBE3B8;
+    --ember-200: #F2C77F;
+    --ember-300: #E5A24E;   /* primary brass */
+    --ember-400: #C8822B;   /* deep brass */
+    --ember-500: #A6661A;   /* burnt bronze */
+    --ember-600: #7A4710;
+    --ember-700: #4A2A08;
+
+    --coal-0:   #0B0907;
+    --coal-1:   #14110D;
+    --coal-2:   #1B1713;
+    --coal-3:   #221C16;
+    --coal-4:   #2C251D;
+    --coal-5:   #3A3127;
+    --coal-6:   #4A3F32;
+    --coal-7:   #6B5C4A;
+    --coal-8:   #A89683;
+    --coal-9:   #E6DDD0;
+    --coal-10:  #F5EFE3;
+
+    --ok:    #6FA46B;
+    --warn:  #E0A23A;
+    --err:   #C9533C;
+    --info:  #6F94B0;
+
+    --font-display: "Cormorant Garamond", "Trajan Pro", "Cinzel", Georgia, serif;
+    --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Menlo, monospace;
+
+    --r-1: 2px;
+    --r-2: 4px;
+    --r-3: 6px;
+    --r-4: 10px;
+
+    --sh-emboss: inset 0 1px 0 rgba(255,228,180,0.06), inset 0 -1px 0 rgba(0,0,0,0.4);
+    --sh-deboss: inset 0 1px 2px rgba(0,0,0,0.6), inset 0 -1px 0 rgba(255,228,180,0.04);
+    --sh-card: 0 1px 0 rgba(255,228,180,0.04), 0 8px 24px rgba(0,0,0,0.5);
+    --sh-glow: 0 0 0 1px rgba(229,162,78,0.35), 0 0 24px rgba(229,162,78,0.18);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--coal-0); color: var(--coal-9); }
+  body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.6;
+    background:
+      radial-gradient(1200px 600px at 50% -200px, rgba(229,162,78,0.08), transparent 70%),
+      var(--coal-0);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .page { max-width: 1000px; margin: 0 auto; padding: 0 28px 96px; }
+
+  /* repo bar */
+  .repo-bar {
+    border-bottom: 1px solid var(--coal-4);
+    background: linear-gradient(180deg, var(--coal-1), var(--coal-0));
+  }
+  .repo-bar-inner {
+    max-width: 1000px; margin: 0 auto; padding: 14px 28px;
+    display: flex; align-items: center; gap: 14px;
+    font-size: 13px;
+  }
+  .crumb { color: var(--coal-7); font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.04em; }
+  .crumb b { color: var(--coal-9); font-weight: 500; }
+  .crumb .slash { color: var(--coal-5); margin: 0 6px; }
+  .repo-actions { margin-left: auto; display: flex; gap: 8px; }
+
+  /* HERO */
+  .hero {
+    margin-top: 56px;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 40px;
+    align-items: center;
+  }
+  .hero-mark {
+    width: 200px; height: 200px;
+    background: url("assets/phoenix-mark.png") center/contain no-repeat;
+    filter: drop-shadow(0 12px 40px rgba(229,162,78,0.35));
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 78px;
+    line-height: 0.95;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+    color: var(--coal-10);
+    font-feature-settings: "liga","smcp";
+  }
+  .hero-eyebrow {
+    font-family: var(--font-sans); font-weight: 600;
+    font-size: 11px; letter-spacing: 0.32em;
+    color: var(--ember-300); text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  /* divider */
+  .rule {
+    margin: 80px 0 50px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--coal-5) 25%, var(--ember-500) 50%, var(--coal-5) 75%, transparent);
+    opacity: 0.6;
+  }
+
+  section h2 {
+    font-family: var(--font-display); font-weight: 500;
+    font-size: 40px; margin: 0 0 8px;
+    letter-spacing: 0.01em; color: var(--coal-10);
+    text-wrap: balance;
+  }
+  p { color: var(--coal-8); }
+  p strong { color: var(--coal-9); font-weight: 600; }
+  a { color: var(--ember-200); text-decoration: none; border-bottom: 1px dashed var(--ember-500); }
+  a:hover { color: var(--ember-100); }
+  code, code.mono, .mono {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    color: var(--ember-200);
+    background: var(--coal-2);
+    padding: 1px 5px;
+    border-radius: 2px;
+    border: 1px solid var(--coal-3);
+  }
+
+  /* ---------- RELEASE CARD ---------- */
+  .release {
+    border: 1px solid var(--coal-4);
+    border-radius: var(--r-3);
+    background: linear-gradient(180deg, var(--coal-2), var(--coal-1) 80%);
+    box-shadow: var(--sh-emboss), var(--sh-card);
+    padding: 28px 30px 24px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+  }
+  .release::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--ember-400), transparent);
+    opacity: 0.7;
+  }
+
+  .release-head {
+    display: flex; align-items: baseline; gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--coal-3);
+    margin-bottom: 20px;
+  }
+  .release-version {
+    font-family: var(--font-mono); font-weight: 500;
+    font-size: 13px; letter-spacing: 0.08em;
+    color: var(--ember-300);
+    background: var(--coal-1);
+    border: 1px solid var(--coal-4);
+    padding: 4px 10px;
+    border-radius: var(--r-2);
+  }
+  .release-name {
+    font-family: var(--font-display); font-weight: 500;
+    font-size: 30px; line-height: 1;
+    color: var(--coal-10); letter-spacing: 0.01em;
+    flex: 1; min-width: 0;
+  }
+  .release-date {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--coal-7);
+  }
+
+  /* buckets */
+  .bucket { margin-bottom: 18px; }
+  .bucket:last-child { margin-bottom: 0; }
+
+  .bucket-label {
+    font-family: var(--font-sans); font-weight: 600;
+    font-size: 10.5px; letter-spacing: 0.22em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 4px 10px 4px 8px;
+    border-radius: var(--r-2);
+    border: 1px solid var(--coal-4);
+    background: var(--coal-1);
+  }
+  .bucket-label::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--coal-5);
+  }
+  .bucket-new   .bucket-label { color: var(--ok); border-color: rgba(111,164,107,0.35); }
+  .bucket-new   .bucket-label::before { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .bucket-fixed .bucket-label { color: var(--ember-200); border-color: rgba(229,162,78,0.35); }
+  .bucket-fixed .bucket-label::before { background: var(--ember-300); box-shadow: 0 0 6px rgba(229,162,78,0.5); }
+  .bucket-gone  .bucket-label { color: var(--coal-8); border-color: var(--coal-5); }
+  .bucket-gone  .bucket-label::before { background: var(--coal-6); }
+
+  .bucket ul { list-style: none; margin: 0; padding: 0; }
+  .bucket li {
+    color: var(--coal-9);
+    font-size: 14.5px;
+    line-height: 1.55;
+    padding: 6px 0 6px 22px;
+    position: relative;
+  }
+  .bucket li::before {
+    content: ""; position: absolute; left: 4px; top: 14px;
+    width: 8px; height: 1px;
+    background: var(--coal-6);
+  }
+  .bucket-gone li {
+    color: var(--coal-8);
+    text-decoration: line-through;
+    text-decoration-color: var(--coal-5);
+    text-decoration-thickness: 1px;
+  }
+
+  /* heads-up callout */
+  .release-heads-up {
+    margin-top: 18px;
+    border-left: 3px solid var(--ember-400);
+    background: linear-gradient(90deg, rgba(229,162,78,0.08), transparent 60%);
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--coal-9);
+  }
+  .release-heads-up::before {
+    content: "Heads up — ";
+    font-family: var(--font-sans); font-weight: 600;
+    color: var(--ember-200);
+    letter-spacing: 0.04em;
+  }
+
+  /* see-also */
+  .seealso {
+    margin-top: 64px;
+    border: 1px solid var(--coal-4);
+    border-radius: var(--r-3);
+    background: linear-gradient(180deg, var(--coal-2), var(--coal-1));
+    padding: 22px 24px;
+    display: grid; grid-template-columns: auto 1fr auto; gap: 18px;
+    align-items: center;
+    box-shadow: var(--sh-emboss);
+  }
+  .seealso .glyph {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--ember-500);
+    background: radial-gradient(circle at 30% 30%, rgba(229,162,78,0.25), transparent 60%), var(--coal-1);
+    color: var(--ember-300);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-size: 22px; font-style: italic;
+  }
+  .seealso .seealso-eyebrow {
+    font-family: var(--font-sans); font-weight: 600;
+    font-size: 10px; letter-spacing: 0.32em;
+    color: var(--ember-300); text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .seealso .seealso-title {
+    font-family: var(--font-display); font-weight: 500;
+    font-size: 22px; color: var(--coal-10); letter-spacing: 0.01em;
+    margin-bottom: 2px;
+  }
+  .seealso .seealso-body { color: var(--coal-8); font-size: 13px; }
+  .seealso a.cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px;
+    background: linear-gradient(180deg,#E5A24E,#A6661A);
+    color: #0B0907;
+    border: 1px solid #7A4710;
+    border-radius: var(--r-2);
+    font-family: var(--font-sans); font-weight: 600;
+    font-size: 13px; letter-spacing: 0.04em;
+    text-decoration: none;
+    box-shadow: var(--sh-emboss), 0 6px 18px rgba(229,162,78,0.2);
+  }
+
+  /* flame separator */
+  .flame {
+    display: flex; align-items: center; justify-content: center;
+    gap: 18px;
+    margin: 24px 0 8px;
+    opacity: 0.55;
+  }
+  .flame .line { height: 1px; width: 80px; background: linear-gradient(90deg, transparent, var(--ember-500), transparent); }
+  .flame .glyph {
+    width: 18px; height: 18px;
+    background: url("assets/phoenix-mark.png") center/contain no-repeat;
+    filter: drop-shadow(0 0 6px rgba(229,162,78,0.4));
+  }
+
+  /* footer */
+  footer {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 1px solid var(--coal-4);
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--coal-7);
+  }
+  footer .col-left  { display: flex; align-items: center; gap: 10px; justify-self: start; }
+  footer .col-right { justify-self: end; text-align: right; }
+  footer .mark {
+    width: 22px; height: 22px;
+    background: url("assets/phoenix-mark.png") center/contain no-repeat;
+    opacity: 0.7;
+  }
+  footer .producer {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 8px 16px;
+    border: 1px solid var(--coal-4);
+    border-radius: 999px;
+    background: linear-gradient(180deg, var(--coal-2), var(--coal-1));
+    box-shadow: var(--sh-emboss);
+    text-decoration: none;
+    color: inherit;
+  }
+  footer .producer:hover { border-color: var(--ember-500); }
+  footer .producer .mm-mark {
+    width: 22px; height: 22px;
+    background: url("assets/megermajo-mark.png") center/contain no-repeat;
+    filter: drop-shadow(0 0 4px rgba(229,162,78,0.25));
+  }
+  footer .producer .mm-text { display: inline-flex; flex-direction: column; line-height: 1.15; }
+  footer .producer .mm-eyebrow {
+    font-family: var(--font-sans); font-weight: 600;
+    font-size: 9px; letter-spacing: 0.22em;
+    color: var(--coal-7); text-transform: uppercase;
+  }
+  footer .producer .mm-name {
+    font-family: var(--font-display); font-weight: 500;
+    font-size: 14px; color: var(--coal-10);
+    letter-spacing: 0.04em;
+  }
+  footer .producer .mm-name em {
+    font-style: italic; color: var(--ember-300); font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<div class="repo-bar">
+  <div class="repo-bar-inner">
+    <a href="https://github.com/Megermajo/PhoenixControls" style="text-decoration:none; border:none;">
+      <span class="crumb"><b>Megermajo</b><span class="slash">/</span><b style="color:var(--ember-200)">PhoenixControls</b></span>
+    </a>
+    <span class="crumb" style="color:var(--coal-6)">·</span>
+    <span class="crumb">Changelog.html</span>
+    <div class="repo-actions">
+      <span class="crumb" style="color:var(--coal-6)">what's new · what's fixed · what's gone</span>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-mark"></div>
+    <div>
+      <div class="hero-eyebrow">Phoenix Controls</div>
+      <h1>Changelog</h1>
+    </div>
+  </header>
+
+  <div class="rule"></div>
+
+  <!-- RELEASES -->
+  <section id="releases">
+
+    <!-- RELEASES START -->
+
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607143</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-14</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Hub: giveaways can charge channel points per ticket - pick the currency table on the ticket node, set the price in the giveaway's settings, and entries are paid automatically.</li>
+          <li>Architect: a "Buy as many as possible" switch on the Giveaway Ticket node converts a viewer's points into tickets, up to their points and the per-user limit.</li>
+          <li>Architect: the Giveaway Ticket node reports how many tickets a call actually bought, and a dedicated branch fires when a viewer cannot afford the entry.</li>
+          <li>Architect: the ticket node's table picker can create the standard "ChannelPoints" currency table with one click.</li>
+          <li>Hub: the Giveaway settings gained a "Ticket price" field (0 = free).</li>
+          <li>Architect: one "Chat Send" node replaces the per-platform send nodes - Twitch/YouTube/Kick checkmarks pick the targets, and a Platforms input can override them at runtime.</li>
+          <li>Architect: the Giveaway Ticket node reads the entrant's subscriber and moderator status through new IsSub/IsMod inputs.</li>
+          <li>Hub: giveaways gained a "Moderator bonus" draw weight next to the subscriber bonus.</li>
+          <li>Architect: a new "Giveaway Is Active" node tells scripts whether a giveaway is currently open.</li>
+          <li>Architect: "Var Set" nodes pass their stored value onward through a new Value output.</li>
+          <li>Hub: after an update, the changelog opens once on first start so you can see what changed.</li>
+          <li>Streamer.bot: the bundled action pack now includes ready-made YouTube and Kick actions - no more building them by hand.</li>
+          <li>Architect: a "Twitch Reply" node and a MessageId output on the Chat Message trigger lay the groundwork for replying to specific chat messages. Live chat does not fill the message ID yet, so replies activate in a coming update.</li>
+          <li>Architect: the Kick Ban node accepts an optional reason.</li>
+          <li>Hub: hovering any pin on a giveaway node shows an explanation of what it does.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect: reroute knots can be moved again - the left half drags the knot, the right half starts a wire.</li>
+          <li>Hub: giveaway, graph-editor, and preview windows open in front of the main window instead of behind it.</li>
+          <li>Hub: older exported scripts calling the Giveaway Ticket with unfilled values no longer mix up their result branches.</li>
+          <li>Hub: the app records diagnostic details when the interface freezes, to help pin down hangs.</li>
+          <li>Hub: closed a series of rare crash paths across the Hub, the script exporter, and the overlay, found in an internal stability review.</li>
+          <li>Architect: the YouTube Create Poll node now sends the question and up to four choices the way Streamer.bot expects.</li>
+          <li>Architect: freshly placed user-lookup nodes (Get User, Check Role, Follow Age, Last Active) now look up the chatting user instead of sending a placeholder.</li>
+          <li>Architect: the State "On Change" trigger's Name, OldValue, and NewValue outputs now carry the real values instead of staying empty.</li>
+          <li>Architect: OBS position, scale, and rotation nodes accept decimal values on their pins.</li>
+          <li>Hub: no more warnings about action-pack entries that cannot exist, after connecting to Streamer.bot.</li>
+          <li>Hub: scripts no longer wait several seconds when asking for data from an action the pack does not provide.</li>
+          <li>Architect: many corrections across the built-in node reference, node tooltips, and first-run tips.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-gone">
+        <div class="bucket-label">Gone</div>
+        <ul>
+          <li>Architect: the Giveaway Ticket node's free-text "Role" input was replaced by the IsSub/IsMod inputs - saved graphs convert automatically.</li>
+          <li>Architect: the separate Twitch/YouTube/Kick "Send Chat" nodes merged into "Chat Send" - saved graphs convert automatically.</li>
+          <li>Architect: the YouTube Create Poll node's Duration input was removed - Streamer.bot sets the poll length.</li>
+          <li>Architect: YouTube Get User, Kick Delete Message, and the Kick reward nodes left the node menu - Streamer.bot cannot perform them. Saved graphs still load.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607142</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-14</div>
+      </header>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Hub: updating no longer deletes the scripts stored in the logic folder.</li>
+          <li>Hub: updating no longer deletes the layers, media, and settings stored in the install folder.</li>
+          <li>Hub: files an earlier update removed are brought back automatically the next time Phoenix Controls starts.</li>
+          <li>Hub: update backups are kept longer while they still hold files that were not brought back yet.</li>
+          <li>Installer: reinstalling no longer replaces scripts or layers you edited.</li>
+          <li>Installer: uninstalling leaves your scripts, layers, and media on disk.</li>
+        </ul>
+      </div>
+
+      <div class="release-heads-up">
+        Heads up — An earlier update could remove the scripts and layers stored inside the install folder. We are truly sorry about this. Your files are not lost: they were moved to a "Phoenix Controls.bak.(date)" folder right next to the install folder, and this version brings them back automatically the first time it starts. Updating with the built-in updater is safe — your files reappear on the first start after the update. If anything is still missing afterwards, copy it from that folder back into Hub\data\.
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607141</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-14</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Hub: giveaways can set a "Max tickets per user" limit, editable per giveaway in the Giveaway panel (0 = unlimited).</li>
+          <li>Hub: the giveaway "Subscriber bonus" is editable - set how much extra weight a subscriber's tickets carry in the winner draw (1 = no bonus).</li>
+          <li>Hub: before a draw with a subscriber bonus, every entrant's current subscriber status is checked live through Streamer.bot.</li>
+          <li>Hub: a ready-to-use giveaway entry script ships with the app - viewers can earn tickets with !ticket right after install.</li>
+          <li>Hub: the Giveaway settings panel can be collapsed and expanded.</li>
+          <li>Architect: the Giveaway Ticket node gained a "Limit" output that fires when a viewer hits the ticket cap, so scripts can answer with their own message.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect: keyboard shortcuts no longer fire while typing in a text field - letters stay in the text instead of triggering canvas actions.</li>
+          <li>Architect: the first edit of a value pill in a freshly opened window no longer makes the node disappear.</li>
+          <li>Architect: auto-scaling text pills no longer cut off the last letters.</li>
+          <li>Architect: branch conditions built on checks like cooldowns or databank lookups work again - they previously always came out false.</li>
+          <li>Architect: once an "Else If" chain matches a branch, the later branches are skipped - a script no longer runs two branches of the same ladder.</li>
+          <li>Architect: combined conditions stop early - a cooldown check placed behind an already-decided condition no longer fires or starts its cooldown.</li>
+          <li>Architect: a check used on both sides of one comparison now runs once instead of twice.</li>
+          <li>Architect: saving a script with a broken macro or process body now says what is wrong instead of pointing at nothing.</li>
+          <li>Hub: waits and delays no longer count against the script time limit - timed flows like a raffle that sleeps for minutes now finish instead of being cut off.</li>
+          <li>Hub: a script sleeping on a delay no longer holds up chat - new messages and other commands keep flowing while it waits.</li>
+          <li>Hub: parallel branches with their own waits no longer cut each other's remaining time short.</li>
+          <li>Hub: reading more command words than a viewer typed now gives empty values instead of leftover text.</li>
+          <li>Hub: script commands that expect whole numbers now round decimal inputs to the nearest whole number instead of treating them as 0.</li>
+          <li>Hub: point amounts calculated from percentages or divisions no longer silently add 0.</li>
+          <li>Hub: lowering a giveaway's ticket limit never takes away tickets viewers already earned.</li>
+          <li>Hub: the ticket-limit box in the Giveaway panel no longer resets while you are typing in it.</li>
+          <li>Hub: the winner overlay's "1 in N" odds now match the draw's real, bonus-weighted odds.</li>
+          <li>Hub: double-clicking "Draw winner" can no longer pick two winners at once.</li>
+          <li>Hub: a draw no longer stalls for minutes when many entrants have left chat.</li>
+          <li>Hub: entrant badges refresh from the live subscriber check before a draw.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-gone">
+        <div class="bucket-label">Gone</div>
+        <ul>
+          <li>Hub: the unused "Entry command", "Tickets per message" and "Draw method" rows left the Giveaway settings - ticket entry comes from the entry script.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607121</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-12</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Architect: OBS nodes to move, scale, and rotate scene sources are now available — they control OBS directly.</li>
+          <li>Hub: choose the translation service (DeepL, Google, or LibreTranslate) in Settings — changes apply without a restart.</li>
+          <li>Hub: the status bar shows what the script engine is currently doing.</li>
+          <li>Viewer: the browser view shows its connection latency and how long ago it last synced.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect: disabled nodes are now skipped correctly when a script runs — the flow continues past them instead of stopping.</li>
+          <li>Architect: disabling a trigger node now stops that script from firing at all.</li>
+          <li>Architect: "Do Once", "Do N", and "Flip Flop" nodes start fresh when a script is edited — they no longer stay used up from before the change.</li>
+          <li>Hub: the script overlap setting is now enforced — a script that is already running skips or waits as configured.</li>
+          <li>Hub: the connection dots show a clear error when sign-in fails and an in-progress state while reconnecting.</li>
+          <li>Viewer: the connection display shows a warning when Streamer.bot is connected but Twitch is not linked.</li>
+          <li>Hub: the overlay server reports a clear error if it stops working, instead of failing silently.</li>
+          <li>Hub: switching between the Hub, Architect, and Visualist tabs is more reliable.</li>
+          <li>Improved reliability of script event handling.</li>
+          <li>Visualist: hovering over a node pin highlights its connected wires.</li>
+          <li>Visualist: web images show a preview on the node while editing.</li>
+          <li>Visualist: a widget whose image cannot load shows "(image unavailable)" instead of staying blank.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607101</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-10</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>YouTube Live support: chat messages, stream events, and viewer data now work alongside Twitch.</li>
+          <li>Kick support: chat messages, stream events, and viewer data now work alongside Twitch.</li>
+          <li>Architect: new YouTube and Kick action nodes — send chat, moderate, and update the stream from a script.</li>
+          <li>Architect: new nodes to look up YouTube and Kick user details in a script.</li>
+          <li>Architect: one unified "Chat Message" trigger node with a checkmark per platform — choose which platforms a script listens to.</li>
+          <li>Hub: the Chat panel shows which platform each message came from.</li>
+          <li>Existing graphs update to the new Chat Message node automatically — Twitch-only scripts behave exactly as before.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Hub, Architect, and Visualist all run noticeably smoother after a broad performance pass.</li>
+          <li>Architect: the canvas goes quiet when you are not interacting — no more constant background work.</li>
+          <li>Architect: editing values and titles on large graphs responds faster.</li>
+          <li>Architect: holding an arrow key to nudge nodes counts as one undo step instead of many.</li>
+          <li>Visualist: dragging a slider counts as one undo step instead of one per movement.</li>
+          <li>Databank: large tables scroll smoothly and the column headers stay aligned with the rows.</li>
+          <li>Hub: Chat and Live Feed keep your reading position when old rows are trimmed.</li>
+          <li>Overlays reconnect cleanly when an OBS browser source reloads — stale connections no longer pile up.</li>
+          <li>The "Open Recent" list shows newly saved files right away.</li>
+          <li>Old log entries are cleaned up in the background in small steps, without causing pauses.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607051</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-05</div>
+      </header>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>German menus and dialogs no longer show broken placeholder symbols in place of accented letters — the text reads correctly again.</li>
+          <li>French menus and dialogs no longer show broken placeholder symbols in place of accented letters — the text reads correctly again.</li>
+          <li>Spanish menus and dialogs no longer show broken placeholder symbols in place of accented letters and inverted question marks — the text reads correctly again.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607043</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-04</div>
+      </header>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Installing an update now completes. The updater used to finish downloading and then close with an error instead of applying the update; updates now install and Hub restarts on its own.</li>
+          <li>The "update available" prompt now matches the Phoenix Controls look instead of showing as a plain system dialog.</li>
+          <li>Architect no longer crashes when exporting a script with very deeply nested macros — it now stops cleanly with a clear message.</li>
+        </ul>
+      </div>
+
+      <div class="release-heads-up">
+        Heads up — the in-app updater couldn't finish installing in earlier versions, so it can't install this update for you. Download and install this version manually once (use the Download button); from this version on, the in-app updater installs updates on its own.
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607042</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-04</div>
+      </header>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect: the "Do N" flow node now runs its Loop Body for the first N calls — before, it skipped straight to Completed every time and never ran the body.</li>
+          <li>Architect: a Databank "Increment" node now adds a calculated Amount correctly — when the Amount came from another node it was adding zero instead of the real value.</li>
+          <li>Architect: point and currency transfers now subtract from the sender — a transfer could add to the receiver while the sender kept everything, quietly duplicating currency.</li>
+          <li>Improved reliability and stability of counters and loops in Architect.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607041</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-04</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Hub now offers to install updates: while a newer release is out, a prompt at startup asks to "Install &amp; restart" — one click downloads the update, applies it, and restarts Hub.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>The "Download &amp; install latest release" button in Settings no longer fails with "one or more numeric fields are invalid" — a hidden, never-filled Viewer server port field was blocking every download attempt.</li>
+          <li>Saving Settings no longer silently resets the Viewer server options (enabled, port, LAN access, channel name) to their defaults.</li>
+          <li>An invalid number in Settings can no longer block downloading an update — bad values now roll back to the last saved ones instead, same as Save.</li>
+          <li>Improved reliability and stability of in-app updates.</li>
+        </ul>
+      </div>
+
+      <div class="release-heads-up">
+        Heads up — the in-app updater was broken in earlier versions, so it can't install this update for you. Download and install this version manually once (use the Download button); from this version on, the in-app updater works normally.
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2607031</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-03</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Architect: paired event nodes now stay matched across scripts — add, rename, or retype a value on one side and its partners update instantly, even in other open windows.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect: naming an Event Trigger now fills in its paired bubbles right away — the node no longer stays bare after naming it.</li>
+          <li>Architect: a freshly named event node syncs its bubbles with partners in the same script and in other scripts.</li>
+          <li>Architect: an event's arguments and return values stay on their own separate channels — a return no longer turns into a second argument.</li>
+          <li>Architect: event nodes no longer show garbled or overlapping sockets after mixing arguments and return values.</li>
+          <li>Architect: clicking a "+" slot on an event node adds the bubble right away, even when the mouse drifts a little during the click.</li>
+          <li>Architect: pressing an event node near its "+" slot row no longer starts an unintended wire drag.</li>
+          <li>Architect: right-clicking a bubble on an event node opens its socket menu — changing a bubble's type or removing it works from there.</li>
+          <li>Architect: renaming an event bubble sticks and carries over to partner nodes in other scripts.</li>
+          <li>Architect: giving a new event node an existing event's name shapes it to match that event, without wiping the other nodes' values.</li>
+          <li>Architect: loading a script no longer shrinks event nodes — paired nodes keep their fullest set of bubbles.</li>
+          <li>Architect: event nodes damaged by earlier versions repair themselves when their script opens.</li>
+          <li>Architect: cross-file event sync can no longer wipe the bubbles of an already-defined partner node.</li>
+          <li>Improved reliability and stability of event nodes in Architect.</li>
+          <li>Architect: saving a script that wires flow into a macro's Exit node no longer fails and leaves the script outdated.</li>
+          <li>Architect: flow reaching a macro's Exit node now ends the macro cleanly.</li>
+          <li>Architect: values wired into a macro's Exit node now come out of the Macro Call node's outputs.</li>
+          <li>Architect: macro outputs reset on every call — no leftover values from an earlier run.</li>
+          <li>Improved reliability and stability of macros in Architect.</li>
+          <li>Architect: double-clicking a node to edit it no longer makes it jump across the canvas or vanish after loading another script in the same window.</li>
+          <li>Architect: values edited directly on a node are no longer lost when the editor closes as you click elsewhere.</li>
+          <li>Architect: value outputs on text and convert nodes can now connect to more than one node.</li>
+          <li>Architect: comment frames can now be renamed — double-click the frame's title, or right-click it.</li>
+          <li>Architect: pressing a shortcut key while typing in a value box no longer triggers canvas actions behind it.</li>
+          <li>Architect: long Template, Script, and Payload text wraps inside the node instead of stretching over its outputs.</li>
+          <li>Improved reliability and stability of inline node editing in Architect.</li>
+          <li>Architect: working on the canvas no longer floods the System Log with repeated warnings.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2606302</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-06-30</div>
+      </header>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Hub's in-app updater now installs new versions — the Update button in Settings spotted updates but couldn't apply them before.</li>
+          <li>An update now finishes cleanly and Hub reopens on the new version.</li>
+          <li>New macros in Architect open with their In and Out nodes already in place.</li>
+          <li>Macros that used to open as an empty graph are repaired automatically when you open them.</li>
+          <li>Macros now pass their data through and run, instead of opening blank.</li>
+          <li>Dragging a wire onto a "+" slot on Event, Macro, and Process nodes now adds that input or return — it often did nothing before.</li>
+          <li>The "+" slots are easier to see, with a clearer dashed outline.</li>
+          <li>The "+" slots are easier to land a wire on.</li>
+          <li>Macro and Process call nodes update as you change their inputs and outputs, with no need to save and reopen.</li>
+        </ul>
+      </div>
+
+      <div class="release-heads-up">
+        Heads up — the in-app updater was broken in earlier versions, so it can't install this update for you. Download and install this version manually once (use the Download button); from this version on, the in-app updater works normally.
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.0.2606301</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-06-30</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Architect and Visualist now have a built-in node reference — open it to read what every node does, with its inputs and outputs, right inside the app.</li>
+          <li>Processes keep running once started — any triggers you place on a process (schedules, chat commands, events) stay active until the process is stopped, instead of running once and quitting.</li>
+          <li>The same process can run as several copies at once, each with its own start values.</li>
+          <li>The Start and Stop nodes turn a process on and off from your logic.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect's left-rail Add, Rename, and Delete buttons for variables, macros, and processes now open their dialog every time.</li>
+          <li>Architect's confirm prompts, recent files, save checks, keyboard shortcuts, and variable trace now open reliably.</li>
+          <li>Visualist's media library, media picker, new layer, shape editor, and curve editor now open reliably.</li>
+          <li>Process and Macro nodes now pick their target from a dropdown, instead of a free-text box that often didn't match and broke the saved script.</li>
+          <li>Architect Process, Macro, and Event node pins connect to wires the moment you place the node, instead of only after saving and reopening the graph.</li>
+          <li>Wires stay attached to an Architect node when you resize it, instead of drifting outside its body.</li>
+          <li>Architect's node search lists the closest matches first and finds nodes by their title, and node tooltips show again on hover.</li>
+          <li>An event's trigger and executor keep their added inputs and return values in sync across files.</li>
+          <li>Long value pills on Architect nodes wrap to fit instead of spilling past the node edge.</li>
+        </ul>
+      </div>
+    </article>
+
+    <!-- RELEASES END -->
+
+  </section>
+
+  <!-- SEE ALSO — link back to README -->
+  <aside class="seealso">
+    <div class="glyph">§</div>
+    <div>
+      <div class="seealso-eyebrow">Start here instead</div>
+      <div class="seealso-title">README</div>
+      <div class="seealso-body">
+        New to Phoenix Controls? The README walks you through install,
+        Streamer.bot setup, and your first flow.
+      </div>
+    </div>
+    <a class="cta" href="Phoenix Controls - README.html">Open README →</a>
+  </aside>
+
+  <div class="flame" aria-hidden="true">
+    <span class="line"></span>
+    <span class="glyph"></span>
+    <span class="line"></span>
+  </div>
+
+  <footer>
+    <div class="col-left">
+      <div class="mark"></div>
+      <span>Phoenix Controls · forged by Megermajo &amp; contributors</span>
+    </div>
+    <a class="producer" href="https://megermajo-productions.com" style="border:none;">
+      <div class="mm-mark" aria-hidden="true"></div>
+      <div class="mm-text">
+        <span class="mm-eyebrow">A product by</span>
+        <span class="mm-name">Megermajo <em>Productions</em></span>
+      </div>
+    </a>
+    <span class="col-right">Changelog · evergreen · 100% AI-authored source</span>
+  </footer>
+
+</div>
+
+</body>
+</html>

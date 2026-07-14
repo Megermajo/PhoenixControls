@@ -130,7 +130,7 @@ namespace Phoenix.Controls.Hub.Core
         /// spec's "same node can also just display tickets") and is never
         /// Capped; neither is increment &lt;= 0.
         /// </summary>
-        public async Task<(int Tickets, bool Capped)> AddTicketAsync(long id, string username, string role, int increment)
+        public async Task<(int Tickets, bool Capped)> AddTicketAsync(long id, string username, string role, int increment, bool isMod = false)
         {
             if (string.IsNullOrWhiteSpace(username)) return (0, false);
             var g = await _db.GetGiveawayAsync(id).ConfigureAwait(false);
@@ -141,7 +141,7 @@ namespace Phoenix.Controls.Hub.Core
                 return (await _db.GetTicketsForUserAsync(id, username).ConfigureAwait(false), false);
 
             var (newTotal, capped) = await _db.UpsertTicketAsync(id, username,
-                string.IsNullOrWhiteSpace(role) ? "viewer" : role, increment, g.CapPerUser, NowIso()).ConfigureAwait(false);
+                string.IsNullOrWhiteSpace(role) ? "viewer" : role, increment, g.CapPerUser, NowIso(), isMod).ConfigureAwait(false);
 
             string capNote = capped ? " · cap reached" : "";
             await _db.LogGiveawayActivityAsync(id, "INF",
@@ -171,9 +171,116 @@ namespace Phoenix.Controls.Hub.Core
             RaiseGiveaways();
         }
 
+        // ── Ticket price ────────────────────────────────────────────────────
+        /// <summary>
+        /// Sets the channel-point price per ticket (0 = free; negatives clamp
+        /// to 0). Charged by Giveaway.Ticket nodes that carry a currency table
+        /// and follow this giveaway's settings (Public = true).
+        /// </summary>
+        public async Task SetTicketPriceAsync(long id, int price)
+        {
+            price = Math.Max(0, price);
+            var g = await _db.GetGiveawayAsync(id).ConfigureAwait(false);
+            if (g is null || g.TicketPrice == price) return;
+
+            await _db.SetGiveawayTicketPriceAsync(id, price).ConfigureAwait(false);
+            await _db.LogGiveawayActivityAsync(id, "INF",
+                price == 0
+                    ? "ticket price removed — entry is free"
+                    : $"ticket price set to {price} channel point{(price == 1 ? "" : "s")} per ticket",
+                NowIso()).ConfigureAwait(false);
+            RaiseGiveaways();
+        }
+
+        // ── Priced ticket entry (Giveaway.Ticket with a currency table) ─────
+        /// <summary>
+        /// Ticket entry that can charge channel points from a user table
+        /// (columns <c>name</c> / <c>currency</c>). Price resolution follows
+        /// the node's Public toggle: Public = true → the resolved giveaway's
+        /// TicketPrice setting; Public = false → the node's own Price pill
+        /// (<paramref name="nodePrice"/>). <paramref name="isAll"/> grants the
+        /// maximum the balance and the per-user cap allow instead of the fixed
+        /// increment. Closed giveaways stay read-only (never charged), same as
+        /// <see cref="AddTicketAsync"/>. Returns the user's new total, how many
+        /// tickets this call granted, and which gate (cap / funds) blocked it.
+        /// </summary>
+        public async Task<(int Tickets, int Purchased, bool Capped, bool NoFunds)> PurchaseTicketAsync(
+            long id, string username, string role, int increment, bool isAll,
+            bool isPublic, int nodePrice, string currencyTable, bool isMod = false)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return (0, 0, false, false);
+            var g = await _db.GetGiveawayAsync(id).ConfigureAwait(false);
+            if (g is null) return (0, 0, false, false);
+
+            // Read-only outside the open state; a non-IsAll increment <= 0 is
+            // the "just display the count" probe. Never charged.
+            if (!string.Equals(g.Status, "open", StringComparison.OrdinalIgnoreCase)
+                || (!isAll && increment <= 0))
+                return (await _db.GetTicketsForUserAsync(id, username).ConfigureAwait(false), 0, false, false);
+
+            int price = Math.Max(0, isPublic ? g.TicketPrice : nodePrice);
+            string table = (currencyTable ?? "").Trim();
+            if (table.Length == 0) price = 0;   // nowhere to charge from → free entry
+
+            var r = await _db.PurchaseGiveawayTicketsAsync(
+                id, username, string.IsNullOrWhiteSpace(role) ? "viewer" : role,
+                increment, g.CapPerUser, price, table, isAll, NowIso(), isMod).ConfigureAwait(false);
+
+            if (r.TableMissing)
+            {
+                GlobalLogger.Log(
+                    $"Giveaway ticket purchase: currency table '{table}' is missing (or lacks the " +
+                    "name/currency columns) — entry blocked. Pick the table on the Giveaway.Ticket " +
+                    "node or use its \"Create 'ChannelPoints' table\" item.",
+                    "Script", LogLevel.CriticalError);
+                await _db.LogGiveawayActivityAsync(id, "INF",
+                    $"{username} entry blocked — currency table \"{table}\" not found", NowIso()).ConfigureAwait(false);
+                // Raised for the same reason as the NoFunds branch: the page's
+                // activity feed only reloads on an event, and the streamer
+                // needs to SEE that entries are being blocked.
+                RaiseEntrants(id);
+                // Script-visible as the funds gate: nothing was granted.
+                return (r.Tickets, 0, false, true);
+            }
+
+            if (r.NoFunds)
+            {
+                await _db.LogGiveawayActivityAsync(id, "INF",
+                    $"{username} entry blocked — not enough channel points (has {r.Balance})", NowIso()).ConfigureAwait(false);
+                RaiseEntrants(id);
+                return (r.Tickets, 0, false, true);
+            }
+
+            if (r.Purchased > 0)
+            {
+                string capNote = r.Capped ? " · cap reached" : "";
+                string costNote = r.Charged > 0 ? $" for {r.Charged} points" : "";
+                await _db.LogGiveawayActivityAsync(id, "INF",
+                    $"{username} entered  +{r.Purchased} ticket{(r.Purchased == 1 ? "" : "s")}{costNote}  ({r.Tickets} total{capNote})",
+                    NowIso()).ConfigureAwait(false);
+                RaiseEntrants(id);
+            }
+            else if (r.Capped)
+            {
+                await _db.LogGiveawayActivityAsync(id, "INF",
+                    $"{username} entered  +0 tickets  ({r.Tickets} total · cap reached)", NowIso()).ConfigureAwait(false);
+                RaiseEntrants(id);
+            }
+
+            return (r.Tickets, r.Purchased, r.Capped, false);
+        }
+
         private static bool IsSubscriber(string? role) =>
             string.Equals(role, "sub", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(role, "subscriber", StringComparison.OrdinalIgnoreCase);
+
+        // The draw's mod check honors the dedicated entry flag AND the legacy
+        // single-badge form (entries recorded before the IsSub/IsMod rework
+        // could only carry "mod" in the Role column).
+        internal static bool IsModerator(GiveawayEntrant e) =>
+            e.IsMod ||
+            string.Equals(e.Role, "mod", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(e.Role, "moderator", StringComparison.OrdinalIgnoreCase);
 
         // ── Subscriber-bonus factor ─────────────────────────────────────────
         /// <summary>
@@ -193,6 +300,29 @@ namespace Phoenix.Controls.Hub.Core
                 factor <= 1.0
                     ? "subscriber bonus removed — all tickets weigh the same"
                     : $"subscriber bonus set to ×{factor.ToString("0.##", CultureInfo.InvariantCulture)} ticket weight at draw",
+                NowIso()).ConfigureAwait(false);
+            RaiseGiveaways();
+        }
+
+        // ── Moderator-bonus factor ──────────────────────────────────────────
+        /// <summary>
+        /// Sets the moderator ticket-weight factor. 1 = no bonus; a moderator's
+        /// tickets count ×factor in the weighted draw (multiplies with the
+        /// subscriber factor for entrants who are both). Same [1, 100] clamp
+        /// as the subscriber factor.
+        /// </summary>
+        public async Task SetModeratorBonusFactorAsync(long id, double factor)
+        {
+            if (double.IsNaN(factor) || double.IsInfinity(factor)) factor = 1.0;
+            factor = Math.Clamp(factor, 1.0, 100.0);
+            var g = await _db.GetGiveawayAsync(id).ConfigureAwait(false);
+            if (g is null || Math.Abs(g.ModBonusFactor - factor) < 0.0001) return;
+
+            await _db.SetGiveawayModBonusFactorAsync(id, factor).ConfigureAwait(false);
+            await _db.LogGiveawayActivityAsync(id, "INF",
+                factor <= 1.0
+                    ? "moderator bonus removed — all tickets weigh the same"
+                    : $"moderator bonus set to ×{factor.ToString("0.##", CultureInfo.InvariantCulture)} ticket weight at draw",
                 NowIso()).ConfigureAwait(false);
             RaiseGiveaways();
         }
@@ -227,27 +357,40 @@ namespace Phoenix.Controls.Hub.Core
 
                 var g = await _db.GetGiveawayAsync(id).ConfigureAwait(false);
                 double factor = g?.SubscriberBonusFactor ?? 1.0;
+                double modFactor = g?.ModBonusFactor ?? 1.0;
 
                 var subs = factor > 1.0
                     ? await ResolveSubscribersForDrawAsync(id, entrants, factor).ConfigureAwait(false)
                     : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                var pool = BuildWeightedPool(entrants, subs, factor);
+                // Mod status comes from the flags recorded at entry (IsMod
+                // column / legacy "mod" badge) — no live gather; mod rosters
+                // barely churn compared to subscriptions.
+                var mods = modFactor > 1.0
+                    ? new HashSet<string>(
+                        entrants.Where(IsModerator).Select(e => e.Username),
+                        StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                var pool = BuildWeightedPool(entrants, subs, factor, mods, modFactor);
                 double totalWeight = pool.Sum(p => p.Weight);
                 if (totalWeight <= 0) return null;
 
                 var winner = PickWeighted(pool, Random.Shared.NextDouble() * totalWeight);
 
-                // Odds come from the WEIGHTED pool (a sub's factor improves
-                // them), so the panel overlay and the activity line agree.
+                // Odds come from the WEIGHTED pool (a sub's/mod's factor
+                // improves them), so the panel overlay and the activity line agree.
                 double winnerWeight = pool.First(p => ReferenceEquals(p.Entrant, winner)).Weight;
                 int odds = winnerWeight > 0 ? Math.Max(1, (int)Math.Round(totalWeight / winnerWeight)) : entrants.Count;
                 string subNote = factor > 1.0 && subs.Contains(winner.Username)
                     ? $" · sub ×{factor.ToString("0.##", CultureInfo.InvariantCulture)}"
                     : "";
+                string modNote = modFactor > 1.0 && mods.Contains(winner.Username)
+                    ? $" · mod ×{modFactor.ToString("0.##", CultureInfo.InvariantCulture)}"
+                    : "";
                 await _db.AppendGiveawayWinnerAsync(id, winner.Username).ConfigureAwait(false);
                 await _db.LogGiveawayActivityAsync(id, "WIN",
-                    $"{winner.Username} won — {winner.Tickets} tickets{subNote} · 1 in {odds}", NowIso()).ConfigureAwait(false);
+                    $"{winner.Username} won — {winner.Tickets} tickets{subNote}{modNote} · 1 in {odds}", NowIso()).ConfigureAwait(false);
                 RaiseGiveaways();
                 return (winner.Username, winner.Tickets, odds);
             }
@@ -324,12 +467,16 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // Weight math split out so the draw odds are unit-testable without
-        // fighting Random.Shared: pool building applies the sub factor, the
-        // CDF walk picks for a given roll in [0, totalWeight).
+        // fighting Random.Shared: pool building applies the sub + mod factors
+        // (multiplicative for an entrant who is both), the CDF walk picks for
+        // a given roll in [0, totalWeight).
         internal static List<(GiveawayEntrant Entrant, double Weight)> BuildWeightedPool(
-            IReadOnlyList<GiveawayEntrant> entrants, IReadOnlySet<string> subs, double factor)
+            IReadOnlyList<GiveawayEntrant> entrants, IReadOnlySet<string> subs, double factor,
+            IReadOnlySet<string>? mods = null, double modFactor = 1.0)
             => entrants
-                .Select(e => (Entrant: e, Weight: e.Tickets * (factor > 1.0 && subs.Contains(e.Username) ? factor : 1.0)))
+                .Select(e => (Entrant: e, Weight: e.Tickets
+                    * (factor > 1.0 && subs.Contains(e.Username) ? factor : 1.0)
+                    * (modFactor > 1.0 && mods is not null && mods.Contains(e.Username) ? modFactor : 1.0)))
                 .ToList();
 
         internal static GiveawayEntrant PickWeighted(
@@ -352,6 +499,17 @@ namespace Phoenix.Controls.Hub.Core
             if (isDefault)
                 await _db.LogGiveawayActivityAsync(id, "INF", "marked as default giveaway", NowIso()).ConfigureAwait(false);
             RaiseGiveaways();
+        }
+
+        /// <summary>
+        /// True while the giveaway exists and its Status is "open" (accepting
+        /// entries). Backs the giveaway.is_active probe (Giveaway.IsActive
+        /// node); closed / drawn / missing all read false.
+        /// </summary>
+        public async Task<bool> IsOpenAsync(long id)
+        {
+            var g = await _db.GetGiveawayAsync(id).ConfigureAwait(false);
+            return g is not null && string.Equals(g.Status, "open", StringComparison.OrdinalIgnoreCase);
         }
 
         // ── Target resolution for the script commands ───────────────────────

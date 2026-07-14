@@ -59,7 +59,7 @@ public static class VisualistWindowRegistry
         string key = UntitledKeyPrefix + Guid.NewGuid().ToString("N");
         Register(window, key);
 
-        try { window.Activate(); }
+        try { WindowFront.Show(window); }
         catch (Exception ex)
         {
             GlobalLogger.Log(
@@ -91,7 +91,7 @@ public static class VisualistWindowRegistry
 
         if (s_open.TryGetValue(key, out var existing))
         {
-            try { existing.Activate(); } catch { /* best-effort */ }
+            try { WindowFront.Show(existing); } catch { /* best-effort */ }
             return Task.FromResult<VisualistSiblingWindow?>(existing);
         }
 
@@ -115,7 +115,7 @@ public static class VisualistWindowRegistry
         }
 
         Register(window, key);
-        try { window.Activate(); } catch { /* best-effort */ }
+        try { WindowFront.Show(window); } catch { /* best-effort */ }
         return Task.FromResult<VisualistSiblingWindow?>(window);
     }
 

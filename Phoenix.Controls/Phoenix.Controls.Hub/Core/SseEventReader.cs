@@ -41,6 +41,13 @@ namespace Phoenix.Controls.Hub.Core
     /// </remarks>
     public sealed class SseEventReader
     {
+        // Hard ceiling on the un-terminated carry buffer. SSE endpoints are
+        // user-configured (custom translator/AI URLs), so a misbehaving or
+        // non-SSE server that never sends a blank-line terminator would grow
+        // _carry without bound. Real events are hundreds of bytes; 1M chars
+        // (~2 MB UTF-16) is orders of magnitude above any legitimate frame.
+        private const int MaxEventChars = 1024 * 1024;
+
         private readonly Stream _stream;
         private readonly byte[] _readBuf;
         private readonly Decoder _decoder;
@@ -100,6 +107,15 @@ namespace Phoenix.Controls.Hub.Core
                     char[] chars = new char[maxChars];
                     int got = _decoder.GetChars(_readBuf, 0, n, chars, 0, flush: false);
                     if (got > 0) _carry.Append(chars, 0, got);
+                }
+
+                // Abort rather than buffer forever when the endpoint never
+                // terminates an event — the caller's catch surfaces this as a
+                // stream error instead of the Hub slowly eating memory.
+                if (_carry.Length > MaxEventChars)
+                {
+                    throw new InvalidDataException(
+                        $"SSE event exceeded {MaxEventChars:N0} chars without a blank-line terminator — aborting (misbehaving or non-SSE endpoint).");
                 }
             }
         }
