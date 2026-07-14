@@ -7,6 +7,18 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607142 - 2026.07.14
+
+**Fixed**
+- Hub: updating no longer deletes the scripts stored in the logic folder.
+- Hub: updating no longer deletes the layers, media, and settings stored in the install folder.
+- Hub: files an earlier update removed are brought back automatically the next time Phoenix Controls starts.
+- Hub: update backups are kept longer while they still hold files that were not brought back yet.
+- Installer: reinstalling no longer replaces scripts or layers you edited.
+- Installer: uninstalling leaves your scripts, layers, and media on disk.
+
+> Heads up — An earlier update could remove the scripts and layers stored inside the install folder. We are truly sorry about this. Your files are not lost: they were moved to a "Phoenix Controls.bak.(date)" folder right next to the install folder, and this version brings them back automatically the first time it starts. Updating with the built-in updater is safe — your files reappear on the first start after the update. If anything is still missing afterwards, copy it from that folder back into Hub\data\.
+
 ## Hotfix - 1.0.2607141 - 2026.07.14
 
 **New**
