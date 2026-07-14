@@ -100,6 +100,16 @@ public static class HubBootstrapper
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(navigator);
 
+        // ── Step 0 — update-backup self-heal ─────────────────────────────
+        // If a previous update wiped user data (the pre-2026-07-14 Updater
+        // swap replaced the whole install root), fill missing files back in
+        // from the retained <installRoot>.bak.* sibling BEFORE anything reads
+        // the data tree — the ConfigManager snapshot below (legacy in-tree
+        // config.json migration) and LayerWatcher / ScriptManager enumeration
+        // of data\layers\ + data\logic\. Fill-only, marker-guarded, never
+        // throws; instant no-op when no backups exist.
+        UpdateBackupSelfHeal.Run();
+
         // Snapshot AppConfig once at boot. The legacy
         // RemoteBridgeServer at step 4 is gated on cfg.RemoteEnabled and the
         // ViewerServer at the end of the method uses the same source-of-truth;

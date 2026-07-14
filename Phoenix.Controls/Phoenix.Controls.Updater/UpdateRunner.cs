@@ -283,7 +283,7 @@ public sealed class UpdateRunner
 
         _swapInFlight = true;
         WriteProgress("swap", -1, "Applying atomic swap...");
-        UpdateOutcome outcome = ApplyArchiveSwap(archive, installRoot);
+        UpdateOutcome outcome = ApplyArchiveSwap(archive, installRoot, out string? retainedBackupDir);
         if (outcome != UpdateOutcome.Success)
         {
             WriteProgress("failed", -1, "Swap failed.");
@@ -305,6 +305,12 @@ public sealed class UpdateRunner
             }
             Log($"manifest verification: ok ({manifest.Files.Count} files)");
         }
+
+        // 7. Merge user state back from the retained backup. Deliberately
+        //    AFTER the manifest verification -- the manifest hashes the
+        //    shipped payload, and the merge overwrites shipped files
+        //    (config.json) with the user's copies where the user wins.
+        RestoreUserState(retainedBackupDir, installRoot);
 
         // Relaunch + hubAlive verification must precede WriteResult(Success).
         // The new Hub's ReadAndClearLastUpdateResult otherwise races + clears the
@@ -435,12 +441,17 @@ public sealed class UpdateRunner
         // atomic boundary. The dialog disables its Cancel button accordingly.
         _swapInFlight = true;
         WriteProgress("swap", -1, "Applying atomic swap...");
-        UpdateOutcome outcome = ApplyArchiveSwap(zipPath, installRoot);
+        UpdateOutcome outcome = ApplyArchiveSwap(zipPath, installRoot, out string? retainedBackupDir);
         if (outcome != UpdateOutcome.Success)
         {
             WriteProgress("failed", -1, "Swap failed.");
             return outcome;
         }
+
+        // Merge user state (scripts / layers / settings) back from the
+        // retained backup -- the release zip only ships seed content, so
+        // without this every completed update deletes the user's working set.
+        RestoreUserState(retainedBackupDir, installRoot);
 
         // Relaunch + hubAlive verification must precede WriteResult(Success).
         // The new Hub's ReadAndClearLastUpdateResult otherwise races + clears the
@@ -474,15 +485,51 @@ public sealed class UpdateRunner
     // ── Archive swap helper (shared between Update + Releases flows) ────
 
     /// <summary>
+    /// Merges user-authored state (scripts, layers, media, config) from the
+    /// retained pre-update backup back into the freshly swapped-in tree.
+    /// An update must never delete the user's working set (P0 2026-07-14:
+    /// every completed update wiped <c>Hub\data\logic\</c> because the swap
+    /// replaces the whole install root). Failures are logged, never fatal —
+    /// every unrestored file stays recoverable in the backup, whose path is
+    /// surfaced in the updater log.
+    /// </summary>
+    internal void RestoreUserState(string? retainedBackupDir, string installRoot)
+    {
+        if (retainedBackupDir is null) return; // fresh layout -- nothing was backed up
+        try
+        {
+            if (!Directory.Exists(retainedBackupDir))
+            {
+                Log($"user-state merge skipped: backup not found at {retainedBackupDir}");
+                return;
+            }
+            WriteProgress("restore_user_data", -1, "Restoring your scripts, layers and settings...");
+            UserStateMerge.MergeReport report = UserStateMerge.Merge(retainedBackupDir, installRoot, Log);
+            Log($"user-state merge from {retainedBackupDir}: {report.Summary()}");
+            if (report.Failures.Count > 0)
+                Log($"user-state merge: {report.Failures.Count} file(s) not restored -- still recoverable in {retainedBackupDir}");
+        }
+        catch (Exception ex)
+        {
+            Log($"user-state merge failed: {ex.Message} -- user files remain in {retainedBackupDir}");
+        }
+    }
+
+    /// <summary>
     /// Extracts <paramref name="archivePath"/> (zip or .phxupdate -- same
     /// format) into a staging directory next to it, then atomically renames
     /// the current install to a timestamped backup and the staging dir into
     /// the install path. Tolerates two archive layouts: a top-level
     /// <c>phoenix-controls/</c> wrapper, or a flat layout where the suite
     /// folders sit at the archive root.
+    /// On success <paramref name="retainedBackupDir"/> carries the renamed-
+    /// aside pre-update tree (null when there was nothing to back up) — the
+    /// caller MUST hand it to <see cref="RestoreUserState"/> so the user's
+    /// scripts / layers / settings survive the swap.
     /// </summary>
-    private UpdateOutcome ApplyArchiveSwap(string archivePath, string installRoot)
+    internal UpdateOutcome ApplyArchiveSwap(string archivePath, string installRoot, out string? retainedBackupDir)
     {
+        retainedBackupDir = null;
         // Normalise the archive path up front. GetDirectoryName returns
         // null on a bare filename, which would silently fall back to _stateDir
         // and stage the extract somewhere unrelated if the Updater's CWD has
@@ -602,6 +649,7 @@ public sealed class UpdateRunner
             }
 
             Log($"swap complete; backup retained at {backupDir}");
+            retainedBackupDir = installRenamed ? backupDir : null;
             return UpdateOutcome.Success;
         }
         catch (Exception ex)
@@ -1273,6 +1321,23 @@ public sealed class UpdateRunner
             string? dir = Path.GetDirectoryName(Path.GetFullPath(protectedFile));
             if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
 
+            // Blast-radius guard (2026-07-14): the caller-provided archive can
+            // live ANYWHERE — `--update D:\Downloads\x.phxupdate` would treat
+            // the user's Downloads folder as scratch space and age-delete its
+            // contents. Only clean when the directory is the Updater's own
+            // state dir (or inside it); anything else is a user-chosen folder
+            // we must never touch beyond reading the archive.
+            string stateFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_stateDir));
+            string dirFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
+            bool insideStateDir =
+                string.Equals(dirFull, stateFull, StringComparison.OrdinalIgnoreCase) ||
+                dirFull.StartsWith(stateFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            if (!insideStateDir)
+            {
+                Log($"staging cleanup skipped: {dirFull} is outside the updater state dir ({stateFull}).");
+                return;
+            }
+
             string protectedFull;
             try { protectedFull = Path.GetFullPath(protectedFile); }
             catch { return; }
@@ -1321,7 +1386,23 @@ public sealed class UpdateRunner
         catch (Exception ex) { Log($"staging cleanup: scan failed: {ex.Message}"); }
     }
 
-    private void TryPruneBackups(string installRoot, int ageDays)
+    /// <summary>
+    /// Marker the Hub-side self-heal (<c>UpdateBackupSelfHeal</c> in
+    /// Phoenix.Controls.Hub) drops into a backup once it has been mined for
+    /// user data. Keep the two literals in sync by hand — the Updater is
+    /// BCL-only and cannot reference the Hub assembly.
+    /// </summary>
+    internal const string SelfHealMarkerFileName = "phx-selfheal.done";
+
+    /// <summary>
+    /// Retention for backups that carry NO self-heal marker. Such a backup
+    /// may be the ONLY surviving copy of user data wiped by a pre-fix
+    /// updater (the machine updated again before Hub ever launched), so it
+    /// gets a long grace window instead of the routine <c>ageDays</c> one.
+    /// </summary>
+    internal const int UnhealedBackupRetentionDays = 30;
+
+    internal void TryPruneBackups(string installRoot, int ageDays)
     {
         try
         {
@@ -1359,10 +1440,19 @@ public sealed class UpdateRunner
                         Log($"could not parse backup timestamp '{stamp}'; leaving alone.");
                         continue;
                     }
-                    if (backupUtc < cutoff)
+                    // Backups are the last line of defense for user data:
+                    // one healed by Hub (marker present) ages out on the
+                    // routine window; an UNHEALED one may hold the only copy
+                    // of a wiped user's scripts, so it survives until the
+                    // 30-day hard cap (disk-space backstop) instead.
+                    bool healed = File.Exists(Path.Combine(dir, SelfHealMarkerFileName));
+                    DateTime effectiveCutoff = healed
+                        ? cutoff
+                        : DateTime.UtcNow - TimeSpan.FromDays(UnhealedBackupRetentionDays);
+                    if (backupUtc < effectiveCutoff)
                     {
                         Directory.Delete(dir, recursive: true);
-                        Log($"pruned old backup: {dir}");
+                        Log($"pruned old backup ({(healed ? "healed" : "unhealed, past hard cap")}): {dir}");
                     }
                 }
                 catch (Exception ex) { Log($"could not prune {dir}: {ex.Message}"); }

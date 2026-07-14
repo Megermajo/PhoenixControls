@@ -147,7 +147,23 @@ Name: "runOnSignin";  Description: "Launch Phoenix Controls when I sign in to Wi
 ; treats every file as content (never compares versions during upgrades, so
 ; the entire payload is rewritten cleanly even if a sibling .dll was
 ; downgraded between releases).
-Source: "{#PayloadRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+;
+; USER-DATA SPLIT — {app}\Hub\data\ is the user's working set (scripts in
+; logic\, layers\, media\, assets\, config.json). The payload ships seed
+; copies of those same files, and a blanket `ignoreversion` rewrite would
+; silently clobber user-edited scripts / layers on every Setup.exe upgrade.
+; The payload is therefore installed in three slices:
+;   1. Everything OUTSIDE Hub\data → full rewrite (binaries, runtime).
+;   2. Release-owned data subtrees (overlay\, streamerbot\) → full rewrite
+;      (runtime code / import pack the new build expects; not user-authored).
+;   3. The rest of Hub\data → `onlyifdoesntexist`: seeds land on a fresh
+;      install, existing files are NEVER touched on upgrade. Marked
+;      `uninsneveruninstall` so an uninstall keeps the user's scripts,
+;      layers, media and settings on disk.
+Source: "{#PayloadRoot}\*"; DestDir: "{app}"; Excludes: "\Hub\data\*"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#PayloadRoot}\Hub\data\overlay\*"; DestDir: "{app}\Hub\data\overlay"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#PayloadRoot}\Hub\data\streamerbot\*"; DestDir: "{app}\Hub\data\streamerbot"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#PayloadRoot}\Hub\data\*"; DestDir: "{app}\Hub\data"; Excludes: "\overlay\*,\streamerbot\*"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist uninsneveruninstall
 
 ; The AppData migration shim rides into {tmp} and is invoked from [Code]
 ; before payload writes start; dontcopy keeps it out of the install root.
