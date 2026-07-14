@@ -73,10 +73,10 @@ internal sealed class GiveawaySourceBridge : IGiveawaySource, IDisposable
 
     public Task CloseAsync(long id, CancellationToken ct = default) => _svc.CloseAsync(id);
 
-    public async Task<(string WinnerName, int WinnerTickets)?> DrawWinnerAsync(long id, CancellationToken ct = default)
+    public async Task<(string WinnerName, int WinnerTickets, int OddsOneIn)?> DrawWinnerAsync(long id, CancellationToken ct = default)
     {
         var r = await _svc.DrawWinnerAsync(id).ConfigureAwait(false);
-        return r is null ? null : (r.Value.Name, r.Value.Tickets);
+        return r is null ? null : (r.Value.Name, r.Value.Tickets, r.Value.OddsOneIn);
     }
 
     public Task SetDefaultAsync(long id, bool isDefault, CancellationToken ct = default)
@@ -86,7 +86,7 @@ internal sealed class GiveawaySourceBridge : IGiveawaySource, IDisposable
     private static GiveawayInfo ToInfo(RuntimeGiveaway g) => new(
         g.Id, g.Key, g.Title, ParseStatus(g.Status), g.OpenedAt, g.ClosedAt, g.OpenedBy, g.IsDefault,
         g.Entrants, g.Tickets, FormatAvg(g.Tickets, g.Entrants), FormatLastEntry(g.LastEntry),
-        g.EntryCommand, g.TicketsPerMessage, g.SubscriberBonus, g.CapPerUser, g.DrawMethod, g.Winners);
+        g.SubscriberBonusFactor, g.CapPerUser, g.Winners);
 
     private static GiveawayEntrantInfo ToEntrant(RuntimeEntrant e)
         => new(e.Username, ParseRole(e.Role), e.Tickets, FormatLastEntry(e.LastEntry));

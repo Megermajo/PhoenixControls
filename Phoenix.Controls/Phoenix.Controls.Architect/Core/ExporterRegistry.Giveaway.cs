@@ -6,7 +6,7 @@ namespace Phoenix.Controls.Architect.Core
     //
     //   Giveaway.Create  → simple emit (no value output).
     //   Giveaway.Close   → giveaway.close(<giveaway>, <public>, "<base>")   → TotalTickets, EntrantCount
-    //   Giveaway.Ticket  → giveaway.ticket(<giveaway>, <public>, <user>, <inc>, <role>, "<base>") → Tickets
+    //   Giveaway.Ticket  → giveaway.ticket(<giveaway>, <public>, <user>, <inc>, <role>, "<base>") → Tickets, Limit
     //   Giveaway.Winner  → giveaway.winner(<giveaway>, <public>, "<base>")  → WinnerName, WinnerTickets
     //
     // The trailing "<base>" literal is the result-var base (ScriptExporter
@@ -60,7 +60,18 @@ namespace Phoenix.Controls.Architect.Core
             string role      = ctx.Materialize(node, "Role", "\"viewer\"");
             string baseVar   = ScriptExporter.GiveawayResultBase(node);
             ctx.Emit($"{prefix}giveaway.ticket({giveaway}, {isPublic}, {user}, {increment}, {role}, \"{baseVar}\")");
-            ctx.FollowNamed(node, "Done", indent);
+
+            // An unwired Limit keeps the legacy single-continuation emission
+            // byte-identical (goldens + existing user graphs must not change).
+            // A wired Limit branches on the handler's "{base}_limit" local
+            // result var — braced, so the engine resolves the value written in
+            // this same execution instead of comparing the literal identifier.
+            if (ctx.GetNamedTarget(node, "Limit") == null)
+            {
+                ctx.FollowNamed(node, "Done", indent);
+                return;
+            }
+            ctx.EmitConditional(node, $"{{{baseVar}_limit}}", "Limit", "Done", prefix, indent);
         }
     }
 

@@ -851,6 +851,137 @@ namespace Phoenix.Controls.Hub.Core
             return (used, total);
         }
 
+        // Ambient handle to the CURRENT tracked execution's linked CTS + its
+        // configured timeout, consumed by the delay / delay_seconds handlers to
+        // re-arm the wall-clock deadline around deliberate waits
+        // (ScriptTimeoutSeconds bounds ACTIVE work, not sleeps).
+        //
+        // AsyncLocal placement: BeginExecutionTracked is SYNCHRONOUS, so the
+        // write inside it mutates the calling async method's ExecutionContext
+        // and flows forward into that method's subsequent awaits — the engine
+        // run and every command handler under it see the scope. A nested
+        // execution (event.trigger → ExecuteInternalEventAsync →
+        // BeginExecutionTracked) performs its write inside an AWAITED async
+        // callee; such writes never propagate back to the caller, so the
+        // nested script sees its own scope and the outer scope is restored
+        // automatically when the awaited call completes.
+        private static readonly AsyncLocal<ExecutionTimeoutScope?> _currentTimeoutScope = new();
+
+        // Pair of (linked CTS, configured ScriptTimeoutSeconds) for one tracked
+        // execution. TimeoutSeconds <= 0 means unlimited — the re-arm helpers
+        // must not touch the CTS in that case.
+        //
+        // One scope is SHARED by everything on the execution's flow — including
+        // parallel_begin branches, which all sleep on tokens linked to this one
+        // root CTS. Re-arms therefore go through per-scope bookkeeping instead
+        // of raw last-writer-wins CancelAfter: while ANY delay is outstanding
+        // the deadline is the MAX of every outstanding (sleep + budget) request;
+        // only when the last delay drains does the deadline drop back to one
+        // normal budget. Without this, a short branch's restore clobbers a long
+        // branch's extension and the long sleep gets cancelled mid-wait.
+        internal sealed class ExecutionTimeoutScope
+        {
+            private readonly object _gate = new();
+            private int _activeDelays;
+            private long _maxDeadlineUtcTicks;
+
+            internal ExecutionTimeoutScope(CancellationTokenSource cts, int timeoutSeconds)
+            {
+                Cts = cts;
+                TimeoutSeconds = timeoutSeconds;
+            }
+            internal CancellationTokenSource Cts { get; }
+            internal int TimeoutSeconds { get; }
+
+            internal void ExtendForDelay(int delayMs)
+            {
+                lock (_gate)
+                {
+                    _activeDelays++;
+                    long candidate = DateTime.UtcNow.Ticks
+                        + TimeSpan.FromMilliseconds(delayMs).Ticks
+                        + TimeSpan.FromSeconds(TimeoutSeconds).Ticks;
+                    if (candidate > _maxDeadlineUtcTicks) _maxDeadlineUtcTicks = candidate;
+                    // Arm INSIDE the gate: CancelAfter is last-writer-wins on
+                    // the single CTS timer, so the arm order must match the
+                    // bookkeeping order — armed outside the lock, a concurrent
+                    // short-restore could re-arm AFTER a long-extend and leave
+                    // the timer at the short deadline while the long sleep is
+                    // still outstanding (false mid-sleep cancellation).
+                    TryCancelAfter(Cts, RemainingLocked());
+                }
+            }
+
+            internal void RestoreAfterDelay()
+            {
+                lock (_gate)
+                {
+                    if (_activeDelays > 0) _activeDelays--;
+                    if (_activeDelays == 0)
+                    {
+                        _maxDeadlineUtcTicks = DateTime.UtcNow.Ticks
+                            + TimeSpan.FromSeconds(TimeoutSeconds).Ticks;
+                    }
+                    TryCancelAfter(Cts, RemainingLocked());
+                }
+            }
+
+            private TimeSpan RemainingLocked()
+            {
+                long left = _maxDeadlineUtcTicks - DateTime.UtcNow.Ticks;
+                return left > 0 ? TimeSpan.FromTicks(left) : TimeSpan.Zero;
+            }
+        }
+
+        // Test seams — install/inspect the ambient scope on the current async
+        // flow without a full ScriptManager execution.
+        internal static void SetTimeoutScopeForCurrentFlow(CancellationTokenSource? cts, int timeoutSeconds)
+            => _currentTimeoutScope.Value = cts == null ? null : new ExecutionTimeoutScope(cts, timeoutSeconds);
+        internal static ExecutionTimeoutScope? CurrentTimeoutScope => _currentTimeoutScope.Value;
+
+        // CancelAfter's TimeSpan overload rejects delays above (uint.MaxValue - 2) ms;
+        // clamp so an extreme configured timeout can't turn a re-arm into an
+        // ArgumentOutOfRangeException mid-script. CancelAfter on an
+        // already-cancelled CTS is a no-op; a disposed CTS (shutdown race) is
+        // swallowed like the initial arm in BeginExecutionTracked.
+        private static void TryCancelAfter(CancellationTokenSource cts, TimeSpan delay)
+        {
+            const double maxMs = 4294967293d; // uint.MaxValue - 2
+            if (delay.TotalMilliseconds > maxMs) delay = TimeSpan.FromMilliseconds(maxMs);
+            try { cts.CancelAfter(delay); }
+            catch (ObjectDisposedException) { }
+        }
+
+        /// <summary>
+        /// Called by the delay / delay_seconds handlers BEFORE their sleep:
+        /// pushes the current execution's deadline to (sleep + one fresh full
+        /// ScriptTimeoutSeconds budget) so a deliberate wait cannot consume the
+        /// timeout budget. No-op when the execution is untracked (no ambient
+        /// scope) or unlimited (ScriptTimeoutSeconds &lt;= 0).
+        /// </summary>
+        internal static void ExtendTimeoutBudgetForDelay(int delayMs)
+        {
+            var scope = _currentTimeoutScope.Value;
+            if (scope == null || scope.TimeoutSeconds <= 0 || delayMs <= 0) return;
+            scope.ExtendForDelay(delayMs);
+        }
+
+        /// <summary>
+        /// Called AFTER a delay finishes (normally OR cancelled): drains this
+        /// delay's extension; when no delays remain outstanding the deadline
+        /// drops back to exactly one normal ScriptTimeoutSeconds budget instead
+        /// of the leftover (sleep + budget). Callers must invoke this from a
+        /// finally — a sleep cut short by a LOCAL cancel (async_timeout's block
+        /// CTS) would otherwise strand the root CTS at the inflated deadline
+        /// while the script continues, defeating the per-script timeout guard.
+        /// </summary>
+        internal static void RestoreTimeoutBudgetAfterDelay()
+        {
+            var scope = _currentTimeoutScope.Value;
+            if (scope == null || scope.TimeoutSeconds <= 0) return;
+            scope.RestoreAfterDelay();
+        }
+
         private ExecutionToken BeginExecutionTracked(string scriptName)
         {
             int timeoutSec = ConfigManager.Current.ScriptTimeoutSeconds;
@@ -868,6 +999,10 @@ namespace Phoenix.Controls.Hub.Core
                 try { cts.CancelAfter(TimeSpan.FromSeconds(timeoutSec)); }
                 catch (ObjectDisposedException) { /* race against shutdown; harmless */ }
             }
+            // Publish the delay-budget scope for this execution's flow. Set even
+            // when timeoutSec <= 0 (unlimited) so a nested unlimited execution
+            // shadows an outer limited one instead of re-arming the outer CTS.
+            _currentTimeoutScope.Value = new ExecutionTimeoutScope(cts, timeoutSec);
             long id = Interlocked.Increment(ref _executionIdCounter);
             _activeCts[id] = cts;
             // Discard-policy bookkeeping — count this execution as in-flight

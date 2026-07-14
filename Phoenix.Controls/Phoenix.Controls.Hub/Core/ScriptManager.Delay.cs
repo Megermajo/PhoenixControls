@@ -9,11 +9,21 @@ namespace Phoenix.Controls.Hub.Core
     // ms or seconds and tie into the engine's CancellationToken / per-
     // handler start-time so timeouts and shutdown can interrupt sleeps.
     //
-    // H11 — both delay forms honour _engine.ExecutionToken so a
-    // delay(60000) cannot outlast ScriptTimeoutSeconds. The catch-and-
+    // H11 — both delay forms honour _engine.ExecutionToken so manual cancel /
+    // shutdown / CancelAllScripts can interrupt a sleep. The catch-and-
     // rethrow on OperationCanceledException is intentional: it lets the
     // surrounding script-engine machinery treat the cancellation the same
     // way as any other propagated cancel.
+    //
+    // Delay-budget contract: ScriptTimeoutSeconds bounds ACTIVE work, not
+    // deliberate waits. Before each sleep the handlers re-arm the current
+    // execution's deadline via ExtendTimeoutBudgetForDelay (sleep + one fresh
+    // full budget); after the sleep RestoreTimeoutBudgetAfterDelay re-arms to
+    // exactly one normal budget for the work that follows. A timed,
+    // self-ending flow like `delay_seconds(500)` → draw winners therefore
+    // survives, while runaway active work is still cut off. Manual cancel and
+    // Hub shutdown still cancel the linked CTS directly and interrupt the
+    // sleep regardless of the re-armed deadline.
     //
     // timeout_check writes global._timeout_ok against the engine's
     // global._script_start_ms stamp (set at the start of each
@@ -34,8 +44,13 @@ namespace Phoenix.Controls.Hub.Core
                 if (ms > 0)
                 {
                     var ct = _engine.ExecutionToken;
+                    // Restore in FINALLY: the sleep can be cancelled by a LOCAL
+                    // token (async_timeout's block CTS) while the script lives
+                    // on — skipping the restore would strand the root deadline
+                    // at (sleep + budget) and defeat the timeout guard.
+                    ExtendTimeoutBudgetForDelay(ms);
                     try { await Task.Delay(ms, ct).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw; }
+                    finally { RestoreTimeoutBudgetAfterDelay(); }
                 }
                 return null;
             });
@@ -51,10 +66,20 @@ namespace Phoenix.Controls.Hub.Core
                 else s = double.TryParse(ArgOrEmpty(args, 0), NumberStyles.Float, CultureInfo.InvariantCulture, out var sx) ? sx : 0d;
                 if (s > 0)
                 {
+                    // Sub-millisecond values round to ms == 0: no sleep, and —
+                    // load-bearing — no Extend/Restore pair. An unpaired
+                    // Restore would decrement the shared scope's outstanding-
+                    // delay count that a SIBLING parallel branch incremented
+                    // and collapse its long deadline mid-sleep.
                     int ms = (int)Math.Min(int.MaxValue, s * 1000d);
-                    var ct = _engine.ExecutionToken;
-                    try { await Task.Delay(ms, ct).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw; }
+                    if (ms > 0)
+                    {
+                        var ct = _engine.ExecutionToken;
+                        // Restore in FINALLY — same local-cancel contract as delay().
+                        ExtendTimeoutBudgetForDelay(ms);
+                        try { await Task.Delay(ms, ct).ConfigureAwait(false); }
+                        finally { RestoreTimeoutBudgetAfterDelay(); }
+                    }
                 }
                 return null;
             });

@@ -214,6 +214,17 @@ namespace Phoenix.Controls.Shared.Core
                 {
                     if (string.IsNullOrEmpty(raw)) return 0;
                     if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)) return v;
+                    // Script numerics are string round-trips, so a fractional value
+                    // arriving at an Int arg ("248.5" from math.divide upstream) is a
+                    // legitimate computation result, not author error — round it
+                    // half-away-from-zero instead of degrading to 0. NaN/Infinity and
+                    // values outside int range still degrade to 0 with an error line.
+                    if (double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
+                        && double.IsFinite(d))
+                    {
+                        double rounded = Math.Round(d, MidpointRounding.AwayFromZero);
+                        if (rounded >= int.MinValue && rounded <= int.MaxValue) return (int)rounded;
+                    }
                     errors?.Add($"arg '{spec.Name}': expected Int, got '{raw}'");
                     return 0;
                 }

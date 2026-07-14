@@ -1,0 +1,961 @@
+{
+  "Name": "New Logic Graph",
+  "Nodes": [
+    {
+      "Id": "b2e4929e-1833-4cc5-95fd-9269dd73b3c0",
+      "Title": "Giveaway.Ticket",
+      "Category": "Giveaway",
+      "Location": {
+        "IsEmpty": false,
+        "X": 314,
+        "Y": 192
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 170
+      },
+      "HeaderColor": -2448096,
+      "Sockets": [
+        {
+          "Id": "4e96e6e0-4493-4e28-b99a-27957470cef3",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "9b29b38e-0d14-46c2-bed4-34aa5fe4e4aa",
+          "Name": "Giveaway",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "fb20bc89-8aa2-4389-9eef-0c360fbda6b0",
+          "Name": "Public",
+          "Type": 0,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "cc0d31c7-cb3f-4595-b601-d62cb8021729",
+          "Name": "User",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "c1a1490f-08ca-4f04-959e-901e62c51d6e",
+          "Name": "Increment",
+          "Type": 0,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "7e2a0e60-6630-46f2-9eff-7770ba6ff45f",
+          "Name": "Role",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 140
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "35ba4744-2ed7-4a70-8ef9-b44fec91e2bf",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "8471d8f7-a9aa-4cf4-b1a1-bdb1965b7a43",
+          "Name": "Tickets",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "7c4892f3-c649-4417-bedf-8e3409a47428",
+          "Name": "Limit",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Giveaway": "",
+        "Public": "true",
+        "User": "",
+        "Increment": "1",
+        "Role": "viewer"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "1e8f8e5d-95a4-44c4-a5aa-313d9b721dbd",
+      "Title": "Chat.Message",
+      "Category": "Events",
+      "Location": {
+        "IsEmpty": false,
+        "X": -1112,
+        "Y": 3
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 324
+      },
+      "HeaderColor": -14513374,
+      "Sockets": [
+        {
+          "Id": "f89d9563-3f2e-4dc7-950b-c2b7a81a7199",
+          "Name": "Flow",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "9f89021c-668f-47c1-bd42-e9fbb1d854ce",
+          "Name": "Message",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "736e5690-f669-4cca-8cc0-78f11e7fadeb",
+          "Name": "User",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": "Packed 7-element array [name, is_mod, is_sub, is_vip, is_broadcaster, color_hex, sub_months]. Feed through Array.Get or Array.Unpack to read individual fields."
+        },
+        {
+          "Id": "adfd4a65-aeb3-4b13-ab94-92b5eb49bd1d",
+          "Name": "IsCommand",
+          "Type": 1,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": "True if the message started with ! and matched the Commands filter on this node."
+        },
+        {
+          "Id": "e1b5cf49-ab72-478d-8800-a89f418f87f1",
+          "Name": "Command",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": "Matched alias with the leading ! stripped. Empty when the message wasn\u0027t a command."
+        },
+        {
+          "Id": "3c4086e8-4cd5-4afc-bd32-c2f62087d328",
+          "Name": "Args",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 140
+          },
+          "IsPlaceholder": false,
+          "Description": "Words after the command, as a list. Iterate with Flow.ForEach or pull individual ones with Array.Get."
+        },
+        {
+          "Id": "77062578-652c-4b1f-8a22-5afb9833f96c",
+          "Name": "IsMod",
+          "Type": 1,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 162
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "b9fa9884-dc7c-49f3-9835-abc3737d1f2c",
+          "Name": "IsSub",
+          "Type": 1,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 184
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "45d22d4c-57f4-4509-b958-b94bd5098aa2",
+          "Name": "IsBroadcaster",
+          "Type": 1,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 206
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "57e4cab9-fe58-42d9-960c-aad5b805ee16",
+          "Name": "IsVip",
+          "Type": 1,
+          "DataType": 4,
+          "Color": -7545716,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 228
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "b892528d-0cea-4ef9-b144-beb181a6be77",
+          "Name": "SubMonths",
+          "Type": 1,
+          "DataType": 2,
+          "Color": -8206081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 250
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "f9ba0026-200a-4285-a1c4-dffd0cfbed67",
+          "Name": "ColorHex",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 272
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "cf40925e-eaa3-43d1-befe-bef4621ad1d3",
+          "Name": "Platform",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 294
+          },
+          "IsPlaceholder": false,
+          "Description": "Which platform sent the line: twitch, youtube or kick. Branch on it with Logic.Switch to answer per platform."
+        }
+      ],
+      "Attributes": {
+        "Commands": "ticket",
+        "Twitch": "true",
+        "YouTube": "false",
+        "Kick": "false"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "a0b3fa37-2348-49c3-9a28-efa642bd5771",
+      "Title": "Array.Unpack",
+      "Category": "Collections",
+      "Location": {
+        "IsEmpty": false,
+        "X": -440,
+        "Y": 288
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 170
+      },
+      "HeaderColor": -7650029,
+      "Sockets": [
+        {
+          "Id": "e3d2a658-2f3b-45f3-8651-d4af5a52ba1f",
+          "Name": "Array",
+          "Type": 0,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "2666a2fe-d867-4022-8915-2ac80ef0a52a",
+          "Name": "Item 0",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "01ba0956-a8d9-4694-a905-ab27927273b7",
+          "Name": "Item 1",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "ce596e06-99d2-4106-a9ea-42ad38d29b2b",
+          "Name": "Item 2",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "71ad1219-3b00-4319-b6b2-f4638c82bcce",
+          "Name": "Item 3",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "b8687f3e-d6b7-4a25-b920-1681d57aebe2",
+          "Name": "Item 4",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 118
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a00d6a6a-5f29-420d-b112-a827c8f85221",
+          "Name": "Rest",
+          "Type": 1,
+          "DataType": 5,
+          "Color": -21916,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 140
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {},
+      "Description": ""
+    },
+    {
+      "Id": "519309b9-f23b-4b14-9d65-7d4f01737b50",
+      "Title": "Text.Builder",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 952,
+        "Y": 406
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 126
+      },
+      "HeaderColor": -16744320,
+      "Sockets": [
+        {
+          "Id": "c99b91a4-6f9d-44fc-b617-f7e88ea33372",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "a07f53d3-c708-4ed4-b5ea-a715a0cb377c",
+          "Name": "Arg1",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "d31a9ba2-5d95-4128-b9b1-165b2a94b3c5",
+          "Name": "Arg2",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "d7094b6b-6191-4a58-a2b1-559e035f2ef6",
+          "Name": "Arg3",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "3b235fe2-94b3-42a9-a8fd-fbaaa969ac9c",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "{Arg1} got themselve a ticket and now has {Arg2}."
+      },
+      "Description": ""
+    },
+    {
+      "Id": "862dfb4d-72bb-470e-9331-f067aafc68c7",
+      "Title": "Twitch.SendChat",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1438,
+        "Y": 256
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": -7077677,
+      "Sockets": [
+        {
+          "Id": "57dff59d-4e76-48fc-a534-bd2031612686",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "0f87f3c4-eb00-470b-9da6-3a44019d8c1e",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "b6ceaf86-fb59-4ddd-97b3-611f0fac0ed6",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": -1,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Message": "Hello chat!"
+      },
+      "Description": ""
+    },
+    {
+      "Id": "1095faec-f944-427b-867e-848423878b14",
+      "Title": "Convert.ToString",
+      "Category": "Convert",
+      "Location": {
+        "IsEmpty": false,
+        "X": 636,
+        "Y": 328
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 60
+      },
+      "HeaderColor": -16741493,
+      "Sockets": [
+        {
+          "Id": "134a8aba-3fff-47c1-93c8-7c0ad964754d",
+          "Name": "In",
+          "Type": 0,
+          "DataType": 6,
+          "Color": -2318081,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "505783bc-9b96-46ed-b40d-da13cae23458",
+          "Name": "Out",
+          "Type": 1,
+          "DataType": 1,
+          "Color": -9116,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Default": ""
+      },
+      "Description": ""
+    },
+    {
+      "Id": "6d857729-498f-49d3-8227-5f324c1d97a6",
+      "Title": "Text.Builder",
+      "Category": "Text",
+      "Location": {
+        "IsEmpty": false,
+        "X": 608,
+        "Y": -162
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 126
+      },
+      "HeaderColor": 0,
+      "Sockets": [
+        {
+          "Id": "bc4dd457-7ce6-41b9-8f45-e6561c03fd06",
+          "Name": "Template",
+          "Type": 0,
+          "DataType": 1,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "169886e2-fc14-4d82-961a-266b1f33c8e7",
+          "Name": "Arg1",
+          "Type": 0,
+          "DataType": 1,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "cfc3d78d-7c8b-4a83-b316-c8709563fcc2",
+          "Name": "Arg2",
+          "Type": 0,
+          "DataType": 1,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 74
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "538f8693-16cc-4fbe-a925-793d51998c72",
+          "Name": "Arg3",
+          "Type": 0,
+          "DataType": 1,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 96
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "ac30c137-ed2d-442c-a30c-d4d333bba943",
+          "Name": "Result",
+          "Type": 1,
+          "DataType": 1,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Template": "{Arg1} already has the max amount of tickets."
+      },
+      "Description": ""
+    },
+    {
+      "Id": "7c37a4eb-85c8-48f5-a6eb-633dd3b89f50",
+      "Title": "Twitch.SendChat",
+      "Category": "Platforms",
+      "Location": {
+        "IsEmpty": false,
+        "X": 1301,
+        "Y": 19
+      },
+      "Size": {
+        "IsEmpty": false,
+        "Width": 200,
+        "Height": 82
+      },
+      "HeaderColor": 0,
+      "Sockets": [
+        {
+          "Id": "a6704694-2e14-44aa-9910-db16abe33aee",
+          "Name": "Flow",
+          "Type": 0,
+          "DataType": 0,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "88ac8f89-0f85-46fe-99d3-0d61aa425cf2",
+          "Name": "Message",
+          "Type": 0,
+          "DataType": 1,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": -6,
+            "Y": 52
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        },
+        {
+          "Id": "34fdcb3d-46b4-4a93-a831-b8151481b2c8",
+          "Name": "Done",
+          "Type": 1,
+          "DataType": 0,
+          "Color": 0,
+          "Offset": {
+            "IsEmpty": false,
+            "X": 186,
+            "Y": 30
+          },
+          "IsPlaceholder": false,
+          "Description": ""
+        }
+      ],
+      "Attributes": {
+        "Message": "Hello chat!"
+      },
+      "Description": ""
+    }
+  ],
+  "Links": [
+    {
+      "Id": "b889393d-6181-4be4-bd82-b69a6a1f9c1a",
+      "FromNodeId": "1e8f8e5d-95a4-44c4-a5aa-313d9b721dbd",
+      "FromSocketId": "736e5690-f669-4cca-8cc0-78f11e7fadeb",
+      "ToNodeId": "a0b3fa37-2348-49c3-9a28-efa642bd5771",
+      "ToSocketId": "e3d2a658-2f3b-45f3-8651-d4af5a52ba1f"
+    },
+    {
+      "Id": "ddb4d2fb-80d2-4b74-9cbf-ada83d0167dc",
+      "FromNodeId": "a0b3fa37-2348-49c3-9a28-efa642bd5771",
+      "FromSocketId": "2666a2fe-d867-4022-8915-2ac80ef0a52a",
+      "ToNodeId": "b2e4929e-1833-4cc5-95fd-9269dd73b3c0",
+      "ToSocketId": "cc0d31c7-cb3f-4595-b601-d62cb8021729"
+    },
+    {
+      "Id": "a54fa07b-37b6-40ab-aa3d-f99587463ad9",
+      "FromNodeId": "a0b3fa37-2348-49c3-9a28-efa642bd5771",
+      "FromSocketId": "2666a2fe-d867-4022-8915-2ac80ef0a52a",
+      "ToNodeId": "519309b9-f23b-4b14-9d65-7d4f01737b50",
+      "ToSocketId": "a07f53d3-c708-4ed4-b5ea-a715a0cb377c"
+    },
+    {
+      "Id": "32b93300-ac8e-4433-89ac-5c2db09fe6ac",
+      "FromNodeId": "519309b9-f23b-4b14-9d65-7d4f01737b50",
+      "FromSocketId": "3b235fe2-94b3-42a9-a8fd-fbaaa969ac9c",
+      "ToNodeId": "862dfb4d-72bb-470e-9331-f067aafc68c7",
+      "ToSocketId": "0f87f3c4-eb00-470b-9da6-3a44019d8c1e"
+    },
+    {
+      "Id": "4bb62068-c45b-46a3-a8e1-c7f19e38fa54",
+      "FromNodeId": "1095faec-f944-427b-867e-848423878b14",
+      "FromSocketId": "505783bc-9b96-46ed-b40d-da13cae23458",
+      "ToNodeId": "519309b9-f23b-4b14-9d65-7d4f01737b50",
+      "ToSocketId": "d31a9ba2-5d95-4128-b9b1-165b2a94b3c5"
+    },
+    {
+      "Id": "bc1f34dd-70b5-4f69-b451-9b1a47758e5d",
+      "FromNodeId": "a0b3fa37-2348-49c3-9a28-efa642bd5771",
+      "FromSocketId": "2666a2fe-d867-4022-8915-2ac80ef0a52a",
+      "ToNodeId": "6d857729-498f-49d3-8227-5f324c1d97a6",
+      "ToSocketId": "169886e2-fc14-4d82-961a-266b1f33c8e7"
+    },
+    {
+      "Id": "b0255b2a-1814-4a6a-8dc6-e086929b1d1d",
+      "FromNodeId": "6d857729-498f-49d3-8227-5f324c1d97a6",
+      "FromSocketId": "ac30c137-ed2d-442c-a30c-d4d333bba943",
+      "ToNodeId": "7c37a4eb-85c8-48f5-a6eb-633dd3b89f50",
+      "ToSocketId": "88ac8f89-0f85-46fe-99d3-0d61aa425cf2"
+    },
+    {
+      "Id": "2e942661-37f5-437c-bbde-dba7004c6557",
+      "FromNodeId": "b2e4929e-1833-4cc5-95fd-9269dd73b3c0",
+      "FromSocketId": "35ba4744-2ed7-4a70-8ef9-b44fec91e2bf",
+      "ToNodeId": "862dfb4d-72bb-470e-9331-f067aafc68c7",
+      "ToSocketId": "57dff59d-4e76-48fc-a534-bd2031612686"
+    },
+    {
+      "Id": "f10decba-e8ca-4077-9095-e3fbde83501b",
+      "FromNodeId": "b2e4929e-1833-4cc5-95fd-9269dd73b3c0",
+      "FromSocketId": "8471d8f7-a9aa-4cf4-b1a1-bdb1965b7a43",
+      "ToNodeId": "1095faec-f944-427b-867e-848423878b14",
+      "ToSocketId": "134a8aba-3fff-47c1-93c8-7c0ad964754d"
+    },
+    {
+      "Id": "fdb69658-a00a-4242-b882-052d67b640d2",
+      "FromNodeId": "b2e4929e-1833-4cc5-95fd-9269dd73b3c0",
+      "FromSocketId": "7c4892f3-c649-4417-bedf-8e3409a47428",
+      "ToNodeId": "7c37a4eb-85c8-48f5-a6eb-633dd3b89f50",
+      "ToSocketId": "a6704694-2e14-44aa-9910-db16abe33aee"
+    },
+    {
+      "Id": "b9fe86a8-d2ee-4432-aeb3-a0f072e6052a",
+      "FromNodeId": "1e8f8e5d-95a4-44c4-a5aa-313d9b721dbd",
+      "FromSocketId": "f89d9563-3f2e-4dc7-950b-c2b7a81a7199",
+      "ToNodeId": "b2e4929e-1833-4cc5-95fd-9269dd73b3c0",
+      "ToSocketId": "4e96e6e0-4493-4e28-b99a-27957470cef3"
+    }
+  ],
+  "Frames": [
+    {
+      "Id": "3aa9e4ff-f12d-4944-896f-68520b7b4d24",
+      "Label": "Purchase Ticket",
+      "Bounds": {
+        "Location": {
+          "IsEmpty": false,
+          "X": -1086,
+          "Y": -251
+        },
+        "Size": {
+          "IsEmpty": false,
+          "Width": 3419,
+          "Height": 902
+        },
+        "X": -1086,
+        "Y": -251,
+        "Width": 3419,
+        "Height": 902,
+        "Left": -1086,
+        "Top": -251,
+        "Right": 2333,
+        "Bottom": 651,
+        "IsEmpty": false
+      },
+      "FrameColor": -14256,
+      "IsPlaceholder": false,
+      "ZOrder": 0
+    }
+  ],
+  "Bookmarks": [],
+  "Macros": [],
+  "Processes": [],
+  "Variables": [],
+  "ViewOffsetX": 447,
+  "ViewOffsetY": 230,
+  "ViewZoom": 0.68301344,
+  "_schemaVersion": 1
+}

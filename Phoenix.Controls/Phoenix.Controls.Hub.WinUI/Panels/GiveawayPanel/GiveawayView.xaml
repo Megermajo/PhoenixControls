@@ -304,9 +304,9 @@
                         BorderBrush="{StaticResource Ember600Brush}"
                         BorderThickness="1"
                         CornerRadius="{StaticResource Radius1Corner}"
-                        IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                        IsEnabled="{x:Bind ViewModel.CanDraw, Mode=OneWay}"
                         Click="OnDrawWinnerClick"
-                        ToolTipService.ToolTip="Pick a winner — weighted by ticket count"
+                        ToolTipService.ToolTip="Pick a winner — weighted by ticket count (subscriber bonus factor applies)"
                         AutomationProperties.Name="Draw winner">
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE735;" FontSize="11"
@@ -455,28 +455,136 @@
                                           Value="{x:Bind ViewModel.LastEntryValue, Mode=OneWay}" />
                     </Grid>
 
-                    <!-- Settings card -->
+                    <!-- Settings card — collapsible; the header row IS the
+                         toggle. Both remaining settings are editable inputs:
+                         entry itself is script-driven (the GiveawayTicket .phx
+                         calls giveaway.ticket), so there is no entry command /
+                         tickets-per-message / draw-method row any more. -->
                     <Border Background="{StaticResource CoalShellBrush}"
                             BorderBrush="{StaticResource CoalCardBrush}"
                             BorderThickness="1"
                             CornerRadius="{StaticResource Radius1Corner}"
                             Padding="14,10">
                         <StackPanel Spacing="0">
-                            <TextBlock Text="SETTINGS"
-                                       FontFamily="{StaticResource SansFont}"
-                                       FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
-                                       Foreground="{StaticResource EmberPrimaryBrush}"
-                                       Margin="0,0,0,8" />
-                            <local:GvSettingRow Label="Entry command"
-                                                Value="{x:Bind ViewModel.SettingEntryCommand, Mode=OneWay}" />
-                            <local:GvSettingRow Label="Tickets per message"
-                                                Value="{x:Bind ViewModel.SettingTicketsPerMessage, Mode=OneWay}" />
-                            <local:GvSettingRow Label="Subscriber bonus"
-                                                Value="{x:Bind ViewModel.SettingSubscriberBonus, Mode=OneWay}" />
-                            <local:GvSettingRow Label="Cap per user"
-                                                Value="{x:Bind ViewModel.SettingCapPerUser, Mode=OneWay}" />
-                            <local:GvSettingRow Label="Draw method" IsLast="True"
-                                                Value="{x:Bind ViewModel.SettingDrawMethod, Mode=OneWay}" />
+                            <Button x:Name="SettingsHeaderButton"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="0,2"
+                                    Click="OnToggleSettingsClick"
+                                    ToolTipService.ToolTip="Collapse / expand the settings panel"
+                                    AutomationProperties.Name="{x:Bind ViewModel.SettingsToggleAutomationName, Mode=OneWay}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="SETTINGS"
+                                               FontFamily="{StaticResource SansFont}"
+                                               FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
+                                               Foreground="{StaticResource EmberPrimaryBrush}"
+                                               VerticalAlignment="Center" />
+                                    <FontIcon Grid.Column="1"
+                                              FontFamily="Segoe MDL2 Assets"
+                                              Glyph="{x:Bind ViewModel.SettingsChevronGlyph, Mode=OneWay}"
+                                              FontSize="10"
+                                              Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+                            <StackPanel Spacing="0"
+                                        Visibility="{x:Bind ViewModel.SettingsBodyVisibility, Mode=OneWay}"
+                                        Margin="0,6,0,0">
+                                <!-- Subscriber bonus — ticket-weight FACTOR applied to
+                                     subscribers at draw time (their sub status is
+                                     gathered fresh via Streamer.bot right before the
+                                     draw). 1 = no bonus; saves on Enter / focus loss,
+                                     Escape reverts. -->
+                                <Border BorderBrush="{StaticResource CoalCardBrush}"
+                                        BorderThickness="0,0,0,1"
+                                        Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="130" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11" CharacterSpacing="40"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="Subscriber bonus" />
+                                        <TextBox Grid.Column="1"
+                                                 x:Name="SubBonusBox"
+                                                 Width="72"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                                 BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}"
+                                                 FontSize="11"
+                                                 TextAlignment="Right"
+                                                 VerticalAlignment="Center"
+                                                 IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                 KeyDown="OnSubBonusKeyDown"
+                                                 LostFocus="OnSubBonusLostFocus"
+                                                 AutomationProperties.Name="Subscriber ticket-weight factor (1 = no bonus)"
+                                                 Text="{x:Bind ViewModel.SubBonusDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="× ticket weight for subs at draw · 1 = no bonus" />
+                                    </Grid>
+                                </Border>
+                                <!-- Max tickets per user — 0 = unlimited; saves on
+                                     Enter / focus loss, Escape reverts. Last row →
+                                     no bottom divider. -->
+                                <Border BorderThickness="0"
+                                        Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="130" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="11" CharacterSpacing="40"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="Max tickets per user" />
+                                        <TextBox Grid.Column="1"
+                                                 x:Name="CapPerUserBox"
+                                                 Width="72"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                                 BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}"
+                                                 FontSize="11"
+                                                 TextAlignment="Right"
+                                                 VerticalAlignment="Center"
+                                                 IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                 KeyDown="OnCapPerUserKeyDown"
+                                                 LostFocus="OnCapPerUserLostFocus"
+                                                 AutomationProperties.Name="Max tickets per user (0 = unlimited)"
+                                                 Text="{x:Bind ViewModel.CapPerUserDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2"
+                                                   FontFamily="{StaticResource MonoFont}"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   VerticalAlignment="Center"
+                                                   Text="0 = unlimited" />
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 

@@ -56,8 +56,13 @@ public interface IGiveawaySource
     System.Threading.Tasks.Task CloseAsync(
         long id, System.Threading.CancellationToken ct = default);
 
-    /// <summary>Draws a weighted winner; null when the pool is empty.</summary>
-    System.Threading.Tasks.Task<(string WinnerName, int WinnerTickets)?> DrawWinnerAsync(
+    /// <summary>
+    /// Draws a weighted winner; null when the pool is empty. OddsOneIn is the
+    /// winner's weighted odds denominator ("1 in N") — computed from the same
+    /// weight pool the draw rolled (incl. the subscriber bonus factor), so the
+    /// overlay never re-derives it from raw ticket counts.
+    /// </summary>
+    System.Threading.Tasks.Task<(string WinnerName, int WinnerTickets, int OddsOneIn)?> DrawWinnerAsync(
         long id, System.Threading.CancellationToken ct = default);
 
     /// <summary>Marks (or clears) a giveaway as the app-wide default.</summary>

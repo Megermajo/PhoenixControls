@@ -36,15 +36,19 @@ namespace Phoenix.Controls.Shared.Models
         public bool IsDefault { get; set; }
 
         // ── Settings (per giveaway) ─────────────────────────────────────────
-        public string EntryCommand { get; set; } = "!enter";
-        public int TicketsPerMessage { get; set; } = 1;
-        public int SubscriberBonus { get; set; } = 0;
+        // Entry itself is script-driven (a .phx file calls giveaway.ticket) —
+        // there is no built-in entry command / per-message ticket amount.
+
+        /// <summary>
+        /// Subscriber ticket-weight factor applied at DRAW time: a subscriber's
+        /// tickets count ×factor in the weighted draw. 1 = no bonus (default).
+        /// Subscriber status is gathered fresh from Streamer.bot before the
+        /// draw (recorded entrant role is the fallback).
+        /// </summary>
+        public double SubscriberBonusFactor { get; set; } = 1.0;
 
         /// <summary>Max tickets per user; 0 = unlimited.</summary>
         public int CapPerUser { get; set; } = 0;
-
-        /// <summary>"weighted" (by ticket count) — the only method today.</summary>
-        public string DrawMethod { get; set; } = "weighted";
 
         /// <summary>Comma-separated winner name(s), appended per draw.</summary>
         public string Winners { get; set; } = "";

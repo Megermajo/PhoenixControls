@@ -29,10 +29,13 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec), ("TotalTickets", ColNumber), ("EntrantCount", ColNumber) },
                 new Dictionary<string, string> { { "Giveaway", "" }, { "Public", "true" } });
 
+            // Limit is appended AFTER the original outputs — a socket RENAME
+            // silently prunes links in every saved user graph, so Done/Tickets
+            // must never move or change name.
             AddTemplate("Giveaway.Ticket", "Giveaway", Color.Goldenrod,
-                "Add tickets for a user (or, with increment 0, just read their current count). Outputs the user's ticket total. Adding is ignored once the giveaway is closed.",
+                "Add tickets for a user (or, with increment 0, just read their current count). Outputs the user's ticket total. When the per-user cap blocks the entry, the Limit flow output fires instead of Done. Adding is ignored once the giveaway is closed.",
                 new[] { ("Flow", ColExec), ("Giveaway", ColString), ("Public", ColBool), ("User", ColString), ("Increment", ColNumber), ("Role", ColString) },
-                new[] { ("Done", ColExec), ("Tickets", ColNumber) },
+                new[] { ("Done", ColExec), ("Tickets", ColNumber), ("Limit", ColExec) },
                 new Dictionary<string, string> { { "Giveaway", "" }, { "Public", "true" }, { "User", "" }, { "Increment", "1" }, { "Role", "viewer" } });
 
             AddTemplate("Giveaway.Winner", "Giveaway", Color.Goldenrod,

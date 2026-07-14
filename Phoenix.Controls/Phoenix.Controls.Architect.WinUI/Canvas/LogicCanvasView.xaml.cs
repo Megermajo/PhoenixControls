@@ -1278,6 +1278,16 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        // Close any open GPU-canvas edit session BEFORE the detach settles.
+        // A canvas unloaded mid-edit (tab-swap / window switch) never routes
+        // through the pointer-path exit, so _editNode survived the detach and
+        // the mounted edit NodeView ran its FULL Unloaded teardown
+        // (_isCulling was false while editing) — on re-load the stale state
+        // handed EnterImmediateEdit a dead, torn-down view. Exiting here sets
+        // _isCulling before the removal so the view survives for a clean
+        // remount, and the renderer resumes drawing the node.
+        ExitImmediateEdit();
+
         if (_renderingHooked)
         {
             CompositionTarget.Rendering -= OnRenderingTick;
@@ -2207,6 +2217,12 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
 
     private void ClearNodeViews()
     {
+        // A graph reset / DataContext rebind ends any open GPU-canvas edit
+        // session. Exit BEFORE the wholesale clear so _editNode is nulled and
+        // the renderer resumes drawing that node — a stale _editNode poisoned
+        // EnterImmediateEdit's same-node early-return (the node vanished and
+        // the editor focused a detached subtree on the next pill edit).
+        ExitImmediateEdit();
         // Unsubscribe via the authoritative tracking set —
         // _nodeViews no longer holds proxy-only nodes (lazy full views), so
         // iterating it alone would leak their PropertyChanged subscriptions.

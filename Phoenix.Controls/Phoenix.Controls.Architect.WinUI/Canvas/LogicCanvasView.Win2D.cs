@@ -254,7 +254,22 @@ public sealed partial class LogicCanvasView
     private void EnterImmediateEdit(NodeViewModel? vm)
     {
         if (!_useImmediateMode || vm is null) return;
-        if (ReferenceEquals(_editNode, vm)) return;
+        // Same-node early-return ONLY when the edit view is genuinely mounted.
+        // Several paths empty NodeLayer without exiting edit mode explicitly —
+        // a pillar-tab / window re-attach re-runs ApplyImmediateModeState →
+        // ClearRetainedNodeMounts, a graph reset / DataContext rebind runs
+        // ClearNodeViews — and a flag-only check then poisoned this method:
+        // the view was never re-mounted, the renderer kept skipping _editNode,
+        // and the (detached) editor still reported focus success, so the FIRST
+        // pill edit after re-entering a window made the node vanish with no
+        // editor until a click-away reset _editNode (user report: "the first text
+        // edit of a pill in a window always causes the node to disappear").
+        // Those clear paths now exit edit mode themselves; this state check is
+        // the by-construction backstop for any future clear path.
+        if (ReferenceEquals(_editNode, vm)
+            && _nodeViews.TryGetValue(vm, out var mounted)
+            && NodeLayer.Children.Contains(mounted))
+            return;
         ExitImmediateEdit();
         _editNode = vm;
         // The GPU renderer bakes the live VM pan/zoom into every frame, but the
@@ -417,8 +432,29 @@ public sealed partial class LogicCanvasView
     {
         EnterImmediateEdit(node);          // materialize the real NodeView over the GPU canvas
         beginEdit();                        // IsEditing=true → editor TextBox Visibility flips Visible
-        if (_nodeViews.TryGetValue(node, out var view)) view.FocusInlineEditorFor(editTarget);
+        bool focused = _nodeViews.TryGetValue(node, out var view) && view.FocusInlineEditorFor(editTarget);
         ImmediateCanvas?.Invalidate();
+
+        //  (temporary, Debug) — discriminates the residual
+        // "node vanishes on first pill edit" reports at the paint level. The
+        // prior PILL-EDIT-DIAG proved materialize+focus SUCCEED in the failing
+        // sessions, so what's left is where/whether the mounted view renders:
+        // in-tree state, actual size after the synchronous UpdateLayout, the
+        // ViewSurface transform vs the live VM pose (stale-transform check),
+        // and the layer visibilities. One line per pill edit; strip once the
+        // symptom is confirmed dead in-app.
+        if (view is not null)
+        {
+            double dx = Math.Abs(ViewTransform.TranslateX - (_vm?.PanX ?? 0));
+            double dy = Math.Abs(ViewTransform.TranslateY - (_vm?.PanY ?? 0));
+            double dz = Math.Abs(ViewTransform.ScaleX - (_vm?.Zoom ?? 1));
+            GlobalLogger.Log(
+                $" '{node.Title}' mounted={NodeLayer.Children.Contains(view)} "
+                + $"layerChildren={NodeLayer.Children.Count} focused={focused} "
+                + $"viewSize={view.ActualWidth:0}x{view.ActualHeight:0} vis={view.Visibility}/{ViewSurface.Visibility} "
+                + $"xfDrift={dx:0.#},{dy:0.#},{dz:0.###} pos=({XamlCanvas.GetLeft(view):0},{XamlCanvas.GetTop(view):0}) vm=({node.X:0},{node.Y:0})",
+                "Architect.LogicCanvasView.Win2D", LogLevel.Debug);
+        }
     }
 
     // Remove every cull/proxy-mounted NodeView from NodeLayer when immediate mode
@@ -426,6 +462,15 @@ public sealed partial class LogicCanvasView
     // PropertyChanged subscriptions intact so a toggle back re-realizes cleanly.
     private void ClearRetainedNodeMounts()
     {
+        // An open edit session cannot survive a mount reset. On the CURRENT
+        // call paths (startup activation via ActivateImmediateModeDefault —
+        // gated by _immediateActivated — and the Ctrl+Alt+F7 toggle-on, whose
+        // toggle-off already exited) _editNode is always null here, so this is
+        // a no-op invariant assert; it exists so any FUTURE caller that resets
+        // the mounts mid-edit can't leave _editNode dangling (the renderer
+        // would keep skipping the node while its view is gone — the "node
+        // vanishes on the first pill edit" class).
+        ExitImmediateEdit();
         if (_realizedNodes.Count > 0)
         {
             var views = new System.Collections.Generic.List<NodeView>(_realizedNodes.Count);
@@ -998,7 +1043,18 @@ public sealed partial class LogicCanvasView
         bool isMultiline = !isDb && NodeGeometry.IsMultilinePill(s.Model?.Name, text);
         double wrapW = NodeGeometry.PillWrapWidth(node.Model, lead, isMultiline, false);
         double textW = NodeGeometry.EstimateTextWidth(text, 11.0, mono: true);
-        bool wraps = !isDb && (isMultiline || textW > wrapW);
+        // A plain pill may only take the WRAP branch when the row-height budget
+        // actually RESERVED a grown row (rowH > the single-line row). The width
+        // predicate alone can disagree with the height budget at the wrap
+        // boundary — EstimateTextWidth is the MAX of the XAML and Win2D
+        // engines, while SocketRowHeights decides line count with a XAML
+        // wrapped measure — and wrapping into a row that stayed single-line
+        // would clip the second line vertically. The reserved height is the
+        // one fact both sides share, so it gates the branch. Declared
+        // multi-line editors always get a grown row from the budget, so this
+        // gate never blocks them.
+        bool rowGrown = rowH > NodeGeometry.SocketRowHeight + 0.5;
+        bool wraps = !isDb && (isMultiline || (textW > wrapW && rowGrown));
         if (wraps)
         {
             double w = Math.Max(10.0, Math.Min(availW, wrapW));
@@ -1073,7 +1129,12 @@ public sealed partial class LogicCanvasView
                 // reserved height instead of overflowing the body single-line.
                 double wrapW = NodeGeometry.MiddleAttrPillWrapWidth(node.Model, m.Key, m.Value);
                 double textW = NodeGeometry.EstimateTextWidth(val, 11.0, mono: true);
-                bool wraps = NodeGeometry.IsMultilinePill(m.Key, m.Value) || textW > wrapW;
+                // Same row-grown gate as ComputeInputPillRect: the width
+                // predicate may only elect the wrap branch when the height
+                // budget (MiddleAttrRowHeightFor) actually reserved a grown
+                // row — wrapping into the fixed 22px row would clip line 2.
+                bool rowGrown = rowH > NodeGeometry.MiddleAttrRowHeight + 0.5;
+                bool wraps = NodeGeometry.IsMultilinePill(m.Key, m.Value) || (textW > wrapW && rowGrown);
                 if (wraps)
                 {
                     double w = Math.Max(10.0, Math.Min(mpAvailW, wrapW));
@@ -1237,36 +1298,16 @@ public sealed partial class LogicCanvasView
     private void EnsureTextFormats(ICanvasResourceCreator rc)
     {
         if (_imTitleFormat is not null) return;
-        // FONTS — load the app's EXACT Inter / JetBrains Mono faces from their .ttf
-        // files via Win2D (a file:// URI + "#Family"). Phoenix is UNPACKAGED, so the
-        // packaged "ms-appx:///" form does NOT resolve and DrawText THROWS on it —
-        // that bug left every node invisible (grid/wires, having no text, still drew).
-        // So we (1) only use the file fonts when the files exist AND a trial
-        // CanvasTextLayout validates they actually load, and (2) otherwise fall back
-        // to Segoe UI Variable Text ≈ Inter / Consolas ≈ JetBrains Mono. Either way
-        // DrawText can never throw on an unresolvable font.
-        string sans = "Segoe UI Variable Text";
-        string mono = "Consolas";
-        bool exact = false;
-        try
-        {
-            string fontsDir = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts");
-            string interTtf = System.IO.Path.Combine(fontsDir, "Inter-Regular.ttf");
-            string jbTtf    = System.IO.Path.Combine(fontsDir, "JetBrainsMono-Regular.ttf");
-            if (System.IO.File.Exists(interTtf) && System.IO.File.Exists(jbTtf))
-            {
-                string sansFam = new Uri(interTtf).AbsoluteUri + "#Inter";
-                string monoFam = new Uri(jbTtf).AbsoluteUri + "#JetBrains Mono";
-                // Trial-load: force font resolution; if it can't load, this throws
-                // and we keep the system fallback (never reaches the hot draw path).
-                using (var tf = new CanvasTextFormat { FontFamily = sansFam, FontSize = 13 })
-                using (var tl = new CanvasTextLayout(rc, "Ag", tf, 200, 50)) { _ = tl.LayoutBounds; }
-                using (var tf2 = new CanvasTextFormat { FontFamily = monoFam, FontSize = 11 })
-                using (var tl2 = new CanvasTextLayout(rc, "Ag", tf2, 200, 50)) { _ = tl2.LayoutBounds; }
-                sans = sansFam; mono = monoFam; exact = true;
-            }
-        }
-        catch { sans = "Segoe UI Variable Text"; mono = "Consolas"; }
+        // FONTS — the app's EXACT Inter / JetBrains Mono faces, resolved through
+        // the shared Win2DCanvasFonts helper (file:// URI + "#Family"; Phoenix is
+        // UNPACKAGED, so the packaged "ms-appx:///" form does NOT resolve and
+        // DrawText THROWS on it — that bug left every node invisible). The helper
+        // trial-loads the files and falls back to Segoe UI Variable Text ≈ Inter /
+        // Consolas ≈ JetBrains Mono, so DrawText can never throw on an
+        // unresolvable font. Sharing the resolver keeps these draw formats and the
+        // NodeGeometry width oracle (Win2DTextMeasure) on the SAME faces — the
+        // measure/draw agreement the pill sizing depends on.
+        var (sans, mono, exact) = Win2DCanvasFonts.Resolve(rc);
         GlobalLogger.Log(
             exact ? "[Win2D] Loaded exact Inter / JetBrains Mono fonts."
                   : "[Win2D] Using system fonts (exact .ttf load unavailable).",

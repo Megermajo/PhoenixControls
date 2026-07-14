@@ -1015,7 +1015,7 @@ namespace Phoenix.Controls.Architect.Core
 
             // Surface authoring mistakes that MacroCallHandler would otherwise
             // paper over. These warnings ride at the call-site indent so they
-            // survive the `.Skip(3)` header strip done below on the inner script.
+            // survive the header strip done below on the inner script.
             var allEntries = macro.Graph.Nodes.Where(n => n.Title == "Macro.Entry").ToList();
             if (allEntries.Count > 1)
                 ctx.Emit($"{prefix}# WARNING: Macro '{macroName}' has multiple Macro.Entry nodes ({allEntries.Count}) — only the first is bound at the call site. Delete duplicates or merge their outputs.");
@@ -1076,10 +1076,9 @@ namespace Phoenix.Controls.Architect.Core
             }
 
             string subScript = ctx.ExportMacroSubGraph(macro.Graph, slotPrefix);
-            var subLines = subScript.Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None)
-                                    .Skip(3)
-                                    .Select(l => string.IsNullOrWhiteSpace(l) ? l : prefix + l);
-            foreach (var l in subLines)
+            // Content-based header strip — see NestedExportSplice for the
+            // contract (validation findings must survive at the call-site indent).
+            foreach (var l in NestedExportSplice.Lines(subScript, prefix))
                 ctx.AppendRawLine(l);
 
             ctx.Emit($"{prefix}# END MACRO: {macroName}");
@@ -1135,6 +1134,41 @@ namespace Phoenix.Controls.Architect.Core
             }
             ctx.Emit($"{prefix}# Macro.Exit reached — macro body completes.");
             // Deliberately no FollowNamed — Exit is a terminator.
+        }
+    }
+
+    /// <summary>
+    /// Shared header strip for the nested sub-graph exports spliced inline by
+    /// MacroCallHandler and ProcessSpawnHandler — the single implementation
+    /// keeps the two splices from drifting. The strip must be content-based,
+    /// not positional: the nested export always opens with the two header
+    /// lines, but line 3 differs by outcome. A healthy body puts ONE blank
+    /// separator there, while a failed validation puts the first
+    /// `# WARNING:`/`# ERROR:` line there followed by
+    /// `# Export aborted: … (see above)`. A blind Skip(3) ate that first
+    /// finding, so the abort notice pointed at nothing. Strip exactly the
+    /// header lines plus at most one immediately-following blank line:
+    /// healthy bodies stay byte-identical to the old Skip(3) result, and
+    /// validation findings survive into the parent .phx at the splice indent.
+    /// </summary>
+    internal static class NestedExportSplice
+    {
+        /// <param name="subScript">Raw nested-export text from ExportMacroSubGraph.</param>
+        /// <param name="linePrefix">Indent prepended to every non-blank line
+        /// (call-site indent for macros, call-site + one level for the
+        /// process_spawn block body).</param>
+        internal static IEnumerable<string> Lines(string subScript, string linePrefix)
+        {
+            var all = subScript.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            int start = 0;
+            while (start < all.Length
+                   && (all[start].StartsWith("# Script — Generated", StringComparison.Ordinal)
+                       || all[start].StartsWith("# Exported:", StringComparison.Ordinal)))
+                start++;
+            if (start > 0 && start < all.Length && string.IsNullOrWhiteSpace(all[start]))
+                start++;
+            return all.Skip(start)
+                      .Select(l => string.IsNullOrWhiteSpace(l) ? l : linePrefix + l);
         }
     }
 
@@ -1295,13 +1329,12 @@ namespace Phoenix.Controls.Architect.Core
             // Inline-expand the process body at indent+1, just like
             // MacroCallHandler. ExportMacroSubGraph re-uses the macro
             // sub-graph exporter which is graph-shape-agnostic — works for
-            // a process graph too.
+            // a process graph too. Content-based header strip — see
+            // NestedExportSplice for the contract (on a validation-abort the
+            // first `# ERROR:` line must survive at the spawn site).
             string subScript = ctx.ExportMacroSubGraph(process.Graph, slotPrefix);
             string innerPrefix = prefix + "    ";
-            var subLines = subScript.Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None)
-                                    .Skip(3)
-                                    .Select(l => string.IsNullOrWhiteSpace(l) ? l : innerPrefix + l);
-            foreach (var l in subLines)
+            foreach (var l in NestedExportSplice.Lines(subScript, innerPrefix))
                 ctx.AppendRawLine(l);
 
             ctx.Emit($"{prefix}# END PROCESS: {processName}");

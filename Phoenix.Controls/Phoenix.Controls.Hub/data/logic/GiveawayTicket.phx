@@ -1,0 +1,17 @@
+# Script — Generated from "New Logic Graph"
+# Exported: 2026-07-14 03:20
+
+on_chat:
+    if {user.command} == "ticket":
+        # [Giveaway.Ticket]
+        # [Array.Unpack]
+        $twitch_user_1e8f8e = array.make({user.name}, {user.is_mod}, {user.is_sub}, {user.is_vip}, {user.is_broadcaster}, {user.color_hex}, {user.sub_months})
+        global._unpack_a0b3fa_0 = array.get({$twitch_user_1e8f8e}, 0)
+        giveaway.ticket(, true, {global._unpack_a0b3fa_0}, 1, viewer, "_gw_b2e492")
+        if {_gw_b2e492_limit}:
+            # [Twitch.SendChat]
+            twitch.send_chat(text.format("{0} already has the max amount of tickets.", {global._unpack_a0b3fa_0}, "", ""))
+        else:
+            # [Twitch.SendChat]
+            twitch.send_chat(text.format("{0} got themselve a ticket and now has {1}.", {global._unpack_a0b3fa_0}, convert.to_string({_gw_b2e492_tickets}), ""))
+

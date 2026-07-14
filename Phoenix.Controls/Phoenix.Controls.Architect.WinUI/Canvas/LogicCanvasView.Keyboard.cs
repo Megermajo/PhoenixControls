@@ -134,22 +134,11 @@ public sealed partial class LogicCanvasView
     // the window — a value-pill / rename box on the canvas, an inspector field,
     // or a flyout's search box. Focus-based so it still fires during the
     // click→type focus race (pill visible, its TextBox not yet focused, so the
-    // KeyDown's OriginalSource is still the canvas).
+    // KeyDown's OriginalSource is still the canvas). The predicate itself is
+    // shared with the chrome / sibling-window menu accelerators via
+    // TextInputFocusGuard so the whole pillar agrees on what "typing" means.
     private bool IsTextInputFocused()
-    {
-        var root = XamlRoot;
-        if (root is null) return false;
-        try
-        {
-            return Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root)
-                is Microsoft.UI.Xaml.Controls.TextBox
-                or Microsoft.UI.Xaml.Controls.RichEditBox
-                or Microsoft.UI.Xaml.Controls.PasswordBox
-                or Microsoft.UI.Xaml.Controls.NumberBox
-                or Microsoft.UI.Xaml.Controls.AutoSuggestBox;
-        }
-        catch { return false; }
-    }
+        => TextInputFocusGuard.IsTextInputFocused(XamlRoot);
 
     private void OnHostKeyDown(object sender, KeyRoutedEventArgs e)
     {

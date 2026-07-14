@@ -203,10 +203,10 @@ internal sealed class FakeGiveaway : IGiveawaySource
 {
     private readonly List<GiveawayInfo> _giveaways = new()
     {
-        new(1, "g-2024-11-22-a", "Forged Coffee Mug · Nov stream", GiveawayStatus.Open,   "21:02:11", null,     "broadcaster", true,  24, 137, "5.7", "8s", "!enter", 1, 1, 0, "Weighted by tickets", ""),
-        new(2, "g-2024-11-15-b", "Sticker Pack v2",                GiveawayStatus.Drawn,  "Nov 15",   "Nov 15", "broadcaster", false, 41, 218, "5.3", "—",  "!enter", 1, 1, 0, "Weighted by tickets", "marigold_77"),
-        new(3, "g-2024-11-09-c", "Custom Phoenix .phx pack",       GiveawayStatus.Closed, "Nov 9",    "Nov 9",  "ironscribe",  false, 18, 64,  "3.6", "—",  "!enter", 1, 0, 0, "Weighted by tickets", ""),
-        new(4, "g-2024-10-30-d", "Halloween brass keycap",         GiveawayStatus.Drawn,  "Oct 30",   "Oct 30", "broadcaster", false, 67, 312, "4.7", "—",  "!enter", 1, 2, 0, "Weighted by tickets", "captain_torch"),
+        new(1, "g-2024-11-22-a", "Forged Coffee Mug · Nov stream", GiveawayStatus.Open,   "21:02:11", null,     "broadcaster", true,  24, 137, "5.7", "8s", 2.0, 0, ""),
+        new(2, "g-2024-11-15-b", "Sticker Pack v2",                GiveawayStatus.Drawn,  "Nov 15",   "Nov 15", "broadcaster", false, 41, 218, "5.3", "—",  1.5, 0, "marigold_77"),
+        new(3, "g-2024-11-09-c", "Custom Phoenix .phx pack",       GiveawayStatus.Closed, "Nov 9",    "Nov 9",  "ironscribe",  false, 18, 64,  "3.6", "—",  1.0, 0, ""),
+        new(4, "g-2024-10-30-d", "Halloween brass keycap",         GiveawayStatus.Drawn,  "Oct 30",   "Oct 30", "broadcaster", false, 67, 312, "4.7", "—",  1.0, 0, "captain_torch"),
     };
 
     private readonly Dictionary<long, List<GiveawayEntrantInfo>> _entrants = new()
@@ -233,7 +233,7 @@ internal sealed class FakeGiveaway : IGiveawaySource
         new("21:14:08", "INF", "ember_ash entered  +1 ticket   (18 total)"),
         new("21:14:02", "INF", "marigold_77 entered  +1 ticket  (14 total)"),
         new("21:13:48", "INF", "loomweaver entered  +1 ticket   (9 total)"),
-        new("21:13:22", "INF", "ironscribe entered  +2 tickets  (11 total · subscriber bonus)"),
+        new("21:13:22", "INF", "ironscribe entered  +2 tickets  (11 total)"),
         new("21:13:02", "INF", "leaderboard refreshed on stream overlay"),
         new("21:12:40", "INF", "marked as default giveaway"),
         new("21:02:11", "INF", "giveaway created — \"Forged Coffee Mug · Nov stream\""),
@@ -258,12 +258,12 @@ internal sealed class FakeGiveaway : IGiveawaySource
 
     public Task<GiveawayInfo> CreateAsync(string title, CancellationToken ct = default)
         => Task.FromResult(new GiveawayInfo(99, "g-new", title, GiveawayStatus.Open, "now", null, "broadcaster",
-            false, 0, 0, "—", "—", "!enter", 1, 1, 0, "Weighted by tickets", ""));
+            false, 0, 0, "—", "—", 1.0, 0, ""));
 
     public Task CloseAsync(long id, CancellationToken ct = default) => Task.CompletedTask;
 
-    public Task<(string WinnerName, int WinnerTickets)?> DrawWinnerAsync(long id, CancellationToken ct = default)
-        => Task.FromResult<(string, int)?>(("ember_ash", 18));
+    public Task<(string WinnerName, int WinnerTickets, int OddsOneIn)?> DrawWinnerAsync(long id, CancellationToken ct = default)
+        => Task.FromResult<(string, int, int)?>(("ember_ash", 18, 8));
 
     public Task SetDefaultAsync(long id, bool isDefault, CancellationToken ct = default) => Task.CompletedTask;
 }

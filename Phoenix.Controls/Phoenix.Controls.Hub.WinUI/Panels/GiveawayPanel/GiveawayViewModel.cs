@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -146,6 +147,15 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     private void ApplySelection(GiveawayInfo? g)
     {
         _selected = g;
+        // Re-seed the editors only when the selection actually changed or
+        // the draft is pristine (still equals the last seeded text) — so a
+        // stale draft never leaks across giveaways, but an uncommitted
+        // mid-typing draft survives the GiveawaysChanged refreshes every
+        // giveaway lifecycle event fires.
+        if (_capSeededGiveawayId != g?.Id || _capPerUserDraft == _capPerUserSeeded)
+            SeedCapPerUserDraft(g);
+        if (_subBonusSeededGiveawayId != g?.Id || _subBonusDraft == _subBonusSeeded)
+            SeedSubBonusDraft(g);
         RaiseDetailProperties();
         if (g is null)
         {
@@ -250,18 +260,184 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     public string AvgValue => _selected?.Avg ?? "0";
     public string LastEntryValue => _selected?.LastEntry ?? "—";
 
-    // Settings card.
-    public string SettingEntryCommand => _selected?.EntryCommand ?? "—";
-    public string SettingTicketsPerMessage => _selected?.TicketsPerMessage.ToString() ?? "—";
-    public string SettingSubscriberBonus => _selected is null
-        ? "—"
-        : (_selected.SubscriberBonus > 0
-            ? $"+{_selected.SubscriberBonus} ticket / message"
-            : "none");
-    public string SettingCapPerUser => _selected is null
-        ? "—"
-        : (_selected.CapPerUser <= 0 ? "unlimited" : _selected.CapPerUser.ToString());
-    public string SettingDrawMethod => _selected?.DrawMethod ?? "—";
+    // ── Settings card collapse toggle ───────────────────────────────────
+    private bool _settingsExpanded = true;
+
+    public bool SettingsExpanded
+    {
+        get => _settingsExpanded;
+        set
+        {
+            if (Set(ref _settingsExpanded, value))
+            {
+                Raise(nameof(SettingsBodyVisibility));
+                Raise(nameof(SettingsChevronGlyph));
+                Raise(nameof(SettingsToggleAutomationName));
+            }
+        }
+    }
+
+    public Visibility SettingsBodyVisibility => _settingsExpanded ? Visibility.Visible : Visibility.Collapsed;
+
+    // Segoe MDL2: E70E = ChevronUp (expanded → click collapses),
+    // E70D = ChevronDown (collapsed → click expands).
+    public string SettingsChevronGlyph => _settingsExpanded ? "\uE70E" : "\uE70D";
+
+    // Assistive tech reads the toggle's CURRENT state + action from the name
+    // (the chevron glyph alone is visual-only).
+    public string SettingsToggleAutomationName => _settingsExpanded
+        ? "Collapse giveaway settings (currently expanded)"
+        : "Expand giveaway settings (currently collapsed)";
+
+    public void ToggleSettingsExpanded() => SettingsExpanded = !SettingsExpanded;
+
+    // ── Per-user cap editor (Settings card) ─────────────────────────────
+    private string _capPerUserDraft = string.Empty;
+    // Dirtiness tracking: the giveaway the draft was last seeded for and the
+    // exact seeded text. Draft != seeded ⇒ the user has typed, and
+    // ApplySelection must not clobber it for the same giveaway.
+    private long? _capSeededGiveawayId;
+    private string _capPerUserSeeded = string.Empty;
+
+    /// <summary>Raw text of the "Max tickets per user" field. 0 = unlimited.</summary>
+    public string CapPerUserDraft
+    {
+        get => _capPerUserDraft;
+        set => Set(ref _capPerUserDraft, value ?? string.Empty);
+    }
+
+    /// <summary>Seeds the cap draft from the stored value and marks it pristine.</summary>
+    private void SeedCapPerUserDraft(GiveawayInfo? g)
+    {
+        _capSeededGiveawayId = g?.Id;
+        _capPerUserSeeded = g?.CapPerUser.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        CapPerUserDraft = _capPerUserSeeded;
+    }
+
+    // IGiveawaySource carries no settings-write surface; the cap write routes
+    // to the shared Hub-runtime GiveawayService — the same instance
+    // GiveawaySourceBridge adapts, so its GiveawaysChanged event round-trips
+    // back into this VM. Resolved lazily (only on save) and swappable so a
+    // design/test host never touches the real databank.
+    internal Func<long, int, Task> CapPerUserSaver { get; set; } =
+        static (id, cap) => Phoenix.Controls.Hub.Core.GiveawayService.Instance.SetCapPerUserAsync(id, cap);
+
+    /// <summary>Drops an in-progress cap edit back to the stored value (pristine).</summary>
+    public void RevertCapPerUserDraft()
+        => SeedCapPerUserDraft(_selected);
+
+    /// <summary>
+    /// Persists the cap draft. Numeric-range validation only: non-numeric
+    /// input reverts to the stored value, negatives clamp to 0.
+    /// </summary>
+    public async Task CommitCapPerUserAsync()
+    {
+        var g = _selected;
+        if (g is null) return;
+
+        if (!int.TryParse(_capPerUserDraft.Trim(), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out int cap))
+        {
+            RevertCapPerUserDraft();
+            return;
+        }
+        cap = Math.Max(0, cap);
+
+        if (cap == g.CapPerUser)
+        {
+            // Normalize cosmetic variants ("007", padded input) without a
+            // write; the value matches the stored one, so this is a re-seed.
+            SeedCapPerUserDraft(g);
+            return;
+        }
+
+        try
+        {
+            await CapPerUserSaver(g.Id, cap).ConfigureAwait(false);
+            // Committed — mark the draft pristine (field-only; no UI raise off
+            // the dispatcher) so the follow-up refresh re-seeds it from the
+            // freshly stored value.
+            _capSeededGiveawayId = g.Id;
+            _capPerUserSeeded = _capPerUserDraft;
+            await RefreshGiveawaysAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("GiveawayViewModel", "SetCapPerUserAsync failed", ex);
+        }
+    }
+
+    // ── Subscriber-bonus factor editor (Settings card) ──────────────────
+    // Same draft/seed/commit shape as the cap editor. The factor is a ticket
+    // WEIGHT multiplier applied to subscribers at draw time: 1 = no bonus
+    // (default), 2 = a sub's tickets count double. Subscriber status is
+    // gathered fresh from Streamer.bot right before the draw.
+    private string _subBonusDraft = string.Empty;
+    private long? _subBonusSeededGiveawayId;
+    private string _subBonusSeeded = string.Empty;
+
+    /// <summary>Raw text of the "Subscriber bonus" factor field. 1 = no bonus.</summary>
+    public string SubBonusDraft
+    {
+        get => _subBonusDraft;
+        set => Set(ref _subBonusDraft, value ?? string.Empty);
+    }
+
+    private static string FormatFactor(double f) => f.ToString("0.##", CultureInfo.InvariantCulture);
+
+    /// <summary>Seeds the factor draft from the stored value and marks it pristine.</summary>
+    private void SeedSubBonusDraft(GiveawayInfo? g)
+    {
+        _subBonusSeededGiveawayId = g?.Id;
+        _subBonusSeeded = g is null ? string.Empty : FormatFactor(g.SubscriberBonusFactor);
+        SubBonusDraft = _subBonusSeeded;
+    }
+
+    // Same lazy/swappable saver seam as CapPerUserSaver.
+    internal Func<long, double, Task> SubBonusSaver { get; set; } =
+        static (id, factor) => Phoenix.Controls.Hub.Core.GiveawayService.Instance.SetSubscriberBonusFactorAsync(id, factor);
+
+    /// <summary>Drops an in-progress factor edit back to the stored value.</summary>
+    public void RevertSubBonusDraft()
+        => SeedSubBonusDraft(_selected);
+
+    /// <summary>
+    /// Persists the factor draft. Numeric-range validation only: non-numeric
+    /// input reverts to the stored value; values below 1 clamp to 1 (a factor
+    /// under 1 would penalize subs). Accepts "1,5", "1.5" and a trailing "x".
+    /// </summary>
+    public async Task CommitSubBonusAsync()
+    {
+        var g = _selected;
+        if (g is null) return;
+
+        string raw = _subBonusDraft.Trim().TrimEnd('x', 'X', '×').Replace(',', '.');
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double factor)
+            || double.IsNaN(factor) || double.IsInfinity(factor))
+        {
+            RevertSubBonusDraft();
+            return;
+        }
+        factor = Math.Clamp(factor, 1.0, 100.0);
+
+        if (Math.Abs(factor - g.SubscriberBonusFactor) < 0.0001)
+        {
+            SeedSubBonusDraft(g); // normalize cosmetic variants without a write
+            return;
+        }
+
+        try
+        {
+            await SubBonusSaver(g.Id, factor).ConfigureAwait(false);
+            _subBonusSeededGiveawayId = g.Id;
+            _subBonusSeeded = _subBonusDraft;
+            await RefreshGiveawaysAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("GiveawayViewModel", "SetSubscriberBonusFactorAsync failed", ex);
+        }
+    }
 
     // Default toggle.
     public bool IsDefault => _selected is not null && _source.DefaultGiveawayId == _selected.Id;
@@ -289,14 +465,10 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
         Raise(nameof(TicketsValue));
         Raise(nameof(AvgValue));
         Raise(nameof(LastEntryValue));
-        Raise(nameof(SettingEntryCommand));
-        Raise(nameof(SettingTicketsPerMessage));
-        Raise(nameof(SettingSubscriberBonus));
-        Raise(nameof(SettingCapPerUser));
-        Raise(nameof(SettingDrawMethod));
         Raise(nameof(IsDefault));
         Raise(nameof(DefaultToggleLabel));
         Raise(nameof(CanClose));
+        Raise(nameof(CanDraw));
         Raise(nameof(PickerButtonTitle));
         Raise(nameof(PickerButtonId));
         Raise(nameof(PickerButtonDefaultVisibility));
@@ -426,33 +598,46 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     // "{tickets} tickets · 1 in {odds}" — matches the JSX reveal sub-line.
     public string WinnerOddsText => _winnerOdds;
 
+    // A draw with a sub-bonus factor blocks on the Streamer.bot gather for
+    // seconds — gate re-entry so a double-click (or a re-draw while one is in
+    // flight) can't queue a second draw. The service serializes draws too;
+    // this flag keeps the button honest.
+    private bool _drawInFlight;
+    public bool CanDraw => HasSelection && !_drawInFlight;
+
     /// <summary>Draws a weighted winner and opens the reveal overlay.</summary>
     public async Task DrawWinnerAsync()
     {
         var g = _selected;
-        if (g is null) return;
-        (string WinnerName, int WinnerTickets)? result;
+        if (g is null || _drawInFlight) return;
+        _drawInFlight = true;
+        Raise(nameof(CanDraw));   // still on the caller's (UI) thread
+
+        (string WinnerName, int WinnerTickets, int OddsOneIn)? result;
         try { result = await _source.DrawWinnerAsync(g.Id).ConfigureAwait(false); }
         catch (Exception ex)
         {
             GlobalLogger.Error("GiveawayViewModel", "DrawWinnerAsync failed", ex);
+            ClearDrawInFlight();
             return;
         }
         if (result is null)
         {
             // Empty pool — nothing to draw.
             GlobalLogger.Log("Draw winner skipped — entrant pool is empty.", "GiveawayViewModel", LogLevel.System);
+            ClearDrawInFlight();
             return;
         }
 
-        int total = TotalTickets;
-        int odds = result.Value.WinnerTickets > 0
-            ? Math.Max(1, (int)Math.Round((double)total / result.Value.WinnerTickets))
-            : 0;
+        // Odds come from the service's weighted pool (subscriber bonus factor
+        // included) — never re-derived here from raw ticket counts.
+        int odds = result.Value.OddsOneIn;
 
         _ui.Post(() =>
         {
             if (_disposed) return;
+            _drawInFlight = false;
+            Raise(nameof(CanDraw));
             _winnerName = result.Value.WinnerName;
             _winnerTickets = result.Value.WinnerTickets;
             _winnerOdds = $"{_winnerTickets} tickets · 1 in {odds}";
@@ -464,6 +649,13 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
             HighlightWinnerRow();
         });
     }
+
+    private void ClearDrawInFlight()
+        => _ui.Post(() =>
+        {
+            _drawInFlight = false;
+            if (!_disposed) Raise(nameof(CanDraw));
+        });
 
     public Task ReDrawAsync() => DrawWinnerAsync();
 

@@ -132,6 +132,12 @@ public sealed partial class ArchitectChrome : UserControl
     /// </summary>
     public event EventHandler? FileCloseRequested;
 
+    // Disables the conflicting menu chords (bare F, Ctrl+Z, …) while a text
+    // input has focus so typing can never trigger canvas actions or lose the
+    // keystroke to accelerator matching. Attached on Loaded / detached on
+    // Unloaded because the gate hooks the static FocusManager.GotFocus event.
+    private readonly Canvas.MenuAcceleratorFocusGate _menuAccelGate = new();
+
     public ArchitectChrome()
     {
         InitializeComponent();
@@ -144,6 +150,9 @@ public sealed partial class ArchitectChrome : UserControl
             : $"v{ver.Major}.{ver.Minor}.{ver.Build} — DEV";
 
         LocalizeMenu();
+
+        Loaded   += (_, _) => _menuAccelGate.Attach(ChromeMenuBar);
+        Unloaded += (_, _) => _menuAccelGate.Detach();
     }
 
     // Routes every menu item / menu name through Localizer.T after
@@ -265,6 +274,30 @@ public sealed partial class ArchitectChrome : UserControl
     {
         if (LiveDebugToggle is null) return;
         LiveDebugToggle.IsChecked = value;
+    }
+
+    /// <summary>
+    /// Focus gate for the menu accelerators. A WinUI
+    /// <c>KeyboardAccelerator</c> is window-scoped and fires regardless of
+    /// which control holds keyboard focus — so typing plain letters like "f"
+    /// into a value pill / rename box / databank cell also framed the
+    /// viewport, and Ctrl+Z inside a pill ran the GRAPH undo instead of the
+    /// text box's own undo (user report: "hotkeys still affect the canvas when typed
+    /// into a pill or other text-panel"). While a text-input control has
+    /// focus, <c>args.Handled = true</c> suppresses the menu item's default
+    /// invoke; the keystroke itself still reaches the focused control through
+    /// the normal text-input pipeline. Ctrl+S / Ctrl+Shift+S / Ctrl+O are
+    /// deliberately NOT gated (their accelerators don't wire this handler) —
+    /// saving/opening mid-edit is harmless and mirrors the canvas guard in
+    /// <c>LogicCanvasView.OnHostKeyDown</c>, which lets exactly those two
+    /// chords through while an inline editor is active.
+    /// </summary>
+    private void OnMenuAcceleratorInvoked(
+        Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
+        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (Canvas.TextInputFocusGuard.IsTextInputFocused(XamlRoot))
+            args.Handled = true;
     }
 
     private void OnHubTabClicked(object sender, RoutedEventArgs e)

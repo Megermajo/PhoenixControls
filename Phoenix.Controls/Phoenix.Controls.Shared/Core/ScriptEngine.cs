@@ -890,12 +890,27 @@ namespace Phoenix.Controls.Shared.Core
                 return i + 1;
 
             // ── Event block headers ──────────────────────────────────────
+            // if/elif conditions may carry registered-command calls authored
+            // in the source (Logic.Branch / Flow.Cooldown / DB.CheckExists
+            // emissions). The sync evaluator can't execute them — run the
+            // async pre-execution pass first (see ScriptEngine.ConditionCalls.cs).
+            if ((line.StartsWith("if ") || line.StartsWith("elif ")) && line.EndsWith(":"))
+                line = await PreExecuteConditionCallsAsync(line, vars);
             if (IsBlockHeader(line))
             {
                 if (ShouldEnterBlock(line, vars))
                 {
                     int blockEnd = FindBlockEnd(lines, i, indent);
                     await ExecuteBlock(lines, i + 1, blockEnd, indent + 1, vars);
+                    // A TAKEN if/elif consumes its whole ladder: subsequent
+                    // same-indent `elif` blocks and one trailing `else:` are
+                    // skipped WITHOUT evaluating their conditions. Without
+                    // this, an elif after a matched branch was re-evaluated
+                    // independently — running its body on overlap and, worse,
+                    // firing side effects of condition calls (cooldown.check)
+                    // in branches the ladder had already settled.
+                    if (line.StartsWith("if ") || line.StartsWith("elif "))
+                        return SkipIfLadderTail(lines, blockEnd + 1, end, indent);
                     return blockEnd + 1;
                 }
                 else
@@ -926,6 +941,42 @@ namespace Phoenix.Controls.Shared.Core
                 int blockEnd = FindBlockEnd(lines, i, indent);
                 return blockEnd + 1; // Skip — preceding condition was satisfied
             }
+
+            return await ProcessLineTail(lines, i, end, indent, line, vars);
+        }
+
+        // Skip the untaken remainder of an if/elif ladder after a taken
+        // branch: consecutive same-indent `elif ...:` blocks and at most one
+        // trailing `else:`. Blank and comment-only lines between ladder arms
+        // pass through (ExecuteBlock ignores them). on_timeout/on_late/
+        // completed are async-block tails, not ladder arms — left to the
+        // consumed-control skip above.
+        private static int SkipIfLadderTail(string[] lines, int from, int end, int indent)
+        {
+            int p = from;
+            while (true)
+            {
+                int next = p;
+                while (next <= end &&
+                       (string.IsNullOrWhiteSpace(lines[next]) ||
+                        StripInlineComment(lines[next].Trim()).Length == 0))
+                    next++;
+                if (next > end || GetIndent(lines[next]) != indent) return p;
+
+                string t = StripInlineComment(lines[next].Trim());
+                if (t.StartsWith("elif ") && t.EndsWith(":"))
+                {
+                    p = FindBlockEnd(lines, next, indent) + 1;
+                    continue;
+                }
+                if (t == "else:")
+                    return FindBlockEnd(lines, next, indent) + 1;
+                return p;
+            }
+        }
+
+        private async Task<int> ProcessLineTail(string[] lines, int i, int end, int indent, string line, Dictionary<string, string> vars)
+        {
 
             // ── Variable assignment ──────────────────────────────────────
             if (AssignmentDetectRegex.IsMatch(line))
@@ -1017,7 +1068,10 @@ namespace Phoenix.Controls.Shared.Core
                 // cond-not-injection: pass the RAW template to EvaluateCondition,
                 // which now substitutes at the leaves. Pre-substituting here would
                 // reintroduce the operator-injection bug for while_loop headers.
-                while (EvaluateCondition("if " + condRaw + ":", vars))
+                // Registered-command calls in the condition are pre-executed
+                // EVERY iteration (template-only, injection-safe) so shapes like
+                // while_loop(cooldown.check(...)) re-evaluate instead of freezing.
+                while (EvaluateCondition(await PreExecuteConditionCallsAsync("if " + condRaw + ":", vars), vars))
                 {
                     _executionCt.ThrowIfCancellationRequested();
                     // Interlocked so concurrent parallel_begin branches running

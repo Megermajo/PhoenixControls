@@ -1555,6 +1555,15 @@ public sealed partial class NodeView : UserControl
         Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
         Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
+        // Accelerators are window-scoped and fire regardless of keyboard
+        // focus — F2 while the user is typing in a pill / rename box /
+        // inspector field must not yank the session into a different rename
+        // (same focus-gate contract as the chrome menu accelerators).
+        if (TextInputFocusGuard.IsTextInputFocused(XamlRoot))
+        {
+            args.Handled = true;
+            return;
+        }
         // Prefer the hovered socket — that's the surface the user is
         // looking at, mirroring the double-tap target. Managed "+" slots are
         // excluded for the same reason as the double-tap path: renaming a

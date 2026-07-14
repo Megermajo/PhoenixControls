@@ -7,6 +7,41 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607141 - 2026.07.14
+
+**New**
+- Hub: giveaways can set a "Max tickets per user" limit, editable per giveaway in the Giveaway panel (0 = unlimited).
+- Hub: the giveaway "Subscriber bonus" is editable - set how much extra weight a subscriber's tickets carry in the winner draw (1 = no bonus).
+- Hub: before a draw with a subscriber bonus, every entrant's current subscriber status is checked live through Streamer.bot.
+- Hub: a ready-to-use giveaway entry script ships with the app - viewers can earn tickets with !ticket right after install.
+- Hub: the Giveaway settings panel can be collapsed and expanded.
+- Architect: the Giveaway Ticket node gained a "Limit" output that fires when a viewer hits the ticket cap, so scripts can answer with their own message.
+
+**Fixed**
+- Architect: keyboard shortcuts no longer fire while typing in a text field - letters stay in the text instead of triggering canvas actions.
+- Architect: the first edit of a value pill in a freshly opened window no longer makes the node disappear.
+- Architect: auto-scaling text pills no longer cut off the last letters.
+- Architect: branch conditions built on checks like cooldowns or databank lookups work again - they previously always came out false.
+- Architect: once an "Else If" chain matches a branch, the later branches are skipped - a script no longer runs two branches of the same ladder.
+- Architect: combined conditions stop early - a cooldown check placed behind an already-decided condition no longer fires or starts its cooldown.
+- Architect: a check used on both sides of one comparison now runs once instead of twice.
+- Architect: saving a script with a broken macro or process body now says what is wrong instead of pointing at nothing.
+- Hub: waits and delays no longer count against the script time limit - timed flows like a raffle that sleeps for minutes now finish instead of being cut off.
+- Hub: a script sleeping on a delay no longer holds up chat - new messages and other commands keep flowing while it waits.
+- Hub: parallel branches with their own waits no longer cut each other's remaining time short.
+- Hub: reading more command words than a viewer typed now gives empty values instead of leftover text.
+- Hub: script commands that expect whole numbers now round decimal inputs to the nearest whole number instead of treating them as 0.
+- Hub: point amounts calculated from percentages or divisions no longer silently add 0.
+- Hub: lowering a giveaway's ticket limit never takes away tickets viewers already earned.
+- Hub: the ticket-limit box in the Giveaway panel no longer resets while you are typing in it.
+- Hub: the winner overlay's "1 in N" odds now match the draw's real, bonus-weighted odds.
+- Hub: double-clicking "Draw winner" can no longer pick two winners at once.
+- Hub: a draw no longer stalls for minutes when many entrants have left chat.
+- Hub: entrant badges refresh from the live subscriber check before a draw.
+
+**Gone**
+- Hub: the unused "Entry command", "Tickets per message" and "Draw method" rows left the Giveaway settings - ticket entry comes from the entry script.
+
 ## Hotfix - 1.0.2607121 - 2026.07.12
 
 **New**

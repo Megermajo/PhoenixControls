@@ -136,11 +136,30 @@ namespace Phoenix.Controls.Hub.Core
                 int n = (bound != null && bound.ContainsKey("Segments"))
                     ? bound.Get<int>("Segments")
                     : (int.TryParse(ArgOrEmpty(args, 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var nx) ? nx : 0);
-                if (n <= 0) return null;
-                msg = msg.TrimStart('!');
-                var parts = msg.Split(' ', n, StringSplitOptions.RemoveEmptyEntries);
-                return string.Join(",", parts);
+                return ParseCommandSegments(msg, n);
             });
+        }
+
+        // CONTRACT: for n > 0 the result is ALWAYS exactly n comma-separated
+        // segments. Present tokens keep the prior semantics — leading '!'
+        // stripped, split on spaces with RemoveEmptyEntries, the final segment
+        // soaks up the remainder — and missing trailing segments are padded
+        // with "" so array.get(list, i) on an unsupplied argument yields an
+        // empty string (and convert.to_int yields 0) instead of array.get's
+        // out-of-range clamp echoing the command word ("!raffle" with n=4
+        // must read as "raffle,,," — not "raffle" from every index).
+        // n <= 0 stays null (invalid Segments count).
+        // Internal static so tests hit the pure logic directly via
+        // InternalsVisibleTo, same as ArgOrEmpty / ExpandArgsList.
+        internal static string? ParseCommandSegments(string msg, int n)
+        {
+            if (n <= 0) return null;
+            var parts = (msg ?? string.Empty).TrimStart('!')
+                .Split(' ', n, StringSplitOptions.RemoveEmptyEntries);
+            var segments = new string[n];
+            for (int i = 0; i < n; i++)
+                segments[i] = i < parts.Length ? parts[i] : string.Empty;
+            return string.Join(",", segments);
         }
     }
 #pragma warning restore CS1998

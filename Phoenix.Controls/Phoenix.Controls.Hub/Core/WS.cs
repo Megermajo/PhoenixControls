@@ -1473,8 +1473,39 @@ namespace Phoenix.Controls.Hub.Core
                             }
                         }
 
-                        // Run all .phx files that have an on_chat: block (any exported ChatMessage graph)
-                        await ScriptManager.Instance.ExecuteOnChatScriptsAsync(msg);
+                        // Run all .phx files that have an on_chat: block (any exported
+                        // ChatMessage graph), with a bounded wait
+                        // (AppConfig.ChatDispatchDetachSeconds, default 5; 0 = legacy
+                        // fully-sequential). Ordering is preserved for scripts that
+                        // finish within the window; a script that sleeps
+                        // (delay_seconds) stops blocking the lane after N seconds —
+                        // the consumer moves on to the next queued message while the
+                        // script keeps running in the background. Each detached
+                        // script still holds one MaxConcurrentChatScripts semaphore
+                        // slot until it finishes, so that cap bounds the number of
+                        // concurrently-detached scripts; one detach decision per
+                        // message, so no unbounded per-message fan-out.
+                        int detachSec = ConfigManager.Current?.ChatDispatchDetachSeconds ?? 5;
+                        var dispatch = ScriptManager.Instance.ExecuteOnChatScriptsAsync(msg);
+                        if (detachSec <= 0
+                            || await WaitForDispatchOrDetachAsync(dispatch, TimeSpan.FromSeconds(detachSec)).ConfigureAwait(false))
+                        {
+                            // Completed within the window (or detach disabled) —
+                            // await so exceptions surface into this catch as before.
+                            await dispatch.ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            GlobalLogger.Log(
+                                $"chat dispatch still running after {detachSec}s — continuing with queued messages; the script keeps running in the background",
+                                "WS", LogLevel.System);
+                            // Observe the detached task so a late fault reaches
+                            // GlobalLogger.Error instead of the unobserved-exception
+                            // pool; OCE (shutdown / script timeout, already logged by
+                            // ScriptManager) is swallowed by the boundary.
+                            _ = AsyncErrorBoundary.SafeRunAsync(
+                                () => dispatch, "WS", "detached chat script dispatch");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -1492,6 +1523,26 @@ namespace Phoenix.Controls.Hub.Core
                 // spin up a new consumer task against the fresh _scriptQueue.
                 Interlocked.Exchange(ref _consumerStarted, 0);
             }
+        }
+
+        // Bounded-wait seam for the chat consumer: true = dispatch completed
+        // within the window (the caller then awaits it so exceptions
+        // propagate), false = still running (the caller detaches). Never
+        // throws — WhenAny observes no result, and a faulted-inside-the-window
+        // dispatch returns true so the caller's await surfaces the fault.
+        // Internal static for direct test coverage (TimingDelayBudgetTests).
+        internal static async Task<bool> WaitForDispatchOrDetachAsync(Task dispatch, TimeSpan window)
+        {
+            if (dispatch.IsCompleted) return true;
+            using var timerCts = new CancellationTokenSource();
+            var timer = Task.Delay(window, timerCts.Token);
+            var first = await Task.WhenAny(dispatch, timer).ConfigureAwait(false);
+            if (!ReferenceEquals(first, dispatch)) return false;
+            // Release the timer now instead of at window expiry. A cancelled
+            // Task.Delay is never awaited; cancelled (not faulted) tasks don't
+            // feed UnobservedTaskException.
+            timerCts.Cancel();
+            return true;
         }
 
         // Producer side of the audit coalescer (see the field block for the

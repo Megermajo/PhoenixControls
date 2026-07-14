@@ -461,8 +461,8 @@ namespace Phoenix.Controls.Architect.Core
             // Macro.Entry is the macro-body analogue: it lives in
             // Category="Macros" (so it newly joins the entry-point set above) and,
             // exactly like Process.Entry, carries NO header. MacroCallHandler emits
-            // the call-site framing and re-indents the body via the .Skip(3) header
-            // strip on ExportMacroSubGraph's output. Without this special-case the
+            // the call-site framing and re-indents the body via the content-based
+            // header strip on ExportMacroSubGraph's output. Without this special-case the
             // node would fall through to the `on_event(...)` switch below and emit a
             // spurious `on_event(Macro.Entry):` header, corrupting the macro body.
             // Live-process template mode — Process.Entry is the "on start" trigger
@@ -2195,7 +2195,83 @@ namespace Phoenix.Controls.Architect.Core
             // method header for the deferred-to-runtime cases.
             CheckUnreachableConditionalCode(graph, nodeById, warnings);
 
+            // Macro + inline-process bodies — save-time visibility. Without
+            // this pass a broken sub-graph only fails inside the NESTED export
+            // that MacroCallHandler / ProcessSpawnHandler splices, and
+            // Architect's save dialog (which validates the top-level graph
+            // only) never shows it.
+            ValidateRoutineBodies(graph, warnings);
+
             return warnings;
+        }
+
+        // One-level structural sweep over every routine sub-graph — macros
+        // (graph.Macros) AND inline-spawnable processes (graph.Processes) —
+        // findings mapped into the caller's list. Both kinds splice a nested
+        // export into the parent .phx (MacroCallHandler / ProcessSpawnHandler),
+        // so both share the abort semantics this pass exists to surface.
+        //
+        // Severity is capped at Warning: an Error would abort the PARENT
+        // export, but a broken routine body must only abort the NESTED export
+        // (the body is skipped, the parent still ships). Findings that were
+        // Errors get the "body will not be exported" suffix so the consequence
+        // stays visible after the downgrade.
+        //
+        // Pass subset is structural correctness only — circular flow,
+        // dangling links / missing sockets, incompatible types: exactly the
+        // classes that abort or corrupt the nested export. Whole-script passes
+        // are excluded because they assume a top-level graph and false-positive
+        // on routine bodies: CheckDisconnectedFlowNodes flags the supported
+        // data-only Macro.Exit pattern (and the seeded, not-yet-wired
+        // Entry/Exit pair); CheckUnmatchedEventPairs pairs per-graph while a
+        // routine's counterpart may live in the parent script;
+        // CheckMacroCallOrphans resolves against graph.Macros, which routine
+        // bodies do not carry. Advisory passes (required inputs, placeholder
+        // frames, unreachable code) already surface at the call site via the
+        // nested export's own validation header — the structural findings kept
+        // here therefore appear twice (parent header + call site), which is
+        // acceptable: the header copy is the discoverable one, the call-site
+        // copy sits next to the skipped body.
+        //
+        // One level deep only: the individual passes are called directly (no
+        // recursion into Validate), so a Macros/Processes list on a routine's
+        // own graph — not a shape the editor produces — is deliberately not
+        // descended into.
+        private static void ValidateRoutineBodies(Graph graph, List<ValidationWarning> warnings)
+        {
+            if (graph.Macros != null)
+                foreach (var macro in graph.Macros)
+                    ValidateRoutineBody(macro?.Graph, $"Macro '{macro?.Name}'", "macro", warnings);
+
+            if (graph.Processes != null)
+                foreach (var process in graph.Processes)
+                    ValidateRoutineBody(process?.Graph, $"Process '{process?.Name}'", "process", warnings);
+        }
+
+        private static void ValidateRoutineBody(Graph? body, string label, string kind, List<ValidationWarning> warnings)
+        {
+            if (body?.Nodes == null || body.Links == null) return;
+
+            var bodyNodeById = new Dictionary<string, Node>(body.Nodes.Count);
+            foreach (var n in body.Nodes)
+                if (n.Id != null) bodyNodeById.TryAdd(n.Id, n);
+
+            var findings = new List<ValidationWarning>();
+            CheckCircularFlow(body, bodyNodeById, findings);
+            CheckDanglingLinks(body, bodyNodeById, findings);
+            CheckIncompatibleLinks(body, bodyNodeById, findings);
+
+            foreach (var f in findings)
+            {
+                bool wasError = f.Severity == ValidationSeverity.Error;
+                warnings.Add(new ValidationWarning
+                {
+                    Severity = ValidationSeverity.Warning,
+                    Message  = $"{label}: {f.Message}"
+                             + (wasError ? $" — the {kind} body will not be exported until this is fixed." : ""),
+                    NodeId   = f.NodeId
+                });
+            }
         }
 
         // O(1) node resolve against the index built in Validate. Null id (only

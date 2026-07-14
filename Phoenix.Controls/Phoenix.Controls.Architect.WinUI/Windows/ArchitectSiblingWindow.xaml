@@ -117,13 +117,14 @@
                 <Border Background="{StaticResource CoalRaisedBrush}"
                         BorderBrush="{StaticResource CoalCardBrush}"
                         BorderThickness="0,0,0,1">
-                    <MenuBar Background="Transparent"
+                    <MenuBar x:Name="WindowMenuBar"
+                             Background="Transparent"
                              VerticalAlignment="Center"
                              Padding="6,0,0,0">
                         <MenuBarItem x:Name="MenuFile" Title="File">
                             <MenuFlyoutItem x:Name="MenuFileNew" Text="New Graph..." Click="OnFileNewClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="N" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="N" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutItem x:Name="MenuFileOpen" Text="Open..." Click="OnFileOpenClicked">
@@ -163,19 +164,19 @@
                             <MenuFlyoutSeparator />
                             <MenuFlyoutItem x:Name="MenuFileClose" Text="Close Window" Click="OnFileCloseClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="W" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="W" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                         </MenuBarItem>
                         <MenuBarItem x:Name="MenuEdit" Title="Edit">
                             <MenuFlyoutItem x:Name="MenuEditUndo" Text="Undo" Click="OnEditUndoClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="Z" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="Z" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutItem x:Name="MenuEditRedo" Text="Redo" Click="OnEditRedoClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="Y" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="Y" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutSeparator />
@@ -184,25 +185,25 @@
                                  collapse-selection-to-macro and add-comment-frame chords. -->
                             <MenuFlyoutItem x:Name="MenuEditGroup" Text="Group Selection" Click="OnEditGroupClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="G" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="G" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutItem x:Name="MenuEditCommentFrame" Text="Add Comment Frame" Click="OnEditCommentFrameClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Key="C" />
+                                    <KeyboardAccelerator Key="C" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutSeparator />
                             <MenuFlyoutItem x:Name="MenuEditFind" Text="Find Node..." Click="OnEditFindClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="F" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="F" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                         </MenuBarItem>
                         <MenuBarItem x:Name="MenuView" Title="View">
                             <MenuFlyoutItem x:Name="MenuViewFrame" Text="Frame Selection" Click="OnViewFrameSelectionClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Key="F" />
+                                    <KeyboardAccelerator Key="F" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <ToggleMenuFlyoutItem x:Name="MenuViewShowGrid" Text="Show Grid" IsChecked="True" Click="OnViewShowGridClicked" />
@@ -215,12 +216,12 @@
                                  ArchitectChrome. -->
                             <ToggleMenuFlyoutItem x:Name="MenuViewLiveDebug" Text="Live Debug" Click="OnViewLiveDebugClicked">
                                 <ToggleMenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control,Shift" Key="D" />
+                                    <KeyboardAccelerator Modifiers="Control,Shift" Key="D" Invoked="OnMenuAcceleratorInvoked" />
                                 </ToggleMenuFlyoutItem.KeyboardAccelerators>
                             </ToggleMenuFlyoutItem>
                             <MenuFlyoutItem x:Name="MenuViewSpawn" Text="Spawn Node..." Click="OnViewSpawnPaletteClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Modifiers="Control" Key="Space" />
+                                    <KeyboardAccelerator Modifiers="Control" Key="Space" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutSeparator />
@@ -245,7 +246,7 @@
                         <MenuBarItem x:Name="MenuHelp" Title="Help">
                             <MenuFlyoutItem x:Name="MenuHelpNodeRef" Text="Node Reference" Click="OnHelpNodeRefClicked">
                                 <MenuFlyoutItem.KeyboardAccelerators>
-                                    <KeyboardAccelerator Key="F1" />
+                                    <KeyboardAccelerator Key="F1" Invoked="OnMenuAcceleratorInvoked" />
                                 </MenuFlyoutItem.KeyboardAccelerators>
                             </MenuFlyoutItem>
                             <MenuFlyoutSeparator />

@@ -39,6 +39,7 @@ namespace Phoenix.Controls.Architect.WinUI.Hosting;
 public sealed partial class ArchitectSiblingWindow : Window
 {
     private readonly ArchitectViewModel _viewModel;
+    private readonly MenuAcceleratorFocusGate _menuAccelGate = new();
     private AppWindow? _appWindow;
     private bool _confirmedClose;
     private bool _promptInFlight;
@@ -137,6 +138,14 @@ public sealed partial class ArchitectSiblingWindow : Window
 
         Activated += OnActivatedOnce;
         Closed += OnClosed;
+
+        // Disable the conflicting menu chords (bare C / F, Ctrl+Z, Ctrl+W, …)
+        // while a text input has focus so typing in a pill can never trigger
+        // canvas actions, close the window, or lose the keystroke to
+        // accelerator matching. Detached in OnClosed (the gate hooks the
+        // static FocusManager.GotFocus event, which would otherwise keep this
+        // window alive).
+        _menuAccelGate.Attach(WindowMenuBar);
 
         // Version label — mirrors ArchitectChrome's behavior (assembly version
         // pulled at construction so the chrome tracks Directory.Build.props
@@ -597,6 +606,11 @@ public sealed partial class ArchitectSiblingWindow : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        // Unhook the accelerator focus gate FIRST — it subscribes the static
+        // FocusManager.GotFocus event, which would keep the closed window
+        // reachable (leak) and keep toggling dead accelerators.
+        try { _menuAccelGate.Detach(); } catch { /* best-effort */ }
+
         // Persist final geometry on real close (cancelled closes already
         // persisted in OnAppWindowClosing).
         // flushSync so the write lands even if the host process exits
@@ -818,6 +832,25 @@ public sealed partial class ArchitectSiblingWindow : Window
     }
 
     // ─── Menu handlers ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Focus gate for this window's menu accelerators — same contract as
+    /// <c>ArchitectChrome.OnMenuAcceleratorInvoked</c>. A window-scoped
+    /// <c>KeyboardAccelerator</c> fires regardless of keyboard focus, so
+    /// typing "c" / "f" into a value pill dropped a comment frame / framed the
+    /// viewport, Ctrl+Z ran the graph undo mid-edit, and Ctrl+W could close
+    /// the window under the user's cursor. While a text-input control has
+    /// focus the menu action is suppressed; the keystroke still reaches the
+    /// focused control. Ctrl+S / Ctrl+Shift+S / Ctrl+O stay ungated (canvas-
+    /// guard parity: saving/opening mid-edit is allowed).
+    /// </summary>
+    private void OnMenuAcceleratorInvoked(
+        Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
+        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (Canvas.TextInputFocusGuard.IsTextInputFocused(Content?.XamlRoot))
+            args.Handled = true;
+    }
 
     private void OnFileNewClicked(object sender, RoutedEventArgs e)
     {

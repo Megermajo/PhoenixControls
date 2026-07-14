@@ -28,11 +28,8 @@ namespace Phoenix.Controls.Shared.Services
                 ClosedAt          TEXT,
                 OpenedBy          TEXT,
                 IsDefault         INTEGER DEFAULT 0,
-                EntryCommand      TEXT    DEFAULT '!enter',
-                TicketsPerMessage INTEGER DEFAULT 1,
-                SubscriberBonus   INTEGER DEFAULT 0,
+                SubBonusFactor    REAL    DEFAULT 1.0,
                 CapPerUser        INTEGER DEFAULT 0,
-                DrawMethod        TEXT    DEFAULT 'weighted',
                 Winners           TEXT    DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS GiveawayTickets (
@@ -53,12 +50,35 @@ namespace Phoenix.Controls.Shared.Services
             CREATE INDEX IF NOT EXISTS idx_gwtickets_gid  ON GiveawayTickets(GiveawayId);
             CREATE INDEX IF NOT EXISTS idx_gwactivity_gid ON GiveawayActivity(GiveawayId);";
 
+        // Schema migration for databanks created before the settings rework:
+        // CREATE TABLE IF NOT EXISTS never touches an existing table, so the
+        // SubBonusFactor column has to be added explicitly. The legacy columns
+        // (EntryCommand / TicketsPerMessage / SubscriberBonus / DrawMethod)
+        // are left in place on old files — nothing reads them any more.
+        // Called synchronously from DB.Initialize right after GiveawayTablesDdl.
+        private void EnsureGiveawaySchemaMigrations()
+        {
+            bool hasFactor = false;
+            using (var probe = new SqliteCommand("PRAGMA table_info(Giveaways)", _connection))
+            using (var r = probe.ExecuteReader())
+            {
+                while (r.Read())
+                {
+                    if (string.Equals(r.GetString(1), "SubBonusFactor", StringComparison.OrdinalIgnoreCase))
+                    { hasFactor = true; break; }
+                }
+            }
+            if (hasFactor) return;
+            using var alter = new SqliteCommand(
+                "ALTER TABLE Giveaways ADD COLUMN SubBonusFactor REAL DEFAULT 1.0", _connection);
+            alter.ExecuteNonQuery();
+        }
+
         // SELECT projection that decorates each Giveaways row with the derived
         // entrant count / ticket total / most-recent entry from GiveawayTickets.
         private const string GiveawaySelect = @"
             SELECT g.Id, g.Key, g.Title, g.Status, g.OpenedAt, g.ClosedAt, g.OpenedBy,
-                   g.IsDefault, g.EntryCommand, g.TicketsPerMessage, g.SubscriberBonus,
-                   g.CapPerUser, g.DrawMethod, g.Winners,
+                   g.IsDefault, g.SubBonusFactor, g.CapPerUser, g.Winners,
                    (SELECT COUNT(*)            FROM GiveawayTickets t WHERE t.GiveawayId = g.Id) AS Entrants,
                    (SELECT COALESCE(SUM(t.Tickets),0) FROM GiveawayTickets t WHERE t.GiveawayId = g.Id) AS TicketTotal,
                    (SELECT MAX(t.LastEntry)    FROM GiveawayTickets t WHERE t.GiveawayId = g.Id) AS LastEntry
@@ -66,23 +86,20 @@ namespace Phoenix.Controls.Shared.Services
 
         private static Giveaway ReadGiveaway(SqliteDataReader r) => new()
         {
-            Id                = r.GetInt64(0),
-            Key               = r.IsDBNull(1) ? "" : r.GetString(1),
-            Title             = r.IsDBNull(2) ? "" : r.GetString(2),
-            Status            = r.IsDBNull(3) ? "open" : r.GetString(3),
-            OpenedAt          = r.IsDBNull(4) ? "" : r.GetString(4),
-            ClosedAt          = r.IsDBNull(5) ? null : r.GetString(5),
-            OpenedBy          = r.IsDBNull(6) ? "" : r.GetString(6),
-            IsDefault         = !r.IsDBNull(7) && r.GetInt64(7) != 0,
-            EntryCommand      = r.IsDBNull(8) ? "!enter" : r.GetString(8),
-            TicketsPerMessage = r.IsDBNull(9) ? 1 : (int)r.GetInt64(9),
-            SubscriberBonus   = r.IsDBNull(10) ? 0 : (int)r.GetInt64(10),
-            CapPerUser        = r.IsDBNull(11) ? 0 : (int)r.GetInt64(11),
-            DrawMethod        = r.IsDBNull(12) ? "weighted" : r.GetString(12),
-            Winners           = r.IsDBNull(13) ? "" : r.GetString(13),
-            Entrants          = r.IsDBNull(14) ? 0 : (int)r.GetInt64(14),
-            Tickets           = r.IsDBNull(15) ? 0 : (int)r.GetInt64(15),
-            LastEntry         = r.IsDBNull(16) ? "" : r.GetString(16),
+            Id                    = r.GetInt64(0),
+            Key                   = r.IsDBNull(1) ? "" : r.GetString(1),
+            Title                 = r.IsDBNull(2) ? "" : r.GetString(2),
+            Status                = r.IsDBNull(3) ? "open" : r.GetString(3),
+            OpenedAt              = r.IsDBNull(4) ? "" : r.GetString(4),
+            ClosedAt              = r.IsDBNull(5) ? null : r.GetString(5),
+            OpenedBy              = r.IsDBNull(6) ? "" : r.GetString(6),
+            IsDefault             = !r.IsDBNull(7) && r.GetInt64(7) != 0,
+            SubscriberBonusFactor = r.IsDBNull(8) ? 1.0 : r.GetDouble(8),
+            CapPerUser            = r.IsDBNull(9) ? 0 : (int)r.GetInt64(9),
+            Winners               = r.IsDBNull(10) ? "" : r.GetString(10),
+            Entrants              = r.IsDBNull(11) ? 0 : (int)r.GetInt64(11),
+            Tickets               = r.IsDBNull(12) ? 0 : (int)r.GetInt64(12),
+            LastEntry             = r.IsDBNull(13) ? "" : r.GetString(13),
         };
 
         /// <summary>Inserts a new open giveaway and returns its row id.</summary>
@@ -193,23 +210,31 @@ namespace Phoenix.Controls.Shared.Services
         /// <summary>
         /// Atomically adds <paramref name="increment"/> tickets for a user
         /// (insert-on-first-entry), clamped to <paramref name="capPerUser"/>
-        /// when &gt; 0, and returns the user's new total. A single round-trip
-        /// under the shared lock — no read-then-write race even when several
-        /// chat handlers fire at once.
+        /// when &gt; 0. The clamp gates GROWTH only — a count already above a
+        /// since-lowered cap is preserved as-is, never trimmed (the MAX/MIN
+        /// pair in the UPDATE). Returns the user's new total plus whether the
+        /// clamp truncated the increment (Clamped = the increment could not be
+        /// applied in full because of the cap; a pure read — increment &lt;= 0
+        /// — is never Clamped). A single round-trip under the shared lock —
+        /// the leading previous-count SELECT rides the same serialized batch,
+        /// so there is no read-then-write race even when several chat handlers
+        /// fire at once.
         /// </summary>
-        public async Task<int> UpsertTicketAsync(long giveawayId, string username, string role,
+        public async Task<(int Tickets, bool Clamped)> UpsertTicketAsync(long giveawayId, string username, string role,
             int increment, int capPerUser, string lastEntryIso)
         {
             int cap = capPerUser > 0 ? capPerUser : int.MaxValue;
+            int inc = Math.Max(0, increment);
             bool taken = await AcquireLockAsync().ConfigureAwait(false);
             try
             {
                 EnsureConnected();
                 using var cmd = new SqliteCommand(
-                    @"INSERT INTO GiveawayTickets (GiveawayId, Username, Role, Tickets, LastEntry)
+                    @"SELECT COALESCE((SELECT Tickets FROM GiveawayTickets WHERE GiveawayId = @gid AND Username = @u), 0);
+                      INSERT INTO GiveawayTickets (GiveawayId, Username, Role, Tickets, LastEntry)
                       VALUES (@gid, @u, @r, MIN(@inc, @cap), @t)
                       ON CONFLICT(GiveawayId, Username) DO UPDATE SET
-                          Tickets   = MIN(Tickets + @inc, @cap),
+                          Tickets   = MAX(Tickets, MIN(Tickets + @inc, @cap)),
                           Role      = @r,
                           LastEntry = @t;
                       SELECT Tickets FROM GiveawayTickets WHERE GiveawayId = @gid AND Username = @u;",
@@ -218,11 +243,82 @@ namespace Phoenix.Controls.Shared.Services
                 cmd.Parameters.AddWithValue("@gid", giveawayId);
                 cmd.Parameters.AddWithValue("@u", username);
                 cmd.Parameters.AddWithValue("@r", string.IsNullOrEmpty(role) ? "viewer" : role);
-                cmd.Parameters.AddWithValue("@inc", Math.Max(0, increment));
+                cmd.Parameters.AddWithValue("@inc", inc);
                 cmd.Parameters.AddWithValue("@cap", cap);
                 cmd.Parameters.AddWithValue("@t", lastEntryIso);
-                var v = await cmd.ExecuteScalarAsync().ConfigureAwait(false);
-                return v is null or DBNull ? 0 : Convert.ToInt32(v, CultureInfo.InvariantCulture);
+
+                // Microsoft.Data.Sqlite executes the batch statement-by-statement
+                // as the reader advances: result set 1 = previous count, the
+                // INSERT produces no result set, result set 2 = new total.
+                int previous = 0, newTotal = 0;
+                using var r = (SqliteDataReader)await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+                if (await r.ReadAsync().ConfigureAwait(false))
+                    previous = r.IsDBNull(0) ? 0 : (int)r.GetInt64(0);
+                if (await r.NextResultAsync().ConfigureAwait(false) &&
+                    await r.ReadAsync().ConfigureAwait(false))
+                    newTotal = r.IsDBNull(0) ? 0 : (int)r.GetInt64(0);
+
+                // Clamped ⇔ the increment did not land in full: covers both
+                // "already at/over cap" (newTotal == previous) and a partial
+                // top-up to the cap. long math guards int overflow at the rim.
+                bool clamped = inc > 0 && newTotal < (long)previous + inc;
+                return (newTotal, clamped);
+            }
+            finally { ReleaseLock(taken); }
+        }
+
+        /// <summary>Sets the per-user ticket cap (0 = unlimited). Existing ticket
+        /// counts above a newly lowered cap are left untouched — the cap gates
+        /// future increments only (the growth-only MAX/MIN clamp in
+        /// UpsertTicketAsync), so an over-cap holder keeps their count and
+        /// simply gains nothing until the cap rises above it again.</summary>
+        public async Task SetGiveawayCapPerUserAsync(long id, int capPerUser)
+        {
+            await ExecuteAsync(
+                "UPDATE Giveaways SET CapPerUser = @cap WHERE Id = @id",
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@cap", Math.Max(0, capPerUser));
+                    cmd.Parameters.AddWithValue("@id", id);
+                }).ConfigureAwait(false);
+        }
+
+        /// <summary>Sets the subscriber ticket-weight factor (1 = no bonus).</summary>
+        public async Task SetGiveawaySubBonusFactorAsync(long id, double factor)
+        {
+            await ExecuteAsync(
+                "UPDATE Giveaways SET SubBonusFactor = @f WHERE Id = @id",
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@f", factor);
+                    cmd.Parameters.AddWithValue("@id", id);
+                }).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Batch-updates entrant roles from a fresh pre-draw lookup (one
+        /// transaction inside one lock hold). Missing users no-op.
+        /// </summary>
+        public async Task UpdateGiveawayEntrantRolesAsync(long giveawayId, IReadOnlyDictionary<string, string> roleByUser)
+        {
+            if (roleByUser.Count == 0) return;
+            bool taken = await AcquireLockAsync().ConfigureAwait(false);
+            try
+            {
+                EnsureConnected();
+                using var tx = _connection!.BeginTransaction();
+                foreach (var kv in roleByUser)
+                {
+                    using var cmd = new SqliteCommand(
+                        "UPDATE GiveawayTickets SET Role = @r WHERE GiveawayId = @gid AND Username = @u",
+                        _connection, tx);
+                    cmd.CommandTimeout = CommandTimeoutSeconds;
+                    cmd.Parameters.AddWithValue("@r", kv.Value);
+                    cmd.Parameters.AddWithValue("@gid", giveawayId);
+                    cmd.Parameters.AddWithValue("@u", kv.Key);
+                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                }
+                tx.Commit();
             }
             finally { ReleaseLock(taken); }
         }

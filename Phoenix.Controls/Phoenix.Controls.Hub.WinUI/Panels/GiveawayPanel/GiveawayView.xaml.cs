@@ -117,6 +117,56 @@ public sealed partial class GiveawayView : UserControl, IDisposable
         catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Toggle default failed", ex); }
     }
 
+    // ── Settings card ───────────────────────────────────────────────────
+    // Header click collapses/expands the card body; the two editors commit on
+    // Enter / focus loss and revert on Escape. Validation is numeric-range
+    // only (VM side): non-numeric reverts, out-of-range clamps.
+
+    private void OnToggleSettingsClick(object sender, RoutedEventArgs e)
+        => ViewModel.ToggleSettingsExpanded();
+
+    private async void OnCapPerUserLostFocus(object sender, RoutedEventArgs e)
+    {
+        try { await ViewModel.CommitCapPerUserAsync(); }
+        catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save max tickets per user failed", ex); }
+    }
+
+    private async void OnCapPerUserKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            try { await ViewModel.CommitCapPerUserAsync(); }
+            catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save max tickets per user failed", ex); }
+        }
+        else if (e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            ViewModel.RevertCapPerUserDraft();
+        }
+    }
+
+    private async void OnSubBonusLostFocus(object sender, RoutedEventArgs e)
+    {
+        try { await ViewModel.CommitSubBonusAsync(); }
+        catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save subscriber bonus failed", ex); }
+    }
+
+    private async void OnSubBonusKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter)
+        {
+            e.Handled = true;
+            try { await ViewModel.CommitSubBonusAsync(); }
+            catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Save subscriber bonus failed", ex); }
+        }
+        else if (e.Key == VirtualKey.Escape)
+        {
+            e.Handled = true;
+            ViewModel.RevertSubBonusDraft();
+        }
+    }
+
     // ── Draw-winner overlay ─────────────────────────────────────────────
 
     private async void OnReDrawClick(object sender, RoutedEventArgs e)

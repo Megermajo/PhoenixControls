@@ -926,6 +926,32 @@ public static class NodeGeometry
             measured = Math.Ceiling(text.Length * fontSize * emRatio);
         }
 
+        // The GPU canvas draws with Win2D/DirectWrite, whose advance widths
+        // drift a few px from the XAML TextBlock measure above — enough for the
+        // renderer's CharacterEllipsis to trim the last letters off a pill that
+        // was budgeted from the XAML number ("text pills cut off the last
+        // couple letters"). Take the MAX of both engines so every consumer of
+        // this one function (intrinsic node width, pill rect, wrap decision)
+        // reserves what the Win2D draw will actually need; the retained XAML
+        // path just gains a few px of harmless headroom. Cached below, so the
+        // double measure only costs on the first sight of a string.
+        double win2d = Win2DTextMeasure.MeasureWidth(text!, fontSize, bold, mono);
+        if (win2d > 0)
+        {
+            measured = Math.Max(measured, Math.Ceiling(win2d) + 1.0); // same +1 px safety pad
+        }
+        else if (!Win2DTextMeasure.IsPermanentlyUnavailable)
+        {
+            // Oracle temporarily unavailable (device not created yet at early
+            // bootstrap, or transient device loss). Do NOT cache — a first-
+            // writer-wins entry would freeze this string at the smaller
+            // XAML-only width for the whole session and the trim would come
+            // back for exactly that string. Return the estimate for now; the
+            // next call re-measures with the oracle up. Headless hosts latch
+            // IsPermanentlyUnavailable and fall through to normal caching.
+            return measured;
+        }
+
         s_textWidthCache[key] = measured;
         return measured;
     }

@@ -167,7 +167,8 @@
                      feedback_visualist_architect_chrome_independence.md the
                      localization plumbing is duplicated per pillar — Visualist's
                      chrome owns its own copy. -->
-                <MenuBar Grid.Column="1"
+                <MenuBar x:Name="ChromeMenuBar"
+                         Grid.Column="1"
                          Background="Transparent"
                          MaxWidth="500"
                          VerticalAlignment="Center">
@@ -175,7 +176,7 @@
                         <MenuFlyoutItem x:Name="MenuFileNew" Text="New Graph..." Click="OnFileNewClicked"
                                         KeyboardAcceleratorTextOverride="Ctrl+N">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="N" />
+                                <KeyboardAccelerator Modifiers="Control" Key="N" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <MenuFlyoutItem x:Name="MenuFileOpen" Text="Open..." Click="OnFileOpenClicked"
@@ -231,13 +232,13 @@
                         <MenuFlyoutItem x:Name="MenuEditUndo" Text="Undo" Click="OnEditUndoClicked"
                                         KeyboardAcceleratorTextOverride="Ctrl+Z">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="Z" />
+                                <KeyboardAccelerator Modifiers="Control" Key="Z" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <MenuFlyoutItem x:Name="MenuEditRedo" Text="Redo" Click="OnEditRedoClicked"
                                         KeyboardAcceleratorTextOverride="Ctrl+Y">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="Y" />
+                                <KeyboardAccelerator Modifiers="Control" Key="Y" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <MenuFlyoutSeparator />
@@ -245,7 +246,7 @@
                         <MenuFlyoutItem x:Name="MenuEditFind" Text="Find Node..." Click="OnEditFindClicked"
                                         KeyboardAcceleratorTextOverride="Ctrl+F">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="F" />
+                                <KeyboardAccelerator Modifiers="Control" Key="F" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <!-- 0.10.0 — Group selection (Collapse to Macro). The
@@ -257,7 +258,7 @@
                         <MenuFlyoutItem x:Name="MenuEditGroup" Text="Group selection" Click="OnEditGroupClicked"
                                         KeyboardAcceleratorTextOverride="Ctrl+G">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control" Key="G" />
+                                <KeyboardAccelerator Modifiers="Control" Key="G" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <!-- 0.10.0 — bare C drops a comment frame at the
@@ -272,7 +273,7 @@
                         <MenuFlyoutItem x:Name="MenuViewFrame" Text="Frame Selection" Click="OnViewFrameSelectionClicked"
                                         KeyboardAcceleratorTextOverride="F">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Key="F" />
+                                <KeyboardAccelerator Key="F" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <!-- 0.10.0 — Spawn Node (palette). The chord is
@@ -291,7 +292,7 @@
                         <ToggleMenuFlyoutItem x:Name="LiveDebugToggle" Text="Live Debug Trace" Click="OnLiveDebugToggled"
                                               KeyboardAcceleratorTextOverride="Ctrl+Shift+D">
                             <ToggleMenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Modifiers="Control,Shift" Key="D" />
+                                <KeyboardAccelerator Modifiers="Control,Shift" Key="D" Invoked="OnMenuAcceleratorInvoked" />
                             </ToggleMenuFlyoutItem.KeyboardAccelerators>
                         </ToggleMenuFlyoutItem>
                         <!-- B11 (audit/winui-regressions-2026-05-24) — Toggle
@@ -305,7 +306,7 @@
                                         Click="OnViewToggleInspectorClicked"
                                         KeyboardAcceleratorTextOverride="F4">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Key="F4" />
+                                <KeyboardAccelerator Key="F4" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <MenuFlyoutSeparator />
@@ -330,7 +331,7 @@
                                         Text="Refresh Script Preview"
                                         KeyboardAcceleratorTextOverride="F5">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Key="F5" />
+                                <KeyboardAccelerator Key="F5" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                     </MenuBarItem>
@@ -353,7 +354,7 @@
                         <MenuFlyoutItem x:Name="MenuHelpNodeRef" Text="Node Reference" Click="OnHelpNodeRefClicked"
                                         KeyboardAcceleratorTextOverride="F1">
                             <MenuFlyoutItem.KeyboardAccelerators>
-                                <KeyboardAccelerator Key="F1" />
+                                <KeyboardAccelerator Key="F1" Invoked="OnMenuAcceleratorInvoked" />
                             </MenuFlyoutItem.KeyboardAccelerators>
                         </MenuFlyoutItem>
                         <MenuFlyoutSeparator />

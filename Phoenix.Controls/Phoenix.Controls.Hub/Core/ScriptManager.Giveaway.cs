@@ -1,5 +1,10 @@
+using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Text.Json;
 using System.Threading.Tasks;
+using Phoenix.Controls.Shared.Models;
+using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Hub.Core
 {
@@ -20,6 +25,11 @@ namespace Phoenix.Controls.Hub.Core
     {
         private void RegisterGiveawayCommands()
         {
+            // Pre-draw subscriber gather for the weighted draw's sub-bonus
+            // factor. The service can't touch Streamer.bot itself (Hub's WS
+            // bridge lives here), so it gets the lookup injected.
+            GiveawayService.Instance.SubscriberStatusResolver = ResolveEntrantSubscribersAsync;
+
             // giveaway.create(Title, SetDefault) — opens a new giveaway; when
             // SetDefault is true it becomes the app-wide default.
             _engine.RegisterCommand("giveaway.create", async (args) =>
@@ -58,7 +68,9 @@ namespace Phoenix.Controls.Hub.Core
 
             // giveaway.ticket(Giveaway, Public, User, Increment, Role, ResultBase) → Tickets
             // Increment <= 0 (or a closed giveaway) makes this read-only — it returns
-            // the user's current ticket count without adding.
+            // the user's current ticket count without adding. Also writes
+            // "{base}_limit" = "true"/"false" (per-user cap truncated the entry);
+            // the exporter's Limit-flow branch reads it as {<base>_limit}.
             _engine.RegisterCommand("giveaway.ticket", async (args) =>
             {
                 var bound = _engine.CurrentBoundArgs;
@@ -75,9 +87,12 @@ namespace Phoenix.Controls.Hub.Core
 
                 long? id = await GiveawayService.Instance.ResolveTargetAsync(selector, isPublic);
                 if (id is null) return null;
-                int count = await GiveawayService.Instance.AddTicketAsync(id.Value, user, role, increment);
+                var (count, capped) = await GiveawayService.Instance.AddTicketAsync(id.Value, user, role, increment);
                 if (!string.IsNullOrEmpty(baseVar))
+                {
                     _engine.SetLocalResultVar($"{baseVar}_tickets", count.ToString(CultureInfo.InvariantCulture));
+                    _engine.SetLocalResultVar($"{baseVar}_limit", capped ? "true" : "false");
+                }
                 return null;
             });
 
@@ -99,6 +114,8 @@ namespace Phoenix.Controls.Hub.Core
                     _engine.SetLocalResultVar($"{baseVar}_winnername", winner?.Name ?? "");
                     _engine.SetLocalResultVar($"{baseVar}_winnertickets",
                         (winner?.Tickets ?? 0).ToString(CultureInfo.InvariantCulture));
+                    // OddsOneIn is service-side display data — the node's output
+                    // sockets stay WinnerName/WinnerTickets.
                 }
                 return null;
             });
@@ -115,6 +132,105 @@ namespace Phoenix.Controls.Hub.Core
                 return id?.ToString(CultureInfo.InvariantCulture) ?? "";
             });
         }
+
+        // ── Pre-draw subscriber gather ───────────────────────────────────────
+        // Resolves the CURRENT subscription status of the given entrants for
+        // GiveawayService.DrawWinnerAsync's sub-bonus weighting. Two stages:
+        //   1. ONE GetActiveViewers request — Streamer.bot's chatter list
+        //      carries a `subscribed` flag per viewer, covering everyone still
+        //      active in chat in a single round-trip.
+        //   2. Entrants not in the active list fall back to a per-user
+        //      "Phoenix: Get User" data-action round-trip (phx_user_sub). The
+        //      per-user loop bails on the FIRST dead round-trip (action pack
+        //      missing / SB stalled), and the whole stage runs under an
+        //      aggregate wall-clock budget — even SUCCESSFUL round-trips take
+        //      a few hundred ms each, so a big pool of long-gone entrants
+        //      would otherwise stall the draw (and the shared _dataFetchLane
+        //      every other data node queues behind) for minutes. Entrants
+        //      left unresolved keep their recorded role; one log line says so.
+        // Returns null when Streamer.bot is not connected at all.
+        internal const int SubCheckBudgetMs = 30_000;
+
+        internal async Task<IReadOnlyDictionary<string, bool>?> ResolveEntrantSubscribersAsync(
+            IReadOnlyList<string> usernames)
+        {
+            if (!WS.Instance.IsConnected) return null;
+            var map = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+            // Stage 1 — active-viewer sweep.
+            string reqId = WS.NewRequestId("phx-gw-subcheck");
+            string response = await WS.Instance.SendAndWaitAsync(
+                $@"{{""request"":""GetActiveViewers"",""id"":""{reqId}""}}",
+                reqId, 5000).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(response))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(response);
+                    if (doc.RootElement.TryGetProperty("viewers", out var viewers)
+                        && viewers.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var v in viewers.EnumerateArray())
+                        {
+                            if (!v.TryGetProperty("login", out var login)
+                                || login.GetString() is not { Length: > 0 } name)
+                                continue;
+                            map[name] = v.TryGetProperty("subscribed", out var sub) && JsonFlagIsTrue(sub);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Log($"Giveaway sub check: GetActiveViewers parse failed: {ex.Message}",
+                        "Script", LogLevel.CriticalError);
+                }
+            }
+
+            // Stage 2 — per-user fallback for entrants who left chat, under an
+            // aggregate wall-clock budget.
+            var budget = System.Diagnostics.Stopwatch.StartNew();
+            int unresolved = 0;
+            foreach (var user in usernames)
+            {
+                if (map.ContainsKey(user)) continue;
+                if (budget.ElapsedMilliseconds >= SubCheckBudgetMs)
+                {
+                    unresolved++;
+                    continue;
+                }
+                var g = await FetchActionGlobalsAsync("giveaway sub check", PhxSbActions.GetUser,
+                    new Dictionary<string, string> { ["user"] = user }).ConfigureAwait(false);
+                if (g is null)
+                {
+                    GlobalLogger.Log(
+                        "Giveaway sub check: per-user lookup failed — remaining entrants use their recorded role.",
+                        "Script", LogLevel.Communication);
+                    break;
+                }
+                map[user] = g.TryGetValue("phx_user_sub", out var flag) && StringFlagIsTrue(flag);
+            }
+            if (unresolved > 0)
+            {
+                GlobalLogger.Log(
+                    $"Giveaway sub check: time budget ({SubCheckBudgetMs / 1000}s) reached — {unresolved} entrant(s) " +
+                    "not verified live; they use their recorded role.",
+                    "Script", LogLevel.Communication);
+            }
+            return map;
+        }
+
+        // SB's "Auto Type" toggle decides whether flags arrive as JSON bools or
+        // strings — accept both shapes.
+        private static bool JsonFlagIsTrue(JsonElement el) => el.ValueKind switch
+        {
+            JsonValueKind.True   => true,
+            JsonValueKind.String => StringFlagIsTrue(el.GetString()),
+            JsonValueKind.Number => el.TryGetInt64(out long n) && n != 0,
+            _ => false,
+        };
+
+        private static bool StringFlagIsTrue(string? s)
+            => s is not null && (s.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) || s.Trim() == "1");
 
         // Tolerant bool parse for the raw-arg fallback path (the typed binder
         // handles the normal case via bound.Get<bool>).

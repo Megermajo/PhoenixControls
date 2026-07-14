@@ -164,6 +164,20 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool ParallelChatScripts { get; set; } = false;
 
+        /// <summary>
+        /// Bounded wait (seconds) the chat consumer gives one message's script
+        /// dispatch before detaching and moving on to the next queued message.
+        /// Chat is a single sequential consumer, so a script that deliberately
+        /// sleeps (<c>delay_seconds</c>) would otherwise block every subsequent
+        /// chat message — including the very commands that script is waiting
+        /// for — for its whole sleep. Ordering is preserved for scripts that
+        /// finish within the window; a detached script keeps running in the
+        /// background and holds its <see cref="MaxConcurrentChatScripts"/>
+        /// slot until it finishes. 0 = disabled (legacy fully-sequential
+        /// dispatch). Default 5.
+        /// </summary>
+        public int ChatDispatchDetachSeconds { get; set; } = 5;
+
         /// <summary>Maximum number of webhook-triggered scripts running concurrently. 0 = unlimited.</summary>
         public int MaxConcurrentWebhookScripts { get; set; } = 5;
 

@@ -951,10 +951,10 @@ internal static class NodeProse
             Example: "<b>!giveaway start</b> &rarr; create \"Stream Deck\" as the active giveaway."),
         ["Giveaway.Ticket"] = new(
             Summary: "Adds tickets for a user (or reads their count with Increment 0).",
-            Description: "<p>More tickets means better odds at the draw. <code>Role</code> qualifies the entrant (e.g. subscriber). Adding is ignored once the giveaway is closed, but reads still work.</p>",
-            Example: "<b>!enter</b> &rarr; add 1 ticket; subs get a bonus ticket."),
+            Description: "<p>More tickets means better odds at the draw. <code>Role</code> records the entrant's badge (e.g. subscriber). Adding is ignored once the giveaway is closed, but reads still work. When the giveaway's per-user cap stops the entry from landing in full, the <code>Limit</code> flow output fires instead of <code>Done</code> — wire it to react (e.g. tell the user they already hold the maximum). Unwired, the node behaves exactly as before.</p>",
+            Example: "<b>!ticket</b> &rarr; add 1 ticket; at the cap &rarr; <code>Limit</code> replies \"you already have the max\"."),
         ["Giveaway.Close"] = new(Summary: "Closes a giveaway to new entries and reports the totals.", Description: "<p>Outputs the combined <code>TotalTickets</code> and the number of unique <code>EntrantCount</code>.</p>", Example: "<b>!giveaway close</b> &rarr; announce \"42 entrants, 60 tickets\"."),
-        ["Giveaway.Winner"] = new(Summary: "Draws a winner weighted by ticket count.", Description: "<p>More tickets, higher chance. Returns the <code>WinnerName</code> and their <code>WinnerTickets</code>.</p>", Example: "<b>!giveaway draw</b> &rarr; announce the weighted winner."),
+        ["Giveaway.Winner"] = new(Summary: "Draws a winner weighted by ticket count.", Description: "<p>More tickets, higher chance. With a subscriber bonus set on the giveaway (Hub panel), each entrant's current sub status is checked via Streamer.bot right before the draw and a subscriber's tickets weigh &times;factor. Returns the <code>WinnerName</code> and their <code>WinnerTickets</code>.</p>", Example: "<b>!giveaway draw</b> &rarr; announce the weighted winner."),
         ["Giveaway.Id"] = new(Summary: "Outputs the id of the current default giveaway. Pure data.", Description: "<p>Empty when no default is set — wire it into a giveaway node's selector to target it explicitly.</p>", Example: "Pass the active giveaway id into a logging branch."),
 
         // ══════════════════════════════ SYSTEM ════════════════════════════════

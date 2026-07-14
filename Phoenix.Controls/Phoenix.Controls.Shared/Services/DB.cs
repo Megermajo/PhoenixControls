@@ -335,6 +335,8 @@ namespace Phoenix.Controls.Shared.Services
                 // GiveawayActivity) — DDL + CRUD live in DB.Giveaway.cs.
                 using (var cmd = new SqliteCommand(GiveawayTablesDdl, _connection))
                     cmd.ExecuteNonQuery();
+                // Column migration for pre-existing databanks (SubBonusFactor).
+                EnsureGiveawaySchemaMigrations();
 
                 // Retention sweep for the unbounded append-
                 // only tables. `EventLog` (every external trigger + audit
