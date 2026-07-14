@@ -7,6 +7,13 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607144 - 2026.07.14
+
+**Fixed**
+- Scripts tied to a live process now run as a single instance instead of stacking duplicate copies of themselves.
+- Turning a script off now reliably stops it - the disable switch is respected everywhere the script runs.
+- Removed a source of slowdown where the same script could fire repeatedly and pile up on itself.
+
 ## Hotfix - 1.0.2607143 - 2026.07.14
 
 **New**

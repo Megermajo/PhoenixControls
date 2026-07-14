@@ -59,6 +59,17 @@ namespace Phoenix.Controls.Hub.Core
         private readonly ConcurrentDictionary<string, ProcessInstance> _instances =
             new(StringComparer.Ordinal);
 
+        // At-most-one-live-instance-per-process gate (processId → live instanceId).
+        // A process.start for a process that already has a live instance is IGNORED
+        // and the running instance is returned instead of minting a second one.
+        // Majo's decision after the 2026-07-14 self-DDoS: a `wheelspin` process
+        // accumulated 3 concurrent instances that each re-ran on every chat message
+        // and pinned all 3 chat-script semaphore slots, melting the pipeline. This
+        // deliberately overrides the original "unlimited concurrent instances" model.
+        // GetOrAdd makes the check-and-claim atomic so two racing starts can't both win.
+        private readonly ConcurrentDictionary<string, string> _liveByProcessId =
+            new(StringComparer.Ordinal);
+
         private ProcessInstanceManager() { }
 
         /// <summary>Starts a new instance of <paramref name="processId"/>. Returns the
@@ -77,6 +88,24 @@ namespace Phoenix.Controls.Hub.Core
             }
 
             string instanceId = Guid.NewGuid().ToString();
+
+            // Cap: at most one live instance per process. GetOrAdd atomically returns
+            // the already-live instance id when one exists, or claims the slot for
+            // this new id. A non-matching return means another instance is already
+            // live → ignore this start and hand back the live one so the caller's
+            // InstanceId output still points at a running instance (process.stop on
+            // it works). Prevents the runaway-accumulation self-DDoS.
+            string claimed = _liveByProcessId.GetOrAdd(processId, instanceId);
+            if (!string.Equals(claimed, instanceId, StringComparison.Ordinal))
+            {
+                GlobalLogger.Log(
+                    $"process.start: '{name}' (id '{processId}') already has a live instance ({claimed}) — " +
+                    "ignoring the new start (max 1 concurrent instance per process). " +
+                    "Stop the running one first if you need a fresh run.",
+                    "ProcessInstance", LogLevel.System);
+                return claimed;
+            }
+
             var scoped = scopedVars ?? new Dictionary<string, string>(0);
             var inst = new ProcessInstance(instanceId, processId, name, template, scoped, DateTime.UtcNow);
             _instances[instanceId] = inst;
@@ -109,6 +138,12 @@ namespace Phoenix.Controls.Hub.Core
             if (string.IsNullOrEmpty(instanceId)) return false;
             if (!_instances.TryRemove(instanceId, out var inst)) return false;
             if (!inst.MarkStopped()) return false; // a concurrent stop won the race
+
+            // Release the at-most-one-live gate so a future process.start for this
+            // process can run again. Keyed remove so a race with a re-start (a new
+            // instanceId already re-claimed the slot) can't evict the newer claim.
+            _liveByProcessId.TryRemove(
+                new KeyValuePair<string, string>(inst.ProcessId, instanceId));
 
             try { inst.ScheduleCts.Cancel(); } catch { }
 

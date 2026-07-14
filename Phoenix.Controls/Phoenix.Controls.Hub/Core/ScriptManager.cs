@@ -1142,6 +1142,17 @@ namespace Phoenix.Controls.Hub.Core
 
         private async Task TimedExecuteAsync(string fn, string content, Dictionary<string, string> vars, CancellationToken token)
         {
+            // Authoritative enablement gate. This is the single choke point EVERY
+            // trigger family + schedule tick funnels through, so a script the user
+            // disabled in Hub is guaranteed not to execute no matter which path
+            // reached here — even when the per-family WhereEnabled snapshot has gone
+            // stale under a dispatch backlog (the ChatDispatchDetachSeconds overlap
+            // can queue runs seconds-to-minutes deep; see RunChatScriptAsync). Fixes
+            // "disabling a script in Hub doesn't stick / it re-fires on the next chat
+            // message." Process instances ("process::<id>") aren't in _scripts, so
+            // IsEnabled returns true for them — their own lifecycle gates them.
+            if (!ScriptRegistry.Instance.IsEnabled(fn)) return;
+
             // Live-process instance run — merge the instance's start params (keyed
             // "param.<name>", so they never clobber event vars) so the template body
             // resolves {param.<name>} / {process.instance_id}. This is the single
@@ -1735,6 +1746,16 @@ namespace Phoenix.Controls.Hub.Core
         {
             try
             {
+                // Early enablement re-check — BEFORE taking a chat-semaphore slot.
+                // ExecuteOnChatScriptsAsync built the `matching` snapshot when the
+                // message was dequeued, but under the ChatDispatchDetachSeconds
+                // overlap that snapshot can be seconds-to-minutes stale, so a script
+                // disabled to stop a runaway would otherwise keep firing (and keep
+                // queuing for a slot) from the backlog. Bailing here — not just at the
+                // TimedExecuteAsync gate — means a disabled script never even competes
+                // for a slot, so disable works as an instant off-switch under load.
+                if (!ScriptRegistry.Instance.IsEnabled(fn)) return;
+
                 string content = await ScriptRegistry.Instance.GetContentAsync(fn).ConfigureAwait(false);
                 if (string.IsNullOrEmpty(content)) return;
 
