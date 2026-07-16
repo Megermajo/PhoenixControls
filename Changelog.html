@@ -388,6 +388,31 @@
 
     <article class="release">
       <header class="release-head">
+        <div class="release-version">v1.0.2607171</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-17</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Hub now warns you right away if any of your scripts or overlays are missing after an update, instead of starting up quietly.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Updates now keep your scripts and overlays safe even when file recovery only partly finishes - nothing is cleared while a backup still holds your only copy.</li>
+          <li>A recovery that does not fully complete is retried the next time you start Hub, instead of being treated as finished.</li>
+          <li>Your edited copy of a built-in script is now kept when an update ships a new version of that script.</li>
+          <li>Improved the reliability of update recovery so it no longer discards files it did not manage to restore.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
         <div class="release-version">v1.0.2607144</div>
         <div class="release-name">Hotfix</div>
         <div class="release-date">2026-07-14</div>
