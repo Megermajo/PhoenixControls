@@ -64,6 +64,22 @@ namespace Phoenix.Controls.Hub.Core
             /// shipped seed knows their copy still sits in the backup.
             /// </summary>
             public int ConflictsSkipped;
+            /// <summary>
+            /// Subset of <see cref="ConflictsSkipped"/> where the backup copy
+            /// DIFFERS byte-for-byte from the live file — the backup holds a
+            /// distinct user version (e.g. a customized shipped seed that a
+            /// wipe replaced with the stock seed). Any of these keeps the backup
+            /// UNMARKED so it is never pruned while it is the only copy.
+            /// </summary>
+            public int ConflictsDiffering;
+            /// <summary>
+            /// Backups that were scanned but NOT fully drained — a copy failed,
+            /// an enumeration faulted, or a differing conflict occurred — so the
+            /// heal marker was deliberately withheld. Leaving them unmarked keeps
+            /// the 30-day unhealed prune grace and forces a retry next launch,
+            /// closing the 2026-07-16 marker-before-verify P0.
+            /// </summary>
+            public int BackupsRetainedForRecovery;
             public List<string> Failures { get; } = new();
         }
 
@@ -92,6 +108,20 @@ namespace Phoenix.Controls.Hub.Core
                         $"update, your copies are still inside the \"{Path.GetFileName(suiteRoot)}.bak.*\" " +
                         "folder(s) next to the install folder.",
                         "UpdateBackupSelfHeal", LogLevel.System);
+                }
+                if (report.BackupsRetainedForRecovery > 0)
+                {
+                    // Persistent (re-logged each launch until resolved) notice —
+                    // the audit flagged the old one-shot log. These backups are
+                    // deliberately NOT marked healed, so TryPruneBackups will not
+                    // delete them while they remain the only copy of your files.
+                    GlobalLogger.Log(
+                        $"Update-backup self-heal: {report.BackupsRetainedForRecovery} update backup(s) still hold " +
+                        "user file(s) that could not be auto-restored (a newer/different file already occupies that " +
+                        "path, or a copy failed). Your originals are kept in the " +
+                        $"\"{Path.GetFileName(suiteRoot)}.bak.*\" folder(s) next to the install folder; they will be " +
+                        "retried on the next launch and will NOT be pruned while they are the only copy.",
+                        "UpdateBackupSelfHeal", LogLevel.CriticalError);
                 }
                 foreach (string failure in report.Failures)
                 {
@@ -168,6 +198,19 @@ namespace Phoenix.Controls.Hub.Core
                 if (File.Exists(marker)) continue;
 
                 int restoredFromThisBackup = 0;
+                // A backup is marked "healed" ONLY when it was FULLY drained —
+                // every source file either restored, or already present in the
+                // live tree with byte-IDENTICAL content. A copy failure, an
+                // enumeration fault, or a conflict against a DIFFERING live file
+                // (e.g. a freshly shipped seed now occupying a path the user had
+                // customized) means the backup still holds the only copy of user
+                // work. Such a backup is left UNMARKED so it keeps the 30-day
+                // unhealed prune grace and is retried next launch (fill-only
+                // makes retry safe). Fix for the 2026-07-16 marker-before-verify
+                // P0: the marker used to be written unconditionally, which both
+                // blocked retry and dropped the backup to the 7-day window, so
+                // TryPruneBackups could delete the sole copy of a .phx/.phxlayer.
+                bool cleanDrain = true;
                 foreach (string candidate in dataRootCandidates)
                 {
                     string backupData = Path.Combine(backupDir, candidate);
@@ -182,6 +225,10 @@ namespace Phoenix.Controls.Hub.Core
                     }
                     catch (Exception ex)
                     {
+                        // Files after the fault point were never enumerated, so
+                        // they were never attempted — the backup is not fully
+                        // drained and must stay unmarked / re-scannable.
+                        cleanDrain = false;
                         report.Failures.Add($"enumeration of {backupData} stopped early: {ex.Message}");
                     }
 
@@ -194,6 +241,16 @@ namespace Phoenix.Controls.Hub.Core
                             if (File.Exists(dest))
                             {
                                 report.ConflictsSkipped++; // fill-only — never overwrite
+                                // A byte-identical live copy is a benign skip
+                                // (the file genuinely IS present live). A
+                                // DIFFERING live copy means the backup holds a
+                                // distinct user version we must not lose, so the
+                                // backup stays unmarked and kept for recovery.
+                                if (!FilesContentEqual(sourceFile, dest))
+                                {
+                                    report.ConflictsDiffering++;
+                                    cleanDrain = false;
+                                }
                                 continue;
                             }
 
@@ -217,6 +274,9 @@ namespace Phoenix.Controls.Hub.Core
                         }
                         catch (Exception ex)
                         {
+                            // This file never reached the live tree — the backup
+                            // is still its only home, so don't mark it healed.
+                            cleanDrain = false;
                             report.Failures.Add($"could not restore {rel} from {backupDir}: {ex.Message}");
                         }
                     }
@@ -225,23 +285,88 @@ namespace Phoenix.Controls.Hub.Core
                 report.FilesRestored += restoredFromThisBackup;
                 report.BackupsProcessed++;
 
-                try
+                if (cleanDrain)
                 {
-                    File.WriteAllText(marker,
-                        $"processed {DateTime.UtcNow:O}; restored {restoredFromThisBackup} file(s); " +
-                        "fill-only heal into " + suiteRoot + Environment.NewLine);
+                    // Fully drained — safe to mark healed. TryPruneBackups clocks
+                    // the 7-day healed window from THIS marker's write time (not
+                    // the backup's creation stamp), so a genuine 7-day grace
+                    // always follows the heal.
+                    try
+                    {
+                        File.WriteAllText(marker,
+                            $"processed {DateTime.UtcNow:O}; restored {restoredFromThisBackup} file(s); " +
+                            "fill-only heal into " + suiteRoot + Environment.NewLine);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Marker write failed — leave the backup unmarked. It
+                        // keeps the long grace and is retried next launch; a
+                        // later clean drain re-attempts the marker.
+                        report.Failures.Add($"could not write marker in {backupDir}: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    // Without the marker the backup is rescanned next launch —
-                    // fill-only stays safe for existing files, but a file the
-                    // user deletes could be re-copied until the marker lands
-                    // or the backup is pruned. Surface it loudly.
-                    report.Failures.Add($"could not write marker in {backupDir}: {ex.Message}");
+                    // Not fully drained: the backup still holds the only copy of
+                    // one or more user files. Leave it UNMARKED so it keeps the
+                    // 30-day unhealed grace, TryPruneBackups' verify-before-delete
+                    // guard protects it, and the next launch retries.
+                    report.BackupsRetainedForRecovery++;
                 }
             }
 
             return report;
+        }
+
+        /// <summary>
+        /// Byte-for-byte content comparison used to tell a benign conflict-skip
+        /// (the same file is already present live) from a lossy one (the backup
+        /// holds a DIFFERENT user version that a wipe replaced with a shipped
+        /// seed). Length is checked first as a cheap reject. Any IO problem is
+        /// treated conservatively as "differing" so a backup we cannot verify is
+        /// never mistaken for a clean drain and pruned.
+        /// </summary>
+        internal static bool FilesContentEqual(string pathA, string pathB)
+        {
+            try
+            {
+                if (new FileInfo(pathA).Length != new FileInfo(pathB).Length) return false;
+
+                const int chunk = 64 * 1024;
+                using var a = new FileStream(pathA, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var b = new FileStream(pathB, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var bufA = new byte[chunk];
+                var bufB = new byte[chunk];
+                int n;
+                while ((n = ReadBlock(a, bufA)) > 0)
+                {
+                    int m = ReadBlock(b, bufB);
+                    if (m != n) return false;
+                    if (!bufA.AsSpan(0, n).SequenceEqual(bufB.AsSpan(0, m))) return false;
+                }
+                return true;
+            }
+            catch
+            {
+                return false; // unknown ⇒ treat as differing (retain the backup)
+            }
+        }
+
+        /// <summary>
+        /// Reads up to <paramref name="buf"/>.Length bytes, looping over short
+        /// reads so a partial <see cref="Stream.Read(byte[], int, int)"/> does
+        /// not produce a false content mismatch. Returns the total read (0 at EOF).
+        /// </summary>
+        private static int ReadBlock(Stream s, byte[] buf)
+        {
+            int total = 0;
+            while (total < buf.Length)
+            {
+                int r = s.Read(buf, total, buf.Length - total);
+                if (r == 0) break;
+                total += r;
+            }
+            return total;
         }
     }
 }

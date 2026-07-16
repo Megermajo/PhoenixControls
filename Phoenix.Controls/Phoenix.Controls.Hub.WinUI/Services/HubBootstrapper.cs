@@ -110,6 +110,14 @@ public static class HubBootstrapper
         // throws; instant no-op when no backups exist.
         UpdateBackupSelfHeal.Run();
 
+        // Wipe sentinel — runs AFTER self-heal so it only fires on files the
+        // heal could not recover. Compares the live logic/layer tree to a
+        // fingerprint kept in %AppData% (outside the install tree, survives the
+        // swap): if authored files present last session have vanished, it logs a
+        // loud warning instead of booting silently on shipped seeds. Covers the
+        // no-backup wipe the heals cannot rescue. Never throws / blocks.
+        WipeSentinel.Run();
+
         // Snapshot AppConfig once at boot. The legacy
         // RemoteBridgeServer at step 4 is gated on cfg.RemoteEnabled and the
         // ViewerServer at the end of the method uses the same source-of-truth;

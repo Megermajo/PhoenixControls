@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -1410,18 +1411,11 @@ public sealed class UpdateRunner
             string baseName = Path.GetFileName(installRoot);
             if (parent.Length == 0 || baseName.Length == 0) return;
 
-            DateTime cutoff = DateTime.UtcNow - TimeSpan.FromDays(ageDays);
             string prefix = $"{baseName}.bak.";
             foreach (string dir in Directory.EnumerateDirectories(parent, $"{baseName}.bak.*"))
             {
                 try
                 {
-                    // Parse the timestamp from the directory name rather
-                    // than reading CreationTimeUtc — Directory.Move (used during
-                    // swap) preserves the original creation time of the install
-                    // tree, so every backup looks "old" and the 7-day window
-                    // collapses to 0. The name format is yyyyMMddHHmmss UTC, set
-                    // when the backup was created in ApplyArchiveSwap.
                     string name = Path.GetFileName(dir);
                     if (!name.StartsWith(prefix, StringComparison.Ordinal))
                     {
@@ -1430,35 +1424,157 @@ public sealed class UpdateRunner
                         // enough that ".bak.foo" could land here.
                         continue;
                     }
+
+                    // ── Verify-before-delete (2026-07-16 P0/P1 backstop) ───────
+                    // A backup is the LAST copy of the user data the update moved
+                    // aside — never delete one while it is still the only home of
+                    // a user file, regardless of age. What "only home" means
+                    // depends on the heal marker:
+                    //   • HEALED backups carry a clean-drain certificate from the
+                    //     Hub self-heal (every file was restored, or already
+                    //     present byte-identical, at heal time). A file that is
+                    //     present-but-different in live is therefore a legitimate
+                    //     LATER user edit, not a sole copy — so only a WHOLLY
+                    //     ABSENT file blocks their pruning.
+                    //   • UNHEALED backups are NOT certified (never healed, or
+                    //     the heal found unrepresented content). Here a
+                    //     present-but-DIFFERING file also blocks pruning — that
+                    //     is the P1 case: a customized seed the wipe replaced with
+                    //     the stock version, surviving only in the backup.
+                    // This makes silent permanent loss impossible even if a marker
+                    // is wrong or a heal only partially ran.
+                    string markerPath = Path.Combine(dir, SelfHealMarkerFileName);
+                    bool healed = File.Exists(markerPath);
+
+                    if (BackupHoldsUnrestoredUserData(dir, installRoot, contentSensitive: !healed))
+                    {
+                        Log($"keeping backup — still the only copy of user file(s) not in the live install: {dir}");
+                        continue;
+                    }
+
+                    if (healed)
+                    {
+                        // Redundant + healed: age out on the routine window, but
+                        // clock it from WHEN the heal happened (marker write
+                        // time), NOT the backup's creation-time name stamp —
+                        // otherwise a backup healed long after creation gets a
+                        // near-zero grace (the 2026-07-16 P2 finding).
+                        DateTime healTimeUtc;
+                        try { healTimeUtc = File.GetLastWriteTimeUtc(markerPath); }
+                        catch { healTimeUtc = DateTime.UtcNow; }
+                        if (healTimeUtc < DateTime.UtcNow - TimeSpan.FromDays(ageDays))
+                        {
+                            Directory.Delete(dir, recursive: true);
+                            Log($"pruned redundant healed backup: {dir}");
+                        }
+                        continue;
+                    }
+
+                    // Unhealed + redundant: age out only at the 30-day hard cap
+                    // (disk-space backstop). Parse the name stamp — Directory.Move
+                    // during the swap preserves creation time, so CreationTimeUtc
+                    // is unreliable here.
                     string stamp = name.Substring(prefix.Length);
                     if (!DateTime.TryParseExact(stamp, "yyyyMMddHHmmss",
                         System.Globalization.CultureInfo.InvariantCulture,
                         System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
                         out DateTime backupUtc))
                     {
-                        // Unrecognised timestamp shape — skip rather than guess.
                         Log($"could not parse backup timestamp '{stamp}'; leaving alone.");
                         continue;
                     }
-                    // Backups are the last line of defense for user data:
-                    // one healed by Hub (marker present) ages out on the
-                    // routine window; an UNHEALED one may hold the only copy
-                    // of a wiped user's scripts, so it survives until the
-                    // 30-day hard cap (disk-space backstop) instead.
-                    bool healed = File.Exists(Path.Combine(dir, SelfHealMarkerFileName));
-                    DateTime effectiveCutoff = healed
-                        ? cutoff
-                        : DateTime.UtcNow - TimeSpan.FromDays(UnhealedBackupRetentionDays);
-                    if (backupUtc < effectiveCutoff)
+                    if (backupUtc < DateTime.UtcNow - TimeSpan.FromDays(UnhealedBackupRetentionDays))
                     {
                         Directory.Delete(dir, recursive: true);
-                        Log($"pruned old backup ({(healed ? "healed" : "unhealed, past hard cap")}): {dir}");
+                        Log($"pruned redundant unhealed backup (past {UnhealedBackupRetentionDays}-day cap): {dir}");
                     }
                 }
                 catch (Exception ex) { Log($"could not prune {dir}: {ex.Message}"); }
             }
         }
         catch (Exception ex) { Log($"prune scan failed: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// True when <paramref name="backupDir"/> is still the only home of a
+    /// user-data file — under a data root (<c>Hub\data</c> or flat <c>data</c>),
+    /// excluding the release-owned <c>overlay</c>/<c>streamerbot</c> subtrees.
+    /// A file counts as "only in the backup" when its relative path is ABSENT
+    /// from <paramref name="installRoot"/>'s live tree; when
+    /// <paramref name="contentSensitive"/> is set, a file that is present live
+    /// but BYTE-DIFFERENT also counts (the P1 case — a customized copy the wipe
+    /// replaced with a shipped seed). Any IO fault is treated as "holds
+    /// unrestored data" so an unverifiable backup is kept (2026-07-16 backstop).
+    /// </summary>
+    private bool BackupHoldsUnrestoredUserData(string backupDir, string installRoot, bool contentSensitive)
+    {
+        foreach (string candidate in UserStateMerge.DataRootCandidates)
+        {
+            string backupData = Path.Combine(backupDir, candidate);
+            if (!Directory.Exists(backupData)) continue;
+            string liveData = Path.Combine(installRoot, candidate);
+
+            var files = new List<string>();
+            try { files.AddRange(Directory.EnumerateFiles(backupData, "*", UserStateMerge.CreateEnumeration())); }
+            catch { return true; } // cannot enumerate ⇒ assume unique data, keep
+
+            foreach (string src in files)
+            {
+                string rel = Path.GetRelativePath(backupData, src);
+                // Release-owned runtime (overlay/streamerbot) is not user data —
+                // a stale copy there must not pin a backup on disk forever.
+                if (UserStateMerge.IsReleaseOwned(rel)) continue;
+                string dest = Path.Combine(liveData, rel);
+                if (!File.Exists(dest)) return true;                         // absent → sole copy
+                if (contentSensitive && !FilesContentEqual(src, dest)) return true; // differing version
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Byte-for-byte content comparison (length first as a cheap reject). Mirror
+    /// of <c>UpdateBackupSelfHeal.FilesContentEqual</c> — the Updater is BCL-only
+    /// and cannot reference the Hub assembly, so the two are kept in sync by
+    /// hand. Any IO problem is treated conservatively as "differing" so a backup
+    /// we cannot verify is never mistaken for redundant and pruned.
+    /// </summary>
+    private static bool FilesContentEqual(string pathA, string pathB)
+    {
+        try
+        {
+            if (new FileInfo(pathA).Length != new FileInfo(pathB).Length) return false;
+
+            const int chunk = 64 * 1024;
+            using var a = new FileStream(pathA, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var b = new FileStream(pathB, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var bufA = new byte[chunk];
+            var bufB = new byte[chunk];
+            int n;
+            while ((n = ReadBlock(a, bufA)) > 0)
+            {
+                int m = ReadBlock(b, bufB);
+                if (m != n) return false;
+                if (!bufA.AsSpan(0, n).SequenceEqual(bufB.AsSpan(0, m))) return false;
+            }
+            return true;
+        }
+        catch
+        {
+            return false; // unknown ⇒ treat as differing (retain the backup)
+        }
+    }
+
+    private static int ReadBlock(Stream s, byte[] buf)
+    {
+        int total = 0;
+        while (total < buf.Length)
+        {
+            int r = s.Read(buf, total, buf.Length - total);
+            if (r == 0) break;
+            total += r;
+        }
+        return total;
     }
 
     // ── Shutdown coordination ───────────────────────────────────────────

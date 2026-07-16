@@ -7,6 +7,17 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607171 - 2026.07.17
+
+**New**
+- Hub now warns you right away if any of your scripts or overlays are missing after an update, instead of starting up quietly.
+
+**Fixed**
+- Updates now keep your scripts and overlays safe even when file recovery only partly finishes - nothing is cleared while a backup still holds your only copy.
+- A recovery that does not fully complete is retried the next time you start Hub, instead of being treated as finished.
+- Your edited copy of a built-in script is now kept when an update ships a new version of that script.
+- Improved the reliability of update recovery so it no longer discards files it did not manage to restore.
+
 ## Hotfix - 1.0.2607144 - 2026.07.14
 
 **Fixed**
