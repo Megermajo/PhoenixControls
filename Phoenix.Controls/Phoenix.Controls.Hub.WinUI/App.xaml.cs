@@ -103,6 +103,25 @@ public partial class App : Application
         // the mutex check first (cheap), show the splash, then run the heavy
         // I/O on a worker while the splash is already painting.
 
+        // UI-hang auto-recovery handoff. When the prior (frozen) instance
+        // relaunched us it passes --recovered-relaunch=<oldPid>; wait for that
+        // process to fully exit BEFORE the single-instance guard runs — its
+        // still-held mutex would otherwise make us foreground the dying window
+        // and exit, leaving nothing running. Detected here (pre-guard); the
+        // user-facing "recovered from a freeze" notice is logged after the main
+        // window is up (below).
+        var recovery = Phoenix.Controls.Hub.Core.HangRecoveryLauncher
+            .DetectRecoveredRelaunch(Environment.GetCommandLineArgs());
+        if (recovery is { } rec)
+        {
+            GlobalLogger.Log(
+                $"Launched as a hang-recovery relaunch (old pid {rec.OldPid}); waiting for it to exit " +
+                "before the single-instance guard.",
+                "App", LogLevel.System);
+            Phoenix.Controls.Hub.Core.HangRecoveryLauncher.WaitForOldInstanceExit(
+                rec.OldPid, TimeSpan.FromSeconds(10));
+        }
+
         // Step 1 — single-instance guard (sync, fast). Must happen before
         // splash creation so a duplicate launch doesn't flash a splash and
         // then exit.
@@ -402,6 +421,22 @@ public partial class App : Application
         catch (Exception ex)
         {
             GlobalLogger.Error("App", "UiHangWatchdog start failed", ex);
+        }
+
+        // Surface the auto-recovery notice now the UI is up: this launch was a
+        // self-relaunch out of a permanent UI freeze in the previous session.
+        // CriticalError so it stands out in the System Log / Errors surfaces.
+        if (recovery is { } recNotice)
+        {
+            try
+            {
+                GlobalLogger.Error("App",
+                    "Hub automatically recovered from a UI-thread freeze in the previous session and restarted. " +
+                    (string.IsNullOrEmpty(recNotice.DumpPath)
+                        ? "A diagnostic dump path was not provided."
+                        : $"Diagnostic dump saved to: {recNotice.DumpPath}"));
+            }
+            catch { /* best-effort notice */ }
         }
 
         // CLI deep-link — when launched via Explorer's

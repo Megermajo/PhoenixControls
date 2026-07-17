@@ -62,13 +62,15 @@ namespace Phoenix.Controls.Hub.WinUI.Services
         private int _uiManagedThreadId;
         private uint _uiOsThreadId;
 
-        // Stack-capture state. _captureInFlight gates to ONE capture at a time
-        // (cross-thread: the watchdog loop launches, the capture worker clears) —
-        // if a capture itself ever wedges, further captures are blocked instead
-        // of stacking threads. The per-stall budget is two snapshots: one at the
-        // trip, one ~20s later, so diffing them separates a live loop from a
-        // blocked wait. The session budget is a runaway backstop. Both counters
-        // are watchdog-thread-only.
+        // Stack-capture state. Each capture writes BOTH a native minidump (.dmp —
+        // the priority instrument; every recorded freeze is a NATIVE UI-thread
+        // wait ClrMD can't name) and the ClrMD managed all-thread text (.txt).
+        // _captureInFlight gates to ONE capture at a time (cross-thread: the
+        // watchdog loop launches, the capture worker clears) — if a capture itself
+        // ever wedges, further captures are blocked instead of stacking threads.
+        // The per-stall budget is two snapshots: one at the trip, one ~20s later,
+        // so diffing them separates a live loop from a blocked wait. The session
+        // budget is a runaway backstop. Both counters are watchdog-thread-only.
         private int _captureInFlight;
         private int _capturesThisStall;
         private int _capturesThisSession;
@@ -79,6 +81,34 @@ namespace Phoenix.Controls.Hub.WinUI.Services
         // Continuing-stall re-log schedule, in seconds since the stall began:
         // 30s, 60s, then every further 60s. Watchdog-thread-only.
         private double _nextRelogAtSeconds;
+
+        // UI-hang auto-recovery. A confirmed PERMANENT freeze — still
+        // unresponsive past the AppConfig.HangAutoRecoveryStallSeconds total —
+        // triggers a ONE-shot self-relaunch (spawn a fresh Hub, hard-kill this
+        // wedged one) via HangRecoveryLauncher, gated on
+        // AppConfig.HangAutoRecoveryEnabled and capped per-window there so a
+        // deterministic re-freeze can't fork-bomb. The threshold is read LIVE
+        // (see GetRelaunchAfter) and clamped just above the trip so it always
+        // lands on a confirmed freeze; 12s default — observed freezes never
+        // return to usable, so healing fast beats making the user sit through
+        // it and close it themselves (~14s). Latched per-stall (reset on a new
+        // stall) so a suppressed/failed attempt doesn't retry every poll; the
+        // relaunch runs on its own thread so the poll loop keeps re-logging
+        // while it captures a final dump and spawns. Watchdog-thread-only.
+        private bool _recoveryInitiated;
+        private const int DefaultRelaunchAfterSeconds = 12;
+
+        // Window scanned in the Windows System event log for a display-driver
+        // reset (TDR) near the freeze — the smoking gun for the GPU-stall class.
+        private static readonly TimeSpan TdrScanWindow = TimeSpan.FromMinutes(5);
+
+        // Sub-trip "soft hitch": a shorter stall that won't trigger the full
+        // capture but still leaves a breadcrumb, so brief freezes (the kind that
+        // recover before the 8s trip and otherwise leave NO trace at all) are
+        // visible. Logged once per unresponsive period; latch reset the moment a
+        // heartbeat is serviced. Watchdog-thread + UI-callback.
+        private volatile bool _softHitchLogged;
+        private static readonly TimeSpan SoftHitchThreshold = TimeSpan.FromSeconds(4);
 
         public UiHangWatchdog(DispatcherQueue ui, TimeSpan? stallThreshold = null, TimeSpan? pollInterval = null)
         {
@@ -133,12 +163,28 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                     // A heartbeat is in flight and not yet serviced — measure it.
                     long waitedTicks = DateTime.UtcNow.Ticks - Interlocked.Read(ref _pingSentAtTicks);
                     var waited = TimeSpan.FromTicks(Math.Max(0, waitedTicks));
+
+                    // Sub-trip soft hitch — record a brief stall that won't reach
+                    // the full-capture threshold, so short freezes (which recover
+                    // before the 8s trip and otherwise leave NO trace) are still
+                    // visible. Once per unresponsive period.
+                    if (!_softHitchLogged && waited >= SoftHitchThreshold && waited < _stallThreshold)
+                    {
+                        _softHitchLogged = true;
+                        GlobalLogger.Log(
+                            $"UI thread slow to respond (~{waited.TotalSeconds:F1}s) — a brief hitch below the " +
+                            $"{_stallThreshold.TotalSeconds:F0}s freeze-capture threshold. Last traced activity: " +
+                            $"'{UiActivityTrace.LastActivity ?? "(none)"}'.",
+                            "UiHangWatchdog", LogLevel.System);
+                    }
+
                     if (waited < _stallThreshold) return;
 
                     if (!_reported)
                     {
                         _reported = true;
                         _capturesThisStall = 0;
+                        _recoveryInitiated = false;
                         _nextRelogAtSeconds = 30;
                         // 0.11.x polish — surface the last-traced UI activity
                         // in the stall message so the rolling log identifies
@@ -186,6 +232,10 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                                 $"UI thread STILL unresponsive after ~{waited.TotalSeconds:F0}s — the freeze is ongoing, not a blip.");
                             _nextRelogAtSeconds = _nextRelogAtSeconds < 60 ? 60 : _nextRelogAtSeconds + 60;
                         }
+
+                        // Confirmed permanent freeze → one-shot auto-relaunch.
+                        if (!_recoveryInitiated && waited >= GetRelaunchAfter())
+                            TryInitiateRecovery(waited.TotalSeconds);
                     }
                 }
         }
@@ -228,15 +278,8 @@ namespace Phoenix.Controls.Hub.WinUI.Services
             {
                 try
                 {
-                    string dir = Paths.RoamingAppData("logs");
-                    string? path = HangStackCapture.TryCaptureToFile(
-                        dir, $"UI thread unresponsive ~{stalledSeconds:F1}s",
-                        uiManaged, uiOs, out string? error);
-                    if (path is not null)
-                        GlobalLogger.Error("UiHangWatchdog",
-                            $"All-thread managed stacks captured to '{path}' — the '>>> UI THREAD' section names the blocked frame.");
-                    else
-                        GlobalLogger.Error("UiHangWatchdog", $"Stack capture failed: {error}");
+                    WriteFullFreezeDiagnostics(
+                        $"UI thread unresponsive ~{stalledSeconds:F1}s", stalledSeconds, uiManaged, uiOs);
                 }
                 catch { /* guarded end-to-end; nothing left to do */ }
                 finally { Interlocked.Exchange(ref _captureInFlight, 0); }
@@ -246,6 +289,190 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                 Name = "UiHangStackCapture",
             };
             worker.Start();
+        }
+
+        // The full freeze-diagnostics bundle written on a confirmed stall (and
+        // again just before an auto-relaunch): native minidump, ClrMD all-thread
+        // text, and the consolidated FREEZE REPORT that synthesizes a plain-
+        // language LIKELY CAUSE from the UI-thread frames + a Windows display-TDR
+        // scan + the loaded GPU driver + the last log breadcrumbs. Returns the
+        // native dump path for the relaunch handoff. Runs on the caller's
+        // background thread; every step is independently guarded so one failure
+        // still lets the rest write. The dump + ClrMD snapshot run sequentially
+        // (dump first) so two process readers never touch the frozen app at once.
+        private string? WriteFullFreezeDiagnostics(string reason, double stalledSeconds, int uiManaged, uint uiOs)
+        {
+            string dir = Paths.RoamingAppData("logs");
+
+            // 1. Native minidump FIRST — the priority instrument; its native
+            //    UI-thread stack names the blocking module in WinDbg.
+            string? dumpPath = NativeMiniDump.TryWriteToFile(dir, out string? dumpError);
+            if (dumpPath is not null)
+                GlobalLogger.Error("UiHangWatchdog",
+                    $"Native minidump written to '{dumpPath}' (UI stall ~{stalledSeconds:F1}s) — open in WinDbg/VS.");
+            else
+                GlobalLogger.Error("UiHangWatchdog", $"Native minidump failed: {dumpError}");
+
+            // 2. ClrMD structured capture SECOND (one snapshot → text + UI frames).
+            string? textPath = null;
+            IReadOnlyList<string> uiFrames = Array.Empty<string>();
+            try
+            {
+                var cap = HangStackCapture.Capture(reason, uiManaged, uiOs);
+                uiFrames = cap.UiThreadFrames;
+                textPath = HangStackCapture.TryWriteText(dir, cap.Text, out string? textError);
+                if (textPath is not null)
+                    GlobalLogger.Error("UiHangWatchdog",
+                        $"All-thread managed stacks captured to '{textPath}'.");
+                else
+                    GlobalLogger.Error("UiHangWatchdog", $"Stack capture write failed: {textError}");
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("UiHangWatchdog", "ClrMD stack capture failed", ex);
+            }
+
+            // 3. Consolidated freeze report: LIKELY CAUSE + GPU/TDR + breadcrumbs.
+            try
+            {
+                var tdr = GpuTdrProbe.RecentDisplayResets(TdrScanWindow);
+                var gpu = GpuTdrProbe.LoadedGraphicsModules();
+                var breadcrumbs = GlobalLogger.GetRecentLogs();
+
+                string lastActivity = UiActivityTrace.LastActivity ?? "(none traced)";
+                var lastStart = UiActivityTrace.LastActivityStartedAtUtc;
+                string age = lastStart == DateTime.MinValue
+                    ? "n/a" : $"{(DateTime.UtcNow - lastStart).TotalSeconds:F1}s ago";
+                int openDepth = UiActivityTrace.OpenScopeDepth;
+                string scopeState = openDepth > 0
+                    ? $"scope STILL OPEN (depth {openDepth}) — this activity is the blocker"
+                    : "scope already CLOSED — stall is in uninstrumented code after it";
+
+                var ctx = new FreezeReport.Context(
+                    stalledSeconds, _stallThreshold.TotalSeconds, lastActivity, age, scopeState, uiManaged, uiOs);
+
+                string cause = FreezeReport.SynthesizeLikelyCause(uiFrames, tdr);
+                string report = FreezeReport.Build(ctx, uiFrames, breadcrumbs, gpu, tdr, TdrScanWindow, dumpPath, textPath);
+                string? reportPath = FreezeReport.TryWriteToFile(dir, report, out string? repError);
+
+                // 4. Prominent in-app System Log entry — the synthesized cause +
+                //    where the full report lives, so the freeze explains itself live.
+                GlobalLogger.Error("UiHangWatchdog",
+                    $"FREEZE likely cause — {cause}" +
+                    (reportPath is not null
+                        ? $" | Full report: {reportPath}"
+                        : $" | (report write failed: {repError})"));
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("UiHangWatchdog", "Freeze report build failed", ex);
+            }
+
+            return dumpPath;
+        }
+
+        // Effective total-freeze deadline before auto-relaunch, read LIVE from
+        // AppConfig (a Settings change applies without a restart) and clamped
+        // just above the trip threshold so it always lands on a CONFIRMED freeze,
+        // and below an absurd ceiling. Falls back to the default on any fault.
+        private TimeSpan GetRelaunchAfter()
+        {
+            int secs = DefaultRelaunchAfterSeconds;
+            try
+            {
+                int cfg = ConfigManager.Current.HangAutoRecoveryStallSeconds;
+                if (cfg > 0) secs = cfg;
+            }
+            catch { /* fall back to the default */ }
+            double min = _stallThreshold.TotalSeconds + 1;   // never before a confirmed trip
+            return TimeSpan.FromSeconds(Math.Clamp(secs, min, 600));
+        }
+
+        // Confirmed permanent freeze → one-shot self-relaunch. The actual
+        // relaunch runs on its own thread so the poll loop keeps re-logging; a
+        // final dump+text is captured synchronously first (the scheduled 2nd
+        // capture may not have fired by the 25s relaunch point) and serialized
+        // against any in-flight normal capture via the _captureInFlight gate so
+        // two process snapshots never touch the frozen process at once.
+        private void TryInitiateRecovery(double stalledSeconds)
+        {
+            // Config gate — read live so a Settings flip applies without a
+            // restart; fail safe to the default-on behaviour if the read throws.
+            bool enabled;
+            try { enabled = ConfigManager.Current.HangAutoRecoveryEnabled; }
+            catch { enabled = true; }
+            if (!enabled) return;
+
+            _recoveryInitiated = true;
+
+            int uiManaged = Volatile.Read(ref _uiManagedThreadId);
+            uint uiOs = Volatile.Read(ref _uiOsThreadId);
+
+            var worker = new Thread(() =>
+            {
+                bool claimed = false;
+                try
+                {
+                    GlobalLogger.Error("UiHangWatchdog",
+                        $"UI thread frozen ~{stalledSeconds:F0}s with no recovery — initiating auto-relaunch " +
+                        "(AppConfig.HangAutoRecoveryEnabled=true).");
+
+                    string? dumpPath = null;
+
+                    // Take the one-at-a-time capture gate (bounded wait) so the
+                    // pre-relaunch snapshot is alone on the process. If a normal
+                    // capture is already in flight (it's writing its own dump),
+                    // skip ours rather than run a second concurrent snapshot.
+                    claimed = TryClaimCaptureGate(TimeSpan.FromSeconds(3));
+                    if (claimed)
+                    {
+                        dumpPath = WriteFullFreezeDiagnostics(
+                            $"UI thread unresponsive ~{stalledSeconds:F1}s (pre-relaunch)",
+                            stalledSeconds, uiManaged, uiOs);
+                    }
+                    else
+                    {
+                        GlobalLogger.Error("UiHangWatchdog",
+                            "Pre-relaunch capture skipped — a capture is already in flight; relaunching.");
+                    }
+
+                    // Loop-guard, spawn a fresh Hub, hard-kill self. Returns only
+                    // when suppressed by the restart-loop cap or a spawn failure
+                    // (on success this process is already terminated).
+                    HangRecoveryLauncher.Relaunch(dumpPath);
+                }
+                catch (Exception ex)
+                {
+                    try { GlobalLogger.Error("UiHangWatchdog", "auto-relaunch worker failed", ex); }
+                    catch { /* dying process — nothing to do */ }
+                }
+                finally
+                {
+                    // Release the gate only on the survive path (suppressed /
+                    // failed relaunch); on success the process is already gone.
+                    if (claimed) Interlocked.Exchange(ref _captureInFlight, 0);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "UiHangRecovery",
+            };
+            worker.Start();
+        }
+
+        // Try to take the one-at-a-time capture gate within <paramref name="budget"/>,
+        // so the pre-relaunch capture never runs concurrently with a normal
+        // capture worker (two process snapshots at once risk a cross-tool suspend
+        // / loader-lock stall on the frozen process). Returns true if claimed.
+        private bool TryClaimCaptureGate(TimeSpan budget)
+        {
+            var deadline = DateTime.UtcNow + budget;
+            while (Interlocked.CompareExchange(ref _captureInFlight, 1, 0) != 0)
+            {
+                if (DateTime.UtcNow >= deadline) return false;
+                Thread.Sleep(50);
+            }
+            return true;
         }
 
         private void OnHeartbeatServiced()
@@ -269,6 +496,9 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                     "UiHangWatchdog", LogLevel.System);
                 _reported = false;
             }
+            // A serviced heartbeat ends any unresponsive period — re-arm the
+            // soft-hitch breadcrumb for the next one.
+            _softHitchLogged = false;
             _outstanding = false;
         }
 

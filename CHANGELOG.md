@@ -7,6 +7,15 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607172 - 2026.07.17
+
+**New**
+- Phoenix Controls now recovers on its own if the app ever freezes: after a short spell of an unresponsive window it saves troubleshooting details and restarts itself automatically, so you are back up without having to close and reopen it. It will not restart in a loop, and you can turn it off in settings.
+- When a freeze happens, Phoenix now writes an easy-to-read report explaining the most likely cause - including whether your graphics driver stopped responding - so problems are much faster to pin down.
+
+**Fixed**
+- Brief slowdowns that used to leave no trace are now recorded, and freezes are captured in far more detail.
+
 ## Hotfix - 1.0.2607171 - 2026.07.17
 
 **New**

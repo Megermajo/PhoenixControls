@@ -710,6 +710,35 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public int UpdateCheckTimeoutSeconds { get; set; } = 5;
 
+        // ── UI-hang auto-recovery (UiHangWatchdog / HangRecoveryLauncher) ─
+        /// <summary>
+        /// When true (default), a CONFIRMED permanent UI-thread freeze (still
+        /// unresponsive for <see cref="HangAutoRecoveryStallSeconds"/> total)
+        /// triggers an automatic self-relaunch: Hub captures a final diagnostic
+        /// dump, spawns a fresh instance, and hard-kills the wedged one. A
+        /// restart-loop guard (<c>HangRecoveryLauncher</c>) caps how many
+        /// auto-relaunches may happen in a short window so a deterministic
+        /// re-freeze can't fork-bomb — past the cap Hub leaves the frozen process
+        /// up (with a loud log) for manual intervention. Set false to disable
+        /// auto-relaunch and keep a freeze diagnostics-only (the .dmp / .txt
+        /// captures still write regardless).
+        /// </summary>
+        public bool HangAutoRecoveryEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Total seconds the UI thread must stay frozen before
+        /// <see cref="HangAutoRecoveryEnabled"/> fires the self-relaunch. The
+        /// watchdog CONFIRMS a freeze at ~8s; this is the total-freeze deadline,
+        /// so 12 (default) relaunches ~4s after confirmation. Observed freezes
+        /// never return to usable, so a low value heals faster without
+        /// over-firing (a modal/nested loop still pumps the heartbeat and never
+        /// trips the watchdog, so this only ever fires on a genuinely wedged UI
+        /// thread). Read live (a Settings change applies without a restart) and
+        /// clamped in-code to [~9s, 600s] so it always lands after a confirmed
+        /// trip.
+        /// </summary>
+        public int HangAutoRecoveryStallSeconds { get; set; } = 12;
+
         // ── First-run UX ─────────────────────────────────────────────────
         /// <summary>
         /// TODO P0 #1 — set to true once the user has dismissed Hub's first-run

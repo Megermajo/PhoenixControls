@@ -32,6 +32,12 @@ namespace Phoenix.Controls.Hub.Core
         private const string CaptureFilePrefix = "ui-hang-stacks-";
         private static readonly TimeSpan CaptureFileMaxAge = TimeSpan.FromDays(14);
 
+        /// <summary>Structured capture — the text block plus the UI thread's own
+        /// frames, so a single snapshot feeds both the .txt file and the freeze
+        /// report's cause synthesis (a second snapshot would double the cost and
+        /// risk two concurrent process reads).</summary>
+        public sealed record CaptureResult(string Text, IReadOnlyList<string> UiThreadFrames);
+
         /// <summary>
         /// Capture every managed thread's stack into one diagnostic text block.
         /// <paramref name="uiManagedThreadId"/> / <paramref name="uiOsThreadId"/>
@@ -40,6 +46,13 @@ namespace Phoenix.Controls.Hub.Core
         /// wanting the guarded form route through <see cref="TryCaptureToFile"/>.
         /// </summary>
         public static string CaptureText(string reason, int uiManagedThreadId, uint uiOsThreadId)
+            => Capture(reason, uiManagedThreadId, uiOsThreadId).Text;
+
+        /// <summary>
+        /// As <see cref="CaptureText"/>, but also returns the UI thread's own
+        /// frames (top-of-stack first) for the freeze report. One snapshot.
+        /// </summary>
+        public static CaptureResult Capture(string reason, int uiManagedThreadId, uint uiOsThreadId)
         {
             var sb = new StringBuilder(64 * 1024);
             sb.AppendLine("Phoenix Controls UI-hang stack capture");
@@ -109,7 +122,12 @@ namespace Phoenix.Controls.Hub.Core
                 sb.AppendLine();
             }
 
-            return sb.ToString();
+            // Hand the UI thread's own frames back for the freeze-report cause
+            // synthesis (top-of-stack first). Empty when the UI thread wasn't
+            // matched (unknown id) or had no managed frames.
+            var uiEntry = entries.FirstOrDefault(e => e.IsUi);
+            IReadOnlyList<string> uiFrames = uiEntry.Frames ?? Array.Empty<string>();
+            return new CaptureResult(sb.ToString(), uiFrames);
         }
 
         /// <summary>
@@ -125,6 +143,26 @@ namespace Phoenix.Controls.Hub.Core
             try
             {
                 string text = CaptureText(reason, uiManagedThreadId, uiOsThreadId);
+                return TryWriteText(directory, text, out error);
+            }
+            catch (Exception ex)
+            {
+                string detail = ex.ToString();
+                error = detail.Length > 600 ? detail[..600] : detail;
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Write pre-captured stack text into <paramref name="directory"/> as
+        /// <c>ui-hang-stacks-*.txt</c> and prune old siblings. Lets a caller that
+        /// already ran <see cref="Capture"/> (to reuse its UI frames) persist the
+        /// text without a second snapshot. Returns the path or null; never throws.
+        /// </summary>
+        public static string? TryWriteText(string directory, string text, out string? error)
+        {
+            try
+            {
                 Directory.CreateDirectory(directory);
                 string path = Path.Combine(
                     directory, $"{CaptureFilePrefix}{DateTime.Now:yyyyMMdd-HHmmss-fff}.txt");
