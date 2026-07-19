@@ -6,9 +6,9 @@ using Windows.System;
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
 /// <summary>
-/// Disables a menu bar's conflicting <see cref="KeyboardAccelerator"/>s while
-/// a text-input control holds keyboard focus, and re-enables them the moment
-/// focus moves on.
+/// Disables a menu bar's conflicting <see cref="KeyboardAccelerator"/>s while a
+/// text-input control holds keyboard focus OR an Architect inline editor is
+/// open (<see cref="InlineEditGate"/>), and re-enables them once both clear.
 /// <para>
 /// WHY: a WinUI accelerator is window-scoped and matches regardless of which
 /// control has focus. The Architect chrome advertises bare-letter chords
@@ -24,6 +24,11 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 /// keystroke reaches the focused text box completely untouched. The
 /// per-accelerator Invoked focus gate (OnMenuAcceleratorInvoked in the chrome
 /// / sibling window) stays as a backstop for the focus-transition race.
+/// Additionally, under Architect's XAML-Islands hosting FocusManager does not
+/// reliably report the canvas value-pill's TextBox as focused, so this gate
+/// ALSO closes on the focus-independent <see cref="InlineEditGate"/> signal
+/// (set the instant an inline edit begins) — otherwise bare F / Ctrl+Z / … kept
+/// firing while the user was still typing in a pill (Majo report).
 /// </para>
 /// <para>
 /// Ctrl+S / Ctrl+Shift+S / Ctrl+O stay enabled while typing — parity with the
@@ -42,6 +47,11 @@ internal sealed class MenuAcceleratorFocusGate
 
     private readonly List<KeyboardAccelerator> _gated = new();
     private bool _hooked;
+    // Last focus verdict from OnGotFocus. Combined with InlineEditGate.IsActive
+    // (the focus-independent "an inline editor is open" signal) so the gate
+    // stays closed even when FocusManager fails to report the canvas pill's
+    // TextBox as focused under Architect's XAML-Islands hosting. See InlineEditGate.
+    private bool _typingFocus;
 
     /// <summary>
     /// Collect the gated accelerators from <paramref name="menuBar"/> (all of
@@ -58,8 +68,13 @@ internal sealed class MenuAcceleratorFocusGate
         if (!_hooked)
         {
             FocusManager.GotFocus += OnGotFocus;
+            InlineEditGate.Changed += OnInlineEditChanged;
             _hooked = true;
         }
+        // Freshly-collected accelerators must reflect the current gate state —
+        // an inline edit may already be open across a re-attach (pillar-tab
+        // switch), and a stale IsEnabled would let the chord through.
+        ReevaluateEnabled();
     }
 
     /// <summary>
@@ -73,8 +88,10 @@ internal sealed class MenuAcceleratorFocusGate
         if (_hooked)
         {
             FocusManager.GotFocus -= OnGotFocus;
+            InlineEditGate.Changed -= OnInlineEditChanged;
             _hooked = false;
         }
+        _typingFocus = false;
         foreach (var a in _gated) a.IsEnabled = true;
         _gated.Clear();
     }
@@ -98,9 +115,22 @@ internal sealed class MenuAcceleratorFocusGate
     {
         // AutoSuggestBox surfaces its inner TextBox as the focused element, so
         // the TextBox arm covers it too.
-        bool typing = e.NewFocusedElement
+        _typingFocus = e.NewFocusedElement
             is TextBox or RichEditBox or PasswordBox or NumberBox or AutoSuggestBox;
+        ReevaluateEnabled();
+    }
+
+    // Re-evaluated on inline-edit begin/end — the moment FocusManager's (here
+    // unreliable) focus signal would otherwise miss a canvas pill edit.
+    private void OnInlineEditChanged(object? sender, System.EventArgs e) => ReevaluateEnabled();
+
+    // A gated accelerator is disabled while EITHER a text input holds focus OR
+    // an Architect inline editor is open. A disabled accelerator never matches,
+    // so the keystroke reaches the field untouched instead of firing the chord.
+    private void ReevaluateEnabled()
+    {
+        bool disable = _typingFocus || InlineEditGate.IsActive;
         foreach (var a in _gated)
-            a.IsEnabled = !typing;
+            a.IsEnabled = !disable;
     }
 }

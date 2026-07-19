@@ -1922,9 +1922,18 @@ namespace Phoenix.Controls.Hub.Core
             // still receives the original "Twitch.Resub" so {user.tier}/{user.sub_months}
             // resolve from the resub payload.
             bool isResub = eventType.Equals("Twitch.Resub", StringComparison.OrdinalIgnoreCase);
+            // Unified stream-lifecycle triggers: a Twitch/YouTube/Kick stream
+            // on/off event ALSO fires any Stream.GoingLive / Stream.SessionEnd node
+            // (on_go_live / on_session_end), in addition to the per-platform
+            // on_event(...) catalog nodes above. The engine gates each block by the
+            // firing platform and debounces it per instance, so a simultaneous
+            // multi-platform go-live fires each unified node once.
+            var streamKind = StreamLifecycle.KindForEvent(eventType);
             foreach (var info in ScriptRegistry.Instance.WhereEnabled(s =>
                 s.EventTypes.Contains(matchType)
-                || (isResub && s.EventTypes.Contains("Twitch.Sub"))))
+                || (isResub && s.EventTypes.Contains("Twitch.Sub"))
+                || (streamKind == StreamLifecycle.Kind.GoingLive  && s.HasGoLiveHeader)
+                || (streamKind == StreamLifecycle.Kind.SessionEnd && s.HasSessionEndHeader)))
             {
                 try
                 {
@@ -1932,6 +1941,12 @@ namespace Phoenix.Controls.Hub.Core
                     if (string.IsNullOrEmpty(content)) continue;
 
                     var vars = BuildGenericEventVars(eventType, data);
+                    // Stream.GoingLive / Stream.SessionEnd Title + Category pins.
+                    // (BuildGenericEventVars already sets user.platform for the
+                    // Platform pin, but maps data.title → user.reward, so title /
+                    // category are extracted here under their own tokens.)
+                    if (streamKind != StreamLifecycle.Kind.None)
+                        ApplyStreamLifecycleVars(eventType, data, vars);
 
                     string fn = info.FileName;
                     var slot = await AcquireEventSlotAsync(fn).ConfigureAwait(false);
@@ -2551,6 +2566,56 @@ namespace Phoenix.Controls.Hub.Core
         // so Phoenix.Controls.Tests (covered by InternalsVisibleTo in
         // Phoenix.Controls.Hub.csproj) can round-trip each sub/gift/raid variant
         // through the var-mapping without spinning the full ScriptManager.
+        // Bind the Title + Category pins for the unified stream-lifecycle nodes
+        // (Stream.GoingLive / Stream.SessionEnd) → {event.title} / {event.category}.
+        // The three platforms publish these under different shapes, so probe
+        // defensively (SB ships no WS payload schema — missing fields stay unset,
+        // matching PlatformEventVarResolver): Kick.StreamOnline carries a flat
+        // "title" + nested "category.name"; YouTube.Broadcast* nests
+        // "broadcast.title"; Twitch.StreamOnline carries neither. Both tokens
+        // default to "" so a platform that omits them resolves the pin to empty
+        // rather than leaking the raw {event.title} token downstream.
+        internal static void ApplyStreamLifecycleVars(string eventType, System.Text.Json.JsonElement data, Dictionary<string, string> vars)
+        {
+            vars["event.title"]    = string.Empty;
+            vars["event.category"] = string.Empty;
+            if (data.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+
+            // Title: flat "title" (Kick) → nested "broadcast.title" (YouTube).
+            string? title = StreamReadJsonString(data, "title");
+            if (string.IsNullOrEmpty(title)
+                && data.TryGetProperty("broadcast", out var broadcast))
+                title = StreamReadJsonString(broadcast, "title");
+            if (!string.IsNullOrEmpty(title))
+                vars["event.title"] = title;
+
+            // Category: nested "category.name" (Kick) → flat "category" fallback.
+            if (data.TryGetProperty("category", out var cat))
+            {
+                string? category = cat.ValueKind == System.Text.Json.JsonValueKind.Object
+                    ? StreamReadJsonString(cat, "name")
+                    : (cat.ValueKind == System.Text.Json.JsonValueKind.String ? cat.GetString() : null);
+                if (!string.IsNullOrEmpty(category))
+                    vars["event.category"] = category;
+            }
+        }
+
+        // Reads a string property (or a number / bool as its text) off a JSON
+        // object, returning null when the object/property is absent or null-valued.
+        private static string? StreamReadJsonString(System.Text.Json.JsonElement obj, string name)
+        {
+            if (obj.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (!obj.TryGetProperty(name, out var el)) return null;
+            return el.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.String => el.GetString(),
+                System.Text.Json.JsonValueKind.Number => el.ToString(),
+                System.Text.Json.JsonValueKind.True   => "true",
+                System.Text.Json.JsonValueKind.False  => "false",
+                _ => null,
+            };
+        }
+
         internal static Dictionary<string, string> BuildGenericEventVars(string eventType, System.Text.Json.JsonElement data)
         {
             var vars = new Dictionary<string, string>();

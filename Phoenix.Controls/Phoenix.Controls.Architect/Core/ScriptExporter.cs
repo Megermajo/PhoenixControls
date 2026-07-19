@@ -508,6 +508,13 @@ namespace Phoenix.Controls.Architect.Core
                 ProcessChatMessageEventNode(node);
                 return;
             }
+            // Unified stream-lifecycle triggers — platform checkmarks like
+            // Chat.Message, but emitting on_go_live(...) / on_session_end(...).
+            if (node.Title == "Stream.GoingLive" || node.Title == "Stream.SessionEnd")
+            {
+                ProcessStreamLifecycleEventNode(node);
+                return;
+            }
             // Bus.OnMessage may need a Source/Target wildcard guard injected
             // between the on_bus header and the body. Done in a dedicated method
             // so the surrounding switch stays readable.
@@ -649,6 +656,45 @@ namespace Phoenix.Controls.Architect.Core
             {
                 FollowNamedOutput(node, "Flow", 1);
             }
+        }
+
+        // Unified stream-lifecycle trigger (Stream.GoingLive / Stream.SessionEnd).
+        // Mirrors ProcessChatMessageEventNode: the Twitch / YouTube / Kick bool
+        // checkmarks select which platforms' go-live / session-end events enter
+        // the block. Unlike on_chat there is no legacy bare form to preserve, so
+        // the platform list is ALWAYS explicit — e.g.
+        // "on_go_live(twitch, youtube, kick):". The engine gates entry by the
+        // firing event's platform (ShouldEnterBlock) and debounces the block per
+        // instance (StreamLifecycle.CooldownSeconds). StreamLifecycle owns the
+        // header spelling; ChatPlatforms owns the platform-token spelling.
+        private void ProcessStreamLifecycleEventNode(Node node)
+        {
+            _nodeResultVars.Clear();
+            _varNameCounters.Clear();
+
+            static bool ParseBoolAttr(string raw) =>
+                raw.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+            bool twitch  = ParseBoolAttr(node.GetAttr("Twitch",  "true"));
+            bool youtube = ParseBoolAttr(node.GetAttr("YouTube", "true"));
+            bool kick    = ParseBoolAttr(node.GetAttr("Kick",    "true"));
+
+            string header = node.Title == "Stream.SessionEnd"
+                ? Phoenix.Controls.Shared.Core.StreamLifecycle.SessionEndHeader
+                : Phoenix.Controls.Shared.Core.StreamLifecycle.GoLiveHeader;
+
+            if (!twitch && !youtube && !kick)
+            {
+                _sb.AppendLine($"# WARNING: {node.Title} node (id {IdPrefix(node, 8)}) has no platform enabled — block skipped");
+                return;
+            }
+
+            var platforms = new List<string>(3);
+            if (twitch)  platforms.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch);
+            if (youtube) platforms.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.YouTube);
+            if (kick)    platforms.Add(Phoenix.Controls.Shared.Core.ChatPlatforms.Kick);
+            _sb.AppendLine($"{header}({string.Join(", ", platforms)}):");
+
+            FollowNamedOutput(node, "Flow", 1);
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -1229,6 +1275,19 @@ namespace Phoenix.Controls.Architect.Core
                 {
                     if (srcSocket.Name == "Body") return "{event.body}";
                     if (srcSocket.Name == "Path") return "{event.path}";
+                }
+                // Stream.GoingLive / Stream.SessionEnd outputs. Platform → the
+                // shared {user.platform} token (bound by BuildGenericEventVars from
+                // the event-type prefix — same pin semantics as Chat.Message's
+                // Platform). Title / Category → {event.title} / {event.category},
+                // bound by the Hub dispatch (ApplyStreamLifecycleVars). Explicit so
+                // Platform doesn't fall through to the generic {event.platform}
+                // default, which nothing binds.
+                if (src.Title == "Stream.GoingLive" || src.Title == "Stream.SessionEnd")
+                {
+                    if (srcSocket.Name == "Platform") return "{user.platform}";
+                    if (srcSocket.Name == "Title")    return "{event.title}";
+                    if (srcSocket.Name == "Category") return "{event.category}";
                 }
                 // System.Hotkey's Combo socket maps to event.combo
                 // (set by ScriptManager.ExecuteOnHotkeyScriptsAsync alongside

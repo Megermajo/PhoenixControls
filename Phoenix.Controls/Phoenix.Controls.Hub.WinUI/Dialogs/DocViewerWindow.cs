@@ -80,6 +80,11 @@ public sealed class DocViewerWindow : Window
         Closed += (_, _) =>
         {
             try { PersistGeometry(); } catch { /* best-effort */ }
+            // Tear down the hosted WebView2 explicitly so its msedgewebview2.exe
+            // browser child exits with the window instead of lingering as an
+            // orphan that keeps the WebView2 user-data folder open. Close() is
+            // the WinUI WebView2's controller-shutdown entry point.
+            try { Web.Close(); } catch { /* already torn down */ }
             if (ReferenceEquals(s_instance, this)) s_instance = null;
         };
 
@@ -115,6 +120,17 @@ public sealed class DocViewerWindow : Window
             // the next request can recover with a fresh window.
             s_instance = null;
         }
+    }
+
+    /// <summary>
+    /// Close the doc viewer (and its WebView2) if it is open. Called on Hub
+    /// shutdown so the browser child is torn down before <c>Environment.Exit</c>
+    /// rather than being orphaned into the install tree. No-op when nothing is
+    /// open; never throws.
+    /// </summary>
+    public static void CloseIfOpen()
+    {
+        try { s_instance?.Close(); } catch { /* shutdown best-effort */ }
     }
 
     private async System.Threading.Tasks.Task InitCoreAsync()

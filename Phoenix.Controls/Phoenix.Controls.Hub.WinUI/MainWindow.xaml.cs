@@ -266,6 +266,14 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     {
         // Step 1 — synchronous detaches. These are cheap and must run on
         // the UI thread before the message pump exits.
+
+        // Close the doc/changelog viewer's WebView2 first so its
+        // msedgewebview2.exe browser child exits with us instead of being
+        // orphaned into the install tree (an orphan there locks the folder the
+        // next auto-update renames aside). Cheap and synchronous.
+        try { Phoenix.Controls.Hub.WinUI.Dialogs.DocViewerWindow.CloseIfOpen(); }
+        catch (Exception ex) { GlobalLogger.Error("MainWindow", "DocViewerWindow.CloseIfOpen", ex); }
+
         try { _hubWorkspace.Dispose(); } catch (Exception ex) { GlobalLogger.Error("MainWindow", "_hubWorkspace.Dispose", ex); }
 
         // Tear down the persistent pillar bus links at

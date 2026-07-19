@@ -2227,6 +2227,11 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         // EnterImmediateEdit's same-node early-return (the node vanished and
         // the editor focused a detached subtree on the next pill edit).
         ExitImmediateEdit();
+        // Clearing every node view closes every inline editor (they live inside
+        // NodeViews). Force the accelerator gate inactive so a view-model
+        // discarded mid-edit can't leave InlineEditGate stuck "on" (which would
+        // wedge the menu chords disabled until restart). See InlineEditGate.
+        InlineEditGate.Reset();
         // Unsubscribe via the authoritative tracking set —
         // _nodeViews no longer holds proxy-only nodes (lazy full views), so
         // iterating it alone would leak their PropertyChanged subscriptions.

@@ -170,6 +170,11 @@ namespace Phoenix.Controls.Architect.Core
                 ["Twitch.Follow"]           = new[] { "user.name" },
                 ["Twitch.PointRedeem"]      = new[] { "user.name", "user.reward", "user.input" },
                 ["YouTube.Message"]         = new[] { "user.name", "user.message" },
+                // Unified stream-lifecycle triggers — the firing platform + the
+                // best-effort stream Title / Category (Hub dispatch binds
+                // user.platform / event.title / event.category).
+                ["Stream.GoingLive"]        = new[] { "user.platform", "event.title", "event.category" },
+                ["Stream.SessionEnd"]       = new[] { "user.platform", "event.title", "event.category" },
                 // Generic events / scheduler / state.
                 // bus.* (not event.*) is the intentional, runtime-correct naming:
                 // Hub's Bus.cs binds bus.type / bus.source / bus.target / bus.payload

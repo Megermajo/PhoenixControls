@@ -615,7 +615,14 @@ public sealed class UpdateRunner
             // from its own directory after the swap.
             if (Directory.Exists(installRoot))
             {
-                Directory.Move(installRoot, backupDir);
+                // The rename fails with a sharing violation if any process still
+                // holds a file open under installRoot — most often an orphaned
+                // msedgewebview2.exe from a prior Hub session whose WebView2
+                // user-data folder lives inside the tree. The retry wrapper asks
+                // the Restart Manager which process is holding it, kills the ones
+                // that are ours, and tries again — so an update no longer needs a
+                // full PC reboot to clear the lock.
+                MoveDirectoryWithUnlockRetry(installRoot, backupDir, lockScopeRoot: installRoot);
                 installRenamed = true;
                 Log($"renamed install -> backup: {backupDir}");
             }
@@ -687,6 +694,51 @@ public sealed class UpdateRunner
             if (Directory.Exists(extractDir))
             {
                 try { Directory.Delete(extractDir, recursive: true); } catch { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// <see cref="Directory.Move"/> with a lock-release retry. On the first
+    /// sharing-violation (a process still holds a file under
+    /// <paramref name="lockScopeRoot"/>), asks the Restart Manager which process
+    /// is responsible, terminates the ones that are ours (orphaned WebView2
+    /// children, leftover suite processes), waits briefly, and retries. Falls
+    /// through to a final throw so the caller's cross-volume / rollback handling
+    /// is unchanged when the lock genuinely can't be cleared. Cross-volume
+    /// <see cref="IOException"/> on the very first attempt still surfaces to the
+    /// caller after the retry budget — the release pass is a no-op there and the
+    /// existing copy fallback takes over.
+    /// </summary>
+    private void MoveDirectoryWithUnlockRetry(string source, string destination, string lockScopeRoot)
+    {
+        // Backoff after each failed attempt; the OS often needs a beat to drop
+        // handles after the holding process is killed.
+        int[] backoffMs = { 250, 600, 1200 };
+        const int maxAttempts = 4; // 1 initial + 3 retries
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                Directory.Move(source, destination);
+                if (attempt > 1) Log($"move succeeded on attempt {attempt} after releasing locks.");
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt >= maxAttempts)
+                {
+                    Log($"move '{source}' -> '{destination}' still blocked after {maxAttempts} attempts: {ex.Message}");
+                    throw; // let the caller's catch handle rollback / cross-volume copy
+                }
+
+                Log($"move blocked (attempt {attempt}/{maxAttempts}): {ex.Message} — asking Restart Manager who holds the tree.");
+                try { InstallRootLock.TryReleaseLockers(lockScopeRoot, Log, SuiteImageNames); }
+                catch (Exception rex) { Log($"lock-release pass threw (ignored): {rex.Message}"); }
+
+                try { System.Threading.Thread.Sleep(backoffMs[Math.Min(attempt - 1, backoffMs.Length - 1)]); }
+                catch { /* ignore */ }
             }
         }
     }

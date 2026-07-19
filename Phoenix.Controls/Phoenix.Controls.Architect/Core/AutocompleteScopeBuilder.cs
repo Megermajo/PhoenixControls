@@ -138,6 +138,13 @@ namespace Phoenix.Controls.Architect.Core
                         "user.color_hex", "user.sub_months",
                         "event.iscommand", "user.platform", "event.message_id");
                     return;
+                // Unified stream-lifecycle triggers — the platform that fired plus
+                // the best-effort stream Title / Category (Hub dispatch binds
+                // user.platform / event.title / event.category).
+                case "Stream.GoingLive":
+                case "Stream.SessionEnd":
+                    AddRange(tokens, "user.platform", "event.title", "event.category");
+                    return;
 
                 // ── Other event sources.
                 case "Bus.OnMessage":

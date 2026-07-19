@@ -848,7 +848,8 @@ public sealed partial class ArchitectSiblingWindow : Window
         Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
         Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (Canvas.TextInputFocusGuard.IsTextInputFocused(Content?.XamlRoot))
+        if (Canvas.TextInputFocusGuard.IsTextInputFocused(Content?.XamlRoot)
+            || Canvas.InlineEditGate.IsActive)
             args.Handled = true;
     }
 

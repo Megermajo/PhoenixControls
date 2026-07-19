@@ -82,6 +82,9 @@
                      BorderBrush="{StaticResource CoalHoverBrush}"
                      BorderThickness="1"
                      CornerRadius="3"
+                     IsSpellCheckEnabled="False"
+                     IsTextPredictionEnabled="False"
+                     PreventKeyboardDisplayOnProgrammaticFocus="True"
                      LostFocus="OnValueBoxLostFocus"
                      KeyDown="OnValueBoxKeyDown" />
         </Grid>

@@ -24,6 +24,18 @@ public partial class App : Application
 
     public App()
     {
+        // Close the WinUI text-input (IME/TSF) nested-message-loop freeze BEFORE
+        // any window exists: ImmDisableIME must run before the first top-level
+        // window's WM_CREATE, and the App constructor is the earliest UI-thread
+        // point. Gated by AppConfig.DisableImeInput (default true). See ImeGuard.
+        ImeGuard.DisableImeInputIfConfigured();
+
+        // Relocate WebView2's user-data folder OUT of the install tree before
+        // anything can spin up a WebView2 (the in-app doc/changelog viewer, the
+        // Visualist preview panels). Must run before the first CoreWebView2 init;
+        // the constructor is the earliest safe point.
+        ConfigureWebView2UserDataFolder();
+
         InitializeComponent();
 
         // Start the on-disk diagnostic log first thing so even a pre-MainWindow
@@ -66,6 +78,48 @@ public partial class App : Application
             }
             catch { }
         };
+    }
+
+    /// <summary>
+    /// Point every in-process WebView2 at a user-data folder under
+    /// <c>%LocalAppData%\PhoenixControls\Hub\WebView2</c> instead of its default
+    /// location next to the exe (<c>{installDir}\…Hub.WinUI.exe.WebView2\</c>).
+    ///
+    /// <para>Why it matters for the auto-updater: the default folder sits INSIDE
+    /// the install tree, and the <c>msedgewebview2.exe</c> browser children keep
+    /// it open. When a Hub session ends abnormally (a freeze-recovery hard-kill,
+    /// or an abrupt <c>Environment.Exit</c>) those children are orphaned and keep
+    /// the tree locked, so the next update's <c>Directory.Move(installRoot →
+    /// .bak)</c> fails until the PC is rebooted. Moving the folder to LocalAppData
+    /// means an orphan can only ever lock scratch state the swap never touches —
+    /// and same-folder WebView2 hosts share one browser process, so the orphan is
+    /// reused rather than blocking. Mirrors what the standalone Viewer already
+    /// does via an explicit environment.</para>
+    ///
+    /// <para>Set through the <c>WEBVIEW2_USER_DATA_FOLDER</c> environment variable
+    /// so it applies to every <c>EnsureCoreWebView2Async()</c> call in the process
+    /// without threading an explicit environment through each host. Best-effort:
+    /// a failure here just leaves WebView2 on its default folder — never blocks
+    /// startup. An operator-supplied value is respected (not overwritten).</para>
+    /// </summary>
+    private static void ConfigureWebView2UserDataFolder()
+    {
+        try
+        {
+            const string EnvVar = "WEBVIEW2_USER_DATA_FOLDER";
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(EnvVar)))
+                return; // respect an explicit override
+
+            string udf = Phoenix.Controls.Shared.Core.Paths.LocalAppData(
+                Path.Combine("Hub", "WebView2"));
+            try { Directory.CreateDirectory(udf); } catch { /* WebView2 creates it if we can't */ }
+            Environment.SetEnvironmentVariable(EnvVar, udf);
+        }
+        catch (Exception ex)
+        {
+            try { GlobalLogger.Error("App", "ConfigureWebView2UserDataFolder", ex); }
+            catch { /* logger not up yet — ignore */ }
+        }
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)

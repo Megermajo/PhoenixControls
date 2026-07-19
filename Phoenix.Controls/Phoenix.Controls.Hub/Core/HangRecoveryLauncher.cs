@@ -4,9 +4,11 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using Phoenix.Controls.Shared.Core;
+using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 // 'Process' binds to a Phoenix type in this namespace — alias the BCL one
 // (same convention as PillarBootstrap).
@@ -118,6 +120,16 @@ namespace Phoenix.Controls.Hub.Core
                         "Process.Start returned null — NOT terminating self; the app stays up (frozen).");
                     return false;
                 }
+
+                // Before hard-killing ourselves, terminate our own WebView2
+                // browser children (msedgewebview2.exe). A bare self-Kill can't
+                // take entireProcessTree (the CLR forbids killing the current
+                // process's own tree), so those children would be orphaned — and
+                // their WebView2 user-data folder sits inside the install tree,
+                // which then blocks the next auto-update's swap until a reboot.
+                // Best-effort; never blocks the relaunch.
+                try { KillOwnWebViewChildren(selfPid); }
+                catch (Exception ex) { GlobalLogger.Error("HangRecovery", "KillOwnWebViewChildren", ex); }
 
                 // Hard-kill (not Environment.Exit): the UI thread is wedged, so a
                 // graceful shutdown would deadlock on it. Kill releases the named
@@ -244,5 +256,85 @@ namespace Phoenix.Controls.Hub.Core
             }
             catch { /* best-effort */ }
         }
+
+        // ── WebView2 child cleanup (freeze-recovery path) ───────────────────
+
+        private const string WebViewImageFile = "msedgewebview2.exe";
+
+        /// <summary>
+        /// Terminate the WebView2 browser children (<c>msedgewebview2.exe</c>)
+        /// whose parent is <paramref name="selfPid"/>, so a self-<see cref="SysProcess.Kill()"/>
+        /// on the wedged UI process doesn't strand them holding the install tree.
+        /// Uses a Toolhelp process snapshot to find direct children by parent PID
+        /// (the BCL exposes no parent-PID accessor). Best-effort; every step is
+        /// guarded so this can never break the relaunch it precedes.
+        /// </summary>
+        private static void KillOwnWebViewChildren(int selfPid)
+        {
+            var childPids = new List<int>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snapshot == IntPtr.Zero || snapshot == INVALID_HANDLE_VALUE) return;
+            try
+            {
+                var entry = new PROCESSENTRY32 { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32>() };
+                if (Process32First(snapshot, ref entry))
+                {
+                    do
+                    {
+                        if (entry.th32ParentProcessID == (uint)selfPid
+                            && string.Equals(entry.szExeFile, WebViewImageFile, StringComparison.OrdinalIgnoreCase))
+                        {
+                            childPids.Add((int)entry.th32ProcessID);
+                        }
+                    }
+                    while (Process32Next(snapshot, ref entry));
+                }
+            }
+            finally { CloseHandle(snapshot); }
+
+            foreach (int pid in childPids)
+            {
+                try
+                {
+                    using var child = SysProcess.GetProcessById(pid);
+                    child.Kill(entireProcessTree: true);
+                    GlobalLogger.Log($"Freeze-recovery: terminated orphan-prone WebView2 child pid {pid}.",
+                        "HangRecovery", LogLevel.System);
+                }
+                catch (ArgumentException) { /* already gone */ }
+                catch (Exception ex) { GlobalLogger.Error("HangRecovery", $"kill WebView2 child pid {pid}", ex); }
+            }
+        }
+
+        private const uint TH32CS_SNAPPROCESS = 0x00000002;
+        private static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr hObject);
     }
 }

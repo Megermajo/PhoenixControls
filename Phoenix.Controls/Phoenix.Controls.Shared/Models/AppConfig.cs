@@ -43,6 +43,22 @@ namespace Phoenix.Controls.Shared.Models
         public bool   AutoStart       { get; set; } = true;
 
         /// <summary>
+        /// Disable the Windows IME / Text Services Framework input path process-wide
+        /// at startup (via <c>ImmDisableIME</c>). Default <c>true</c>. Closes a
+        /// confirmed WinUI 3 UI-thread freeze: when an inline TextBox editor gains
+        /// focus during canvas interaction (Architect node editing under pan/zoom),
+        /// the <c>msctf</c> / <c>TextServicesHost</c> IME window procedure can enter a
+        /// nested message loop that never exits, hanging the app 8–15s with no
+        /// self-recovery (see <c>ImeGuard</c>; microsoft-ui-xaml #9216 / Chromium
+        /// #328859185). Latin-script keyboards — including German QWERTZ (ä/ö/ü/ß are
+        /// direct keys, not IME composition) — are unaffected; only CJK-style
+        /// composition is turned off. Set <c>false</c> ONLY if you must type via an
+        /// IME into node/value fields (the freeze risk returns). Read very early in
+        /// App startup, so a change applies on next launch.
+        /// </summary>
+        public bool   DisableImeInput { get; set; } = true;
+
+        /// <summary>
         /// Named webhook registry.
         /// Key = friendly name used in scripts (e.g. "discord_alerts").
         /// Value = full webhook URL.

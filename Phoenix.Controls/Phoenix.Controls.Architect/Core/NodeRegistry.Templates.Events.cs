@@ -73,6 +73,42 @@ namespace Phoenix.Controls.Architect.Core
                     { "Kick",     "true" }
                 });
 
+            // Unified multi-platform stream-lifecycle triggers — one node fires
+            // whenever the broadcaster goes live / ends the session on ANY of the
+            // checked platforms. Same checkmark pattern as Chat.Message: the
+            // Twitch / YouTube / Kick bool attrs render as ☑/☐ rows on the node
+            // body (the generic MiddleAttributeViewModel path — no per-node UI
+            // code) and default all-on. ScriptExporter.ProcessStreamLifecycleEventNode
+            // emits on_go_live(<platforms>): / on_session_end(<platforms>):; the
+            // engine gates the block by the firing event's platform and applies a
+            // per-instance 10s cooldown so a simultaneous multi-stream go-live
+            // fires each node once (StreamLifecycle is the single-source map).
+            // Platform → {user.platform}, Title → {event.title},
+            // Category → {event.category}; all populated by the Hub dispatch.
+            // Additive to the existing per-platform stream events (Kick.StreamOnline,
+            // YouTube.BroadcastStarted/Ended, …), which keep their own on_event path.
+            AddTemplate("Stream.GoingLive",    "Events", Color.OrangeRed,
+                Localizer.T("architect.node.bubble.stream_goinglive"),
+                null,
+                new[] { ("Flow", ColExec), ("Platform", ColString), ("Title", ColString), ("Category", ColString) },
+                new Dictionary<string, string>
+                {
+                    { "Twitch",  "true" },
+                    { "YouTube", "true" },
+                    { "Kick",    "true" }
+                });
+
+            AddTemplate("Stream.SessionEnd",   "Events", Color.SlateGray,
+                Localizer.T("architect.node.bubble.stream_sessionend"),
+                null,
+                new[] { ("Flow", ColExec), ("Platform", ColString), ("Title", ColString), ("Category", ColString) },
+                new Dictionary<string, string>
+                {
+                    { "Twitch",  "true" },
+                    { "YouTube", "true" },
+                    { "Kick",    "true" }
+                });
+
             AddTemplate("Twitch.Subscription", "Events", Color.ForestGreen,
                 Localizer.T("architect.node.bubble.twitch_subscription"),
                 null,

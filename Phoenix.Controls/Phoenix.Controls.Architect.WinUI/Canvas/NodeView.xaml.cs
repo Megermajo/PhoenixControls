@@ -1642,8 +1642,10 @@ public sealed partial class NodeView : UserControl
         // Accelerators are window-scoped and fire regardless of keyboard
         // focus — F2 while the user is typing in a pill / rename box /
         // inspector field must not yank the session into a different rename
-        // (same focus-gate contract as the chrome menu accelerators).
-        if (TextInputFocusGuard.IsTextInputFocused(XamlRoot))
+        // (same focus-gate contract as the chrome menu accelerators). Also gate
+        // on InlineEditGate: FocusManager doesn't reliably report the canvas
+        // pill's TextBox under XAML-Islands hosting, so focus alone let F2 leak.
+        if (TextInputFocusGuard.IsTextInputFocused(XamlRoot) || InlineEditGate.IsActive)
         {
             args.Handled = true;
             return;

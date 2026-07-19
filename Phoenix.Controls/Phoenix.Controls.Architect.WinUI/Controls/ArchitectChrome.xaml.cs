@@ -296,7 +296,8 @@ public sealed partial class ArchitectChrome : UserControl
         Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
         Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (Canvas.TextInputFocusGuard.IsTextInputFocused(XamlRoot))
+        if (Canvas.TextInputFocusGuard.IsTextInputFocused(XamlRoot)
+            || Canvas.InlineEditGate.IsActive)
             args.Handled = true;
     }
 

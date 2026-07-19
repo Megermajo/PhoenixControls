@@ -162,7 +162,10 @@ public sealed class MiddleAttributeViewModel : ObservableObject
     public bool IsEditing
     {
         get => _isEditing;
-        set => SetField(ref _isEditing, value);
+        // Report the open/close transition to InlineEditGate so the window's
+        // menu accelerators disable while this middle-attr editor is up
+        // (focus-independent — see SocketViewModel.IsEditing / InlineEditGate).
+        set { if (SetField(ref _isEditing, value)) { if (value) InlineEditGate.Enter(); else InlineEditGate.Exit(); } }
     }
 
     /// <summary>

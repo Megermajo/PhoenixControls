@@ -833,7 +833,11 @@ public sealed class SocketViewModel : ObservableObject
     public bool IsEditing
     {
         get => _isEditing;
-        set => SetField(ref _isEditing, value);
+        // Report the open/close transition to InlineEditGate so the window's
+        // menu accelerators (bare F, Ctrl+Z, …) disable while this pill editor
+        // is up — focus-independent, so it holds even mid-typing where
+        // FocusManager doesn't report the pill's TextBox under XAML-Islands hosting.
+        set { if (SetField(ref _isEditing, value)) { if (value) InlineEditGate.Enter(); else InlineEditGate.Exit(); } }
     }
 
     private bool _isRenaming;
@@ -845,7 +849,10 @@ public sealed class SocketViewModel : ObservableObject
     public bool IsRenaming
     {
         get => _isRenaming;
-        set => SetField(ref _isRenaming, value);
+        // Same InlineEditGate reporting as IsEditing — a label rename box is
+        // an inline editor too, so the canvas hotkeys must stay suppressed
+        // while it is open (Esc/Enter both route through the setter to false).
+        set { if (SetField(ref _isRenaming, value)) { if (value) InlineEditGate.Enter(); else InlineEditGate.Exit(); } }
     }
 
     // ─── 0.10.0 inline-edit baseline tracking ───────────────────────────
@@ -1059,6 +1066,25 @@ public sealed class SocketViewModel : ObservableObject
         OnPropertyChanged(nameof(MeasuredRowCenterY));
     }
     public double MeasuredRowCenterY => _measuredRowCenterY;
+
+    /// <summary>
+    /// Drop the measured row-centre back to the "no measurement" sentinel so
+    /// <see cref="Anchor"/> reverts to the static <see cref="NodeGeometry"/>
+    /// estimate. Called (together with <c>SocketRenderState.Forget</c>) when the
+    /// GPU-canvas edit overlay tears down — the measured value is only
+    /// trustworthy WHILE a NodeView is mounted (it is captured against the
+    /// editor-TextBox layout, subject to commit/exit timing), so once the node
+    /// goes back to being GPU-drawn the dynamic estimate — which the body
+    /// outline also uses — is the authoritative, self-consistent source. Leaving
+    /// the stale value behind is what left "bubbles"/wires drifting after a
+    /// multi-line pill edit until an app restart re-GUID'd the sockets.
+    /// </summary>
+    public void ClearMeasuredRowCenterY()
+    {
+        if (_measuredRowCenterY == 0) return;
+        _measuredRowCenterY = 0;
+        OnPropertyChanged(nameof(MeasuredRowCenterY));
+    }
 
     /// <summary>
     /// Anchor point (node-relative) where wires terminate against this socket's pin.

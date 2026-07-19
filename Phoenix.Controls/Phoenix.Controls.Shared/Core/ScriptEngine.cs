@@ -144,6 +144,12 @@ namespace Phoenix.Controls.Shared.Core
         {
             "on_event(",
             "on_chat",
+            // Unified multi-platform stream-lifecycle triggers. Always carry an
+            // explicit platform list, e.g. on_go_live(twitch, youtube, kick):.
+            // Gated by platform + per-instance-debounced in ShouldEnterBlock /
+            // ExecuteBlock (see StreamLifecycle).
+            "on_go_live(",
+            "on_session_end(",
             "on_startup",
             "on_bus(",
             "on_webhook(",
@@ -232,6 +238,54 @@ namespace Phoenix.Controls.Shared.Core
         public ScriptEngine(IScriptDb db)
         {
             _db = db ?? throw new ArgumentNullException(nameof(db));
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Stream-lifecycle per-instance cooldown.
+        // on_go_live / on_session_end blocks debounce so a simultaneous
+        // multi-platform go-live — a burst of Twitch/YouTube/Kick on/off events
+        // arriving within seconds — fires each placed node ONCE, not once per
+        // platform. Key = (scriptFile | header-line-index | kind): stable across
+        // the separate per-event executions that make up one burst, and distinct
+        // per node instance (two go-live nodes in one graph export to two headers
+        // at different line indices → independent cooldowns). State lives on the
+        // engine instance (shared across executions) and is guarded for atomic
+        // check-and-set. The clock is the IClock seam so tests advance a
+        // VirtualClock instead of burning wall-clock time.
+        // ─────────────────────────────────────────────────────────────────
+        internal IClock StreamClock { get; set; } = SystemClock.Instance;
+        private readonly object _streamCooldownLock = new();
+        private readonly Dictionary<string, DateTime> _streamCooldownLastFire = new(StringComparer.Ordinal);
+
+        /// <summary>Test seam — clears all stream-lifecycle cooldown state.</summary>
+        internal void ResetStreamCooldowns()
+        {
+            lock (_streamCooldownLock) _streamCooldownLastFire.Clear();
+        }
+
+        // True when the header opens a stream-lifecycle block. Cheap prefix test
+        // used at the block-entry site in ExecuteBlock.
+        private static bool IsStreamLifecycleHeader(string line) =>
+            line.StartsWith(StreamLifecycle.GoLiveHeader, StringComparison.Ordinal) ||
+            line.StartsWith(StreamLifecycle.SessionEndHeader, StringComparison.Ordinal);
+
+        // Atomic check-and-set of the per-instance debounce. Returns true (and
+        // records the fire) when the block is clear to enter; false when a fire
+        // for this same instance happened within CooldownSeconds. Called only
+        // AFTER ShouldEnterBlock's platform gate passes.
+        private bool TryPassStreamCooldown(string headerLine, int headerLineIndex)
+        {
+            DateTime now = StreamClock.UtcNow;
+            string kind = headerLine.StartsWith(StreamLifecycle.GoLiveHeader, StringComparison.Ordinal) ? "gl" : "se";
+            string key = (ScriptFile ?? string.Empty) + "|" + headerLineIndex + "|" + kind;
+            var window = TimeSpan.FromSeconds(StreamLifecycle.CooldownSeconds);
+            lock (_streamCooldownLock)
+            {
+                if (_streamCooldownLastFire.TryGetValue(key, out var last) && now - last < window)
+                    return false;
+                _streamCooldownLastFire[key] = now;
+                return true;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -900,6 +954,14 @@ namespace Phoenix.Controls.Shared.Core
             {
                 if (ShouldEnterBlock(line, vars))
                 {
+                    // Per-instance stream-lifecycle debounce: an on_go_live /
+                    // on_session_end block fires at most once per CooldownSeconds
+                    // per node, so a simultaneous multi-platform go-live burst
+                    // triggers each placed node once rather than once per platform.
+                    // These headers carry no else/timeout clause, so a cooled-down
+                    // block is simply skipped past.
+                    if (IsStreamLifecycleHeader(line) && !TryPassStreamCooldown(line, i))
+                        return FindBlockEnd(lines, i, indent) + 1;
                     int blockEnd = FindBlockEnd(lines, i, indent);
                     await ExecuteBlock(lines, i + 1, blockEnd, indent + 1, vars);
                     // A TAKEN if/elif consumes its whole ladder: subsequent

@@ -317,6 +317,26 @@ public sealed partial class LogicCanvasView
         _realizedNodes.Remove(vm);
         _nodeRowHeightsCache.Remove(vm);        // sockets/pills may have been edited while mounted
         NodeGeometry.MarkGeometryDirty(vm.Id);  // static geometry gate — same reason
+        // Drop this node's per-socket MEASURED row-centre Y. It was captured
+        // against the mounted editor-TextBox layout (with commit/exit timing
+        // races), and the GPU renderer + pin overlay + wire anchors all PREFER
+        // it over the dynamic estimate — so a stale value left the pins/labels/
+        // wires drifting off the (freshly re-measured) body after a multi-line
+        // pill edit, until an app restart re-GUID'd the sockets. Now the node is
+        // GPU-drawn again, the dynamic estimate (which the body outline also
+        // uses) is the authoritative, self-consistent source, so revert to it.
+        foreach (var s in vm.Inputs)
+        {
+            SocketRenderState.Forget(s.Id);
+            s.ClearMeasuredRowCenterY();
+        }
+        foreach (var s in vm.Outputs)
+        {
+            SocketRenderState.Forget(s.Id);
+            s.ClearMeasuredRowCenterY();
+        }
+        // Recompute the wires terminating on this node with the reverted anchors.
+        _vm?.MarkNodeLinksDirty(vm.Id);
         MarkSceneDirty();
         ImmediateCanvas?.Invalidate();          // GPU path draws the node again
     }

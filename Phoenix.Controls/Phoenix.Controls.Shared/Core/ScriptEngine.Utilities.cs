@@ -162,6 +162,33 @@ namespace Phoenix.Controls.Shared.Core
                 }
                 return false;
             }
+            // on_go_live(...) / on_session_end(...) — unified stream-lifecycle
+            // triggers. Enter when the firing event's platform is in the header's
+            // list AND the event kind matches the header (a going-live event never
+            // enters a session-end block, and vice versa). Empty EventType stays
+            // permissive (direct/test invocations). The per-instance 10s debounce
+            // is enforced separately in ExecuteBlock — this method only decides
+            // platform/kind eligibility. StreamLifecycle owns the event↔platform↔kind map.
+            if (line.StartsWith(StreamLifecycle.GoLiveHeader) || line.StartsWith(StreamLifecycle.SessionEndHeader))
+            {
+                if (string.IsNullOrEmpty(EventType)) return true;
+                var kind = StreamLifecycle.KindForEvent(EventType);
+                if (kind == StreamLifecycle.Kind.None) return false;
+                bool wantGoLive = line.StartsWith(StreamLifecycle.GoLiveHeader);
+                if ((kind == StreamLifecycle.Kind.GoingLive) != wantGoLive) return false;
+
+                string? platform = StreamLifecycle.PlatformForEvent(EventType);
+                if (platform is null) return false;
+
+                int open = line.IndexOf('(');
+                if (open < 0) return false; // always emitted with an explicit list
+                int close = line.LastIndexOf(')');
+                string list = close > open ? line.Substring(open + 1, close - open - 1) : string.Empty;
+                foreach (var token in list.Split(','))
+                    if (token.Trim().Equals(platform, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                return false;
+            }
             if (line.StartsWith("on_startup"))
                 return string.IsNullOrEmpty(EventType) || EventType.Equals("Startup", StringComparison.OrdinalIgnoreCase);
             // Live processes — on_process_start / on_process_stop run a process

@@ -53,6 +53,14 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public bool             HasChatHeader      { get; set; }
         public bool             HasStartupHeader   { get; set; }
+        // Unified stream-lifecycle triggers (Stream.GoingLive / Stream.SessionEnd).
+        // Bool flags rather than name sets: the platform selection lives inside the
+        // on_go_live(...) / on_session_end(...) header and is gated by the engine,
+        // so dispatch only needs "does this script subscribe?". ScriptManager unions
+        // these into ExecuteGenericEventAsync's selection when a stream on/off event
+        // arrives (additive alongside the per-platform on_event catalog nodes).
+        public bool             HasGoLiveHeader     { get; set; }
+        public bool             HasSessionEndHeader { get; set; }
         public HashSet<string>  EventTypes         { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string>  WebhookNames       { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string>  StateChangeNames   { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -335,6 +343,8 @@ namespace Phoenix.Controls.Hub.Core
                     fresh.HasChatHeader      = prior.HasChatHeader;
                     fresh.HasStartupHeader   = prior.HasStartupHeader;
                     fresh.HasClipboardHeader = prior.HasClipboardHeader;
+                    fresh.HasGoLiveHeader     = prior.HasGoLiveHeader;
+                    fresh.HasSessionEndHeader = prior.HasSessionEndHeader;
                     fresh.EventTypes         = prior.EventTypes;
                     fresh.WebhookNames       = prior.WebhookNames;
                     fresh.StateChangeNames   = prior.StateChangeNames;
@@ -464,6 +474,12 @@ namespace Phoenix.Controls.Hub.Core
         // event name (e.g. "CurrentProgramSceneChanged"); ObsWebSocketClient
         // forwards the matching events through ScriptManager.DispatchObsEvent.
         private static readonly Regex _rxOnObs        = new(@"^on_obs\(""?([^""\)]+)""?\)\s*:",  RegexOptions.Multiline | RegexOptions.Compiled);
+        // Unified stream-lifecycle header detection (Stream.GoingLive /
+        // Stream.SessionEnd). Bool flags, not name sets — the platform list lives
+        // inside the parentheses and is gated by the engine. \b after the selector
+        // name so on_go_live(...) matches but a hypothetical longer name doesn't.
+        private static readonly Regex _rxOnGoLive     = new(@"^on_go_live\b",     RegexOptions.Multiline | RegexOptions.Compiled);
+        private static readonly Regex _rxOnSessionEnd = new(@"^on_session_end\b", RegexOptions.Multiline | RegexOptions.Compiled);
 
         private static void BuildHeaderIndex(ScriptInfo info, string content)
         {
@@ -496,6 +512,8 @@ namespace Phoenix.Controls.Hub.Core
             info.HasChatHeader      = _rxOnChat.IsMatch(content);
             info.HasStartupHeader   = _rxOnStartup.IsMatch(content);
             info.HasClipboardHeader = _rxOnClipboard.IsMatch(content);
+            info.HasGoLiveHeader     = _rxOnGoLive.IsMatch(content);
+            info.HasSessionEndHeader = _rxOnSessionEnd.IsMatch(content);
             info.EventTypes       = eventTypes;
             info.WebhookNames     = webhookNames;
             info.StateChangeNames = stateChangeNames;

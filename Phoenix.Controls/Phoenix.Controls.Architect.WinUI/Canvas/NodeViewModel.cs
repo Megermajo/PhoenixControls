@@ -132,7 +132,10 @@ public sealed class NodeViewModel : ObservableObject
     public bool IsTitleRenaming
     {
         get => _isTitleRenaming;
-        set => SetField(ref _isTitleRenaming, value);
+        // Report the open/close transition to InlineEditGate so the window's
+        // menu accelerators disable while the node-title editor is up
+        // (focus-independent — see SocketViewModel.IsEditing / InlineEditGate).
+        set { if (SetField(ref _isTitleRenaming, value)) { if (value) InlineEditGate.Enter(); else InlineEditGate.Exit(); } }
     }
 
     // Inline-title edit baseline — mirror of SocketViewModel's

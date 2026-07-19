@@ -7,6 +7,20 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607191 - 2026.07.19
+
+**New**
+- Architect has a new "Going Live" trigger that runs your logic the moment your stream starts.
+- Architect has a new "Session End" trigger that runs your logic when your stream ends.
+- Both new triggers let you choose which platforms they react to: Twitch, YouTube, or Kick.
+
+**Fixed**
+- Updates now install reliably even when the app was open earlier in the same session, without needing a PC restart before the update can apply.
+- Architect no longer freezes when you edit a node's text while panning or zooming the graph.
+- Steadier, more reliable editing on the Architect canvas during live changes.
+- Typing in a node's text field no longer sets off menu shortcuts by accident.
+- Wires no longer drift away from their pins while you edit multi-line node text.
+
 ## Hotfix - 1.0.2607172 - 2026.07.17
 
 **New**
