@@ -181,6 +181,13 @@ public sealed partial class LogicCanvasView
     {
         if (_nodeViews.TryGetValue(vm, out var view)) return view;
         view = new NodeView { DataContext = vm };
+        // Gate the inline value-editor's programmatic Focus so it can never fire
+        // while THIS canvas owns pointer capture for a pan / wire-drop / node-drag
+        // gesture — the WinAppSDK 1.5 Microsoft.UI.Input nested-GetMessage-pump
+        // freeze (native minidumps 2026-07-19). Per-instance closure over this
+        // canvas's live drag/capture state, so it stays correct across multiple
+        // Architect windows (never lift to a static). See NodeView.InlineFocusBlocked.
+        view.InlineFocusBlocked = () => _drag != DragState.Idle || _hasCapture;
         _nodeViews[vm] = view;
         return view;
     }

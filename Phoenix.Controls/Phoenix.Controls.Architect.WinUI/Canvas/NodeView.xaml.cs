@@ -545,6 +545,27 @@ public sealed partial class NodeView : UserControl
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBox, object> s_inlineEditorWatched = new();
     private static readonly object s_inlineEditorSentinel = new();
 
+    /// <summary>
+    /// Set by the owning canvas (see <c>LogicCanvasView.EnsureFullView</c>): returns
+    /// true while a pan / wire-drop / node-drag gesture owns pointer capture. During
+    /// that window a programmatic inline-editor <see cref="Control.Focus(FocusState)"/>
+    /// must NOT run — on WinAppSDK 1.5 that focus is delivered through
+    /// <c>Microsoft.UI.Input!WindowsMessageDeliveryAdapter::ProcessWindowMessage_NoLock</c>
+    /// and, mid-input-dispatch with capture active, spins a nested
+    /// <c>user32!GetMessageW</c> pump that wedges the UI thread 8–15s (the confirmed
+    /// "Architect freeze while editing a node under pan/zoom" hang, native minidumps
+    /// 2026-07-19). When set and true, <see cref="FocusInlineEditor"/> re-defers the
+    /// focus one dispatcher turn at a time until the gesture releases capture, then
+    /// focuses cleanly. Null (no owner wired) ⇒ never blocked ⇒ original behaviour.
+    /// Per-instance (not static) so it stays correct across multiple Architect windows.
+    /// </summary>
+    internal System.Func<bool>? InlineFocusBlocked { get; set; }
+
+    // Cap on how many dispatcher turns the inline-editor focus waits for a gesture to
+    // release capture before giving up (a very long drag simply forgoes the auto-focus;
+    // the user can click the pill again). Bounded so a stuck predicate can't loop forever.
+    private const int InlineFocusMaxDeferTurns = 240;
+
     private void OnInlineEditorLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is not TextBox tb) return;
@@ -558,37 +579,49 @@ public sealed partial class NodeView : UserControl
         });
     }
 
-    private static void FocusInlineEditor(TextBox tb)
+    private void FocusInlineEditor(TextBox tb)
     {
         // Defer to let the visibility change + layout settle before focusing,
         // otherwise Focus on a just-shown (previously-collapsed) element can
         // no-op. SelectAll so typing replaces the existing value.
         //
-        // On a pointer-captured canvas (the pill is
-        // tapped while the canvas still owns pointer capture) Focus() can silently
-        // return false; SelectAll() on an unfocused box then no-ops and the first
-        // keystroke inserts instead of replacing. Honour the Focus() result: only
-        // SelectAll() when it succeeded, and on failure re-enqueue ONE guarded
-        // retry so capture has a frame to release. The retry flag prevents a loop.
-        void Apply(bool retried)
+        // CAPTURE GATE (freeze fix): never run the programmatic Focus while the
+        // owning canvas holds pointer capture for a pan / wire-drop / node-drag
+        // gesture. TextBox.Focus() executed mid-gesture is delivered through the
+        // WinAppSDK 1.5 Microsoft.UI.Input message adapter and spins a nested
+        // GetMessage pump that wedges the UI thread 8–15s (the confirmed edit-
+        // under-pan/zoom freeze; see InlineFocusBlocked). Re-defer one dispatcher
+        // turn at a time until the gesture releases capture, then focus cleanly —
+        // bounded by InlineFocusMaxDeferTurns so a stuck gesture can't loop forever.
+        //
+        // On a pointer-captured canvas Focus() can also silently return false;
+        // keep honouring that (SelectAll only on success, re-defer on failure) so
+        // the first keystroke still replaces the value.
+        void Apply(int attempt)
         {
             try
             {
                 if (tb.Visibility != Visibility.Visible) return;
+                if (InlineFocusBlocked?.Invoke() == true)
+                {
+                    if (attempt < InlineFocusMaxDeferTurns)
+                        tb.DispatcherQueue?.TryEnqueue(() => Apply(attempt + 1));
+                    return;
+                }
                 if (tb.Focus(FocusState.Programmatic))
                 {
                     tb.SelectAll();
                 }
-                else if (!retried)
+                else if (attempt < InlineFocusMaxDeferTurns)
                 {
                     var rq = tb.DispatcherQueue;
-                    if (rq is not null) rq.TryEnqueue(() => Apply(retried: true));
+                    if (rq is not null) rq.TryEnqueue(() => Apply(attempt + 1));
                 }
             }
             catch { /* designer-time / detached */ }
         }
         var dq = tb.DispatcherQueue;
-        if (dq is null) Apply(retried: false); else dq.TryEnqueue(() => Apply(retried: false));
+        if (dq is null) Apply(0); else dq.TryEnqueue(() => Apply(0));
     }
 
     /// <summary>
@@ -1203,7 +1236,15 @@ public sealed partial class NodeView : UserControl
             catch { /* best-effort */ }
         };
 
-        flyout.ShowAt(host);
+        // Defer the popup's ShowAt off this synchronous KeyDown dispatch. Opening
+        // a windowed Flyout (its own top-level HWND + message delivery) from inside
+        // the live input event, while the value-pill TextBox still holds keyboard
+        // focus, can enter the WinAppSDK Microsoft.UI.Input nested GetMessage pump
+        // that wedges the UI thread (same freeze class as the inline-editor focus).
+        // One dispatcher turn later the input event has unwound; behaviour is
+        // otherwise identical.
+        if (host.DispatcherQueue is { } dq) dq.TryEnqueue(() => flyout.ShowAt(host));
+        else flyout.ShowAt(host);
     }
 
     /// <summary>

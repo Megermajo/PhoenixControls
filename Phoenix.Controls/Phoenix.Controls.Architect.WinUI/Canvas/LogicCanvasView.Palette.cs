@@ -85,7 +85,7 @@ public sealed partial class LogicCanvasView
         // an unrelated spawn.
         _spawnFlyout.ClosedCleanup = () => _pendingWireDropSource = null;
 
-        _spawnFlyout.ShowAt(HostRoot, new FlyoutShowOptions
+        var showOptions = new FlyoutShowOptions
         {
             Position           = hostPoint,
             ShowMode           = FlyoutShowMode.Standard,
@@ -94,7 +94,20 @@ public sealed partial class LogicCanvasView
             // The prior hard-coded BottomEdgeAlignedRight clipped the results
             // list when the palette opened near the bottom / right screen edge.
             Placement          = FlyoutPlacementMode.Auto,
-        });
+        };
+        // Defer ShowAt off the pointer-release/gesture-end dispatch. ShowSpawnPalette
+        // runs from HandlePointerEnd's wire-drop branch while _drag is still WireDrop
+        // and pointer capture may not be released yet; opening the windowed palette
+        // Flyout (its own top-level HWND + message delivery) synchronously there can
+        // enter the WinAppSDK Microsoft.UI.Input nested GetMessage pump that wedges
+        // the UI thread (same freeze class as the inline-editor focus). One dispatcher
+        // turn later capture is released and _drag is Idle; the palette opens at the
+        // same anchor with identical behaviour.
+        var paletteLocal = _spawnFlyout;
+        if (DispatcherQueue is { } dq)
+            dq.TryEnqueue(() => paletteLocal.ShowAt(HostRoot, showOptions));
+        else
+            _spawnFlyout.ShowAt(HostRoot, showOptions);
     }
 
     private void OnSpawnPaletteSelected(object? sender, string templateTitle)

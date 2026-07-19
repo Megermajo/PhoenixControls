@@ -206,7 +206,19 @@ public sealed partial class LogicCanvasView
         // traced inside OnRenderingTick's drains.
         using var _trace = Phoenix.Controls.Shared.Services.UiActivityTrace
             .Begin("Architect.PointerPressed");
-        Focus(FocusState.Programmatic);
+        // Do NOT steal canvas keyboard focus off a LIVE inline editor here. On
+        // WinAppSDK 1.5 a programmatic Focus() that blurs the mounted+TSF-focused
+        // value-pill TextBox, run synchronously inside this pointer message while a
+        // pan/wire-drop gesture is starting, is delivered through Microsoft.UI.Input's
+        // message adapter and spins a nested GetMessage pump that wedges the UI thread
+        // 8–15s (the confirmed edit-under-pan/zoom freeze; native minidumps 2026-07-19).
+        // When an editor is live we let the controlled ExitImmediateEdit below tear it
+        // down first and then grab canvas focus once (see the post-exit Focus below);
+        // affordance presses that keep the editor return early and must NOT be blurred
+        // at all. With no editor open, keep the original synchronous grab so canvas
+        // hotkeys stay armed on the very first press.
+        if (_editNode is null)
+            Focus(FocusState.Programmatic);
         var pp = e.GetCurrentPoint(HostRoot);
         var point = pp.Position;
         _lastHostPoint = point;
@@ -258,7 +270,15 @@ public sealed partial class LogicCanvasView
         // is a real element only for the one materialized NodeView, so this never
         // fires for GPU-drawn nodes.
         if (_useImmediateMode && _editNode is not null && !IsPressOnEditAffordance(e.OriginalSource, e))
+        {
             ExitImmediateEdit();
+            // The editor is now torn down via the controlled path — there is no
+            // longer a mounted TSF TextBox to blur — so grabbing canvas keyboard
+            // focus here is a clean re-focus (hotkeys/quick-keys stay armed for the
+            // gesture this press begins), NOT the mid-input focus-steal that the
+            // line-209 guard above deliberately skipped.
+            Focus(FocusState.Programmatic);
+        }
         if (_useImmediateMode) ClearImmediateHover();   // a press starting a drag clears stale hover
 
         // Pan: middle-button anywhere; right-button on bare canvas; or LMB
