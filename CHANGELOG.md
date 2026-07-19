@@ -7,6 +7,12 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607201 - 2026.07.20
+
+**Fixed**
+- Fixed a remaining case where Architect could still freeze when you started editing a node while panning or zooming.
+- Steadier focus handling when opening a node's text field mid-gesture.
+
 ## Hotfix - 1.0.2607191 - 2026.07.19
 
 **New**
