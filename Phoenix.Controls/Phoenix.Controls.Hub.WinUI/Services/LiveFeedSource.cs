@@ -140,6 +140,17 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
         int firstSpace = m.IndexOf(' ');
         if (firstSpace > 0) who = m[..firstSpace];
 
+        // Private whispers to the bot account. WS emits these (via the
+        // ephemeral LogTransient path) as "<sender> whispered: <text>". Matched
+        // on the exact " whispered:" verb form — NOT a bare "whisper" substring
+        // — so a viewer/scene name that merely contains "whisper" (e.g.
+        // "WhisperKing raided", "Scene → WhisperCam") can't hijack the kind.
+        // Checked FIRST so the body text can't steal the row from itself
+        // ("<sender> whispered: nice raid!" stays a Whisper). who = first word
+        // = sender; Detail keeps the full line so the panel shows the complete
+        // whisper.
+        if (m.Contains(" whispered:", StringComparison.OrdinalIgnoreCase))
+            return (LiveFeedKind.Whisper, who);
         // YouTube memberships are subs in Twitch vocabulary — NewSponsor /
         // MembershipGift / MemberMileStone bucket with Sub alongside Kick's
         // Subscription/GiftSubscription (already caught by the "sub" probe).

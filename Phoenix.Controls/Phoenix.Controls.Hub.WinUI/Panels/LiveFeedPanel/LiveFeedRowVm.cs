@@ -77,6 +77,7 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
         LiveFeedKind.Raid   => "⚑",  // ⚑
         LiveFeedKind.Visual => "▰",  // ▰
         LiveFeedKind.Follow => "+",
+        LiveFeedKind.Whisper => "✉",  // ✉ private DM
         _                   => "·",
     };
 
@@ -105,6 +106,7 @@ public sealed class LiveFeedRowVm : INotifyPropertyChanged
             LiveFeedKind.Raid   => "EmberDeepBrush",
             LiveFeedKind.Visual => "CoalSecondaryTextBrush",
             LiveFeedKind.Follow => "OkBrush",
+            LiveFeedKind.Whisper => "InfoBrush",
             _                   => "CoalSecondaryTextBrush",
         };
         var brush = ResolveBrush(key);

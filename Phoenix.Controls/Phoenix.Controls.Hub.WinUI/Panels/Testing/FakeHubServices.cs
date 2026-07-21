@@ -68,6 +68,7 @@ internal sealed class FakeLiveFeed : ILiveFeedSource
         New("21:13:41", LiveFeedKind.Raid,   "captain_torch",  "raided with 47 viewers"),
         New("21:13:22", LiveFeedKind.Visual, "main",           "VISUAL_TRIGGER · greet · widget#3"),
         New("21:13:11", LiveFeedKind.Follow, "kindling_kid",   "started following"),
+        New("21:13:07", LiveFeedKind.Whisper, "shy_ember",     "shy_ember whispered: is the raid still on?"),
         New("21:12:58", LiveFeedKind.Chat,   "broadcaster",    "we are LIVE — testing alerts"),
         New("21:12:40", LiveFeedKind.Sub,    "loomweaver",     "gifted 5 subs to the channel"),
         New("21:12:22", LiveFeedKind.Visual, "main",           "VISUAL_COMPLETE · jackpot · 1.84s"),

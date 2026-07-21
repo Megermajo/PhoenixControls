@@ -6,14 +6,19 @@ public record LiveFeedEntry(
     string         Who,
     string         Detail);
 
-public enum LiveFeedKind { Sub, Chat, Redeem, Raid, Visual, Follow }
+// Whisper appended for the inbound-whisper feature (private DMs to the bot
+// account). Appended last to preserve the binary/int order of the existing
+// values. The whisper BODY is shown in the LiveFeed row Detail but never
+// persisted to the EventLog audit (WS redacts it there).
+public enum LiveFeedKind { Sub, Chat, Redeem, Raid, Visual, Follow, Whisper }
 
 // Redeem + Follow added so the filter
 // can target every kind LiveFeedKind emits — without them the feed
 // surfaced Redeem / Follow rows the UI had no way to filter to. New
 // values appended (not inserted) to preserve binary compatibility for
 // any persisted filter state that round-trips the underlying int.
-public enum LiveFeedFilter { All, Chat, Subs, Raids, Visual, Redeem, Follow }
+// Whispers appended last for the same append-only reason.
+public enum LiveFeedFilter { All, Chat, Subs, Raids, Visual, Redeem, Follow, Whispers }
 
 // Role-vs-flags invariant — the model carries BOTH a single
 // precedence-collapsed <see cref="ChatRole"/> AND the four original

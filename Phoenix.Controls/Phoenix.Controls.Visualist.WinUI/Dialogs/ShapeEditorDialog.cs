@@ -809,8 +809,8 @@ public sealed class ShapeEditorDialog : ContentDialog
             GlobalLogger.Log(
                 $"Shape editor: vertex limit ({ShapeData.MaxVertices}) reached on '{_node.Title}' — add ignored.",
                 "ShapeEditorDialog", LogLevel.System);
-            ShowGuardHint(Localizer.T("visualist.shape.guard.max",
-                $"Vertex limit reached ({ShapeData.MaxVertices}) — can't add more."));
+            ShowGuardHint(string.Format(Localizer.T("visualist.shape.guard.max",
+                "Vertex limit reached ({0}) — can't add more."), ShapeData.MaxVertices));
             return;
         }
         PushUndo();

@@ -202,6 +202,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
     // Pair the new REDEEM + FOLLOW chips with VM selectors.
     private void OnChipRedeemClick(object sender, RoutedEventArgs e) => ViewModel.SelectRedeem();
     private void OnChipFollowClick(object sender, RoutedEventArgs e) => ViewModel.SelectFollow();
+    private void OnChipWhisperClick(object sender, RoutedEventArgs e) => ViewModel.SelectWhispers();
     // Errors chip handler. Mutually exclusive
     // with the other chips; the VM toggles via SelectErrors.
     private void OnChipErrorsClick(object sender, RoutedEventArgs e) => ViewModel.SelectErrors();
@@ -299,6 +300,8 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
         // New REDEEM + FOLLOW chip labels.
         ChipRedeemLabel.Text = Localizer.T("panel.livefeed.chip.redeem", "REDEEM");
         ChipFollowLabel.Text = Localizer.T("panel.livefeed.chip.follow", "FOLLOW");
+        // Whisper chip label — private DMs to the bot account.
+        ChipWhisperLabel.Text = Localizer.T("panel.livefeed.chip.whisper", "WHISPER");
         // Errors chip label.
         ChipErrorsLabel.Text = Localizer.T("panel.livefeed.chip.errors", "ERRORS");
         // Clear feed button label + tooltip.
@@ -315,6 +318,7 @@ public sealed partial class LiveFeedView : UserControl, IDisposable,
         AutomationProperties.SetName(ChipVisual, Localizer.T("panel.livefeed.chip.visual.aria", "Filter to visual trigger events"));
         AutomationProperties.SetName(ChipRedeem, Localizer.T("panel.livefeed.chip.redeem.aria", "Filter to channel point redemption events"));
         AutomationProperties.SetName(ChipFollow, Localizer.T("panel.livefeed.chip.follow.aria", "Filter to follow events"));
+        AutomationProperties.SetName(ChipWhisper, Localizer.T("panel.livefeed.chip.whisper.aria", "Filter to whisper events"));
         AutomationProperties.SetName(ChipErrors, Localizer.T("panel.livefeed.chip.errors.aria", "Filter to critical-error events"));
 
         // Visible "pop-out" label next to the

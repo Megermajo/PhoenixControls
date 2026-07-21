@@ -83,6 +83,17 @@
                                       Click="OnChipFollowClick">
                             <TextBlock x:Name="ChipFollowLabel" />
                         </ToggleButton>
+                        <!-- WHISPER chip — private DMs to the bot account.
+                             LiveFeedSource classifies Kind=Whisper from the
+                             "<sender> whispered: …" StreamEvent log line. Sits
+                             after FOLLOW so the chip row matches the
+                             LiveFeedKind order in Records.cs. -->
+                        <ToggleButton x:Name="ChipWhisper"
+                                      Style="{StaticResource LiveFeedChipStyle}"
+                                      IsChecked="{x:Bind ViewModel.IsWhispersSelected, Mode=OneWay}"
+                                      Click="OnChipWhisperClick">
+                            <TextBlock x:Name="ChipWhisperLabel" />
+                        </ToggleButton>
                         <!-- B3 (audit 2026-05-24) — Errors filter chip.
                              Mutually exclusive with the other chips; when
                              selected the feed surfaces ONLY GlobalLogger

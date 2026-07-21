@@ -2631,6 +2631,41 @@ namespace Phoenix.Controls.Hub.Core
                 vars["user.platform"] = eventType.Substring(0, sourceDot).ToLowerInvariant();
             try
             {
+                // Twitch.Whisper is the one Twitch event whose payload is NESTED
+                // rather than flattened: the sender lives under data.user.{name,
+                // login,id} and the body under data.whisperText (SB docs: Twitch
+                // → Whisper). Handle it up-front — the flattened probes below
+                // (displayName / user_name / message-routing) never match a
+                // whisper payload, so this is the sole source of the Whisper
+                // node's User / Message / UserId outputs. Feeds the InWhisper
+                // node (user.name / user.message / user.id).
+                if (eventType.Equals("Twitch.Whisper", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (data.TryGetProperty("user", out var whisperUser)
+                        && whisperUser.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    {
+                        if (whisperUser.TryGetProperty("name", out var wn)
+                            && wn.ValueKind == System.Text.Json.JsonValueKind.String
+                            && wn.GetString() is { Length: > 0 } wDispName)
+                            vars["user.name"] = wDispName;
+                        else if (whisperUser.TryGetProperty("login", out var wl)
+                            && wl.ValueKind == System.Text.Json.JsonValueKind.String)
+                            vars["user.name"] = wl.GetString() ?? "unknown";
+                        // id tolerates String OR Number — SB sends a string today,
+                        // but a numeric drift shouldn't blank the UserId output.
+                        if (whisperUser.TryGetProperty("id", out var wid))
+                        {
+                            if (wid.ValueKind == System.Text.Json.JsonValueKind.String)
+                                vars["user.id"] = wid.GetString() ?? "";
+                            else if (wid.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                vars["user.id"] = wid.GetRawText();
+                        }
+                    }
+                    if (data.TryGetProperty("whisperText", out var wtext)
+                        && wtext.ValueKind == System.Text.Json.JsonValueKind.String)
+                        vars["user.message"] = wtext.GetString() ?? "";
+                }
+
                 if (data.TryGetProperty("displayName", out var name))
                     vars["user.name"] = name.GetString() ?? "unknown";
                 else if (data.TryGetProperty("user_name", out var uname))

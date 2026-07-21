@@ -766,6 +766,20 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool SeenWelcomeDialog { get; set; } = false;
 
+        /// <summary>
+        /// Highest Terms-of-Service version the user has accepted via the
+        /// first-launch consent gate (<c>TermsOfServiceGate</c>). Default 0 means
+        /// "never accepted" — a fresh install or clean AppData shows the ToS
+        /// pop-up before any Hub service comes up. The gate compares this against
+        /// <c>TermsOfServiceGate.CurrentVersion</c>: when the stored value is
+        /// lower (fresh install, OR the terms were revised and the constant was
+        /// bumped), the pop-up re-appears and the app stays non-functional until
+        /// the user clicks Accept — declining closes the app. Persisted the
+        /// moment Accept is clicked, so a crash before Hub finishes booting still
+        /// counts the acceptance and doesn't re-prompt on the next launch.
+        /// </summary>
+        public int AcceptedTosVersion { get; set; } = 0;
+
         // ── OBS WebSocket direct subscription ────────────────
         // Hub opens a direct OBS WS v5 connection (separate from the
         // Streamer.bot DoAction proxy) so scripts can react to OBS state

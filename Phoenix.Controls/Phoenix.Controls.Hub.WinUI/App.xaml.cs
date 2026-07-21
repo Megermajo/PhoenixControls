@@ -249,6 +249,40 @@ public partial class App : Application
         catch (Exception ex) { GlobalLogger.Error("App", "Splash.RefreshLocalizedStrings", ex); }
         GlobalLogger.Log($"Startup phase: Splash.RefreshLocalizedStrings end (elapsed {swPhase.ElapsedMilliseconds}ms)", "App", LogLevel.System);
 
+        // ── Terms of Service consent gate ────────────────────────────────
+        // Fail-closed, by construction. This runs BEFORE HubBootstrapper.BootAsync,
+        // so while the ToS pop-up is open NOTHING operational has started — no
+        // Streamer.bot connection (BootAsync step 5), no on_startup scripts
+        // (step 7), no HUD server, no scheduler, and no MainWindow. The app is
+        // genuinely non-functional until the user accepts. Declining, closing the
+        // pop-up, or any failure to obtain consent exits the process before a
+        // single service comes up ("the safe way"). The gate re-appears whenever
+        // TermsOfServiceGate.CurrentVersion exceeds the user's stored
+        // AcceptedTosVersion — i.e. a fresh install, or the terms were revised
+        // and the constant was bumped. EnsureAcceptedAsync loads config itself
+        // (config is otherwise first loaded inside BootAsync), checks the version,
+        // shows the pop-up when needed, and persists acceptance synchronously.
+        bool tosAccepted;
+        try
+        {
+            tosAccepted = await TermsOfServiceGate.EnsureAcceptedAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            // EnsureAcceptedAsync is already fail-closed internally; this outer
+            // guard covers anything truly unexpected escaping it.
+            GlobalLogger.Error("App", "Terms of Service gate threw", ex);
+            tosAccepted = false;
+        }
+        if (!tosAccepted)
+        {
+            // Consent not given — tear down the splash and exit before boot.
+            try { _splash?.Close(); } catch { /* best-effort */ }
+            _splash = null;
+            Exit();
+            return;
+        }
+
         // Minimum splash duration so the phoenix-mark rise animation
         // (2.4s) gets a chance to complete on warm-disk machines where
         // BootAsync can finish in ~300ms. Without this the splash closes

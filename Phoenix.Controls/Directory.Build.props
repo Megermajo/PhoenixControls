@@ -9,10 +9,10 @@
   -->
 
   <PropertyGroup>
-    <Version>1.0.2607201</Version>
+    <Version>1.0.2607211</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>1.0.2607201</InformationalVersion>
+    <InformationalVersion>1.0.2607211</InformationalVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PublicRelease)' == 'true'">

@@ -246,6 +246,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
         Raise(nameof(IsVisualSelected));
         Raise(nameof(IsRedeemSelected));
         Raise(nameof(IsFollowSelected));
+        Raise(nameof(IsWhispersSelected));
         Raise(nameof(IsErrorsSelected));
         Raise(nameof(IsEmpty));
         Raise(nameof(EmptyStateVisibility));
@@ -294,6 +295,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
                 Raise(nameof(IsVisualSelected));
                 Raise(nameof(IsRedeemSelected));
                 Raise(nameof(IsFollowSelected));
+                Raise(nameof(IsWhispersSelected));
                 Raise(nameof(IsErrorsSelected));
                 // Empty-state surface is filter-aware.
                 Raise(nameof(IsEmpty));
@@ -341,6 +343,8 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     // in the panel header.
     public bool IsRedeemSelected => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Redeem;
     public bool IsFollowSelected => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Follow;
+    // Whisper chip selector — private DMs to the bot account.
+    public bool IsWhispersSelected => !_errorsChipSelected && _selectedFilter == LiveFeedFilter.Whispers;
 
     public void SelectAll()    => SelectedFilter = LiveFeedFilter.All;
     public void SelectSubs()   => SelectedFilter = LiveFeedFilter.Subs;
@@ -348,6 +352,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
     public void SelectVisual() => SelectedFilter = LiveFeedFilter.Visual;
     public void SelectRedeem() => SelectedFilter = LiveFeedFilter.Redeem;
     public void SelectFollow() => SelectedFilter = LiveFeedFilter.Follow;
+    public void SelectWhispers() => SelectedFilter = LiveFeedFilter.Whispers;
 
     private void OnEntryAdded(object? sender, LiveFeedEntry entry)
     {
@@ -460,6 +465,7 @@ public sealed class LiveFeedViewModel : ObservableObject, IDisposable
                 LiveFeedFilter.Visual => row.Entry.Kind == LiveFeedKind.Visual,
                 LiveFeedFilter.Redeem => row.Entry.Kind == LiveFeedKind.Redeem,
                 LiveFeedFilter.Follow => row.Entry.Kind == LiveFeedKind.Follow,
+                LiveFeedFilter.Whispers => row.Entry.Kind == LiveFeedKind.Whisper,
                 _                     => true,
             };
             if (!kindMatches) return false;

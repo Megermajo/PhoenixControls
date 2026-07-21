@@ -534,6 +534,10 @@ namespace Phoenix.Controls.Architect.Core
                 "Twitch.Raid"         => "on_event(Twitch.Raid)",
                 "Twitch.Cheer"        => "on_event(Twitch.Cheer)",
                 "Twitch.PointRedeem"  => "on_event(Twitch.PointRedeem)",
+                // Inbound whisper node title differs from the SB event type
+                // (its title is taken by the outbound send-whisper action), so
+                // map it explicitly to the real event the Hub dispatches.
+                "Twitch.InWhisper"    => "on_event(Twitch.Whisper)",
                 "YouTube.Message"     => "on_event(YouTube.Message)",
                 "System.Startup"      => "on_startup",
                 "Event.Executor"        => $"on_event(Internal.{node.GetAttr("EventName", "MyEvent")})",
@@ -1321,6 +1325,13 @@ namespace Phoenix.Controls.Architect.Core
                         case "NewValue": return "{state.new_value}";
                     }
                 }
+                // Twitch.InWhisper's UserId output → {user.id} (the whisper
+                // sender's numeric id, set by BuildGenericEventVars from
+                // data.user.id). Without this guard it falls through to the
+                // generic {event.userid} form which nothing binds. User /
+                // Message resolve via the generic switch below.
+                if (src.Title == "Twitch.InWhisper" && srcSocket.Name == "UserId")
+                    return "{user.id}";
 
                 return srcSocket.Name switch
                 {

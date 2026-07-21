@@ -390,7 +390,12 @@ namespace Phoenix.Controls.Shared.Core
             // Databank simple
             AddT("db.clear_table", new ArgSpec("TableName", ArgType.String));
             AddT("db.delete_var",  new ArgSpec("Key", ArgType.String));
-            AddT("cooldown.check", new ArgSpec("User", ArgType.String), new ArgSpec("GlobalCooldownMs", ArgType.Int), new ArgSpec("UserCooldownMs", ArgType.Int));
+            // NodeKey (arg 4) is the exporter-supplied per-node id that lets the
+            // handler gate a channel-wide GLOBAL cooldown (always) plus a per-user
+            // cooldown (when User is wired) without two Cooldown nodes colliding.
+            // Optional so legacy 3-arg exports still bind (they keep the old
+            // single-bucket behavior). See ScriptManager.Cooldown.cs.
+            AddT("cooldown.check", new ArgSpec("User", ArgType.String), new ArgSpec("GlobalCooldownMs", ArgType.Int), new ArgSpec("UserCooldownMs", ArgType.Int), new ArgSpec("NodeKey", ArgType.String, Optional: true, Default: ""));
             AddT("db.check",       new ArgSpec("Key", ArgType.String));
 
             // DB-family commands that the exporter emits and the engine handles

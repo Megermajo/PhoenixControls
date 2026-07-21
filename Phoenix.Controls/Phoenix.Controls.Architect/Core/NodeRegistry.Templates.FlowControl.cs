@@ -86,7 +86,7 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Loop Body", ColExec), ("Completed", ColExec) });
 
             AddTemplate("Flow.Cooldown",   "Flow Control", Color.OrangeRed,
-                "Rate-limits a flow with one cooldown timer keyed on the User input, armed for max(GlobalCooldown, UserCooldown) seconds. Ready fires when enough time has passed since the last Ready; Blocked fires while the cooldown is still active. Wire User from the chat user so each viewer gets their own timer — an empty/unwired User is always Blocked (there is no separate channel-wide timer).",
+                "Rate-limits a flow with two independent timers: a channel-wide GLOBAL cooldown (GlobalCooldown seconds) that ALWAYS applies, plus a per-USER cooldown (UserCooldown seconds) that applies when the User input is wired. Ready fires only when BOTH have elapsed; Blocked fires while either is still active. Set a timer to 0 to disable it: GlobalCooldown=0 makes it purely per-user, and leaving User unwired makes it purely channel-wide. Each Flow.Cooldown node keeps its own timers, so different cooldowns never share a bucket.",
                 new[] { ("Flow", ColExec), ("User", ColString) },
                 new[] { ("Ready", ColExec), ("Blocked", ColExec) },
                 new Dictionary<string, string> { { "GlobalCooldown", "0" }, { "UserCooldown", "0" } });

@@ -142,6 +142,10 @@ internal static class NodeProse
             Summary: "Fires when a viewer redeems a channel-points reward.",
             Description: "<p><code>Reward</code> is the reward title from your Twitch dashboard; <code>Input</code> is the viewer's text (empty when the reward asks for none). Branch on the title with <code>Logic.Switch</code> — Phoenix matches on the title, not the reward ID, because IDs regenerate on rename.</p>",
             Example: "<b>\"Hydrate!\"</b> redeem &rarr; a Visualist trigger and a chat nudge to drink water."),
+        ["Twitch.InWhisper"] = new(
+            Summary: "Fires when someone sends a private whisper (DM) to the bot account.",
+            Description: "<p><code>User</code> is the sender's display name, <code>UserId</code> their numeric Twitch id, and <code>Message</code> the whisper text. React however you like — answer in chat with <code>Twitch.SendChat</code>, fire an overlay, or store the message. Requires the bot account connected in Streamer.bot with whisper-read authorized. The whisper body shows live in the Hub's Live Feed but is never written to the on-disk event log.</p>",
+            Example: "Whisper <b>!uptime</b> &rarr; post how long the stream has been live in chat."),
 
         // ── YouTube Live events ────────────────────────────────────────────
         ["YouTube.SuperChat"] = new(

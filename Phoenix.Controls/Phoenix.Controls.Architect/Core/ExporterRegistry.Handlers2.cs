@@ -245,8 +245,13 @@ namespace Phoenix.Controls.Architect.Core
             string user     = ctx.Resolve(node, "User", "\"\"");
             string globalCd = node.GetAttr("GlobalCooldown", "0");
             string userCd   = node.GetAttr("UserCooldown",   "0");
+            // Emit the node id as a 4th arg. The handler keys a channel-wide
+            // GLOBAL bucket on it (always enforced, GlobalCooldown seconds) plus a
+            // per-user bucket when User is wired (UserCooldown seconds) — so an
+            // unwired User is a channel-wide cooldown, not a permanent Blocked, and
+            // two Cooldown nodes never share a bucket. See ScriptManager.Cooldown.cs.
             ctx.EmitConditional(node,
-                $"cooldown.check({user}, {globalCd}, {userCd})",
+                $"cooldown.check({user}, {globalCd}, {userCd}, \"{node.Id}\")",
                 "Ready", "Blocked", prefix, indent);
         }
     }

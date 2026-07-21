@@ -169,6 +169,7 @@ namespace Phoenix.Controls.Architect.Core
                 ["Twitch.Cheer"]            = new[] { "user.name", "user.bits", "user.message" },
                 ["Twitch.Follow"]           = new[] { "user.name" },
                 ["Twitch.PointRedeem"]      = new[] { "user.name", "user.reward", "user.input" },
+                ["Twitch.InWhisper"]        = new[] { "user.name", "user.message", "user.id" },
                 ["YouTube.Message"]         = new[] { "user.name", "user.message" },
                 // Unified stream-lifecycle triggers — the firing platform + the
                 // best-effort stream Title / Category (Hub dispatch binds

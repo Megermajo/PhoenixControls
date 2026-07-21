@@ -645,6 +645,11 @@ namespace Phoenix.Controls.Hub.Core
                             eventSource == "YouTube" && eventType == "Message"     ? ChatPlatforms.YouTube :
                             eventSource == "Kick"    && eventType == "ChatMessage" ? ChatPlatforms.Kick : null;
 
+                        // Private DM to the bot account. Handled by a dedicated
+                        // redacting branch below (never audited with its body) —
+                        // detected up-front so the audit gate can redact it.
+                        bool isWhisper = eventSource == "Twitch" && eventType == "Whisper";
+
                         // ── AUDIT LOG ──
                         // privacy + DB-load: chat messages (all platforms) are firehose,
                         // audited separately via chat history. The periodic viewer-count
@@ -656,7 +661,24 @@ namespace Phoenix.Controls.Hub.Core
                             (eventSource == "Kick"    && (eventType == "ViewerCountUpdate" || eventType == "PresentViewers"));
                         if (chatPlatform is null && !isHeartbeatEvent)
                         {
-                            EnqueueAuditEvent(eventSource, eventType, "System", json);
+                            if (isWhisper)
+                            {
+                                // Privacy (Majo): never persist the whisper BODY. Store
+                                // only that a whisper arrived and from whom — a minimal
+                                // redacted payload with no whisperText. The live LiveFeed
+                                // and on_event(Twitch.Whisper) scripts still receive the
+                                // full text (dispatch branch below); the EventLog does not.
+                                // The payload is built from sender+id ONLY (ExtractWhisper
+                                // drops the body), so the body can't leak here by construction.
+                                var (wSender, wSenderId, _) = ExtractWhisper(root);
+                                EnqueueAuditEvent(eventSource, eventType,
+                                    string.IsNullOrEmpty(wSender) ? "unknown" : wSender,
+                                    BuildRedactedWhisperAudit(wSender, wSenderId));
+                            }
+                            else
+                            {
+                                EnqueueAuditEvent(eventSource, eventType, "System", json);
+                            }
                         }
 
                         // 1. Route to Process Interceptors (Dynamic Caching)
@@ -912,6 +934,48 @@ namespace Phoenix.Controls.Hub.Core
                             _ = AsyncErrorBoundary.SafeRunAsync(
                                 () => ScriptManager.Instance.ExecuteGenericEventAsync("OBS.SceneChanged", sceneDataLocal),
                                 "WS", "OBS.SceneChanged script");
+                        }
+                        // 3b. Private whisper to the bot account. Dedicated branch so
+                        //     the full body reaches BOTH the live LiveFeed (via the
+                        //     EPHEMERAL GlobalLogger.LogTransient path, which fires
+                        //     OnLogEntry but skips the SystemHistory SQLite store) AND
+                        //     on_event(Twitch.Whisper) scripts, while the persistent
+                        //     EventLog audit above stays redacted to sender-only. Runs
+                        //     before the generic branch so the body is never dropped into
+                        //     the generic (persisting) StreamEvent log.
+                        else if (isWhisper && root.TryGetProperty("data", out var whisperData))
+                        {
+                            var (wSender, _, wText) = ExtractWhisper(root);
+                            if (string.IsNullOrEmpty(wSender))
+                            {
+                                // Payload shape drifted (no sender under data.user) —
+                                // one-time warning, same defensive posture as the SB
+                                // sub-months probe. Still dispatch so a script can inspect.
+                                WarnWhisperPayloadDriftOnce();
+                                wSender = "unknown";
+                            }
+                            // Full text to the LiveFeed via the EPHEMERAL log path:
+                            // it reaches the live LiveFeed / SystemLog panels
+                            // (OnLogEntry) but is NEVER written to the SystemHistory
+                            // SQLite store — unlike a normal GlobalLogger.Log(), which
+                            // persists EVERY level. That keeps the whisper BODY out of
+                            // the permanent log while showing it live in the panel; the
+                            // only persisted record is the redacted EventLog audit above
+                            // (sender + "whisper received", no body). Who = sender (first
+                            // word); Detail = "<sender> whispered: <text>".
+                            GlobalLogger.LogTransient($"{wSender} whispered: {wText}", "Twitch", LogLevel.StreamEvent);
+                            var whisperDataLocal = whisperData;
+                            _ = AsyncErrorBoundary.SafeRunAsync(
+                                () => ScriptManager.Instance.ExecuteGenericEventAsync("Twitch.Whisper", whisperDataLocal),
+                                "WS", "Twitch.Whisper script");
+                        }
+                        // A whisper with NO `data` object at all is the most severe
+                        // shape drift — it would otherwise fall through to the generic
+                        // branch (also `data`-gated) and vanish silently. Warn once so
+                        // the operator sees that whispers stopped resolving.
+                        else if (isWhisper)
+                        {
+                            WarnWhisperPayloadDriftOnce();
                         }
                         // 4. Route all other events to the script engine for .phx execution
                         else if (root.TryGetProperty("data", out var eventData))
@@ -1340,6 +1404,68 @@ namespace Phoenix.Controls.Hub.Core
                 if (!string.IsNullOrEmpty(s)) return s!;
             }
             return "";
+        }
+
+        // Twitch.Whisper payload is nested (unlike the flattened non-chat
+        // events): the sender lives under data.user.{name,login,id} and the
+        // body under data.whisperText (SB docs: Twitch → Whisper). Returns the
+        // display name (login fallback), the id, and the body text; any missing
+        // field yields "" so callers can log/dispatch defensively. Internal so
+        // the whisper-redaction tests can pin the sender/id/body extraction.
+        internal static (string Sender, string SenderId, string Text) ExtractWhisper(System.Text.Json.JsonElement root)
+        {
+            string sender = "", senderId = "", text = "";
+            if (root.TryGetProperty("data", out var data) && data.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (data.TryGetProperty("user", out var user) && user.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    if (user.TryGetProperty("name", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.String
+                        && n.GetString() is { Length: > 0 } dispName)
+                        sender = dispName;
+                    else if (user.TryGetProperty("login", out var l) && l.ValueKind == System.Text.Json.JsonValueKind.String)
+                        sender = l.GetString() ?? "";
+                    // id tolerates String OR Number — SB currently sends a string,
+                    // but a numeric drift shouldn't blank {user.id}.
+                    if (user.TryGetProperty("id", out var idEl))
+                        senderId = JsonScalarToString(idEl);
+                }
+                if (data.TryGetProperty("whisperText", out var wt) && wt.ValueKind == System.Text.Json.JsonValueKind.String)
+                    text = wt.GetString() ?? "";
+            }
+            return (sender, senderId, text);
+        }
+
+        // Reads a JSON string or number as a plain string; anything else -> "".
+        // Shared by the whisper sender-id probe (String/Number tolerant).
+        private static string JsonScalarToString(System.Text.Json.JsonElement el) => el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => el.GetString() ?? "",
+            System.Text.Json.JsonValueKind.Number => el.GetRawText(),
+            _ => "",
+        };
+
+        // Builds the sender-only redacted EventLog payload for a whisper. Takes
+        // ONLY the sender name + id — the body is never a parameter, so this
+        // sink cannot leak whisperText even if a caller regresses. Internal for
+        // the privacy regression test.
+        internal static string BuildRedactedWhisperAudit(string sender, string senderId)
+            => System.Text.Json.JsonSerializer.Serialize(new
+            {
+                user = new { name = sender, id = senderId },
+                redacted = true,
+                note = "whisper body not stored",
+            });
+
+        // One-time warning if a whisper arrives with no resolvable sender —
+        // SB publishes no WS payload schema, so a shape drift shouldn't spam
+        // the log every DM. Mirrors ResolveSubMonths' one-time drift warning.
+        private static int _whisperDriftWarned;
+        private static void WarnWhisperPayloadDriftOnce()
+        {
+            if (Interlocked.CompareExchange(ref _whisperDriftWarned, 1, 0) != 0) return;
+            GlobalLogger.Log(
+                "Twitch.Whisper arrived with no sender under data.user.{name,login} — SB payload shape may have drifted (one-time warning).",
+                "WS", LogLevel.Debug);
         }
 
         // Append a message to the most-recent ring buffer feeding Chat.PeekRecent.
@@ -2032,6 +2158,13 @@ namespace Phoenix.Controls.Hub.Core
         // Twitch per-reward redemptions, Charity, Goals, Shoutouts, Bans,
         // Timeouts, and Channel.Update are intentionally NOT added here — the
         // exact-event-name ambiguity kept them out of this pass.
+        //
+        // "Whisper" = a private DM sent TO the bot account (SB source "Twitch",
+        // type "Whisper"; requires the bot account connected in Streamer.bot
+        // with whisper-read authorized). Routed through a dedicated redacting
+        // branch in ParseBotMessage — the whisper BODY is shown live in the
+        // LiveFeed and handed to on_event(Twitch.Whisper) scripts, but is NEVER
+        // persisted to the EventLog audit (only "who whispered" is stored).
         private static readonly string[] TwitchEvents = new[]
         {
             "ChatMessage", "Cheer", "Sub", "Resub", "GiftSub", "GiftBomb",
@@ -2039,7 +2172,7 @@ namespace Phoenix.Controls.Hub.Core
             "PollCreated", "PollUpdated", "PollCompleted",
             "PredictionCreated", "PredictionUpdated", "PredictionLocked", "PredictionEnded",
             "HypeTrainStart", "HypeTrainUpdate", "HypeTrainEnd",
-            "AdRun", "StreamOnline", "StreamOffline",
+            "AdRun", "StreamOnline", "StreamOffline", "Whisper",
         };
         private static readonly string[] YouTubeEvents = new[]
         {

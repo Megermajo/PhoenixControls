@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phoenix Controls — Terms of Service</title>
+<!-- Offline-first, exactly like the rest of the in-app doc bundle. tokens.css
+     is local (served from the phoenix.docs virtual host); the Google Fonts link
+     is progressive enhancement only — tokens.css lists Windows-present
+     fallbacks so the page renders faithfully with no network. -->
+<link rel="stylesheet" href="tokens.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html, body { background: var(--coal-0); }
+  body {
+    background:
+      radial-gradient(1200px 420px at 50% -160px, rgba(229,162,78,0.10), rgba(229,162,78,0) 70%),
+      var(--coal-0);
+    background-attachment: fixed;
+  }
+  .tos-wrap { max-width: 760px; margin: 0 auto; padding: 54px 32px 72px; }
+
+  /* Masthead */
+  .tos-mast { margin-bottom: 30px; }
+  .tos-eyebrow {
+    font-family: var(--font-sans); font-weight: 600; letter-spacing: 0.22em;
+    text-transform: uppercase; font-size: 11px; color: var(--ember-300); margin: 0 0 14px;
+  }
+  .tos-title {
+    font-family: var(--font-display); font-weight: 600; letter-spacing: 0.01em;
+    font-size: 42px; line-height: 1.08; color: var(--coal-10); margin: 0 0 16px;
+  }
+  .tos-essence {
+    font-family: var(--font-sans); font-size: 16px; line-height: 1.65;
+    color: var(--coal-8); max-width: 660px; margin: 0 0 26px;
+  }
+  .tos-essence strong { color: var(--coal-10); font-weight: 600; }
+  .tos-rule {
+    height: 3px; border: 0; margin: 0 0 8px;
+    background: linear-gradient(90deg, var(--ember-400), var(--ember-600) 60%, rgba(122,71,16,0));
+    border-radius: 2px;
+  }
+
+  /* Body copy */
+  .tos-content h2 {
+    font-family: var(--font-display); font-weight: 500; font-size: 27px;
+    letter-spacing: 0.01em; color: var(--coal-10); margin: 46px 0 12px; padding-top: 8px;
+  }
+  .tos-content h3 {
+    font-family: var(--font-sans); font-weight: 600; font-size: 15px;
+    letter-spacing: 0.02em; color: var(--coal-9); margin: 24px 0 8px;
+  }
+  .tos-content p {
+    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.78;
+    color: var(--coal-8); margin: 0 0 13px;
+  }
+  .tos-content p.tos-lede { font-size: 16px; line-height: 1.7; color: var(--coal-9); margin-bottom: 20px; }
+  .tos-content strong { color: var(--coal-10); font-weight: 600; }
+  .tos-content em { color: var(--coal-9); font-style: italic; }
+  .tos-content ul, .tos-content ol { margin: 4px 0 15px; padding-left: 22px; }
+  .tos-content li {
+    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.72;
+    color: var(--coal-8); margin-bottom: 8px;
+  }
+  .tos-content li strong { color: var(--coal-10); }
+  .tos-content hr { border: 0; height: 1px; background: var(--coal-4); margin: 30px 0; }
+  .tos-content code {
+    font-family: var(--font-mono); font-size: 12.5px; color: var(--ember-200);
+    background: var(--coal-2); border: 1px solid var(--coal-3); border-radius: 2px; padding: 1px 5px;
+  }
+
+  /* "In short:" section summaries */
+  .tos-content p.tos-summary {
+    font-family: var(--font-sans); font-size: 13px; line-height: 1.6;
+    color: var(--coal-7); background: var(--coal-1);
+    border-left: 2px solid var(--coal-5); border-radius: 0 var(--r-2) var(--r-2) 0;
+    padding: 9px 14px; margin: 2px 0 15px;
+  }
+  .tos-content p.tos-summary strong { color: var(--ember-200); font-weight: 600; }
+
+  /* Guarantee callouts */
+  .tos-callout {
+    background: var(--coal-1); border: 1px solid var(--coal-3);
+    border-left: 3px solid var(--ember-400); border-radius: var(--r-3);
+    box-shadow: var(--sh-card); padding: 16px 20px 6px; margin: 18px 0 22px;
+  }
+  .tos-callout p { color: var(--coal-9); }
+  .tos-callout strong { color: var(--coal-10); }
+
+  /* MIT license block */
+  .tos-license {
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.6; color: var(--coal-8);
+    background: var(--coal-1); border: 1px solid var(--coal-3); border-radius: var(--r-3);
+    box-shadow: var(--sh-emboss); padding: 18px 20px; margin: 14px 0 20px;
+    white-space: pre-wrap; overflow-x: auto;
+  }
+
+  /* Sign-off */
+  .tos-content p.tos-signoff {
+    font-family: var(--font-display); font-style: italic; font-size: 19px;
+    color: var(--coal-9); margin-top: 26px;
+  }
+
+  .tos-foot {
+    margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--coal-3);
+    font-family: var(--font-sans); font-size: 11.5px; letter-spacing: 0.04em; color: var(--coal-7);
+  }
+</style>
+</head>
+<body>
+  <div class="tos-wrap">
+    <header class="tos-mast">
+      <p class="tos-eyebrow">Phoenix Controls · Terms of Service</p>
+      <h1 class="tos-title">Terms of Service &amp; End-User License Agreement</h1>
+      <p class="tos-essence">Phoenix Controls is free forever with no fees of any kind, collects no data and keeps everything on your own machine (its only self-initiated connection is an update check to GitHub), and is open-source under the MIT License so you can use, modify and even sell copies as long as you keep the credit. It is provided "as is" with warranty and liability honestly limited to what German law allows. Clicking "I Accept" forms a binding agreement to these terms.</p>
+      <hr class="tos-rule" />
+    </header>
+
+    <div class="tos-content">
+<p class="tos-lede">Hello, and welcome. Before you open Phoenix Controls for the first time, I want to talk to you honestly for a moment — not in the voice of a lawyer, but in mine. I'm Majo, one German creator working under the name Megermajo Productions, and I built this suite because streaming should be fun to run, not expensive to run. The fact that you're about to run something I made on your own machine, in front of your own audience, means a great deal to me. What follows is the agreement between the two of us. I'd rather you actually understood what you're agreeing to than clicked past a wall of fog, so I've kept it plain and complete. When you click <strong>I Accept</strong>, this becomes a real, binding agreement — so let me earn that click by being clear about every part of it.</p>
+
+<p>Phoenix Controls is a free desktop suite for streamers on Twitch, YouTube and Kick. It runs your bot logic, drives your OBS overlays, and keeps a small local databank — all on your own Windows PC. It's a passion project, made by one person, offered to you in good faith. It is not affiliated with, endorsed by, or operated by Twitch, YouTube, Kick, Streamer.bot, or any AI provider you might choose to connect to it.</p>
+
+<p><em>These Terms are effective as of 20 July 2026 (version 1). When they change in any material way, this line changes with them, and the app will ask you to read and accept the new version before you continue — so the date and version you see here are always the ones you actually agreed to.</em></p>
+
+<h2>1. What you're agreeing to</h2>
+<p class="tos-summary"><strong>In short:</strong> Clicking "I Accept" forms a binding agreement to these terms, and using the app means you accept them. If you don't agree, decline — the app closes, and you can uninstall it. No hard feelings, nothing owed.</p>
+<p>These Terms of Service and End-User License Agreement (the "Terms") form a binding agreement between you (the person using the software) and Megermajo Productions ("I", "me", "my") concerning the Phoenix Controls software and its documentation (together, the "Software"). When you click <strong>I Accept</strong>, you confirm that you've read these Terms, that you understand them, and that you agree to be bound by them. Installing, launching or otherwise using the Software also counts as acceptance, and each time you open the app and put it to work you reaffirm that these Terms govern how you and I stand toward one another.</p>
+<p>If any part of this doesn't sit right with you, that's completely fair — but then please don't accept: declining closes the application, and you're free to uninstall the Software at any time. What you can't do is keep using the Software while rejecting the Terms it runs under; acceptance and use travel together. If you don't agree, please just walk away, and thank you for giving it a look.</p>
+
+<h2>2. It's free — and it stays free</h2>
+<p class="tos-summary"><strong>In short:</strong> No price, no subscription, no licence fee, no in-app purchases, no hidden costs, no ads that sell you. Tips are welcome but buy nothing extra.</p>
+<div class="tos-callout">
+<p><strong>Free, with no asterisk.</strong> Phoenix Controls costs nothing, and it always will. There is no purchase price, no subscription, no licence fee, no per-seat or per-channel charge, no in-app purchases, no unlockable "pro" tier, no hidden or deferred costs waiting to surprise you later, and no advertising that turns you or your audience into the product being sold. Every feature the Software offers is yours to use at no cost. If a "premium" version of Phoenix Controls ever asks you for money, it isn't mine.</p>
+</div>
+<p>If you ever feel moved to support the project — a tip on Ko-fi, say — thank you, sincerely. But please take it for exactly what it is: a gift, given freely, with no strings attached on either side. A donation is not a payment. It buys no extra features, no priority, no warranty, no service-level promise, and no rights or guarantees beyond the ones everyone already has for free. A donor and a non-donor stand on exactly equal footing under these Terms, and you never owe me a cent to keep using the Software.</p>
+<p>One honest caveat, so the promise stays honest: "free" means that <em>Phoenix Controls itself</em> charges you nothing. It doesn't cover the fees other companies may charge for services you choose to connect — an AI provider's API usage, for example, or any paid third-party tool you wire in. Those are your own arrangements with those providers, at their prices; the free Software simply talks to them when you ask it to.</p>
+
+<h2>3. Your data stays on your machine</h2>
+<p class="tos-summary"><strong>In short:</strong> I collect no personal data. The app sends no telemetry or analytics to me. Everything it creates lives locally on your machine, under your control. The one connection it makes on its own is an update check to GitHub — which reaches GitHub, never me.</p>
+<div class="tos-callout">
+<p><strong>I collect no personal data. None.</strong> Phoenix Controls contains no analytics, no telemetry, no usage tracking, and it does not "phone home" to me. It does not transmit your settings, your scripts, your overlays, your logs or your local databank to me. Everything the application creates — your configuration, your <code>.phx</code> logic, your Visualist layers, the local SQLite databank, and its logs — is written to your own machine and stays under your control. I never receive it, because it never leaves your machine to reach me.</p>
+</div>
+<p>Honesty means naming the one exception, because "no data collection" deserves precision. The single connection the app makes on its own initiative is an update check: to see whether a newer version exists and to download it, Phoenix Controls contacts GitHub, which hosts the releases. That check necessarily reveals your IP address and your current app version to GitHub, under GitHub's own terms — never to me — and it carries none of your settings, scripts, overlays, logs or databank with it. It is a version handshake, nothing more. Everything else the app does stays on your machine.</p>
+<p>Because everything is local, you own it and you control it: you can read it, back it up, move it, or delete it whenever you like. There is no hidden back door — nothing quietly copies your work anywhere else. I do have to be precise about one further boundary, though — the services <em>you</em> choose to plug in — so see the next section.</p>
+
+<h2>4. Services you connect to</h2>
+<p class="tos-summary"><strong>In short:</strong> Anything you plug in — bots, platforms, AI providers, Discord, webhooks — is run by someone else under their terms. Data you send there lives by their rules, not mine, and your API keys are stored locally on your device.</p>
+<p>The moment <em>you</em> choose to connect a third-party service — Streamer.bot, the Twitch, YouTube or Kick platforms, an AI provider such as OpenAI or Anthropic, Discord, a webhook, anything — the app sends information to <em>them</em>, directly, from your machine. Those services are operated by those companies under their own terms and privacy policies, not mine, and whatever you send them travels under their rules. I have no visibility into it and no responsibility for it; that relationship is between you and them, so please read their policies, because they are the ones actually holding that data.</p>
+<p>I also can't guarantee those services will be available, correct, secure or unchanged, and I'm not responsible for outages, billing, data handling or policy changes on their side. Any API keys, tokens or credentials you enter are stored locally on your device so the app can act on your behalf; they are not transmitted to me, and I never see them. Treat those keys like passwords, because that's what they are.</p>
+
+<h2>5. Provided "as is" — no warranty, and honest limits on liability</h2>
+<p class="tos-summary"><strong>In short:</strong> The Software comes "as is" and "as available" with no warranties; you run it at your own risk. I limit my liability as far as the law allows — but German law will not let me disclaim certain things, and I'm not going to pretend otherwise.</p>
+<p>Phoenix Controls is offered to you as a gift, and it comes as it is. It is provided <strong>"AS IS"</strong> and <strong>"AS AVAILABLE"</strong>, with all its faults and without warranty of any kind, whether express, implied or statutory. To the fullest extent the law allows, I disclaim every implied warranty — including the warranties of merchantability, of fitness for a particular purpose, of non-infringement, and of quiet enjoyment — except to the extent mandatory law grants you rights in respect of defects that cannot be excluded or limited, in particular for a defect I have fraudulently concealed or where I have expressly given a guarantee. I make no promise that the Software will meet your needs, run uninterrupted, be timely, be secure, be free of errors or bugs, be compatible with your setup or with any third-party service, or that any defect will be corrected. You install and run it at your own risk, and you are responsible for backing up your own settings, scripts, overlays and databank, and for judging whether the Software is suitable for what you intend to do with it.</p>
+<p>To the fullest extent permitted by law, Megermajo Productions shall not be liable to you for any damage, loss or harm of any kind — direct, indirect, incidental, special, consequential or otherwise — arising out of or in connection with downloading, installing, configuring or using (or being unable to use) the Software, including without limitation lost data, corrupted files, missed or broken streams, lost revenue, lost donations, business interruption, or damage to your hardware or software, even where the possibility of such damage was known or foreseeable.</p>
+<p>Now, because I operate from Germany, I want to be straight with you rather than over-promising a disclaimer that the law would simply strike down. A blanket "not liable for anything" is void here (see BGB §§ 307, 309 Nr. 7) — an over-reaching disclaimer isn't strong, it's worthless. So instead of pretending, let me tell you where liability really lands. <strong>Nothing in these Terms limits or excludes any liability or warranty right that may not lawfully be limited or excluded</strong>, and regardless of anything written above, I remain fully liable:</p>
+<ul>
+<li>for damage caused by <strong>intent (Vorsatz)</strong> or <strong>gross negligence (grobe Fahrlässigkeit)</strong> on my part or on the part of my legal representatives or vicarious agents (<em>gesetzliche Vertreter und Erfüllungsgehilfen</em>);</li>
+<li>for injury to <strong>life, body or health</strong> caused by a negligent or intentional breach of duty on my part or on the part of my legal representatives or vicarious agents;</li>
+<li>under any <strong>mandatory statutory liability</strong>, in particular under the German Product Liability Act (<em>Produkthaftungsgesetz</em>); and</li>
+<li>to the extent I have assumed a <strong>guarantee</strong> or <strong>fraudulently concealed a defect</strong>.</li>
+</ul>
+<p>For the culpable breach of an essential contractual duty — a "cardinal obligation", that is, a duty whose fulfilment makes proper performance of this agreement possible at all and on which you may reasonably rely — my liability, where not already covered above, is limited to the foreseeable damage typical for an agreement of this kind; it is not excluded outright. Beyond the cases listed here, liability is excluded. Nothing in these Terms shortens any limitation period or shifts any burden of proof to your disadvantage where the law forbids it. These limits apply equally to the "IN NO EVENT… LIABLE" language in the MIT block below and to the "AS IS" disclaimer above: none of them is intended to remove the protections that German law makes mandatory, and where German law sets the firmer floor, that floor wins in your favour.</p>
+
+<h2>6. The MIT License — open source, and yours to build on</h2>
+<p class="tos-summary"><strong>In short:</strong> Phoenix Controls is open source under the MIT License. You may use, copy, modify, distribute and even sell copies — freely — as long as you keep the copyright and permission notice in substantial copies. I keep the copyright; you get the broad MIT rights.</p>
+<p>Phoenix Controls is open-source software, released under the MIT License. That's one of the most generous, least restrictive licences there is, and I chose it on purpose — it's a promise about how far your freedom with this Software extends, so let me say it plainly in both directions before the formal text.</p>
+<h3>What you may do</h3>
+<p>Permission is granted to you, free of charge, the moment you obtain a copy of the Software and its associated documentation files, to deal in the Software <strong>without restriction</strong> — including the rights to use, copy, modify, merge, publish, distribute, sublicense, and even sell copies of it (that freedom to sell is about copies you pass on or build upon; my own release of Phoenix Controls always stays free of charge, as Section 2 promises), and to permit the persons to whom you give it to do the same. You don't need to ask me, register, or report back. Fork it, bend it to your stream, fold pieces of it into your own project, ship it onward — it's genuinely yours to run with, and all of that is expressly allowed.</p>
+<h3>The one thing I ask in return</h3>
+<p>In return, the MIT License asks for exactly one thing, and it's a small and fair one: the copyright notice and the MIT permission notice below must be included in all copies or substantial portions of the Software. In plain terms — keep the credit intact when you copy, modify or share it. That single line of acknowledgement is the whole rent.</p>
+<h3>Ownership</h3>
+<p>Megermajo Productions <strong>retains the copyright</strong> in Phoenix Controls and, through the MIT License, grants you the broad rights described above. The two sit together comfortably; they don't compete. This is not a personal, revocable or restricted permission — the licence is not personal to you, and there's nothing here to revoke; the MIT grant stands for everyone who obtains a copy. Where any general wording in these Terms might seem to sit awkwardly against the MIT License, the MIT License governs the rights you hold in the Software.</p>
+<h3>How this fits with Section 5</h3>
+<p>The MIT text carries its own "as is", no-warranty and no-liability language. That's not a contradiction of Section 5 — it's the same honesty said twice, and the two reinforce each other rather than compete. Where they speak to the same point, read them as one consistent promise, always subject to the mandatory German-law carve-outs in Section 5. Here is the licence in full, exactly as it ships with the Software:</p>
+<pre class="tos-license">MIT License
+
+Copyright (c) 2026 Megermajo Productions
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+
+<h2>7. Using it responsibly</h2>
+<p class="tos-summary"><strong>In short:</strong> Don't use Phoenix Controls to break the law or to abuse the platforms you stream on. Their rules still bind you, on top of these Terms, and how you run your channel is your responsibility.</p>
+<p>Phoenix Controls is a tool, and like any tool it reflects the hand that holds it. Please use it only for lawful purposes, and only in ways that respect the platforms it connects to. Twitch, YouTube, Kick and any other service you link each have their own Terms of Service, community guidelines and developer or API rules — those agreements are between you and them, and they continue to bind you in full whenever you use Phoenix Controls to reach them. Nothing in this document loosens, overrides or excuses you from them. In particular, please don't use the Software:</p>
+<ul>
+<li>to break any applicable law, or to help anyone else do so;</li>
+<li>to send spam, to harass or deceive viewers, to manipulate metrics or engagement, to evade a ban, or to circumvent a platform's protections;</li>
+<li>to harm, deceive, harass or endanger other people; or</li>
+<li>in any way a platform forbids or the law prohibits.</li>
+</ul>
+<p>How you run your channel is your responsibility. Megermajo Productions doesn't monitor, review or control what you do with the Software and can't answer for it — if something you build with Phoenix Controls would break a platform's rules, the platform's rules win, and the consequences of breaking them are yours, not mine. I've built the app to help you play by the rules, not around them.</p>
+
+<h2>8. A one-person passion project</h2>
+<p class="tos-summary"><strong>In short:</strong> This is a passion project maintained by one person — there's no support desk, no guaranteed response times, and no promise of updates or continued availability. Please hold it as a gift, not a service contract.</p>
+<p>Phoenix Controls is made and looked after by one person, in the hours around an ordinary life, because building it is a genuine joy — so please hold everything here as a gift rather than a service contract. There is no support desk, no ticket queue, and no promise that any single bug is fixed on a set timeline; I read what people send me, and I fix what I can, when I can. The app could change, pause, or stop being maintained at any point, so please plan around that rather than depending on a guarantee I'm not making. What I can promise is that it's made with care. And if you're ever curious who actually stands behind the software, or you simply want the formal particulars a German-based maker is expected to keep on the public record, you'll find every one of them set out in full at https://megermajo-productions.com/imprint.html, which is the proper home for that sort of detail so this letter never has to read like a registry filing.</p>
+
+<h2>9. When these Terms change</h2>
+<p class="tos-summary"><strong>In short:</strong> I may revise these Terms. On a material change, the app will show them again and ask you to accept the new version; if you don't agree, stop using the Software and uninstall it.</p>
+<p>Because this is living software — it grows, it gets fixed, and the world around it keeps moving — these Terms may need to be revised from time to time. Small housekeeping clarifications may happen quietly, but the version that matters is always the one the app has asked you to accept, as stamped in the effective-date line near the top. Whenever a change is <em>material</em> — anything that meaningfully affects your rights, your risks, or what you're agreeing to — the app won't slip it past you: it will show you the updated Terms on launch and ask you to read and accept them again, exactly as it did the first time. Your continued use after a material change depends on that fresh acceptance, and the new version replaces the old one from the moment you agree. If a revision isn't for you, that's your right — stop using Phoenix Controls and uninstall it.</p>
+
+<h2>10. Governing law and severability</h2>
+<p class="tos-summary"><strong>In short:</strong> German law applies, gently — and any mandatory protections your own home law gives you stay yours. If one clause fails, the rest still stand.</p>
+<p>Phoenix Controls is made in Germany by a German creator, so it feels natural that the law of the Federal Republic of Germany is the backdrop against which these Terms are read and understood, to the extent the law lets us choose. This is meant gently, not as a trap: if you're a consumer somewhere else, the mandatory consumer protections guaranteed to you by your own home law stay yours, and nothing here is intended to take away rights the law grants you and doesn't allow to be waived. I'd always rather sort out a problem with a friendly message than a formal one, so please reach out before anything escalates.</p>
+<p>If any single provision of these Terms turns out to be invalid or unenforceable — in whole or in part — that provision is severed, and its place is taken by the applicable statutory rule (§ 306 Abs. 2 BGB); every remaining provision stays in full force and keeps its full meaning. One weak link doesn't unravel the whole chain.</p>
+
+<hr>
+
+<p>Thank you for reading all the way to here — truly. Building this has been one of the real pleasures of my life so far, and handing it to you for free, to bend and remix and make your own, is exactly the point of it. Whatever else changes, it will stay free, stay local to your machine, and stay honest with you. I hope Phoenix Controls serves your stream well.</p>
+<p class="tos-signoff">With warmth and gratitude, and every good wish for your channel — Majo, Megermajo Productions.</p>
+    </div>
+
+    <div class="tos-foot">Phoenix Controls · Megermajo Productions · free &amp; open-source under the MIT License</div>
+  </div>
+</body>
+</html>

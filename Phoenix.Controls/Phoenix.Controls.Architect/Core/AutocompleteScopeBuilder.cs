@@ -124,6 +124,9 @@ namespace Phoenix.Controls.Architect.Core
                 case "Twitch.PointRedeem":
                     AddRange(tokens, "user.name", "user.reward", "user.input");
                     return;
+                case "Twitch.InWhisper":
+                    AddRange(tokens, "user.name", "user.message", "user.id");
+                    return;
                 case "YouTube.Message":
                     AddRange(tokens, "user.name", "user.message");
                     return;

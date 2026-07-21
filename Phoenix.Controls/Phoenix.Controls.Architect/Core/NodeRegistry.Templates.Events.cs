@@ -169,6 +169,17 @@ namespace Phoenix.Controls.Architect.Core
                 null,
                 new[] { ("Flow", ColExec), ("User", ColString), ("Reward", ColString), ("Input", ColString) });
 
+            // Inbound whisper (private DM) to the bot account. Distinct title
+            // from the OUTBOUND "Twitch.Whisper" action node (RemainingBands) —
+            // both can't share a template key. The exporter maps this title to
+            // on_event(Twitch.Whisper) (the real SB event type). Reply with the
+            // existing twitch.whisper action wired from User. Requires the bot
+            // account connected in Streamer.bot with whisper-read authorized.
+            AddTemplate("Twitch.InWhisper",    "Events", Color.ForestGreen,
+                Localizer.T("architect.node.bubble.twitch_inwhisper"),
+                null,
+                new[] { ("Flow", ColExec), ("User", ColString), ("Message", ColString), ("UserId", ColString) });
+
             AddTemplate("System.Startup",      "Events", Color.DimGray,
                 Localizer.T("architect.node.bubble.system_startup"),
                 null,

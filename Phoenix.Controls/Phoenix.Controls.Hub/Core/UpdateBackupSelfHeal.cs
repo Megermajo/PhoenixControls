@@ -20,8 +20,8 @@ namespace Phoenix.Controls.Hub.Core
     /// <list type="bullet">
     ///   <item>Installs that ALREADY updated with a wiping Updater — their
     ///         live tree is missing the user files, and the backup still has
-    ///         them (unhealed backups get a 30-day prune grace, see
-    ///         <c>UpdateRunner.UnhealedBackupRetentionDays</c>).</item>
+    ///         them (unhealed backups are content-verified before pruning and
+    ///         retried each launch, see <c>UpdateRunner.TryPruneBackups</c>).</item>
     ///   <item>The next update FROM a pre-fix build: the swap is performed by
     ///         the OLD, in-place Updater, so it still wipes. The freshly
     ///         installed (fixed) Hub heals on its first launch.</item>
@@ -49,7 +49,8 @@ namespace Phoenix.Controls.Hub.Core
         /// Marker dropped into a backup dir once it has been healed from.
         /// Keep in sync with <c>UpdateRunner.SelfHealMarkerFileName</c> in
         /// Phoenix.Controls.Updater (BCL-only project, no shared reference) —
-        /// the Updater uses it to grant unhealed backups a longer prune grace.
+        /// the Updater uses it to relax the prune verify gate for this backup
+        /// from content-sensitive to existence-only.
         /// </summary>
         internal const string MarkerFileName = "phx-selfheal.done";
 
@@ -76,8 +77,9 @@ namespace Phoenix.Controls.Hub.Core
             /// Backups that were scanned but NOT fully drained — a copy failed,
             /// an enumeration faulted, or a differing conflict occurred — so the
             /// heal marker was deliberately withheld. Leaving them unmarked keeps
-            /// the 30-day unhealed prune grace and forces a retry next launch,
-            /// closing the 2026-07-16 marker-before-verify P0.
+            /// the stronger content-sensitive verify-before-delete protection and
+            /// forces a retry next launch, closing the 2026-07-16
+            /// marker-before-verify P0.
             /// </summary>
             public int BackupsRetainedForRecovery;
             public List<string> Failures { get; } = new();
@@ -113,14 +115,16 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     // Persistent (re-logged each launch until resolved) notice —
                     // the audit flagged the old one-shot log. These backups are
-                    // deliberately NOT marked healed, so TryPruneBackups will not
-                    // delete them while they remain the only copy of your files.
+                    // deliberately NOT marked healed, so within the prune window
+                    // TryPruneBackups keeps them while they remain the only copy;
+                    // the 7-day hard age cap eventually clears them, so the notice
+                    // urges timely recovery rather than promising indefinite keep.
                     GlobalLogger.Log(
                         $"Update-backup self-heal: {report.BackupsRetainedForRecovery} update backup(s) still hold " +
                         "user file(s) that could not be auto-restored (a newer/different file already occupies that " +
                         "path, or a copy failed). Your originals are kept in the " +
-                        $"\"{Path.GetFileName(suiteRoot)}.bak.*\" folder(s) next to the install folder; they will be " +
-                        "retried on the next launch and will NOT be pruned while they are the only copy.",
+                        $"\"{Path.GetFileName(suiteRoot)}.bak.*\" folder(s) next to the install folder and are retried " +
+                        "on the next launch — recover them soon, as update backups are cleared about a week after they are made.",
                         "UpdateBackupSelfHeal", LogLevel.CriticalError);
                 }
                 foreach (string failure in report.Failures)
@@ -204,12 +208,14 @@ namespace Phoenix.Controls.Hub.Core
                 // enumeration fault, or a conflict against a DIFFERING live file
                 // (e.g. a freshly shipped seed now occupying a path the user had
                 // customized) means the backup still holds the only copy of user
-                // work. Such a backup is left UNMARKED so it keeps the 30-day
-                // unhealed prune grace and is retried next launch (fill-only
-                // makes retry safe). Fix for the 2026-07-16 marker-before-verify
-                // P0: the marker used to be written unconditionally, which both
-                // blocked retry and dropped the backup to the 7-day window, so
-                // TryPruneBackups could delete the sole copy of a .phx/.phxlayer.
+                // work. Such a backup is left UNMARKED so it keeps the stronger
+                // content-sensitive verify-before-delete protection and is retried
+                // next launch (fill-only makes retry safe). Fix for the 2026-07-16
+                // marker-before-verify P0: the marker used to be written
+                // unconditionally, which both blocked retry and flipped the prune
+                // gate to the weaker existence-only check (a healed backup does not
+                // block on a present-but-differing file), so TryPruneBackups could
+                // delete a sole or customized copy of a .phx/.phxlayer.
                 bool cleanDrain = true;
                 foreach (string candidate in dataRootCandidates)
                 {
@@ -287,10 +293,11 @@ namespace Phoenix.Controls.Hub.Core
 
                 if (cleanDrain)
                 {
-                    // Fully drained — safe to mark healed. TryPruneBackups clocks
-                    // the 7-day healed window from THIS marker's write time (not
-                    // the backup's creation stamp), so a genuine 7-day grace
-                    // always follows the heal.
+                    // Fully drained — safe to mark healed. The marker relaxes
+                    // TryPruneBackups' verify gate from content-sensitive to
+                    // existence-only for this backup: a later user edit that makes
+                    // a live file differ no longer pins the (now redundant) backup
+                    // on disk.
                     try
                     {
                         File.WriteAllText(marker,
@@ -300,8 +307,9 @@ namespace Phoenix.Controls.Hub.Core
                     catch (Exception ex)
                     {
                         // Marker write failed — leave the backup unmarked. It
-                        // keeps the long grace and is retried next launch; a
-                        // later clean drain re-attempts the marker.
+                        // keeps the stronger content-sensitive prune protection
+                        // and is retried next launch; a later clean drain
+                        // re-attempts the marker.
                         report.Failures.Add($"could not write marker in {backupDir}: {ex.Message}");
                     }
                 }
@@ -309,8 +317,9 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     // Not fully drained: the backup still holds the only copy of
                     // one or more user files. Leave it UNMARKED so it keeps the
-                    // 30-day unhealed grace, TryPruneBackups' verify-before-delete
-                    // guard protects it, and the next launch retries.
+                    // stronger content-sensitive verify-before-delete protection (a
+                    // present-but-differing live file blocks its prune), and the
+                    // next launch retries.
                     report.BackupsRetainedForRecovery++;
                 }
             }

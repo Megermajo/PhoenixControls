@@ -132,6 +132,21 @@ namespace Phoenix.Controls.Shared.Services
         // the object — it flattens via Message — so the Exception lives only on
         // the in-memory ring and the OnLogEntry/OnError dispatches.
         public static void Log(string message, string source, LogLevel level, Exception? exception)
+            => LogInternal(message, source, level, exception, persist: true);
+
+        // Ephemeral variant — reaches the in-memory ring + OnLogEntry
+        // subscribers (the live LiveFeed / SystemLog panels) but is NOT written
+        // to the SystemHistory SQLite store. For privacy-sensitive content that
+        // must be visible LIVE in the Hub yet must never land in the permanent
+        // on-disk log: e.g. an incoming whisper DM, whose body shows in the Live
+        // Feed while the only persisted record is the redacted EventLog audit
+        // (sender + "whisper received", no body). Everything else about a normal
+        // Log() holds — ring buffer, OnLogEntry fan-out, re-entry guard — only
+        // the SQLite persistence step is skipped.
+        public static void LogTransient(string message, string source = "System", LogLevel level = LogLevel.System)
+            => LogInternal(message, source, level, exception: null, persist: false);
+
+        private static void LogInternal(string message, string source, LogLevel level, Exception? exception, bool persist)
         {
             // Capture the instant once as a DateTimeOffset so the
             // zone offset is preserved. DateTime.Now (Kind=Local) loses the
@@ -188,6 +203,12 @@ namespace Phoenix.Controls.Shared.Services
             // both directions (false positives when queue briefly idled at
             // cap, false negatives when the writer drained between TryWrite
             // and the count check). Counter-on-pump is exact.
+            // Ephemeral entries (LogTransient) skip BOTH the persistence enqueue
+            // and the writer-start — they exist only for the in-memory ring +
+            // the OnLogEntry fan-out below, so the whisper body (and any future
+            // privacy-sensitive live-only line) never reaches SystemHistory.
+            if (persist)
+            {
             long seq = Interlocked.Increment(ref _writeSequence);
             if (!_logChannel.Writer.TryWrite(new QueuedEntry(entry, seq)))
             {
@@ -217,6 +238,7 @@ namespace Phoenix.Controls.Shared.Services
                     () => StartLogWriterAsync(ctsSnap.Token),
                     "GlobalLogger", "log-writer pump", ctsSnap.Token);
             }
+            } // end if (persist)
 
             // 4. Fire event for UI listeners (Hub Dashboard). Per-handler
             // try/catch so one throwing subscriber can't crash the caller.

@@ -1448,13 +1448,29 @@ public sealed class UpdateRunner
     internal const string SelfHealMarkerFileName = "phx-selfheal.done";
 
     /// <summary>
-    /// Retention for backups that carry NO self-heal marker. Such a backup
-    /// may be the ONLY surviving copy of user data wiped by a pre-fix
-    /// updater (the machine updated again before Hub ever launched), so it
-    /// gets a long grace window instead of the routine <c>ageDays</c> one.
+    /// Prunes backups after every update. A <c>&lt;root&gt;.bak.&lt;stamp&gt;</c>
+    /// is the pre-update snapshot of the whole install tree (renamed aside by the
+    /// swap); its only lasting value is the USER DATA it holds — code is
+    /// re-shipped by every release. Policy (Majo 2026-07-20):
+    /// <list type="bullet">
+    ///   <item>HARD CAP: any backup older than <paramref name="ageDays"/> is
+    ///         deleted, ALWAYS — no exception. After the window everything clears
+    ///         up (the self-heal has the whole window to restore un-restored data
+    ///         first).</item>
+    ///   <item>Within the window a REDUNDANT / empty backup (its user data is
+    ///         empty, or already present identically in the live tree) is deleted
+    ///         immediately, EXCEPT the single newest data-bearing one, retained as
+    ///         a rollback snapshot and trimmed to its data folder alone
+    ///         (<see cref="TrimBackupToDataOnly"/>).</item>
+    ///   <item>Within the window a backup still holding the sole (or, un-healed,
+    ///         byte-differing) copy of a user file is KEPT INTACT — the
+    ///         content-sensitive verify-before-delete gate, unchanged since the
+    ///         2026-07-16 P0/P1 hardening — until the hard cap eventually clears
+    ///         it.</item>
+    /// </list>
+    /// Runs at the tail of every update, after the swap + user-state restore have
+    /// succeeded.
     /// </summary>
-    internal const int UnhealedBackupRetentionDays = 30;
-
     internal void TryPruneBackups(string installRoot, int ageDays)
     {
         try
@@ -1464,82 +1480,73 @@ public sealed class UpdateRunner
             if (parent.Length == 0 || baseName.Length == 0) return;
 
             string prefix = $"{baseName}.bak.";
-            foreach (string dir in Directory.EnumerateDirectories(parent, $"{baseName}.bak.*"))
+
+            // Newest-first: the one rollback snapshot we retain is the most
+            // recent backup. Order by the name stamp — Directory.Move during the
+            // swap preserves creation time, so the stamp (not CreationTimeUtc) is
+            // the reliable ordering key.
+            var backups = Directory.EnumerateDirectories(parent, $"{baseName}.bak.*")
+                .Where(d => Path.GetFileName(d).StartsWith(prefix, StringComparison.Ordinal))
+                .OrderByDescending(d => Path.GetFileName(d), StringComparer.Ordinal)
+                .ToList();
+
+            bool rollbackRetained = false;
+            foreach (string dir in backups)
             {
                 try
                 {
-                    string name = Path.GetFileName(dir);
-                    if (!name.StartsWith(prefix, StringComparison.Ordinal))
+                    // ── Hard cap: after ageDays a backup ALWAYS clears up ──────
+                    // No exception (Majo 2026-07-20) — this overrides both the
+                    // rollback retention and the sole-copy keep below. Clock from
+                    // the name stamp: Directory.Move during the swap preserves
+                    // creation time, so the stamp (not CreationTimeUtc) is the
+                    // reliable age.
+                    string stamp = Path.GetFileName(dir).Substring(prefix.Length);
+                    if (DateTime.TryParseExact(stamp, "yyyyMMddHHmmss",
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                            out DateTime backupUtc)
+                        && backupUtc < DateTime.UtcNow - TimeSpan.FromDays(ageDays))
                     {
-                        // Defence-in-depth: skip anything that doesn't match the
-                        // exact prefix — the EnumerateDirectories glob is lax
-                        // enough that ".bak.foo" could land here.
+                        Directory.Delete(dir, recursive: true);
+                        Log($"pruned backup past the {ageDays}-day cap: {dir}");
                         continue;
                     }
 
-                    // ── Verify-before-delete (2026-07-16 P0/P1 backstop) ───────
-                    // A backup is the LAST copy of the user data the update moved
-                    // aside — never delete one while it is still the only home of
-                    // a user file, regardless of age. What "only home" means
-                    // depends on the heal marker:
-                    //   • HEALED backups carry a clean-drain certificate from the
-                    //     Hub self-heal (every file was restored, or already
-                    //     present byte-identical, at heal time). A file that is
-                    //     present-but-different in live is therefore a legitimate
-                    //     LATER user edit, not a sole copy — so only a WHOLLY
-                    //     ABSENT file blocks their pruning.
-                    //   • UNHEALED backups are NOT certified (never healed, or
-                    //     the heal found unrepresented content). Here a
-                    //     present-but-DIFFERING file also blocks pruning — that
-                    //     is the P1 case: a customized seed the wipe replaced with
-                    //     the stock version, surviving only in the backup.
-                    // This makes silent permanent loss impossible even if a marker
-                    // is wrong or a heal only partially ran.
                     string markerPath = Path.Combine(dir, SelfHealMarkerFileName);
                     bool healed = File.Exists(markerPath);
 
+                    // ── Verify-before-delete (2026-07-16 P0/P1 backstop) ───────
+                    // Never delete a backup while it is still the only home of a
+                    // user file. What "only home" means depends on the marker:
+                    //   • HEALED — a clean-drain certificate; a present-but-
+                    //     different live file is a legitimate later user edit, so
+                    //     only a WHOLLY ABSENT file blocks pruning.
+                    //   • UNHEALED — not certified; a present-but-DIFFERING file
+                    //     also blocks (the P1 case: a customized seed the wipe
+                    //     replaced with the stock version, surviving only here).
+                    // Any IO fault inside the gate is treated as "holds unrestored
+                    // data" → kept. Silent permanent loss stays impossible.
                     if (BackupHoldsUnrestoredUserData(dir, installRoot, contentSensitive: !healed))
                     {
                         Log($"keeping backup — still the only copy of user file(s) not in the live install: {dir}");
                         continue;
                     }
 
-                    if (healed)
+                    // Redundant: nothing here the live tree lacks. Retain the
+                    // newest data-bearing one as a rollback snapshot (trimmed to
+                    // its data folder — "the rest is code"); delete the rest now,
+                    // regardless of how recent they are.
+                    if (!rollbackRetained && BackupHasUserData(dir))
                     {
-                        // Redundant + healed: age out on the routine window, but
-                        // clock it from WHEN the heal happened (marker write
-                        // time), NOT the backup's creation-time name stamp —
-                        // otherwise a backup healed long after creation gets a
-                        // near-zero grace (the 2026-07-16 P2 finding).
-                        DateTime healTimeUtc;
-                        try { healTimeUtc = File.GetLastWriteTimeUtc(markerPath); }
-                        catch { healTimeUtc = DateTime.UtcNow; }
-                        if (healTimeUtc < DateTime.UtcNow - TimeSpan.FromDays(ageDays))
-                        {
-                            Directory.Delete(dir, recursive: true);
-                            Log($"pruned redundant healed backup: {dir}");
-                        }
+                        rollbackRetained = true;
+                        TrimBackupToDataOnly(dir);
+                        Log($"retained newest redundant backup as a data-only rollback snapshot: {dir}");
                         continue;
                     }
 
-                    // Unhealed + redundant: age out only at the 30-day hard cap
-                    // (disk-space backstop). Parse the name stamp — Directory.Move
-                    // during the swap preserves creation time, so CreationTimeUtc
-                    // is unreliable here.
-                    string stamp = name.Substring(prefix.Length);
-                    if (!DateTime.TryParseExact(stamp, "yyyyMMddHHmmss",
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                        out DateTime backupUtc))
-                    {
-                        Log($"could not parse backup timestamp '{stamp}'; leaving alone.");
-                        continue;
-                    }
-                    if (backupUtc < DateTime.UtcNow - TimeSpan.FromDays(UnhealedBackupRetentionDays))
-                    {
-                        Directory.Delete(dir, recursive: true);
-                        Log($"pruned redundant unhealed backup (past {UnhealedBackupRetentionDays}-day cap): {dir}");
-                    }
+                    Directory.Delete(dir, recursive: true);
+                    Log($"pruned redundant backup: {dir}");
                 }
                 catch (Exception ex) { Log($"could not prune {dir}: {ex.Message}"); }
             }
@@ -1548,15 +1555,89 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
+    /// True when <paramref name="backupDir"/> holds at least one user-data file
+    /// (under a data root, excluding the release-owned <c>overlay</c>/
+    /// <c>streamerbot</c> runtime). Distinguishes a backup worth keeping as a
+    /// rollback snapshot from a code-only / empty one. Any IO fault returns true
+    /// so an unreadable backup is treated as data-bearing (kept, never dropped
+    /// as "empty").
+    /// </summary>
+    private bool BackupHasUserData(string backupDir)
+    {
+        foreach (string candidate in UserStateMerge.DataRootCandidates)
+        {
+            string backupData = Path.Combine(backupDir, candidate);
+            if (!Directory.Exists(backupData)) continue;
+            try
+            {
+                foreach (string src in Directory.EnumerateFiles(backupData, "*", UserStateMerge.CreateEnumeration()))
+                {
+                    if (!UserStateMerge.IsReleaseOwned(Path.GetRelativePath(backupData, src))) return true;
+                }
+            }
+            catch { return true; } // unreadable ⇒ assume data-bearing, keep
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Strips a retained backup down to its user-data root, deleting the release
+    /// code around it — the backup exists only to preserve user data and every
+    /// release re-ships its own code. STRICTLY data-preserving: it walks only
+    /// the path segments leading to the data root, deleting siblings at each
+    /// level, and NEVER enters or removes the data subtree itself. Any IO fault
+    /// leaves the backup untouched (wasted disk, never data loss); best-effort
+    /// and non-fatal to the update. Only runs when exactly ONE data-root
+    /// candidate is present — zero means nothing to preserve (the caller only
+    /// trims data-bearing backups) and a pathological multi-root layout is left
+    /// whole rather than risk deleting a second data root as a "sibling".
+    /// </summary>
+    private void TrimBackupToDataOnly(string backupDir)
+    {
+        try
+        {
+            var present = UserStateMerge.DataRootCandidates
+                .Where(c => Directory.Exists(Path.Combine(backupDir, c)))
+                .ToList();
+            if (present.Count != 1) return;
+
+            string[] segments = present[0].Split(
+                new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries);
+
+            string level = backupDir;
+            foreach (string seg in segments)
+            {
+                // Delete every sibling directory that is NOT the next step toward
+                // the data root; the data root's own subtree is only ever kept.
+                foreach (string sub in Directory.GetDirectories(level))
+                {
+                    if (!string.Equals(Path.GetFileName(sub), seg, StringComparison.OrdinalIgnoreCase))
+                        Directory.Delete(sub, recursive: true);
+                }
+                // Loose files at an ancestor level are release code, never data.
+                foreach (string file in Directory.GetFiles(level))
+                    File.Delete(file);
+                level = Path.Combine(level, seg);
+            }
+        }
+        catch (Exception ex) { Log($"data-only trim skipped for {backupDir}: {ex.Message}"); }
+    }
+
+    /// <summary>
     /// True when <paramref name="backupDir"/> is still the only home of a
-    /// user-data file — under a data root (<c>Hub\data</c> or flat <c>data</c>),
-    /// excluding the release-owned <c>overlay</c>/<c>streamerbot</c> subtrees.
+    /// user-data file under a data root (<c>Hub\data</c> or flat <c>data</c>).
     /// A file counts as "only in the backup" when its relative path is ABSENT
-    /// from <paramref name="installRoot"/>'s live tree; when
-    /// <paramref name="contentSensitive"/> is set, a file that is present live
-    /// but BYTE-DIFFERENT also counts (the P1 case — a customized copy the wipe
-    /// replaced with a shipped seed). Any IO fault is treated as "holds
-    /// unrestored data" so an unverifiable backup is kept (2026-07-16 backstop).
+    /// from <paramref name="installRoot"/>'s live tree — and that applies to
+    /// EVERY file, INCLUDING the release-owned <c>overlay</c>/<c>streamerbot</c>
+    /// subtrees, because a user can author files there that the release never
+    /// ships (UserStateMerge restores them and the self-heal protects them).
+    /// When <paramref name="contentSensitive"/> is set, a NON-release file that
+    /// is present live but BYTE-DIFFERENT also counts (the P1 case — a customized
+    /// copy the wipe replaced with a shipped seed); a differing release-owned
+    /// file is the shipped copy winning by design and does NOT count. Any IO
+    /// fault is treated as "holds unrestored data" so an unverifiable backup is
+    /// kept (2026-07-16 backstop).
     /// </summary>
     private bool BackupHoldsUnrestoredUserData(string backupDir, string installRoot, bool contentSensitive)
     {
@@ -1573,11 +1654,20 @@ public sealed class UpdateRunner
             foreach (string src in files)
             {
                 string rel = Path.GetRelativePath(backupData, src);
-                // Release-owned runtime (overlay/streamerbot) is not user data —
-                // a stale copy there must not pin a backup on disk forever.
-                if (UserStateMerge.IsReleaseOwned(rel)) continue;
                 string dest = Path.Combine(liveData, rel);
-                if (!File.Exists(dest)) return true;                         // absent → sole copy
+                // ABSENT from live ⇒ this backup is the sole home of the file.
+                // Checked for EVERY file, incl. overlay/streamerbot: a user can
+                // add files there that the release never ships, UserStateMerge
+                // restores them, and the self-heal withholds its marker to keep
+                // them — so an absent one is genuine unrestored user content.
+                // (2026-07-20 P1 fix: the old code skipped release-owned files
+                // BEFORE this test and could delete their sole copy.)
+                if (!File.Exists(dest)) return true;
+                // PRESENT but differing: for a release-owned file this is the
+                // shipped copy winning by design (UserStateMerge keeps the stock
+                // file on conflict), NOT unrestored user data — it must not pin
+                // the backup. Only a non-release user file blocks on content.
+                if (UserStateMerge.IsReleaseOwned(rel)) continue;
                 if (contentSensitive && !FilesContentEqual(src, dest)) return true; // differing version
             }
         }
