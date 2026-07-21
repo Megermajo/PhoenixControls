@@ -386,6 +386,44 @@
     <!-- RELEASES START -->
     <article class="release">
       <header class="release-head">
+        <div class="release-version">v1.0.2607211</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-21</div>
+      </header>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Whispers sent to your bot account now appear in Hub's Live Feed.</li>
+          <li>The Live Feed has a new "Whispers" filter to pull them up on their own.</li>
+          <li>Architect has a new "Whisper Received" trigger that runs your logic when someone whispers the bot.</li>
+          <li>The new trigger hands your logic the sender, their id, and the message.</li>
+          <li>Whisper text stays on screen only — the saved log records who whispered, never what they wrote.</li>
+          <li>Phoenix Controls now shows its Terms of Service the first time you start it, and again whenever the terms change.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>A cooldown with no viewer assigned no longer blocks its command forever, so commands like a raffle or a wheel start work again.</li>
+          <li>Cooldowns now keep two timers side by side: one for the whole channel, one per viewer.</li>
+          <li>Setting a cooldown's global time to zero switches that timer off.</li>
+          <li>German, French, and Spanish now cover the whole app — around 220 labels that were still showing English are translated.</li>
+          <li>Missing translations can no longer slip in unnoticed.</li>
+          <li>Update backups are cleared out after seven days instead of piling up.</li>
+          <li>Update cleanup no longer deletes a backup that still holds your only copy of an overlay file.</li>
+          <li>Steadier update cleanup overall — empty and duplicate backups go immediately, one rollback snapshot is kept.</li>
+        </ul>
+      </div>
+
+      <div class="release-heads-up">
+        Open and re-save your graphs in Architect once for the cooldown changes to take effect. After that a cooldown's global time applies to the whole channel; set it to 0 on a node to keep the per-viewer timer only.
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
         <div class="release-version">v1.0.2607201</div>
         <div class="release-name">Hotfix</div>
         <div class="release-date">2026-07-20</div>

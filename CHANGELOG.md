@@ -7,6 +7,28 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607211 - 2026.07.21
+
+**New**
+- Whispers sent to your bot account now appear in Hub's Live Feed.
+- The Live Feed has a new "Whispers" filter to pull them up on their own.
+- Architect has a new "Whisper Received" trigger that runs your logic when someone whispers the bot.
+- The new trigger hands your logic the sender, their id, and the message.
+- Whisper text stays on screen only — the saved log records who whispered, never what they wrote.
+- Phoenix Controls now shows its Terms of Service the first time you start it, and again whenever the terms change.
+
+**Fixed**
+- A cooldown with no viewer assigned no longer blocks its command forever, so commands like a raffle or a wheel start work again.
+- Cooldowns now keep two timers side by side: one for the whole channel, one per viewer.
+- Setting a cooldown's global time to zero switches that timer off.
+- German, French, and Spanish now cover the whole app — around 220 labels that were still showing English are translated.
+- Missing translations can no longer slip in unnoticed.
+- Update backups are cleared out after seven days instead of piling up.
+- Update cleanup no longer deletes a backup that still holds your only copy of an overlay file.
+- Steadier update cleanup overall — empty and duplicate backups go immediately, one rollback snapshot is kept.
+
+> Heads up — open and re-save your graphs in Architect once for the cooldown changes to take effect. After that a cooldown's global time applies to the whole channel; set it to 0 on a node to keep the per-viewer timer only.
+
 ## Hotfix - 1.0.2607201 - 2026.07.20
 
 **Fixed**
