@@ -65,6 +65,7 @@ namespace Phoenix.Controls.Hub.Core
             public const string SetRewardEnabled  = "Phoenix: Set Reward Enabled";
             public const string FulfillRedemption = "Phoenix: Fulfill Redemption";
             public const string RejectRedemption  = "Phoenix: Reject Redemption";
+            public const string ResolvePrediction = "Phoenix: Resolve Prediction";
 
             // Data actions — unlike the fire-and-forget actions above, these write
             // their result into shared phx_* globals that Hub reads back via the
@@ -127,15 +128,15 @@ namespace Phoenix.Controls.Hub.Core
 
             // Authoritative set the connect-probe checks against — the actions the
             // shipped PhoenixActionPack.sb actually DEFINES, so a correct install
-            // probes clean (no false "re-import the pack" nag). Deliberately absent:
-            //   • twitch.resolve_prediction — no live path (see its handler).
-            //   • DeleteMessage / Whisper / CreatePoll / SubOnlyMode /
-            //     UpdateRewardCost / SetRewardEnabled / Fulfill/RejectRedemption —
-            //     their nodes are HIDDEN (NodeRegistry.HiddenFromPalette): no usable
-            //     Streamer.bot 1.0.x sub-action, so the pack omits them and a user
-            //     can't place those nodes. Their consts stay defined and their
-            //     handlers keep the fire-time _knownSbActions check, so a legacy
-            //     placed node still warns loudly if fired against a pack without it.
+            // probes clean (no false "re-import the pack" nag).
+            //   • 2026-07-22: the pack gained custom C# (Execute-Code) sub-actions
+            //     for the formerly-dead set — DeleteMessage / Whisper / CreatePoll /
+            //     SubOnlyMode / UpdateRewardCost / SetRewardEnabled / Fulfill+Reject
+            //     Redemption / ResolvePrediction — so those are now listed here and
+            //     their nodes are un-hidden (see NodeRegistry.HiddenFromPalette).
+            //   • Still absent by design: nothing on the Twitch side — every Twitch
+            //     action now has a real path. (YouTube.GetUser + Kick reward mgmt
+            //     remain absent from YouTubeAll/KickAll — no SB path even via C#.)
             // (OBS Source Position/Scale/Rotation stay listed: their nodes are
             //  VISIBLE and use the Streamer.bot relay as a fallback to Hub's direct
             //  OBS-WebSocket path.)
@@ -144,7 +145,9 @@ namespace Phoenix.Controls.Hub.Core
                 Shoutout, Timeout, Ban, Unban, Mod, Unmod, Vip, Unvip,
                 Reply, SlowMode, FollowerMode, Marker,
                 UpdateChannel, Announcement, CreateClip,
-                EndPoll, CreatePrediction,
+                EndPoll, CreatePoll, CreatePrediction, ResolvePrediction,
+                DeleteMessage, Whisper, SubOnlyMode,
+                UpdateRewardCost, SetRewardEnabled, FulfillRedemption, RejectRedemption,
                 GetUser, GetFollowAge,
                 ObsSetScene, ObsSourceVisible, ObsRefreshBrowser, ObsStartRecording,
                 ObsStopRecording, ObsStartStreaming, ObsStopStreaming, ObsSaveReplay,
@@ -167,16 +170,18 @@ namespace Phoenix.Controls.Hub.Core
                 YtCreatePoll, YtEndPoll,
             };
 
-            // KickDeleteMessage / KickSetRewardCost / KickSetRewardEnabled are
-            // intentionally absent: SB 1.0.x has no Kick delete-message sub-action
-            // and Kick rewards are fixed at config time (no %rewardId% binding), so
-            // those wrappers can't do real work — probing for them would spam a
-            // permanent false "missing action" line. Their nodes are hidden from the
-            // palette for the same reason (NodeRegistry.HiddenFromPalette).
+            // KickDeleteMessage gained a custom C# sub-action (CPH.KickDeleteChatMessage)
+            // in the 2026-07-22 pack, so it is now probed + its node un-hidden.
+            // KickSetRewardCost / KickSetRewardEnabled stay intentionally absent: Kick
+            // rewards are fixed at SB config time (no %rewardId% binding) and there is
+            // no Kick reward-management C# method, so those wrappers can't do real work —
+            // probing for them would spam a permanent false "missing action" line. Their
+            // nodes stay hidden from the palette (NodeRegistry.HiddenFromPalette).
             public static readonly string[] KickAll =
             {
                 KickSendChat, KickReply, KickTimeout, KickBan, KickUnban,
                 KickUntimeout, KickSetTitle, KickSetCategory, KickGetUser,
+                KickDeleteMessage,
             };
         }
 
@@ -588,18 +593,20 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // twitch.resolve_prediction — DEFERRED (no live path). Resolving needs
-            // the prediction id + winning-outcome id that only the create call can
-            // mint, and DoAction can't return them; SB's resolve sub-action support
-            // is also version-dependent. Log loudly instead of firing a fictional
-            // request that silently no-ops. Revisit when Hub gains direct Helix.
+            // twitch.resolve_prediction(WinningOutcome) — resolves the LAST prediction
+            // by winning-outcome index (0 = first outcome) via the "Phoenix: Resolve
+            // Prediction" action (SB's native Resolve Last Prediction sub-action,
+            // winningIndex = %outcome%). The pack ships a custom C# path since 2026-07-22.
             _engine.RegisterCommand("twitch.resolve_prediction", async (args) =>
             {
-                GlobalLogger.Log(
-                    "twitch.resolve_prediction is not available over Streamer.bot (no native resolve path; the " +
-                    "prediction/outcome ids can't be retrieved over DoAction). No action taken — this node is " +
-                    "deferred until Hub gains direct Twitch access.",
-                    "Script", LogLevel.CriticalError);
+                var bound = _engine.CurrentBoundArgs;
+                int outcome = (bound != null && bound.ContainsKey("WinningOutcome"))
+                    ? bound.Get<int>("WinningOutcome")
+                    : (int.TryParse(ArgOrEmpty(args, 0), NumberStyles.Integer, CultureInfo.InvariantCulture, out int o) ? o : 0);
+                DispatchNamedAction("twitch.resolve_prediction", PhxSbActions.ResolvePrediction, new
+                {
+                    outcome = outcome.ToString(CultureInfo.InvariantCulture)
+                });
                 return null;
             });
 
@@ -639,19 +646,38 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
+            // Fulfill/Reject auto-source BOTH ids from the ambient Twitch.PointRedeem
+            // event (the exporter defaults RewardId={event.reward_id} + RedemptionId=
+            // {event.redemption_id}). CPH.TwitchRedemptionFulfill/Cancel need both.
+            // Empty ⇒ the graph wasn't redemption-triggered — skip, don't fire a
+            // half-populated request.
             _engine.RegisterCommand("twitch.fulfill_redemption", async (args) =>
             {
-                string redemptionId = _engine.CurrentBoundArgs?.GetOrDefault<string>("RedemptionId", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                if (string.IsNullOrEmpty(redemptionId)) return null;
-                DispatchNamedAction("twitch.fulfill_redemption", PhxSbActions.FulfillRedemption, new { redemptionId });
+                var bound = _engine.CurrentBoundArgs;
+                string rewardId     = bound?.GetOrDefault<string>("RewardId", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
+                string redemptionId = bound?.GetOrDefault<string>("RedemptionId", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
+                if (string.IsNullOrEmpty(rewardId) || string.IsNullOrEmpty(redemptionId))
+                {
+                    GlobalLogger.Log("twitch.fulfill_redemption: no reward/redemption id — fire this from a Twitch.PointRedeem-triggered script.",
+                        "Script", LogLevel.Communication);
+                    return null;
+                }
+                DispatchNamedAction("twitch.fulfill_redemption", PhxSbActions.FulfillRedemption, new { rewardId, redemptionId });
                 return null;
             });
 
             _engine.RegisterCommand("twitch.reject_redemption", async (args) =>
             {
-                string redemptionId = _engine.CurrentBoundArgs?.GetOrDefault<string>("RedemptionId", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                if (string.IsNullOrEmpty(redemptionId)) return null;
-                DispatchNamedAction("twitch.reject_redemption", PhxSbActions.RejectRedemption, new { redemptionId });
+                var bound = _engine.CurrentBoundArgs;
+                string rewardId     = bound?.GetOrDefault<string>("RewardId", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
+                string redemptionId = bound?.GetOrDefault<string>("RedemptionId", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
+                if (string.IsNullOrEmpty(rewardId) || string.IsNullOrEmpty(redemptionId))
+                {
+                    GlobalLogger.Log("twitch.reject_redemption: no reward/redemption id — fire this from a Twitch.PointRedeem-triggered script.",
+                        "Script", LogLevel.Communication);
+                    return null;
+                }
+                DispatchNamedAction("twitch.reject_redemption", PhxSbActions.RejectRedemption, new { rewardId, redemptionId });
                 return null;
             });
         }

@@ -844,6 +844,13 @@ namespace Phoenix.Controls.Shared.Models
         /// <summary>Fire every N seconds. Used by Schedule.Recurring. 0 = disabled.</summary>
         public int IntervalSeconds { get; set; } = 0;
 
+        /// <summary>Optional chat-activity gate for interval schedules (Schedule.Recurring's
+        /// second on_interval arg). When &gt; 0, an interval fire is SKIPPED unless at least
+        /// this many inbound chat lines (see <c>ChatActivityCounter</c>) arrived since the
+        /// previous fire. 0 (default) = no gate — every interval fires. Interval-only;
+        /// cron / RunAt ignore it.</summary>
+        public int MinChatLines { get; set; } = 0;
+
         /// <summary>Whether this schedule entry is active.</summary>
         public bool Enabled { get; set; } = true;
     }

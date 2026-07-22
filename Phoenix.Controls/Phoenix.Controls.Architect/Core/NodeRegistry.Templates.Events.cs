@@ -243,7 +243,7 @@ namespace Phoenix.Controls.Architect.Core
                 Localizer.T("architect.node.bubble.schedule_recurring"),
                 null,
                 new[] { ("Flow", ColExec), ("Count", ColNumber) },
-                new Dictionary<string, string> { { "IntervalSeconds", "60" }, { "MaxCount", "0" } });
+                new Dictionary<string, string> { { "IntervalSeconds", "60" }, { "MaxCount", "0" }, { "MinChatLines", "0" } });
 
             AddTemplate("State.OnChange",      "Events", Color.DarkOrange,
                 Localizer.T("architect.node.bubble.state_onchange"),

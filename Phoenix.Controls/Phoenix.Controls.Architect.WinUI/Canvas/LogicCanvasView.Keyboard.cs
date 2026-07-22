@@ -262,7 +262,27 @@ public sealed partial class LogicCanvasView
                     e.Handled = true;
                     return;
                 case ScanCode_PhysicalG:
-                    if (_vm.SelectedNodes.Count < 2)
+                {
+                    // Ctrl+G = Group, Ctrl+Shift+G = toggle grid. The Shift gate
+                    // is what makes the advertised View → Show Grid chord
+                    // (HubChrome binds architect.view.showGrid → Ctrl+Shift+G,
+                    // window-wide) actually toggle the grid when the canvas has
+                    // focus — the canvas handles KeyDown BEFORE the window-wide
+                    // accelerator resolves and marks the event handled, so
+                    // without this the Show-Grid chord would collapse the
+                    // selection into a macro (a graph-mutating wrong action).
+                    // Read Shift inline the same way the Ctrl+Z / Ctrl+Shift+Z
+                    // arm below does.
+                    bool shift = (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)
+                                  & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+                    if (shift)
+                    {
+                        // Grid toggle — flips the same LogicCanvasViewModel.ShowGrid
+                        // property MainView.ToggleShowGrid() drives, so the grid
+                        // visibility and the chrome's Show-Grid checkmark both update.
+                        _vm.ShowGrid = !_vm.ShowGrid;
+                    }
+                    else if (_vm.SelectedNodes.Count < 2)
                     {
                         GlobalLogger.Log(
                             "Ctrl+G needs >= 2 nodes selected",
@@ -275,6 +295,7 @@ public sealed partial class LogicCanvasView
                     }
                     e.Handled = true;
                     return;
+                }
             }
         }
 
@@ -615,26 +636,45 @@ public sealed partial class LogicCanvasView
             // above for readability.
 
             case VirtualKey.G when ctrl:
-                // 0.10.0 — Ctrl+G "Group" wraps the current multi-selection
-                // in a Macro shell. CollapseSelectionToMacro is a no-op on
-                // <2 selected nodes (so a stray Ctrl+G with nothing selected
-                // is harmless rather than spawning an empty macro).
-                // Log the silent-reject path so the System Log
-                // surfaces the reason; mirrors the no-modal-for-repeatable-
-                // rejections rule (don't pop a modal, but DO leave a breadcrumb).
-                if (_vm.SelectedNodes.Count < 2)
                 {
-                    GlobalLogger.Log(
-                        "Ctrl+G needs >= 2 nodes selected",
-                        "Architect.LogicCanvasView",
-                        LogLevel.System);
+                    // 0.10.0 — Ctrl+G "Group" wraps the current multi-selection
+                    // in a Macro shell. CollapseSelectionToMacro is a no-op on
+                    // <2 selected nodes (so a stray Ctrl+G with nothing selected
+                    // is harmless rather than spawning an empty macro).
+                    // Log the silent-reject path so the System Log
+                    // surfaces the reason; mirrors the no-modal-for-repeatable-
+                    // rejections rule (don't pop a modal, but DO leave a breadcrumb).
+                    //
+                    // Ctrl+Shift+G toggles the grid instead: HubChrome binds the
+                    // advertised View → Show Grid chord to Ctrl+Shift+G window-
+                    // wide, and the focused canvas handles KeyDown first, so
+                    // without this Shift gate the Show-Grid chord would collapse
+                    // the selection into a macro. Read Shift inline, matching the
+                    // Ctrl+Z / Ctrl+Shift+Z arm. (This VirtualKey.G arm is the
+                    // QWERTY safety net for the scancode arm above.)
+                    bool shift = (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)
+                                  & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+                    if (shift)
+                    {
+                        // Flips the same LogicCanvasViewModel.ShowGrid property
+                        // MainView.ToggleShowGrid() drives, so grid visibility and
+                        // the chrome's Show-Grid checkmark both stay in sync.
+                        _vm.ShowGrid = !_vm.ShowGrid;
+                    }
+                    else if (_vm.SelectedNodes.Count < 2)
+                    {
+                        GlobalLogger.Log(
+                            "Ctrl+G needs >= 2 nodes selected",
+                            "Architect.LogicCanvasView",
+                            LogLevel.System);
+                    }
+                    else
+                    {
+                        CollapseSelectionToMacro();
+                    }
+                    e.Handled = true;
+                    break;
                 }
-                else
-                {
-                    CollapseSelectionToMacro();
-                }
-                e.Handled = true;
-                break;
 
             // Ctrl+W "Close window". ArchitectHotkeyCatalog
             // (Canvas/ArchitectHotkeyCatalog.cs line 89) advertises this
@@ -659,12 +699,14 @@ public sealed partial class LogicCanvasView
                 break;
 
             case VirtualKey.C when !ctrl && !alt:
-                // 0.10.0 — bare C drops a comment frame at the view centre
-                // (canvas-space). Pre-0.10.0 the only paths were a right-click
-                // menu item and a Ctrl+RightClick fast-path; the bare-C
-                // accelerator matches the OBS / DaVinci editing rhythm where
-                // typed letters seed annotations in-place.
-                AddCommentFrameAtViewCenter();
+                // Bare C — UE-Blueprints "comment" chord. When one or more
+                // nodes are selected it wraps them in a comment frame;
+                // otherwise it drops an empty frame at the view centre (the
+                // pre-existing behaviour). AddCommentFrameSmart routes both
+                // cases so the key and the chrome "Add comment frame" menu
+                // item stay identical. Matches the OBS / DaVinci editing
+                // rhythm where typed letters seed annotations in-place.
+                AddCommentFrameSmart();
                 e.Handled = true;
                 break;
 
@@ -759,6 +801,29 @@ public sealed partial class LogicCanvasView
             HostRoot.ActualWidth  / 2,
             HostRoot.ActualHeight / 2);
         ShowSpawnPalette(hostCenter);
+    }
+
+    /// <summary>
+    /// UE-Blueprints "C": wrap the current node selection in a comment frame
+    /// when one exists, otherwise drop an empty frame at the view centre.
+    /// Backs both the bare-C hotkey and every "Add comment frame" menu item
+    /// (via <see cref="RequestAddCommentFrameFromShell"/>) so the key and the
+    /// menu behave identically. A single selected node wraps too — the
+    /// right-click "Wrap N nodes in Frame" item is only surfaced at &gt;= 2
+    /// nodes, so this looser floor never changes that menu.
+    /// </summary>
+    private void AddCommentFrameSmart()
+    {
+        if (_vm is null) return;
+        var targets = _vm.SelectedNodes.Count > 0
+            ? System.Linq.Enumerable.ToList(_vm.SelectedNodes)
+            : (_vm.Selection is NodeViewModel solo
+                ? new System.Collections.Generic.List<NodeViewModel> { solo }
+                : new System.Collections.Generic.List<NodeViewModel>());
+        if (targets.Count > 0)
+            WrapNodesInFrame(targets);
+        else
+            AddCommentFrameAtViewCenter();
     }
 
     /// <summary>

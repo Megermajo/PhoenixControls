@@ -77,10 +77,20 @@ namespace Phoenix.Controls.Architect.Core
                         ("IsSub", ColBool), ("IsVip", ColBool) },
                 new Dictionary<string, string> { { "Username", "{user.name}" } });
 
+            // IsLive (bool) — a request-time companion to the Stream.GoingLive /
+            // Stream.SessionEnd events: the events fire WHEN live-state flips; this
+            // lets a graph ask for the current state on demand. Resolves to
+            // {stream.is_live} (see the Twitch Data arm in
+            // ScriptExporter.ResolveOutputFromNode). For the broadcaster's OWN
+            // channel it answers from the StreamOnline/Offline-tracked flag; an
+            // arbitrary channel has no SB live path and reports false (honest) —
+            // exactly the semantics twitch.get_stream already writes. Placed first
+            // so the three headline outputs (IsLive / Title / Category) read top-to-
+            // bottom; existing graphs heal to this order via ReorderSocketsToTemplate.
             AddTemplate("Twitch.GetStream",     "Twitch Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.twitch_getstream"),
                 new[] { ("Flow", ColExec), ("Username", ColString) },
-                new[] { ("Flow", ColExec), ("Title", ColString), ("Category", ColString), ("ViewerCount", ColNumber), ("Uptime", ColString) },
+                new[] { ("Flow", ColExec), ("IsLive", ColBool), ("Title", ColString), ("Category", ColString), ("ViewerCount", ColNumber), ("Uptime", ColString) },
                 new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             AddTemplate("Twitch.CheckRole",     "Twitch Data", Color.FromArgb(100, 65, 165),
@@ -234,6 +244,17 @@ namespace Phoenix.Controls.Architect.Core
                     { "YouTube",   "true" },
                     { "Kick",      "true" }
                 });
+
+            // Chat.MessageCount — pure-data value probe (single Count output, no
+            // Flow, no inputs) reporting how many inbound chat lines the Hub has
+            // counted since it started, across all platforms. Non-pure-data
+            // category ("Platforms") so it routes through the by-title arm in
+            // ScriptExporter.ResolveOutputFromNode (mirrors Queue.Length /
+            // Giveaway.Id); the exporter inlines chat.message_count().
+            AddTemplate("Chat.MessageCount", "Platforms", Color.MediumPurple,
+                "Outputs the number of chat messages received since the Hub started (all platforms). Store it in a State/Var and compare deltas to gate on chat activity, e.g. only act after N new messages.",
+                null,                                    // no inputs
+                new[] { ("Count", ColNumber) });         // single value output, NO Flow socket
 
             // Twitch.SendChat Message fallback pill. Same fallback
             // semantics as the other fallback pills (wired wins at export;
@@ -765,10 +786,14 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec) },
                 new Dictionary<string, string> { { "DurationSec", "120" } });
 
+            // Resolves the LAST prediction by winning-outcome index (0 = first outcome)
+            // via SB's native Resolve Last Prediction sub-action. No prediction/outcome
+            // ids needed — the streamer decides the winning outcome and passes its index.
             AddTemplate("Twitch.ResolvePrediction","Platforms", Color.MediumOrchid,
                 Localizer.T("architect.node.bubble.twitch_resolveprediction"),
-                new[] { ("Flow", ColExec), ("PredictionId", ColString), ("WinningOutcomeId", ColString) },
-                new[] { ("Flow", ColExec) });
+                new[] { ("Flow", ColExec), ("WinningOutcome", ColNumber) },
+                new[] { ("Flow", ColExec) },
+                new Dictionary<string, string> { { "WinningOutcome", "0" } });
 
             // ── Twitch Reward Management ──────────────────────────────────
             AddTemplate("Twitch.UpdateRewardCost", "Platforms", Color.DarkViolet,
@@ -781,14 +806,18 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("RewardId", ColString), ("Enabled", ColBool) },
                 new[] { ("Flow", ColExec) });
 
+            // Fulfill/Reject take NO inputs — the reward id + redemption id auto-source
+            // from the Twitch.PointRedeem event that triggered the graph (exporter
+            // defaults RewardId={event.reward_id}, RedemptionId={event.redemption_id}).
+            // Only meaningful inside a redemption-triggered script.
             AddTemplate("Twitch.FulfillRedemption","Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.twitch_fulfillredemption"),
-                new[] { ("Flow", ColExec), ("RedemptionId", ColString) },
+                new[] { ("Flow", ColExec) },
                 new[] { ("Flow", ColExec) });
 
             AddTemplate("Twitch.RejectRedemption", "Platforms", Color.DarkViolet,
                 Localizer.T("architect.node.bubble.twitch_rejectredemption"),
-                new[] { ("Flow", ColExec), ("RedemptionId", ColString) },
+                new[] { ("Flow", ColExec) },
                 new[] { ("Flow", ColExec) });
 
             AddTemplate("StreamerBot.DoAction",  "Platforms", Color.Crimson,

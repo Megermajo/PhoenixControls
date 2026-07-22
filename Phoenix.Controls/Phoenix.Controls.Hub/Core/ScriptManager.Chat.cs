@@ -79,6 +79,16 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
+            // chat.message_count() — inline pure-data probe backing the
+            // Chat.MessageCount value node. Returns the process-wide monotonic
+            // count of inbound (bot-filtered) chat lines the Hub has seen since
+            // launch. The exporter emits `chat.message_count()` and the engine
+            // round-trips this return value into the node's Count output
+            // (mirrors queue.length() / giveaway.default_id()). No result-var
+            // base, no flow, no args.
+            _engine.RegisterCommand("chat.message_count", async (args) =>
+                ChatActivityCounter.Current.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
             // ── Phase 3E: Chat overlay ──────────────────────────────────────
             // chat.overlay.push(widgetId, username, message, color?)
             // Broadcasts a HUD_BROADCAST → chat_push step to all connected browsers.

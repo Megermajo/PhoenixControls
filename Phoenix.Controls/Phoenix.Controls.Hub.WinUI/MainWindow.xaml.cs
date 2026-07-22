@@ -1092,6 +1092,14 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             case "architect.edit.undo":           _architectView.Undo(); break;
             case "architect.edit.redo":           _architectView.Redo(); break;
             case "architect.edit.find":           _architectView.FindNode(); break;
+            // Edit → Group (Ctrl+G). Was a dead menu item — the entry + its
+            // advertised accelerator existed in HubChrome but no dispatch case
+            // ran GroupSelection, so clicking it (or hitting Ctrl+G while the
+            // chrome, not the canvas, had focus) did nothing. The focused
+            // canvas already handles Ctrl+G itself and marks the event handled,
+            // so this case only fires on the menu click / chrome-focus path —
+            // no double-Group.
+            case "architect.edit.group":          _architectView.GroupSelection(); break;
             case "architect.view.liveDebug":      _architectView.ToggleLiveDebug(); break;
             case "architect.view.showGrid":       _architectView.ToggleShowGrid(); break;
             case "architect.view.frameSelection": _architectView.FrameSelection(); break;

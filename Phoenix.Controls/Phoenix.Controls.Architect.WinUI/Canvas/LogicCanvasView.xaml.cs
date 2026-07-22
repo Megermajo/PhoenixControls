@@ -371,10 +371,12 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     /// selected (CollapseSelectionToMacro guards on count).</summary>
     public void RequestGroupFromShell() => CollapseSelectionToMacro();
 
-    /// <summary>0.10.0 — Edit → Add comment frame (chrome menu) / bare-C
-    /// keyboard chord entry point. Drops a 240×160 gold-ember comment
-    /// frame whose centre lands at the visible viewport centre.</summary>
-    public void RequestAddCommentFrameFromShell() => AddCommentFrameAtViewCenter();
+    /// <summary>Edit → Add comment frame (chrome menu) / bare-C keyboard chord
+    /// entry point. Wraps the current node selection in a comment frame when
+    /// one exists; otherwise drops a 240×160 gold-ember frame at the visible
+    /// viewport centre. Kept in lockstep with the bare-C hotkey via
+    /// <see cref="AddCommentFrameSmart"/>.</summary>
+    public void RequestAddCommentFrameFromShell() => AddCommentFrameSmart();
 
     /// <summary>0.10.0 — View → Spawn node… (chrome menu) entry point. The
     /// canvas-side keyboard chord is Ctrl+Space; the chrome menu reuses

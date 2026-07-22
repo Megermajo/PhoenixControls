@@ -750,7 +750,15 @@ namespace Phoenix.Controls.Hub.Core
                                     // Debug warning if all three are missing on a sub gift event so
                                     // we notice payload-shape drift without spamming the log.
                                     SubMonths     = ResolveSubMonths(data, eventType),
+                                    // Message id — Streamer.bot's Twitch ChatMessage carries the
+                                    // IRC message id. Probe the known field names defensively
+                                    // (msgId is the current SB schema; messageId / id are
+                                    // fallbacks). Feeds {event.message_id} + Chat.Message.MessageId
+                                    // → reply / delete / automod.
+                                    MessageId     = FirstNonEmpty(JsonStringField(data, "msgId"), JsonStringField(data, "messageId"), JsonStringField(data, "id")),
                                 };
+                                if (msg.MessageId.Length == 0)
+                                    WarnMessageIdMissingOnce(ref _msgIdDiagTwitch, "Twitch", data);
                                 // Per-chat [RoleDebug] log was retired. Under busy chat
                                 // it burned every slot in the 2000-entry log ring within seconds,
                                 // crowding out the System / Critical events Majo actually needs to
@@ -1160,6 +1168,11 @@ namespace Phoenix.Controls.Hub.Core
 
             msg.Username = name;
             msg.Message  = text;
+            // Message id — the SB YouTube chat payload carries the id at the top level
+            // (eventId in the documented schema; id / messageId are fallbacks).
+            msg.MessageId = FirstNonEmpty(JsonStringField(data, "eventId"), JsonStringField(data, "id"), JsonStringField(data, "messageId"));
+            if (msg.MessageId.Length == 0)
+                WarnMessageIdMissingOnce(ref _msgIdDiagYouTube, "YouTube", data);
             if (hasUser)
             {
                 msg.IsMod         = JsonBoolField(user, "isModerator");
@@ -1231,6 +1244,13 @@ namespace Phoenix.Controls.Hub.Core
 
             msg.Username = name;
             msg.Message  = text;
+            // Message id — Kick uses `messageId` (the field SB's own Reply/Delete actions
+            // consume); probe the message body + the outer data object, id as a fallback.
+            msg.MessageId = FirstNonEmpty(
+                JsonStringField(body, "messageId"), JsonStringField(body, "id"),
+                JsonStringField(data, "messageId"), JsonStringField(data, "id"));
+            if (msg.MessageId.Length == 0)
+                WarnMessageIdMissingOnce(ref _msgIdDiagKick, "Kick", data);
             msg.IsMod = JsonBoolField(body, "isModerator") || JsonBoolField(data, "isModerator")
                      || (hasUser && JsonBoolField(user, "isModerator"));
             msg.IsSub = JsonBoolField(body, "isSubscribed") || JsonBoolField(data, "isSubscribed")
@@ -1267,6 +1287,29 @@ namespace Phoenix.Controls.Hub.Core
             foreach (var v in values)
                 if (!string.IsNullOrEmpty(v)) return v;
             return string.Empty;
+        }
+
+        // One-time-per-platform diagnostic: when an inbound chat message id can't be found
+        // in the usual payload fields, log the payload's actual top-level field names ONCE
+        // so the correct key can be identified from a live capture and the probe corrected
+        // in a single line. System level (a setup/authoring aid, not a fault); Interlocked
+        // one-shot so a busy chat can't spam the 2000-entry log ring.
+        private static int _msgIdDiagTwitch, _msgIdDiagYouTube, _msgIdDiagKick;
+        private static void WarnMessageIdMissingOnce(ref int flag, string platform, System.Text.Json.JsonElement obj)
+        {
+            if (System.Threading.Interlocked.Exchange(ref flag, 1) != 0) return;
+            var keys = new System.Text.StringBuilder();
+            if (obj.ValueKind == System.Text.Json.JsonValueKind.Object)
+                foreach (var p in obj.EnumerateObject())
+                {
+                    if (keys.Length > 0) keys.Append(", ");
+                    keys.Append(p.Name);
+                }
+            GlobalLogger.Log(
+                $"{platform} chat: no message id found in the payload (probed the usual fields). " +
+                $"Available fields: [{keys}]. {{event.message_id}} / Chat.Message.MessageId will stay " +
+                "empty for this platform until the correct field is wired.",
+                "WS", LogLevel.System);
         }
 
         // Actor-vs-broadcaster check for non-chat events.

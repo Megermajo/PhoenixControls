@@ -108,6 +108,10 @@ namespace Phoenix.Controls.Architect.Core
                 { "Platforms", "Optional runtime OVERRIDE of the checkmarks: a single platform name or a comma list — twitch, youtube, kick (case doesn't matter). Leave empty to use the checked platforms below." },
                 { "Done",      "Fires after the send was handed to every targeted platform." },
             });
+            SetSocketDescriptions("Chat.MessageCount", new()
+            {
+                { "Count", "Total inbound chat lines (all platforms, bot messages excluded) the Hub has seen since it started. Monotonic — it never resets mid-run, so store it and compare deltas to gate on chat activity." },
+            });
             SetSocketDescriptions("Public.Get", new()
             {
                 { "Value", "Reads {public.<KeyName>}. Lives for the script run; visible across Async.Parallel branches and called macros — see Public.Set." },
@@ -217,6 +221,7 @@ namespace Phoenix.Controls.Architect.Core
             SetKeywords("Math.Ceil",           "round", "up", "ceiling");
             SetKeywords("Chat.Message",        "chat", "message", "command", "twitch", "youtube", "kick");
             SetKeywords("Chat.Send",           "say", "respond", "reply", "send", "twitch", "youtube", "kick");
+            SetKeywords("Chat.MessageCount",   "count", "messages", "activity", "chat", "traffic", "gate");
             SetKeywords("Twitch.SendChat",     "say", "respond", "reply");
             SetKeywords("Twitch.LastActive",   "lastseen", "active", "presence");
             SetKeywords("Twitch.GetViewers",   "viewers", "audience", "list");

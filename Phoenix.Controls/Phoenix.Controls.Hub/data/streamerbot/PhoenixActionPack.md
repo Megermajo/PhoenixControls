@@ -23,14 +23,15 @@ native sub-action's fields.
 > platform connected. The Kick set needs Streamer.bot **1.0.2+** with Kick
 > connected (app OAuth + streamer.bot website account link).
 
-> **The shipped `PhoenixActionPack.sb` now includes the YouTube and Kick sets.**
-> Importing the pack creates all **46** `Phoenix: …` actions in one go. Three
-> documented actions are **deliberately not** in the pack because Streamer.bot
-> 1.0.x can't back them — `Phoenix: YT Get User`, `Phoenix: Kick Set Reward
-> Cost`, `Phoenix: Kick Set Reward Enabled`. Their Architect nodes are hidden
-> from the palette; they're kept in the tables below only for reference. (A
-> fourth, `Phoenix: Kick Delete Message`, imports as an empty placeholder — see
-> its row.)
+> **The shipped `PhoenixActionPack.sb` includes the YouTube and Kick sets plus a
+> custom-C# (Execute-Code) set added 2026-07-22 for the actions Streamer.bot's
+> native sub-actions can't do** — reward cost/enable, fulfill/reject redemption,
+> delete message (Twitch + Kick), whisper, sub-only mode, create poll, and resolve
+> prediction. Importing the pack creates all **56** `Phoenix: …` actions in one go.
+> Only three documented actions are **deliberately not** in the pack because
+> Streamer.bot 1.0.x can't back them at all — `Phoenix: YT Get User`, `Phoenix:
+> Kick Set Reward Cost`, `Phoenix: Kick Set Reward Enabled`. Their Architect nodes
+> are hidden from the palette; they're kept in the tables below only for reference.
 
 ---
 
@@ -39,9 +40,9 @@ native sub-action's fields.
 **Option A — import the pack (recommended).**
 The pack ships with the app at **`data/streamerbot/PhoenixActionPack.sb`** (next
 to this file). Open it, copy its **entire** contents, then in Streamer.bot:
-**Import** → paste → review → **Import**. All **46** `Phoenix: …` actions
+**Import** → paste → review → **Import**. All **56** `Phoenix: …` actions
 (Twitch, OBS, YouTube, and Kick) are created with the correct names, field
-bindings, and the data-action C# / globals wiring — nothing to build by hand.
+bindings, and the data-action / custom-C# wiring — nothing to build by hand.
 (Three documented actions Streamer.bot 1.0.x can't back are omitted on purpose —
 `Phoenix: YT Get User`, `Phoenix: Kick Set Reward Cost`, `Phoenix: Kick Set
 Reward Enabled`; their nodes are hidden in Architect.)
@@ -185,12 +186,12 @@ The Kick nodes follow the same pattern: each node calls a **named Streamer.bot
 action that you create once**, and the `args` arrive inside the action as
 `%variable%` references you wire into the native Kick sub-action's fields.
 
-> The 10 working actions below **ship in `PhoenixActionPack.sb`**. Three more are
-> reference-only: **`Phoenix: Kick Set Reward Cost`** / **`Set Reward Enabled`**
-> can't work (Kick rewards are fixed at Streamer.bot config time — no `%rewardId%`
-> binding), and **`Phoenix: Kick Delete Message`** imports as an empty placeholder
-> (Streamer.bot 1.0.x has no Kick delete-message sub-action). All three nodes are
-> hidden in Architect.
+> The 11 working actions below **ship in `PhoenixActionPack.sb`** — Kick Delete
+> Message gained a custom C# `CPH.KickDeleteChatMessage` sub-action (2026-07-22).
+> Two more are reference-only: **`Phoenix: Kick Set Reward Cost`** / **`Set Reward
+> Enabled`** can't work — Kick rewards are fixed at Streamer.bot config time (no
+> `%rewardId%` binding) and there is no Kick reward-management C# method. Those two
+> nodes stay hidden in Architect.
 
 | Phoenix action name (exact) | Hub command | Hub sends `args` | Streamer.bot native sub-action | Field bindings |
 |---|---|---|---|---|
@@ -203,7 +204,7 @@ action that you create once**, and the `args` arrive inside the action as
 | `Phoenix: Kick Set Title` | `kick.set_title` | `title` | Kick → Set Channel Title | Title = `%title%` |
 | `Phoenix: Kick Set Category` | `kick.set_category` | `category` | Kick → Set Channel Category | Category = `%category%` |
 | `Phoenix: Kick Get User` | `kick.get_user` | `user`, `req` | **data action** — see below | writes the `phx_kick_*` globals |
-| `Phoenix: Kick Delete Message` — **placeholder** | `kick.delete_message` | `messageId` | *(no Kick delete-message sub-action in SB 1.0.x)* | ships as an empty action; node hidden |
+| `Phoenix: Kick Delete Message` | `kick.delete_message` | `messageId` | **C# (Execute Code)** — `CPH.KickDeleteChatMessage(messageId)` | deletes the Kick message by id |
 | `Phoenix: Kick Set Reward Cost` — **NOT AVAILABLE** | `kick.set_reward_cost` | `rewardId`, `cost` | *(Kick rewards fixed at config time — no `%rewardId%`)* | not in the pack; node hidden |
 | `Phoenix: Kick Set Reward Enabled` — **NOT AVAILABLE** | `kick.set_reward_enabled` | `rewardId`, `enabled` | *(Kick rewards fixed at config time — no `%rewardId%`)* | not in the pack; node hidden |
 
@@ -241,16 +242,14 @@ and bind each `phx_kick_*` global to the matching one.
 - **`twitch.send_chat` is not in the pack.** Sending chat already works through
   your existing **Chat Action** (Hub → Settings → Connection → Chat Action
   Name). Leave that as-is.
-- **`twitch.resolve_prediction` has no live path.** Resolving a prediction needs
-  the prediction id + winning-outcome id, which only the create call can mint and
-  which Streamer.bot cannot return over the WebSocket. The node logs a clear
-  message and takes no action; it stays deferred until Hub gains direct Twitch
-  access.
+- **`twitch.resolve_prediction` resolves the LAST prediction by winning-outcome
+  index** — the `Phoenix: Resolve Prediction` action uses SB's *Resolve Last
+  Prediction* sub-action (`winningIndex = %outcome%`). The node takes a single
+  `WinningOutcome` index (0 = first outcome); no prediction/outcome ids needed.
 - **Poll / Prediction ids are not returned.** `Create Poll` / `Create Prediction`
-  fire the poll/prediction, but `DoAction` can't return a value, so the `PollId` /
-  `PredictionId` output sockets were **removed** from those nodes. `End Poll` acts
-  on the active poll (no id needed); `Resolve Prediction` needs ids Streamer.bot
-  can't return, so it's deferred and logs instead of firing.
+  fire the poll/prediction but expose no id (`DoAction` can't return one), so those
+  nodes have no `PollId` / `PredictionId` output. `End Poll` acts on the active
+  poll; `Resolve Prediction` acts on the last prediction by winning-outcome index.
 - **Stream live-metrics are broadcaster-only.** Streamer.bot exposes no way to
   read `is_live` / viewer count / uptime for an **arbitrary** channel.
   `get_user` / `get_stream` return the channel's last **game** and **title**
@@ -265,10 +264,9 @@ and bind each `phx_kick_*` global to the matching one.
 - **Whisper** requires the bot account to have a **verified phone number** and is
   rate-limited hard by Twitch (≈40 recipients/day). A correctly-wired action can
   still be rejected at Twitch.
-- **Update Channel game** — Hub passes `gameId`. Streamer.bot's *Set Channel
-  Game* sub-action usually wants a **category name**, not an id. If your title
-  changes but the game doesn't, switch the node to pass a game name, or have the
-  action resolve the id → name first.
+- **Update Channel game** — the `Phoenix: Update Channel` C# accepts either a game
+  **name** or a numeric game **id**: it calls `CPH.SetChannelGameById` for a numeric
+  value, else `CPH.SetChannelGame`, so Hub's `gameId` works either way.
 - **Version-dependent sub-actions.** *Create Stream Marker*, *Create Clip*
   options, *Update Reward*, *Update Redemption*, and the *Chat Modes* set vary by
   Streamer.bot version. Build against your installed Streamer.bot and confirm each
@@ -280,20 +278,19 @@ and bind each `phx_kick_*` global to the matching one.
 ## Status
 
 The action pack **ships with the app** at
-`data/streamerbot/PhoenixActionPack.sb` and creates **46 `Phoenix: …` actions**
+`data/streamerbot/PhoenixActionPack.sb` and creates **56 `Phoenix: …` actions**
 on import — the full Twitch, OBS, YouTube, and Kick surface that has a working
-Streamer.bot 1.0.x path — exported from and verified against a live Streamer.bot
-(exported from 1.0.4; minimum Streamer.bot 1.0.0 for Twitch/OBS, 1.0 for YouTube,
-1.0.2 for Kick).
+Streamer.bot 1.0.x path (native sub-actions + custom C# where the natives fall
+short) — exported from and verified against a live Streamer.bot (exported from
+1.0.4; minimum Streamer.bot 1.0.0 for Twitch/OBS, 1.0 for YouTube, 1.0.2 for Kick).
 
-A few documented actions are **reference-only** because Streamer.bot 1.0.x can't
-back them — `Phoenix: YT Get User`, `Phoenix: Kick Set Reward Cost`, and
-`Phoenix: Kick Set Reward Enabled` (plus `Phoenix: Kick Delete Message`, which
-imports as an empty placeholder). Their Architect nodes are hidden and the
-connect-probe does not expect them. The OBS *Source Position / Scale / Rotation*
-nodes also aren't in the pack — Hub drives those over its own OBS-WebSocket
-connection, falling back to a Streamer.bot relay only if you add those actions
-yourself.
+Only three documented actions are **reference-only** because Streamer.bot 1.0.x
+can't back them even via custom C# — `Phoenix: YT Get User`, `Phoenix: Kick Set
+Reward Cost`, and `Phoenix: Kick Set Reward Enabled`. Their Architect nodes are
+hidden and the connect-probe does not expect them. The OBS *Source Position /
+Scale / Rotation* nodes also aren't in the pack — Hub drives those over its own
+OBS-WebSocket connection, falling back to a Streamer.bot relay only if you add
+those actions yourself.
 
 The names and argument variables are compiled into Hub
 (`ScriptManager.PhxSbActions`) and are what the connect-probe checks for, so the

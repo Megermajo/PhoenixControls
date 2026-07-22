@@ -49,6 +49,14 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.websocket_status_footer.where"));
 
             // ─────────────────────────────────────────────────────────────
+            // GIVEAWAY (top-bar tab)
+            // ─────────────────────────────────────────────────────────────
+            Add(Localizer.T("hub.feature.giveaway.title"),
+                Localizer.T("hub.feature.category.main_window"),
+                Localizer.T("hub.feature.giveaway.description"),
+                Localizer.T("hub.feature.giveaway.where"));
+
+            // ─────────────────────────────────────────────────────────────
             // DASHBOARD PANELS
             // ─────────────────────────────────────────────────────────────
             Add(Localizer.T("hub.feature.live_event_feed.title"),
@@ -107,6 +115,16 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.reset_layout.description"),
                 Localizer.T("hub.feature.reset_layout.where"));
 
+            Add(Localizer.T("hub.feature.recent_webhooks.title"),
+                Localizer.T("hub.feature.category.windows_menu"),
+                Localizer.T("hub.feature.recent_webhooks.description"),
+                Localizer.T("hub.feature.recent_webhooks.where"));
+
+            Add(Localizer.T("hub.feature.event_log_window.title"),
+                Localizer.T("hub.feature.category.windows_menu"),
+                Localizer.T("hub.feature.event_log_window.description"),
+                Localizer.T("hub.feature.event_log_window.where"));
+
             // ─────────────────────────────────────────────────────────────
             // BEHIND THE SCENES
             // ─────────────────────────────────────────────────────────────
@@ -114,6 +132,11 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.category.behind_the_scenes"),
                 Localizer.T("hub.feature.hud_overlay_server.description"),
                 Localizer.T("hub.feature.hud_overlay_server.where"));
+
+            Add(Localizer.T("hub.feature.viewer_server.title"),
+                Localizer.T("hub.feature.category.behind_the_scenes"),
+                Localizer.T("hub.feature.viewer_server.description"),
+                Localizer.T("hub.feature.viewer_server.where"));
 
             Add(Localizer.T("hub.feature.scheduler.title"),
                 Localizer.T("hub.feature.category.behind_the_scenes"),
@@ -182,22 +205,38 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.ai_suite.where"));
 
             // ─────────────────────────────────────────────────────────────
-            // TOOLS MENU — Hub ↔ Architect documentation unification
-            // (authored for a future help/about surface — the WinForms
-            // documentation form that consumed this catalog was retired)
+            // TOOLS MENU — the Documentation window itself (this catalogue)
+            // This catalogue is rendered by the WinUI DocumentationWindow
+            // (Tools → Documentation), which replaced the retired WinForms
+            // documentation form. The full node reference is a SEPARATE
+            // surface — opened with F1 on a node or from the Help menu —
+            // so the entry names both.
             // ─────────────────────────────────────────────────────────────
             Add(Localizer.T("hub.feature.docs_nodes_tab.title"),
                 Localizer.T("hub.feature.category.tools_menu"),
                 Localizer.T("hub.feature.docs_nodes_tab.description"),
                 Localizer.T("hub.feature.docs_nodes_tab.where"));
 
+            // ─────────────────────────────────────────────────────────────
+            // HELP MENU
+            // ─────────────────────────────────────────────────────────────
+            Add(Localizer.T("hub.feature.readme_changelog.title"),
+                Localizer.T("hub.feature.category.help_menu"),
+                Localizer.T("hub.feature.readme_changelog.description"),
+                Localizer.T("hub.feature.readme_changelog.where"));
+
+            Add(Localizer.T("hub.feature.about.title"),
+                Localizer.T("hub.feature.category.help_menu"),
+                Localizer.T("hub.feature.about.description"),
+                Localizer.T("hub.feature.about.where"));
+
             // Architect-side onboarding entry point. Surfaces here so streamers
             // browsing Hub's feature catalogue learn the bundled samples exist
             // even before they ever open Architect.
-            Add("Sample Graph Picker",
-                "Architect",
-                "Architect's File menu has a Welcome dialog with a flat gallery of bundled sample graphs. Picking one copies the .phxg into Hub's data/logic folder and opens it in the canvas.",
-                "Architect: File → Welcome…");
+            Add(Localizer.T("hub.feature.sample_graph_picker.title"),
+                Localizer.T("hub.feature.category.architect"),
+                Localizer.T("hub.feature.sample_graph_picker.description"),
+                Localizer.T("hub.feature.sample_graph_picker.where"));
         }
     }
 }

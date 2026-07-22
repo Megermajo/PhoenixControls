@@ -78,7 +78,7 @@ public static class ArchitectHotkeyCatalog
             new("Ctrl+L",        "Auto-format graph",                     SectionEdit, AnyCanvas),
             new("Del",           "Delete selection",                      SectionEdit, AnySelected),
             new("F2",            "Rename frame",                          SectionEdit, FrameOnly),
-            new("C",             "Drop comment frame at view centre",     SectionEdit, CanvasOnly),
+            new("C",             "Comment frame — wraps selection, else empty at view centre", SectionEdit, CanvasOnly),
             new("Arrow keys",    "Nudge selection 1 px (Shift = 10 px)",  SectionEdit, NodesOnly),
 
             // ── File ──────────────────────────────────────────────────────

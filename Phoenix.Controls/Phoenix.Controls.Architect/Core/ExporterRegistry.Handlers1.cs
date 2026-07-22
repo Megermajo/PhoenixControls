@@ -389,8 +389,7 @@ namespace Phoenix.Controls.Architect.Core
                 "Twitch.ResolvePrediction", "twitch.resolve_prediction",
                 new[]
                 {
-                    new SocketArg("PredictionId",     "\"\""),
-                    new SocketArg("WinningOutcomeId", "\"\""),
+                    new SocketArg("WinningOutcome", "0"),
                 },
                 FollowNamedOutput: "Flow"));
 
@@ -412,14 +411,17 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
+            // Fulfill/Reject take no visible inputs — both ids auto-source from the
+            // ambient Twitch.PointRedeem event (the fallback tokens below resolve at
+            // runtime when the graph is redemption-triggered; empty otherwise).
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Twitch.FulfillRedemption", "twitch.fulfill_redemption",
-                new[] { new SocketArg("RedemptionId", "\"\"") },
+                new[] { new SocketArg("RewardId", "{event.reward_id}"), new SocketArg("RedemptionId", "{event.redemption_id}") },
                 FollowNamedOutput: "Flow"));
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Twitch.RejectRedemption", "twitch.reject_redemption",
-                new[] { new SocketArg("RedemptionId", "\"\"") },
+                new[] { new SocketArg("RewardId", "{event.reward_id}"), new SocketArg("RedemptionId", "{event.redemption_id}") },
                 FollowNamedOutput: "Flow"));
 
             r.RegisterSimple(new SimpleEmitDescriptor(

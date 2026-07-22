@@ -1290,18 +1290,36 @@ public sealed partial class LogicCanvasView
 
     private void WrapSelectionInFrame()
     {
+        // Right-click "Wrap N nodes in Frame" — only offered at >= 2 selected
+        // nodes; keep that floor here. The bare-C / "Add comment frame" smart
+        // path (AddCommentFrameSmart) shares WrapNodesInFrame at a >= 1 floor.
         if (_vm is null || _vm.SelectedNodes.Count < 2) return;
+        WrapNodesInFrame(_vm.SelectedNodes);
+    }
+
+    /// <summary>
+    /// Draw a comment frame that encloses <paramref name="nodes"/> (padding +
+    /// header room) and push one undo entry via <see cref="AddFrame"/>. Shared
+    /// by the right-click "Wrap N nodes in Frame" menu item (>= 2 nodes) and
+    /// the bare-C / "Add comment frame" smart path (>= 1 node).
+    /// </summary>
+    private void WrapNodesInFrame(System.Collections.Generic.IEnumerable<NodeViewModel> nodes)
+    {
+        if (_vm is null) return;
         const int pad      = 20;
         const int headerPad = 28;
         double minX = double.MaxValue, minY = double.MaxValue;
         double maxX = double.MinValue, maxY = double.MinValue;
-        foreach (var n in _vm.SelectedNodes)
+        int count = 0;
+        foreach (var n in nodes)
         {
+            count++;
             if (n.X < minX) minX = n.X;
             if (n.Y < minY) minY = n.Y;
             if (n.X + n.Width  > maxX) maxX = n.X + n.Width;
             if (n.Y + n.Height > maxY) maxY = n.Y + n.Height;
         }
+        if (count == 0) return;
         var x = (int)System.Math.Round(minX - pad);
         var y = (int)System.Math.Round(minY - pad - headerPad);
         var w = (int)System.Math.Round((maxX - minX) + pad * 2);

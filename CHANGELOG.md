@@ -7,6 +7,28 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Small update - 1.0.2607221 - 2026.07.22
+
+> Heads up — this update adds new Streamer.bot actions, so you need to import the Action Pack again for them to work. In Hub, open the **File** menu and choose **"Open Action-Pack Folder"**, open the **PhoenixActionPack.sb** file, and copy everything in it. Then in Streamer.bot open **Import**, paste it in, and click **Import**.
+
+**New**
+- Architect's "Get Stream" node now reports whether your channel is live.
+- Architect has a new "Chat Message Count" value your logic can read.
+- Architect's "Recurring Schedule" trigger can wait until chat has been active before it runs.
+- The chat-message trigger now carries the message's ID, so replies and message-deletes have something to target.
+- Press C in Architect to wrap the selected nodes in a comment frame.
+- Architect can now change a channel-point reward's cost and turn rewards on or off.
+- Architect can now delete a chat message on Twitch and on Kick.
+- Architect can now send a whisper, switch subscriber-only chat on or off, and create a poll.
+- Architect's "Resolve Prediction" node now closes the last prediction on your channel.
+- "Fulfill Redemption" and "Reject Redemption" now run on their own inside a channel-point redemption.
+
+**Fixed**
+- Architect's Edit → Group menu item, and Ctrl+G, group the selected nodes again.
+- Ctrl+Shift+G now toggles the canvas grid instead of grouping nodes.
+- Corrected several cards in Architect's built-in Node Reference, including which node to use to reply to a whisper, and added the "Going Live" and "Session End" triggers.
+- The Terms of Service shown on first launch are written in clearer, plainer language. What the terms mean is unchanged.
+
 ## Hotfix - 1.0.2607211 - 2026.07.21
 
 **New**

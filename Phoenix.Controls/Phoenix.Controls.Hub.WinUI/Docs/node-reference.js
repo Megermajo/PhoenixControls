@@ -19,7 +19,7 @@
  *     ] } ],
  *     PRIMER:  { tokenFamilies:[{root,dot,label,note,toks:[]}], storageRoots:[{root,d,ex}],
  *                systemToks:[], streamToks:[], hotkeyGroups:[{sec,note?,rows:[[k,d]]}] },
- *     INITIAL_ANCHOR: "n-twitch-chatmessage" | null      // deep-link target for F1-from-node
+ *     INITIAL_ANCHOR: "n-chat-message" | null            // deep-link target for F1-from-node
  *   }
  *
  * If `window.PHX` is absent (e.g. opened directly in a browser for QA), a small

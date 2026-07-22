@@ -1657,6 +1657,8 @@ namespace Phoenix.Controls.Hub.Core
             // Drop inbound chat cleanly so a late message can't enter a disposed _chatSemaphore
             // and abort the shutdown coordinator with ObjectDisposedException.
             if (System.Threading.Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+            // Count every inbound (already bot-filtered) chat line for the Chat.MessageCount node.
+            ChatActivityCounter.Increment();
             if (!Directory.Exists(_logicPath)) return;
             _lastActiveMap[chatData.Username] = DateTime.UtcNow;
 
@@ -2715,6 +2717,27 @@ namespace Phoenix.Controls.Hub.Core
                 if (data.TryGetProperty("viewers",     out var viewers))vars["user.viewers"]     = viewers.ToString();
                 if (data.TryGetProperty("title",       out var reward)) vars["user.reward"]      = reward.GetString() ?? "";
                 if (data.TryGetProperty("totalGifts",  out var gifts))  vars["user.total_gifts"] = gifts.ToString();
+
+                // PointRedeem reward + redemption ids → event.reward_id / event.redemption_id,
+                // consumed by Twitch.FulfillRedemption / RejectRedemption (auto-source, zero-input).
+                // SB field names are version-dependent — probe defensively; empty ⇒ the fulfill/
+                // reject handler logs + skips. ⚠️ VERIFY these keys against a live redemption payload.
+                if (eventType.Equals("Twitch.PointRedeem", StringComparison.OrdinalIgnoreCase) ||
+                    eventType.Equals("Twitch.RewardRedemption", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var k in new[] { "rewardId", "reward_id" })
+                        if (data.TryGetProperty(k, out var rEl))
+                        {
+                            string rv = rEl.ValueKind == System.Text.Json.JsonValueKind.String ? (rEl.GetString() ?? "") : rEl.GetRawText();
+                            if (rv.Length > 0) { vars["event.reward_id"] = rv; break; }
+                        }
+                    foreach (var k in new[] { "redemptionId", "redemption_id", "id" })
+                        if (data.TryGetProperty(k, out var dEl))
+                        {
+                            string dv = dEl.ValueKind == System.Text.Json.JsonValueKind.String ? (dEl.GetString() ?? "") : dEl.GetRawText();
+                            if (dv.Length > 0) { vars["event.redemption_id"] = dv; break; }
+                        }
+                }
 
                 // PointRedeem userInput goes to user.input (the redeem-input socket).
                 // For chat-style events the same field name carries the chat message body.

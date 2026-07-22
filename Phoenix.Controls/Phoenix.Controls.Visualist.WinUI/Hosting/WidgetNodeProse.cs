@@ -125,9 +125,9 @@ internal static class WidgetNodeProse
             Description: "<p>A constant source for the canvas size, so positions and scales can be resolution-independent. Collapses to width when read as a scalar.</p>",
             Example: "Centre something at <code>resolution / 2</code>."),
         ["WebSource"] = new(
-            Summary: "Renders a web page as an image source (scaffold).",
-            Description: "<p>Set a <code>Url</code> and a refresh interval; the page is snapshotted into an <code>Image</code>. A design-time scaffold — the live render path is still being wired.</p>",
-            Example: "Embed a live web widget (timer, poll) as an overlay layer."),
+            Summary: "A URL-driven image source that re-fetches on a timer.",
+            Description: "<p>Set a <code>Url</code> and a <code>RefreshSeconds</code> interval; the compositor fetches the URL through Hub's asset proxy and hands the result down as an <code>Image</code>, re-fetching every interval. <b>Image URLs only</b> — a plain HTML page is rejected (a browser can't paint a cross-origin page onto a canvas), so point it at a live image endpoint, not a web widget.</p>",
+            Example: "A self-updating scoreboard or weather PNG that refreshes every 30&nbsp;s."),
 
         // ══════════════════════════════ IMAGE ═════════════════════════════
         ["Image.Scale"] = new(Summary: "Scales an image by a factor (1 = identity, <1 shrinks, >1 grows).", Description: "<p>A wired <code>Factor</code> wins over the inline value. Floored just above 0 to avoid a 0×0 image.</p>", Example: "Pulse a logo by keyframing <code>Factor</code> 1.0 → 1.1 → 1.0."),
@@ -150,13 +150,13 @@ internal static class WidgetNodeProse
             Example: "Confetti burst on a sub alert, rate scaled to the tier."),
         ["Mask.Rectangle"] = new(Summary: "A procedural rectangle mask, with corner radius and feather.", Description: "<p>A pure generator (no inputs). Coordinates are 0–1 fractions, so it scales across resolutions. Feed it into <code>Image.Mask</code> or key it with <code>Image.Combine</code>.</p>", Example: "A rounded-rect window for a webcam feed."),
         ["Mask.Circle"] = new(Summary: "A procedural circle mask — centre, radius, feather.", Description: "<p>All parameters in 0–1 fractions; animatable via the scalar pipeline.</p>", Example: "Round-crop an avatar."),
-        ["Mask.Ellipse"] = new(Summary: "A procedural ellipse mask with per-axis radii and rotation.", Example: "An angled spotlight oval."),
+        ["Mask.Ellipse"] = new(Summary: "A procedural ellipse mask with per-axis radii and rotation.", Description: "<p>Like <code>Mask.Circle</code> but with independent X and Y radii plus a rotation angle. All parameters are 0–1 fractions, so it scales across resolutions; feed it into <code>Image.Mask</code>.</p>", Example: "An angled spotlight oval."),
         ["Mask.LinearGradient"] = new(Summary: "A procedural linear alpha gradient.", Description: "<p>Runs from one point to another, fading alpha between two stops — a soft directional mask.</p>", Example: "Fade the bottom of a video into transparency."),
-        ["Mask.RadialGradient"] = new(Summary: "A procedural radial alpha gradient — inner/outer radius and alpha.", Example: "A soft circular vignette around a focal point."),
+        ["Mask.RadialGradient"] = new(Summary: "A procedural radial alpha gradient — inner/outer radius and alpha.", Description: "<p>Alpha fades between an inner and outer radius — the radial cousin of <code>Mask.LinearGradient</code>, and a softer alternative to the one-knob <code>Mask.Vignette</code>. All 0–1 fractions.</p>", Example: "A soft circular vignette around a focal point."),
         ["Mask.Vignette"] = new(Summary: "A one-knob vignette preset (a tuned radial gradient).", Description: "<p>Just a <code>Strength</code> — a quick darkened-edges look without wiring a gradient by hand.</p>", Example: "Frame the whole layer with subtle darkened corners."),
         ["Mask.Polygon"] = new(Summary: "A procedural polygon mask from a vertex list.", Description: "<p>Edit the points in the shape editor. Per-vertex animation is supported via keyframes.</p>", Example: "A custom badge shape for an emote."),
         ["Mask.Bezier"] = new(Summary: "A procedural Bézier-curve mask from a control-point list.", Description: "<p>Like <code>Mask.Polygon</code> but with smooth curves. Edit in the shape editor.</p>", Example: "A flowing ribbon mask."),
-        ["Mask.Star"] = new(Summary: "A procedural star mask — points, inner/outer radius, rotation.", Example: "A spinning star wipe on a hype alert."),
+        ["Mask.Star"] = new(Summary: "A procedural star mask — points, inner/outer radius, rotation.", Description: "<p>A star polygon built from a point count and the inner/outer radius ratio, rotatable. Keyframe the rotation for a spinning wipe. Coordinates are 0–1 fractions.</p>", Example: "A spinning star wipe on a hype alert."),
 
         // ═══════════════════════════════ TEXT ═════════════════════════════
         ["Text.Render"] = new(
@@ -165,7 +165,7 @@ internal static class WidgetNodeProse
             Example: "Render <code>\"{Message}\"</code> from a trigger in your brand font with a black outline."),
         ["Caption.LiveCaption"] = new(
             Summary: "Live captions from Hub's caption service — raw and translated text.",
-            Description: "<p><code>Text</code> is the live caption; <code>Translated</code> applies the layer's target language (equal to <code>Text</code> when no translation is set). Only one Live Caption widget per layer is supported.</p>",
+            Description: "<p><code>Text</code> is the live caption. <code>Translated</code> mirrors <code>Text</code> today — the layer's target-language rendering of captions is a planned follow-up — so either output works for now. Only one Live Caption widget per layer is supported.</p>",
             Example: "Burn-in live captions, translated to your audience's language."),
         ["Text.Translate"] = new(
             Summary: "Translates a string to a target language.",

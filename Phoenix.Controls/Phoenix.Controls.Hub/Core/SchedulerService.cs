@@ -168,13 +168,21 @@ namespace Phoenix.Controls.Hub.Core
                         entry.RunAt = arg;
                         break;
                     case "on_interval":
-                        if (!int.TryParse(arg, out int seconds) || seconds <= 0)
+                    {
+                        // on_interval(seconds[, minChatLines]) — the regex captures the
+                        // whole "300, 5" as one group, so split off the seconds first.
+                        // Single-arg form parses exactly as before.
+                        string[] parts = arg.Split(',');
+                        if (!int.TryParse(parts[0].Trim(), out int seconds) || seconds <= 0)
                         {
                             GlobalLogger.Log($"Scheduler: '{name}' has invalid on_interval('{arg}') — skipping.", "Scheduler", LogLevel.CriticalError);
                             continue;
                         }
                         entry.IntervalSeconds = seconds;
+                        if (parts.Length > 1 && int.TryParse(parts[1].Trim(), out int minChatLines) && minChatLines > 0)
+                            entry.MinChatLines = minChatLines;
                         break;
+                    }
                     default:
                         continue;
                 }
@@ -243,10 +251,22 @@ namespace Phoenix.Controls.Hub.Core
                 if (entry.IntervalSeconds > 0)
                 {
                     int fireCount = 0;
+                    // Chat-activity gate baseline (Schedule.Recurring's MinChatLines).
+                    // Snapshot the running chat count; each interval only fires when at
+                    // least MinChatLines new lines arrived since the LAST fire. A skipped
+                    // interval does NOT advance the baseline or the fire count — it just
+                    // waits another interval. MinChatLines == 0 (the default, and every
+                    // non-interval caller such as ProcessInstanceManager) disables the
+                    // gate entirely, so behaviour is unchanged there.
+                    long lastFireLines = ChatActivityCounter.Current;
                     while (!ct.IsCancellationRequested)
                     {
                         await Task.Delay(TimeSpan.FromSeconds(entry.IntervalSeconds), ct);
+                        if (entry.MinChatLines > 0
+                            && (ChatActivityCounter.Current - lastFireLines) < entry.MinChatLines)
+                            continue; // not enough chat activity yet — wait another interval
                         await fire(++fireCount);
+                        lastFireLines = ChatActivityCounter.Current;
                     }
                     return;
                 }

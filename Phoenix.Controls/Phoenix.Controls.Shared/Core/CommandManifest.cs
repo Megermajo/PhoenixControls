@@ -146,11 +146,16 @@ namespace Phoenix.Controls.Shared.Core
             AddT("twitch.create_poll",          new ArgSpec("Title", ArgType.String), new ArgSpec("Choices", ArgType.String), new ArgSpec("DurationSec", ArgType.Int));
             AddT("twitch.end_poll",             new ArgSpec("PollId", ArgType.String));
             AddT("twitch.create_prediction",    new ArgSpec("Title", ArgType.String), new ArgSpec("OutcomeA", ArgType.String), new ArgSpec("OutcomeB", ArgType.String), new ArgSpec("OutcomeC", ArgType.String, Optional: true, Default: ""), new ArgSpec("OutcomeD", ArgType.String, Optional: true, Default: ""), new ArgSpec("OutcomeE", ArgType.String, Optional: true, Default: ""), new ArgSpec("DurationSec", ArgType.Int, Optional: true, Default: "120"));
-            AddT("twitch.resolve_prediction",   new ArgSpec("PredictionId", ArgType.String), new ArgSpec("WinningOutcomeId", ArgType.String));
+            // resolve_prediction resolves the LAST prediction by winning-outcome index
+            // (SB's Resolve Last Prediction sub-action, winningIndex = %outcome%).
+            AddT("twitch.resolve_prediction",   new ArgSpec("WinningOutcome", ArgType.Int, Optional: true, Default: "0"));
             AddT("twitch.update_reward_cost",   new ArgSpec("RewardId", ArgType.String), new ArgSpec("Cost", ArgType.Int));
             AddT("twitch.set_reward_enabled",   new ArgSpec("RewardId", ArgType.String), new ArgSpec("Enabled", ArgType.Bool));
-            AddT("twitch.fulfill_redemption",   new ArgSpec("RedemptionId", ArgType.String));
-            AddT("twitch.reject_redemption",    new ArgSpec("RedemptionId", ArgType.String));
+            // Fulfill/Reject auto-source BOTH ids from the ambient Twitch.PointRedeem
+            // event (exporter defaults RewardId={event.reward_id}, RedemptionId=
+            // {event.redemption_id}); CPH.TwitchRedemptionFulfill/Cancel need both.
+            AddT("twitch.fulfill_redemption",   new ArgSpec("RewardId", ArgType.String, Optional: true, Default: ""), new ArgSpec("RedemptionId", ArgType.String, Optional: true, Default: ""));
+            AddT("twitch.reject_redemption",    new ArgSpec("RewardId", ArgType.String, Optional: true, Default: ""), new ArgSpec("RedemptionId", ArgType.String, Optional: true, Default: ""));
             AddT("twitch.create_clip",          new ArgSpec("Duration", ArgType.Int, Optional: true, Default: "30"), new ArgSpec("Title", ArgType.String, Optional: true, Default: ""));
 
             // Moderation / channel-control proxies. All currently
@@ -560,6 +565,10 @@ namespace Phoenix.Controls.Shared.Core
                 new ArgSpec("N",        ArgType.Int),
                 new ArgSpec("UsersVar", ArgType.String, Optional: true, Default: ""),
                 new ArgSpec("MsgsVar",  ArgType.String, Optional: true, Default: ""));
+            // chat.message_count() — no-arg inline pure-data probe backing the
+            // Chat.MessageCount value node; resolved inline by ScriptExporter
+            // (no descriptor), like giveaway.default_id / state.list_keys.
+            AddT("chat.message_count");
 
             // twitch.get_viewers (was missing from manifest).
             AddT("twitch.get_viewers", new ArgSpec("ResultVar", ArgType.String));

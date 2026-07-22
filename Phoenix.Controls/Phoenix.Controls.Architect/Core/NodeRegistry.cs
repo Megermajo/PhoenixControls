@@ -403,29 +403,17 @@ namespace Phoenix.Controls.Architect.Core
 
         public static IEnumerable<NodeTemplate> GetAllTemplates() => _templates.Values;
 
-        // 0.13.9 — nodes whose live path doesn't exist yet, hidden from the
-        // spawn palette / search / node-reference (but kept registered so existing
-        // graphs still load + export, and tests still cover them). These are
-        // exactly the Twitch actions with NO corresponding Streamer.bot
-        // sub-action / Phoenix action-pack entry: SB can't create a poll the way
-        // the node assumes; resolving a prediction needs ids DoAction can't return;
-        // reward/redemption nodes need a reward pre-defined; Delete Message /
-        // Sub-Only Mode / Whisper have no usable native sub-action (or need a
-        // phone-verified bot). The OBS transform nodes (SetSourcePosition /
-        // Scale / Rotation) are no longer listed — they dispatch for real via
-        // Hub's direct OBS WebSocket (SB action relay as fallback). Un-hide a
-        // title here the moment its action path lands. See PhoenixActionPack.md.
+        // Nodes whose live path doesn't exist yet, hidden from the spawn palette /
+        // search / node-reference (but kept registered so existing graphs still load
+        // + export, and tests still cover them). Un-hide a title the moment its
+        // action path lands. See PhoenixActionPack.md.
+        //   • 2026-07-22: the former Twitch dead-set (CreatePoll / ResolvePrediction /
+        //     UpdateRewardCost / SetRewardEnabled / Fulfill+RejectRedemption /
+        //     DeleteMessage / Whisper / SubOnlyMode) and Kick.DeleteMessage gained
+        //     custom C# (Execute-Code) sub-actions in the re-exported pack, so they are
+        //     now un-hidden + probed (ScriptManager PhxSbActions.All / KickAll).
         public static readonly HashSet<string> HiddenFromPalette = new(StringComparer.Ordinal)
         {
-            "Twitch.CreatePoll",
-            "Twitch.ResolvePrediction",
-            "Twitch.UpdateRewardCost",
-            "Twitch.SetRewardEnabled",
-            "Twitch.FulfillRedemption",
-            "Twitch.RejectRedemption",
-            "Twitch.DeleteMessage",
-            "Twitch.Whisper",
-            "Twitch.SubOnlyMode",
             // 2026-06-24 — the AI band (LLM / vision / image-gen nodes) is
             // neither tested nor fully functional yet, so it is hidden from
             // the spawn palette / search / node-reference and deferred as a
@@ -455,17 +443,16 @@ namespace Phoenix.Controls.Architect.Core
             "Twitch.SendChat",
             "YouTube.SendChat",
             "Kick.SendChat",
-            // 2026-07-14 — platform nodes with NO usable Streamer.bot 1.0.x path,
-            // even after Majo's re-exported action pack. Hidden from palette/search/
-            // node-reference but kept REGISTERED (existing graphs load + export,
-            // coverage tests stay green). YouTube.GetUser: SB exposes no YouTube
-            // user-info sub-action. Kick.DeleteMessage: SB has no Kick delete-message
-            // sub-action (the pack's "Phoenix: Kick Delete Message" is an empty
-            // placeholder). Kick.SetRewardCost / Kick.SetRewardEnabled: Kick rewards
-            // are fixed at SB config time (no %rewardId% binding possible). Un-hide
-            // any of these the moment its action path lands. See PhoenixActionPack.md.
+            // Platform nodes with NO usable Streamer.bot path — even via custom C#.
+            // Hidden from palette/search/node-reference but kept REGISTERED (existing
+            // graphs load + export, coverage tests stay green). YouTube.GetUser: SB
+            // exposes no YouTube user-info sub-action OR C# method (only GetBot/
+            // GetBroadcaster). Kick.SetRewardCost / Kick.SetRewardEnabled: Kick rewards
+            // are fixed at SB config time (no %rewardId% binding) and there is no Kick
+            // reward-management C# method. Un-hide if a future SB adds a path. See
+            // PhoenixActionPack.md. (Kick.DeleteMessage graduated 2026-07-22 —
+            // CPH.KickDeleteChatMessage exists.)
             "YouTube.GetUser",
-            "Kick.DeleteMessage",
             "Kick.SetRewardCost",
             "Kick.SetRewardEnabled",
         };

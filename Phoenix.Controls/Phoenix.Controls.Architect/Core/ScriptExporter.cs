@@ -552,7 +552,7 @@ namespace Phoenix.Controls.Architect.Core
                 "OBS.Event"             => $"on_obs(\"{node.GetAttr("EventType", "CurrentProgramSceneChanged")}\")",
                 "Schedule.Cron"         => $"on_schedule(\"{node.GetAttr("CronExpression", "*/5 * * * *")}\")",
                 "Schedule.RunAt"        => $"on_schedule_once(\"{node.GetAttr("DateTime", "")}\")",
-                "Schedule.Recurring"    => $"on_interval({node.GetAttr("IntervalSeconds", "60")})",
+                "Schedule.Recurring"    => BuildOnIntervalTrigger(node),
                 "State.OnChange"        => $"on_state_change({node.GetAttr("StateName", "stream_phase")})",
                 _                       => $"on_event({node.Title})"
             };
@@ -573,6 +573,20 @@ namespace Phoenix.Controls.Architect.Core
                         Emit($"    event.ret.{s.Name} = {ResolveInputValue(node, s.Name, "\"\"")}");
                 }
             }
+        }
+
+        // Schedule.Recurring header builder. Emits on_interval(seconds) — with an
+        // optional SECOND arg (min chat lines that must have arrived since the last
+        // fire) ONLY when MinChatLines > 0. The `> 0` guard is load-bearing: the
+        // default "0" MUST keep the single-arg form so every existing on_interval
+        // golden / hand-authored .phx stays byte-identical.
+        private static string BuildOnIntervalTrigger(Node node)
+        {
+            string sec = node.GetAttr("IntervalSeconds", "60");
+            string min = node.GetAttr("MinChatLines", "0");
+            return (int.TryParse(min, out var mv) && mv > 0)
+                ? $"on_interval({sec}, {min})"
+                : $"on_interval({sec})";
         }
 
         // Bus.OnMessage with optional Source/Target wildcard filter.
@@ -1671,7 +1685,7 @@ namespace Phoenix.Controls.Architect.Core
 
             // Pure-data nodes that live outside the Math/Text/Logic/Collections/Convert
             // categories but follow the same inline-or-hoist pattern.
-            if (src.Title is "HTTP.ParseJson" or "Queue.Length")
+            if (src.Title is "HTTP.ParseJson" or "Queue.Length" or "Chat.MessageCount")
                 return ResolvePureData(src);
 
             // ── Generic pure-data category handler ──────────────────────────
@@ -1758,6 +1772,10 @@ namespace Phoenix.Controls.Architect.Core
                     ("Twitch.GetUser",      "IsMod")         => "user.is_mod",
                     ("Twitch.GetUser",      "IsSub")         => "user.is_sub",
                     ("Twitch.GetUser",      "IsVip")         => "user.is_vip",
+                    // IsLive shares the same {stream.is_live} the twitch.get_stream
+                    // handler writes (own channel: StreamOnline/Offline flag;
+                    // arbitrary channel: false). Same var Twitch.IsOnline resolves.
+                    ("Twitch.GetStream",    "IsLive")        => "stream.is_live",
                     ("Twitch.GetStream",    "Title")         => "stream.title",
                     // Engine writes stream.game / stream.viewers
                     // (ScriptManager.Twitch.cs); the exporter previously mapped to
@@ -2030,6 +2048,7 @@ namespace Phoenix.Controls.Architect.Core
                 case "HTTP.ParseJson":   return $"http.parse_json({ResolveInputValue(src,"Json","\"\"")}, {ResolveInputValue(src,"Path","\"\"")})";
                 // Flow.Select handled by dedicated branch in ResolveOutputFromNode (engine has no `select` runtime).
                 case "Queue.Length":     return "queue.length()";
+                case "Chat.MessageCount": return "chat.message_count()";
                 case "Giveaway.Id":      return "giveaway.default_id()";
                 // Empty selector → giveaway.is_active() → the engine follows the
                 // app-wide default giveaway; a named selector resolves by
