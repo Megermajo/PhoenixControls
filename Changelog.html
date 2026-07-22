@@ -386,6 +386,44 @@
     <!-- RELEASES START -->
     <article class="release">
       <header class="release-head">
+        <div class="release-version">v1.0.2607221</div>
+        <div class="release-name">Small update</div>
+        <div class="release-date">2026-07-22</div>
+      </header>
+
+      <div class="release-heads-up">
+        Heads up — this update adds new Streamer.bot actions, so you need to import the Action Pack again for them to work. In Hub, open the <strong>File</strong> menu and choose <strong>&quot;Open Action-Pack Folder&quot;</strong>, open the <strong>PhoenixActionPack.sb</strong> file, and copy everything in it. Then in Streamer.bot open <strong>Import</strong>, paste it in, and click <strong>Import</strong>.
+      </div>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Architect's "Get Stream" node now reports whether your channel is live.</li>
+          <li>Architect has a new "Chat Message Count" value your logic can read.</li>
+          <li>Architect's "Recurring Schedule" trigger can wait until chat has been active before it runs.</li>
+          <li>The chat-message trigger now carries the message's ID, so replies and message-deletes have something to target.</li>
+          <li>Press C in Architect to wrap the selected nodes in a comment frame.</li>
+          <li>Architect can now change a channel-point reward's cost and turn rewards on or off.</li>
+          <li>Architect can now delete a chat message on Twitch and on Kick.</li>
+          <li>Architect can now send a whisper, switch subscriber-only chat on or off, and create a poll.</li>
+          <li>Architect's "Resolve Prediction" node now closes the last prediction on your channel.</li>
+          <li>"Fulfill Redemption" and "Reject Redemption" now run on their own inside a channel-point redemption.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect's Edit → Group menu item, and Ctrl+G, group the selected nodes again.</li>
+          <li>Ctrl+Shift+G now toggles the canvas grid instead of grouping nodes.</li>
+          <li>Corrected several cards in Architect's built-in Node Reference, including which node to use to reply to a whisper, and added the "Going Live" and "Session End" triggers.</li>
+          <li>The Terms of Service shown on first launch are written in clearer, plainer language. What the terms mean is unchanged.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
         <div class="release-version">v1.0.2607211</div>
         <div class="release-name">Hotfix</div>
         <div class="release-date">2026-07-21</div>
