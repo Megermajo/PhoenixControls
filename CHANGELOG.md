@@ -7,6 +7,22 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607231 - 2026.07.23
+
+> Heads up — the freeze investigation is still ongoing. This update lightens the load on the areas where freezes have occurred and adds deeper diagnostics to close in on the remaining cause; it is not the final fix yet.
+
+**New**
+- Freeze reports now record how busy the processor, memory, and graphics card were at the moment of a freeze.
+- A new optional deep-diagnostics setting captures a complete snapshot on the next freeze, to help pin down the remaining freeze cause.
+
+**Fixed**
+- Architect puts noticeably less load on the graphics card while drawing node graphs.
+- Node text in Architect is drawn from a cache instead of being rebuilt over and over.
+- Opening or switching a graph in Architect no longer does its reset work twice.
+- The Architect minimap no longer keeps working in the background while it is hidden.
+- The visible minimap stays smooth while a busy graph is being edited.
+- A burst of quick script saves no longer briefly stalls the Architect window.
+
 ## Small update - 1.0.2607221 - 2026.07.22
 
 > Heads up — this update adds new Streamer.bot actions, so you need to import the Action Pack again for them to work. In Hub, open the **File** menu and choose **"Open Action-Pack Folder"**, open the **PhoenixActionPack.sb** file, and copy everything in it. Then in Streamer.bot open **Import**, paste it in, and click **Import**.

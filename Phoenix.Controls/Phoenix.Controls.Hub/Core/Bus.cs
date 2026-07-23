@@ -53,6 +53,27 @@ namespace Phoenix.Controls.Hub.Core
         // Tracks pending WaitForVisual / WaitForEvent completions: key = waitId, value = TaskCompletionSource
         private readonly ConcurrentDictionary<string, TaskCompletionSource<BusMessage>> _pendingWaits = new();
 
+        // LOGIC_RELOAD refresh scheduling (see the LOGIC_RELOAD case in
+        // RouteIncomingMessage): LEADING-edge immediate refresh on a thread-pool
+        // thread for the common single-save case (the bus path is the FAST
+        // refresh — Architect saves rely on it so a chat command arriving right
+        // after a save runs the NEW script text), plus a TRAILING-edge
+        // 250ms coalesce for save storms (rapid graph switching fired 5-6
+        // LOGIC_RELOADs in ~1s in the 2026-07-22 streaming-PC freeze log) so a
+        // burst costs two background rescans, not six UI-thread ones.
+        // _lastLogicReloadRefreshMs gates the leading edge (Environment.
+        // TickCount64; CAS so racing messages elect exactly one immediate
+        // runner). The debouncer is deliberately NOT disposed in StopAsync —
+        // the same Bus instance can be restarted (StopAsync's HttpListener
+        // teardown comment documents the Stop→StartAsync cycle) and a disposed
+        // PathDebouncer turns Schedule into a permanent no-op; the refresh
+        // action gates on _stopped instead, so a late fire during teardown is
+        // a no-op.
+        private const string LogicReloadDebounceKey = "bus-logic-reload";
+        private const int LogicReloadDebounceMs = 250;
+        private readonly PathDebouncer _logicReloadDebouncer = new();
+        private long _lastLogicReloadRefreshMs;
+
         // Anonymous-id population counter. Each connection that arrives
         // without a query-string `id` (or with an id that fails validation) gets
         // a synthetic `client_xxxxxxxxxxxx`. Without a ceiling, a hostile loopback
@@ -931,13 +952,59 @@ namespace Phoenix.Controls.Hub.Core
                     break;
 
                 case "LOGIC_RELOAD":
-                    ScriptRegistry.Instance.Refresh();
-                    GlobalLogger.Log($"LOGIC_RELOAD received from {msg.Source} — scripts refreshed.", "Bus", LogLevel.System);
+                    // OFF-CALLER-THREAD refresh, leading+trailing edged. The old
+                    // direct ScriptRegistry.Instance.Refresh() here ran
+                    // synchronously on the CALLER's thread — and with the
+                    // in-proc bridge that caller is the Architect UI thread
+                    // (SaveAsync → SendAsync → PublishAsync's synchronous prefix
+                    // → RouteIncomingMessage). Refresh() is a full logic-dir
+                    // rescan whose per-file WaitForFileStable can Thread.Sleep
+                    // up to ~1.5s on a locked .phx (the LogicWatcher backup
+                    // writer holds FileShare.None on the very file that was just
+                    // saved) — so every save stalled the UI thread, and a rapid
+                    // graph-switch save storm serialized several rescans on it
+                    // back-to-back (2026-07-22 streaming-PC freeze log).
+                    //
+                    // But the bus path is ALSO the fast-freshness path: it is
+                    // what makes a chat command arriving right after a save run
+                    // the NEW script text (the disk-watcher path is ~500ms+
+                    // behind — double debounce + stability wait). So a plain
+                    // trailing debounce would widen the post-save stale window
+                    // from ~0 to ≥250ms. Hence LEADING edge: after a quiet
+                    // period the refresh fires IMMEDIATELY on a thread-pool
+                    // thread (freshness ≈ the rescan duration itself, UI thread
+                    // untouched); messages inside the window coalesce onto ONE
+                    // trailing 250ms refresh (storm → 2 background rescans
+                    // total, and the final state always wins).
+                    {
+                        string reloadSource = msg.Source ?? "?";
+                        long nowMs = Environment.TickCount64;
+                        long last = Interlocked.Read(ref _lastLogicReloadRefreshMs);
+                        bool leading = nowMs - last >= LogicReloadDebounceMs
+                            && Interlocked.CompareExchange(ref _lastLogicReloadRefreshMs, nowMs, last) == last;
+                        if (leading)
+                        {
+                            _ = AsyncErrorBoundary.SafeRunAsync(
+                                () => Task.Run(() => RunLogicReloadRefresh(reloadSource, "immediate")),
+                                "Bus", "LOGIC_RELOAD immediate refresh");
+                        }
+                        else
+                        {
+                            _logicReloadDebouncer.Schedule(LogicReloadDebounceKey, LogicReloadDebounceMs, () =>
+                            {
+                                Interlocked.Exchange(ref _lastLogicReloadRefreshMs, Environment.TickCount64);
+                                RunLogicReloadRefresh(reloadSource, "coalesced");
+                            });
+                        }
+                    }
                     // Route the ACK broadcast through SafeRunAsync.
                     // The bare `_ = BroadcastAsync(...)` swallowed any fault inside
                     // the broadcast loop; if a peer's send threw and the loop
                     // tried to log via GlobalLogger.Error from inside the bus
                     // receive thread, that exception would escape unobserved.
+                    // The ACK stays IMMEDIATE (not debounced) — it acknowledges
+                    // receipt, not completion, and Architect's round-trip signal
+                    // must not lag behind the coalesce window.
                     {
                         // Coalesce the possibly-null inbound
                         // payload before it feeds BusMessage.Payload — matches the
@@ -1834,6 +1901,24 @@ namespace Phoenix.Controls.Hub.Core
         /// SyncContext the call came from. Idempotent — the _stopped CAS
         /// guards against re-entry.
         /// </summary>
+        // The shared body of the leading/trailing LOGIC_RELOAD refresh — always
+        // on a background (thread-pool / timer) thread, never the bus caller's.
+        private void RunLogicReloadRefresh(string source, string mode)
+        {
+            if (Volatile.Read(ref _stopped) != 0) return; // bus torn down mid-window
+            try
+            {
+                ScriptRegistry.Instance.Refresh();
+                GlobalLogger.Log(
+                    $"LOGIC_RELOAD received from {source} — scripts refreshed ({mode}, off-thread).",
+                    "Bus", LogLevel.System);
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("Bus", "LOGIC_RELOAD refresh failed", ex);
+            }
+        }
+
         public async Task StopAsync()
         {
             if (Interlocked.Exchange(ref _stopped, 1) != 0) return;

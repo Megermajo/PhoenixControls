@@ -500,6 +500,34 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HoveredVarChainName));
     }
 
+    /// <summary>
+    /// View-state-only reset for the Open / NewGraph "clear then LoadGraph"
+    /// boundary. Identical to <see cref="Reset"/> EXCEPT it does not clear
+    /// Nodes / Links / Frames — the immediately-following LoadGraph replaces
+    /// them via BulkObservableCollection.ReplaceAll, which raises the single
+    /// CollectionChanged(Reset) the canvas needs. The old Reset()+LoadGraph
+    /// pair raised TWO Resets per collection per open (Clear then ReplaceAll),
+    /// so every graph open paid the full unmount/remount cascade, the
+    /// virtualization + LOD recompute, the frame-overlap pass and a minimap
+    /// rebuild TWICE (the doubled 'graph-reset' PERF-BASELINE log lines).
+    /// Selection / pan / zoom are still cleared here for parity with Reset();
+    /// LoadGraph re-derives them from the incoming graph's saved viewport
+    /// afterwards, exactly as it always has.
+    /// </summary>
+    public void ClearViewState()
+    {
+        Selection = null;
+        ClearMultiSelection();
+        PanX = 0;
+        PanY = 0;
+        Zoom = 1.0;
+        _pickerVarChainName  = null;
+        _hoveredVarChainName = null;
+        InvalidateVarChainTraceCache();
+        OnPropertyChanged(nameof(PickerVarChainName));
+        OnPropertyChanged(nameof(HoveredVarChainName));
+    }
+
     public event EventHandler? SelectionChanged;
 
     /// <summary>

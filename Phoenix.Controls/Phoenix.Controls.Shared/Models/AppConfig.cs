@@ -755,6 +755,23 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public int HangAutoRecoveryStallSeconds { get; set; } = 12;
 
+        /// <summary>
+        /// OPT-IN deep-diagnostics dump. When true, the FIRST capture of a UI
+        /// freeze writes a FULL-MEMORY minidump (<c>ui-hang-fulldump-*.dmp</c>,
+        /// multi-GB — heap pages included, so WinDbg can inspect the
+        /// DispatcherQueue / XAML-core state the standard stacks-only dump
+        /// structurally cannot show). Follow-up captures of the same stall stay
+        /// lightweight. Guardrails: only the 2 newest full dumps are retained,
+        /// and the write silently falls back to the lightweight dump when the
+        /// drive lacks the estimated free space. NOTE: while this dump is being
+        /// written the freeze auto-relaunch WAITS for it (up to ~2 min) instead
+        /// of killing the process mid-write — armed sessions trade relaunch
+        /// speed for the diagnostic. Default false — arm this only while
+        /// actively hunting a freeze (e.g. the 2026-07 streaming-PC
+        /// Architect-open wedge), then turn it back off. Read live.
+        /// </summary>
+        public bool HangFullMemoryDump { get; set; } = false;
+
         // ── First-run UX ─────────────────────────────────────────────────
         /// <summary>
         /// TODO P0 #1 — set to true once the user has dismissed Hub's first-run

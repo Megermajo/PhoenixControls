@@ -1145,12 +1145,17 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         // post-load cascade and ran on the UI thread after the off-thread
         // load returned — removed to keep one source of truth.
 
-        // 0.10.0 — explicit canvas reset before LoadGraph so
+        // Explicit view-state reset before LoadGraph so
         // pan/zoom/selection/inspector all clear before the incoming graph's
-        // saved ViewOffset / Zoom paint on top. LoadGraph itself sets pan/zoom
-        // from Graph.View* fields; Reset() guarantees a clean slate even when
-        // the incoming graph has no saved viewport (e.g. legacy .phxg files).
-        LogicCanvas.Reset();
+        // saved ViewOffset / Zoom paint on top. Deliberately NOT the full
+        // Reset(): clearing the collections here and then LoadGraph's
+        // ReplaceAll raised TWO CollectionChanged(Reset)s per open — the whole
+        // unmount/remount + virtualization + minimap cascade ran twice (the
+        // doubled 'graph-reset' log lines in every freeze capture). LoadGraph's
+        // single ReplaceAll is the one clear+rebuild; it also sets pan/zoom
+        // from Graph.View* (defaulting to identity for legacy .phxg files
+        // with no saved viewport).
+        LogicCanvas.ClearViewState();
         LogicInspector.SetNode(null);
         // GraphSerializer.LoadGraph
         // already ran ResolveWildcardCascade off-thread (after MigrateNodes) inside
@@ -1176,10 +1181,10 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     /// </summary>
     public void NewGraph()
     {
-        // 0.10.0 — same Reset-then-LoadGraph pattern as Open() so a New
+        // Same ClearViewState-then-LoadGraph pattern as Open() so a New
         // wipes pan/zoom/selection/inspector cleanly before the empty
-        // graph paints.
-        LogicCanvas.Reset();
+        // graph paints — one CollectionChanged(Reset) per collection, not two.
+        LogicCanvas.ClearViewState();
         LogicInspector.SetNode(null);
         LogicCanvas.LoadGraph(new Graph());
         LogicCanvas.LoadedFilePath = null;

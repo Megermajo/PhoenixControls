@@ -2028,6 +2028,11 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     {
         MarkSceneDirty();
         _nodeRowHeightsCache.Clear();
+        // New graph → the cached CanvasTextLayouts belong to the OLD graph's
+        // texts (content-addressed, so never stale — but native objects worth
+        // freeing eagerly during rapid graph switching instead of waiting for
+        // the entry-cap backstop).
+        ClearTextLayoutCache();
         // Only reset when WE own the history (standalone canvas, no AVM).
         // The shared-AVM path owns the reset lifecycle itself (Open() /
         // NewGraph()) so the canvas-side reset would just race the AVM —
@@ -2418,6 +2423,11 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
             int links    = _vm?.Links.Count ?? 0;
             int elements = CountRealizedUiElements(NodeLayer);
             int shown    = full + proxy;
+            // Publish the pillar status for the freeze diagnostics — a hang
+            // report can then state WHAT Architect was holding when the UI
+            // wedged (the streaming-PC freezes cluster around graph bind/reset).
+            PillarDiagnostics.SetArchitectStatus(
+                $"{trigger}: {total} nodes, {links} links ({(_useImmediateMode ? "GPU canvas" : "retained canvas")})");
             GlobalLogger.Log(
                 $" {trigger}: {total} nodes → {full} full + {proxy} proxy mounted "
                 + $"(+ {links} links) = {elements} UIElements in NodeLayer (~{(shown > 0 ? elements / shown : 0)}/mounted). "

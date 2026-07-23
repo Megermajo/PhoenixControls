@@ -95,6 +95,15 @@ public sealed partial class MiniMapOverlay : UserControl
     private readonly Dictionary<FrameViewModel, Rectangle> _frameRectCache = new();
     private bool _renderingHooked;
 
+    // Full-rebuild throttle state (see OnRenderingTick): a rebuild burst
+    // (graph-switch storm, node drag) runs at most one O(N+F) Rebuild per
+    // RebuildMinIntervalMs instead of one per displayed frame. The viewport-
+    // rect pass stays per-frame even while a rebuild is throttle-pending (it
+    // is cheap and drives the live pan/zoom feedback); colour-only repaints
+    // wait for the rebuild that will repaint them anyway.
+    private const int RebuildMinIntervalMs = 100;
+    private long _lastRebuildAtMs;
+
     // Drag state for the viewport rect → canvas-pan gesture. Captured on
     // PointerPressed, applied per PointerMoved, released on
     // PointerReleased / Cancelled / CaptureLost.
@@ -220,12 +229,52 @@ public sealed partial class MiniMapOverlay : UserControl
     /// </summary>
     private void OnRenderingTick(object? sender, object e)
     {
+        // Hidden minimap → zero work. The Rendering subscription stays hooked
+        // (Attach/Detach lifecycle unchanged) but a collapsed overlay skips the
+        // whole drain. Dirty bits are LATCHED, not cleared, so everything that
+        // changed while hidden repaints on the first tick after re-show. Before
+        // this gate a hidden minimap still paid the full O(N+F) Rebuild walks
+        // during graph-switch storms (View → Minimap off gave no relief).
+        if (Visibility != Visibility.Visible) return;
+
         // The work branches carry UiActivityTrace breadcrumbs because this is a
         // SECOND CompositionTarget.Rendering handler running outside the canvas's
         // traced render tick — exactly the uninstrumented post-tick window the
         // 2026-07 freeze captures pointed into. Idle ticks stay scope-free.
         if (_rebuildDirty)
         {
+            // Full-rebuild throttle: the per-frame dirty-bit coalesce already
+            // bounds this to one Rebuild per displayed frame, but each Rebuild
+            // is a full O(N+F) XAML property-write walk — during a graph-switch
+            // or drag storm that is still ~60 walks/second on the UI thread
+            // (the 2026-07-22 streaming-PC freeze latched
+            // 'Architect.MiniMap.Rebuild' as the last traced activity). An
+            // overview thumbnail lagging the canvas by ≤100ms is imperceptible,
+            // so cap rebuilds at ~10/s. The dirty bit stays SET on a throttled
+            // skip — convergence to the final state is guaranteed on a later
+            // tick (never cleared without running).
+            long now = Environment.TickCount64;
+            if (now - _lastRebuildAtMs < RebuildMinIntervalMs)
+            {
+                // Throttled skip — but keep the CHEAP viewport pass tracking
+                // per-frame. Edge-auto-pan node/frame drags set BOTH
+                // _rebuildDirty and _viewportRectDirty every 16ms tick; if the
+                // skip returned outright, the gold viewport rect would only
+                // move at the ~10Hz rebuild cadence (visible stutter in the
+                // exact live pan feedback this throttle promises to preserve).
+                // Colours deliberately wait for the rebuild: their pass assumes
+                // the rect caches match the live node/frame set, which a
+                // pending rebuild says they may not.
+                if (_viewportRectDirty)
+                {
+                    _viewportRectDirty = false;
+                    using (Phoenix.Controls.Shared.Services.UiActivityTrace.Begin("Architect.MiniMap.Viewport"))
+                        UpdateViewportRect();
+                }
+                return;
+            }
+            _lastRebuildAtMs = now;
+
             _rebuildDirty = false;
             _viewportRectDirty = false;
             _colorDirty = false; // a full rebuild repaints every rect with its current colour

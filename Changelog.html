@@ -386,6 +386,38 @@
     <!-- RELEASES START -->
     <article class="release">
       <header class="release-head">
+        <div class="release-version">v1.0.2607231</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-23</div>
+      </header>
+
+      <div class="release-heads-up">
+        The freeze investigation is still ongoing — this update lightens the load on the areas where freezes have occurred and adds deeper diagnostics to close in on the remaining cause. It is not the final fix yet.
+      </div>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Freeze reports now record how busy the processor, memory, and graphics card were at the moment of a freeze.</li>
+          <li>A new optional deep-diagnostics setting captures a complete snapshot on the next freeze, to help pin down the remaining freeze cause.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Architect puts noticeably less load on the graphics card while drawing node graphs.</li>
+          <li>Node text in Architect is drawn from a cache instead of being rebuilt over and over.</li>
+          <li>Opening or switching a graph in Architect no longer does its reset work twice.</li>
+          <li>The Architect minimap no longer keeps working in the background while it is hidden.</li>
+          <li>The visible minimap stays smooth while a busy graph is being edited.</li>
+          <li>A burst of quick script saves no longer briefly stalls the Architect window.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
         <div class="release-version">v1.0.2607221</div>
         <div class="release-name">Small update</div>
         <div class="release-date">2026-07-22</div>

@@ -110,6 +110,17 @@ namespace Phoenix.Controls.Hub.WinUI.Services
         private volatile bool _softHitchLogged;
         private static readonly TimeSpan SoftHitchThreshold = TimeSpan.FromSeconds(4);
 
+        // Periodic resource-usage breadcrumb (Majo 2026-07-23: "include resource
+        // usage logs — especially on hang-logs"). A Debug-level line every 5 min
+        // lands in the log ring (and therefore in a freeze report's breadcrumb
+        // tail) so the lead-up trend into a freeze is visible, not just the
+        // at-capture sample. Runs on the watchdog thread; the ~0.5s CPU/GPU
+        // sample window merely delays one poll tick. Suppressed while a stall is
+        // being reported (captures own the thread's attention then).
+        // Watchdog-thread-only.
+        private static readonly TimeSpan ResourceBreadcrumbInterval = TimeSpan.FromMinutes(5);
+        private DateTime _nextResourceBreadcrumbUtc = DateTime.UtcNow + TimeSpan.FromMinutes(1);
+
         public UiHangWatchdog(DispatcherQueue ui, TimeSpan? stallThreshold = null, TimeSpan? pollInterval = null)
         {
             _ui = ui ?? throw new ArgumentNullException(nameof(ui));
@@ -148,6 +159,8 @@ namespace Phoenix.Controls.Hub.WinUI.Services
 
         private void PollOnce()
         {
+                MaybeLogResourceBreadcrumb();
+
                 if (!_outstanding)
                 {
                     // Fire a fresh heartbeat at the UI thread.
@@ -174,7 +187,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                         GlobalLogger.Log(
                             $"UI thread slow to respond (~{waited.TotalSeconds:F1}s) — a brief hitch below the " +
                             $"{_stallThreshold.TotalSeconds:F0}s freeze-capture threshold. Last traced activity: " +
-                            $"'{UiActivityTrace.LastActivity ?? "(none)"}'.",
+                            $"'{UiActivityTrace.LastActivity ?? "(none)"}'. Resources: {ResourceUsageProbe.TryFormatInstantLine()}.",
                             "UiHangWatchdog", LogLevel.System);
                     }
 
@@ -215,6 +228,7 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                         GlobalLogger.Error("UiHangWatchdog",
                             $"UI thread unresponsive for ~{waited.TotalSeconds:F1}s — the app appears frozen. " +
                             $"Last traced UI activity: '{lastActivity}' (started {sinceStart}; {scopeState}). " +
+                            $"Resources: {ResourceUsageProbe.TryFormatInstantLine()}. " +
                             "The entries logged just before this show what was running when it stalled.");
                         TryLaunchStackCapture(waited.TotalSeconds);
                     }
@@ -257,7 +271,13 @@ namespace Phoenix.Controls.Hub.WinUI.Services
             if (Interlocked.CompareExchange(ref _captureInFlight, 1, 0) != 0) return;
             try
             {
-                LaunchStackCaptureWorker(stalledSeconds);
+                // Opt-in deep dump: ONLY the first capture of a stall may write
+                // the multi-GB full-memory variant; the ~20s second snapshot and
+                // the pre-relaunch capture stay lightweight, so one stall costs
+                // at most one big file. Config read live (Settings flip applies
+                // without restart, like the sibling hang settings).
+                bool fullMemory = _capturesThisStall == 0 && ReadFullMemoryDumpConfig();
+                LaunchStackCaptureWorker(stalledSeconds, fullMemory);
                 _capturesThisStall++;
                 _capturesThisSession++;
             }
@@ -270,7 +290,13 @@ namespace Phoenix.Controls.Hub.WinUI.Services
             }
         }
 
-        private void LaunchStackCaptureWorker(double stalledSeconds)
+        private static bool ReadFullMemoryDumpConfig()
+        {
+            try { return ConfigManager.Current.HangFullMemoryDump; }
+            catch { return false; }
+        }
+
+        private void LaunchStackCaptureWorker(double stalledSeconds, bool fullMemory)
         {
             int uiManaged = Volatile.Read(ref _uiManagedThreadId);
             uint uiOs = Volatile.Read(ref _uiOsThreadId);
@@ -278,17 +304,54 @@ namespace Phoenix.Controls.Hub.WinUI.Services
             {
                 try
                 {
+                    if (fullMemory) _fullMemoryCaptureInFlight = true;
                     WriteFullFreezeDiagnostics(
-                        $"UI thread unresponsive ~{stalledSeconds:F1}s", stalledSeconds, uiManaged, uiOs);
+                        $"UI thread unresponsive ~{stalledSeconds:F1}s", stalledSeconds, uiManaged, uiOs, fullMemory);
                 }
                 catch { /* guarded end-to-end; nothing left to do */ }
-                finally { Interlocked.Exchange(ref _captureInFlight, 0); }
+                finally
+                {
+                    _fullMemoryCaptureInFlight = false;
+                    Interlocked.Exchange(ref _captureInFlight, 0);
+                }
             })
             {
                 IsBackground = true,
                 Name = "UiHangStackCapture",
             };
             worker.Start();
+        }
+
+        // True while a capture worker is writing the (multi-GB, tens-of-seconds)
+        // full-memory dump. The auto-relaunch consults this to WAIT for the dump
+        // instead of hard-killing the process mid-write — the deep dump is the
+        // entire point of arming HangFullMemoryDump, and a TerminateProcess runs
+        // none of the writer's cleanup. Volatile: capture worker writes,
+        // recovery worker reads.
+        private volatile bool _fullMemoryCaptureInFlight;
+        private static readonly TimeSpan FullDumpGateBudget = TimeSpan.FromSeconds(120);
+
+        // Periodic Debug-level resource breadcrumb — lands in the log ring (and
+        // therefore in every freeze report's breadcrumb tail) so the trend INTO
+        // a freeze is on record. Skipped while a stall is being reported: the
+        // at-capture sample in WriteFullFreezeDiagnostics owns that moment.
+        private void MaybeLogResourceBreadcrumb()
+        {
+            if (_reported) return;
+            var now = DateTime.UtcNow;
+            if (now < _nextResourceBreadcrumbUtc) return;
+            _nextResourceBreadcrumbUtc = now + ResourceBreadcrumbInterval;
+            try
+            {
+                var sample = ResourceUsageProbe.TrySample();
+                string architect = PillarDiagnostics.ArchitectStatus is string s
+                    ? $" · Architect {s}"
+                    : string.Empty;
+                GlobalLogger.Log(
+                    $"Resource usage — {ResourceUsageProbe.FormatLine(sample)}{architect}",
+                    "UiHangWatchdog", LogLevel.Debug);
+            }
+            catch { /* breadcrumb is best-effort */ }
         }
 
         // The full freeze-diagnostics bundle written on a confirmed stall (and
@@ -300,18 +363,37 @@ namespace Phoenix.Controls.Hub.WinUI.Services
         // background thread; every step is independently guarded so one failure
         // still lets the rest write. The dump + ClrMD snapshot run sequentially
         // (dump first) so two process readers never touch the frozen app at once.
-        private string? WriteFullFreezeDiagnostics(string reason, double stalledSeconds, int uiManaged, uint uiOs)
+        private string? WriteFullFreezeDiagnostics(string reason, double stalledSeconds, int uiManaged, uint uiOs, bool fullMemoryDump = false)
         {
             string dir = Paths.RoamingAppData("logs");
 
             // 1. Native minidump FIRST — the priority instrument; its native
-            //    UI-thread stack names the blocking module in WinDbg.
-            string? dumpPath = NativeMiniDump.TryWriteToFile(dir, out string? dumpError);
+            //    UI-thread stack names the blocking module in WinDbg. With
+            //    AppConfig.HangFullMemoryDump armed, the stall's first capture
+            //    writes the full-memory variant (heap included → DispatcherQueue
+            //    / XAML-core state becomes inspectable); NativeMiniDump falls
+            //    back to the lightweight dump when disk space can't take it.
+            string? dumpPath = NativeMiniDump.TryWriteToFile(dir, fullMemoryDump, out bool wroteFullMemory, out string? dumpError);
             if (dumpPath is not null)
+            {
+                string kind = wroteFullMemory
+                    ? "FULL-MEMORY minidump (heap included — DispatcherQueue/XAML state inspectable)"
+                    : fullMemoryDump
+                        ? "Native minidump (full-memory was requested but fell back — likely insufficient free disk)"
+                        : "Native minidump";
                 GlobalLogger.Error("UiHangWatchdog",
-                    $"Native minidump written to '{dumpPath}' (UI stall ~{stalledSeconds:F1}s) — open in WinDbg/VS.");
+                    $"{kind} written to '{dumpPath}' (UI stall ~{stalledSeconds:F1}s) — open in WinDbg/VS.");
+            }
             else
                 GlobalLogger.Error("UiHangWatchdog", $"Native minidump failed: {dumpError}");
+
+            // 1b. Resource sample (~0.5s window) right after the dump — the
+            //     at-capture CPU / RAM / GPU truth for the report and the live
+            //     log line (Majo: "include resource usage — especially on
+            //     hang-logs"). Background thread; the frozen UI is unaffected.
+            ResourceUsageProbe.Snapshot? resources = null;
+            try { resources = ResourceUsageProbe.TrySample(); }
+            catch { /* section prints unavailable */ }
 
             // 2. ClrMD structured capture SECOND (one snapshot → text + UI frames).
             string? textPath = null;
@@ -351,14 +433,47 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                 var ctx = new FreezeReport.Context(
                     stalledSeconds, _stallThreshold.TotalSeconds, lastActivity, age, scopeState, uiManaged, uiOs);
 
+                string? resourceSection = null;
+                try { if (resources is not null) resourceSection = ResourceUsageProbe.FormatReportSection(resources); }
+                catch { /* section prints unavailable */ }
+
+                // Architect status is published from a Low-priority UI-thread
+                // lambda, which cannot run while the UI is wedged — so what we
+                // read here can predate the freeze by minutes. Annotate its AGE
+                // so the report reader can weigh it (a 2s-old "graph-bind: 183
+                // nodes" is a lead; a 20-min-old one is just ambient context).
+                string? architectStatus = PillarDiagnostics.ArchitectStatus;
+                if (architectStatus is not null)
+                {
+                    var publishedAt = PillarDiagnostics.ArchitectStatusAtUtc;
+                    architectStatus += publishedAt == DateTime.MinValue
+                        ? " (age unknown)"
+                        : $" (published {(DateTime.UtcNow - publishedAt).TotalSeconds:F0}s before this capture)";
+                }
+
                 string cause = FreezeReport.SynthesizeLikelyCause(uiFrames, tdr);
-                string report = FreezeReport.Build(ctx, uiFrames, breadcrumbs, gpu, tdr, TdrScanWindow, dumpPath, textPath);
+                string report = FreezeReport.Build(ctx, uiFrames, breadcrumbs, gpu, tdr, TdrScanWindow, dumpPath, textPath,
+                    resourceUsage: resourceSection,
+                    architectStatus: architectStatus);
                 string? reportPath = FreezeReport.TryWriteToFile(dir, report, out string? repError);
+
+                // GPU-pressure note on the LIVE line — the "graphics card was
+                // quite in use" observation, decided per freeze from data. This
+                // stays a NOTE beside the synthesized cause (the dump shows a
+                // GetMessage wait, so GPU load is an aggravator hypothesis, not
+                // a proven present-block).
+                string gpuNote = string.Empty;
+                if (resources?.GpuTotalPercent is double gpuTotal && gpuTotal >= 90.0)
+                {
+                    string proc = resources.GpuProcessPercent is double p
+                        ? $", ~{p:F0}% from Phoenix" : string.Empty;
+                    gpuNote = $" | GPU under heavy load at capture (~{gpuTotal:F0}% machine-wide engine-sum{proc}).";
+                }
 
                 // 4. Prominent in-app System Log entry — the synthesized cause +
                 //    where the full report lives, so the freeze explains itself live.
                 GlobalLogger.Error("UiHangWatchdog",
-                    $"FREEZE likely cause — {cause}" +
+                    $"FREEZE likely cause — {cause}{gpuNote}" +
                     (reportPath is not null
                         ? $" | Full report: {reportPath}"
                         : $" | (report write failed: {repError})"));
@@ -423,7 +538,21 @@ namespace Phoenix.Controls.Hub.WinUI.Services
                     // pre-relaunch snapshot is alone on the process. If a normal
                     // capture is already in flight (it's writing its own dump),
                     // skip ours rather than run a second concurrent snapshot.
-                    claimed = TryClaimCaptureGate(TimeSpan.FromSeconds(3));
+                    // EXCEPTION: an in-flight FULL-MEMORY dump (opt-in,
+                    // multi-GB, tens of seconds) gets a generous wait — killing
+                    // the process mid-write would truncate the one artifact the
+                    // user explicitly armed this freeze hunt for. The relaunch
+                    // resumes the moment the gate frees.
+                    TimeSpan gateBudget = TimeSpan.FromSeconds(3);
+                    if (_fullMemoryCaptureInFlight)
+                    {
+                        gateBudget = FullDumpGateBudget;
+                        GlobalLogger.Error("UiHangWatchdog",
+                            $"Auto-relaunch is WAITING (up to {FullDumpGateBudget.TotalSeconds:F0}s) for the in-flight " +
+                            "full-memory hang dump to finish (AppConfig.HangFullMemoryDump=true) — relaunching " +
+                            "immediately would truncate it.");
+                    }
+                    claimed = TryClaimCaptureGate(gateBudget);
                     if (claimed)
                     {
                         dumpPath = WriteFullFreezeDiagnostics(

@@ -808,6 +808,80 @@ public sealed partial class LogicCanvasView
         _wireGeometryCache.Clear();
     }
 
+    // ── Per-text CanvasTextLayout cache ──
+    //
+    // Win2D's ds.DrawText(string, Rect, color, CanvasTextFormat) overload builds
+    // a transient CanvasTextLayout (a native DirectWrite IDWriteTextLayout behind
+    // a finalizable RCW) internally on EVERY call and throws it away — one per
+    // text element per visible node per frame while the scene is dirty. On a
+    // ~170-node graph that is >1000 native allocations per frame, the dominant
+    // remaining churn in the draw pass now that wire beziers and pin shapes are
+    // cached. The layout depends only on (text, format, layout-box size), all of
+    // which are stable for a settled node, so it is cached here and drawn via
+    // DrawTextLayout instead. Color is a draw-time argument (not baked into the
+    // layout), so state-driven tint changes reuse the cached layout.
+    //
+    // Invalidation: device recreate / DPI flip (ReleaseDeviceGeometryCaches, same
+    // as the geometry caches), graph load/unload (beside _nodeRowHeightsCache),
+    // and a hard entry cap as the backstop for long editing sessions — text edits
+    // mint new keys and abandon the old ones, so without a cap the dictionary
+    // would grow monotonically.
+    private readonly System.Collections.Generic.Dictionary<
+        (string Text, CanvasTextFormat Format, float W, float H), CanvasTextLayout>
+        _textLayoutCache = new();
+
+    private const int TextLayoutCacheMaxEntries = 4096;
+
+    private void ClearTextLayoutCache()
+    {
+        foreach (var layout in _textLayoutCache.Values) layout.Dispose();
+        _textLayoutCache.Clear();
+    }
+
+    // Drop-in replacement for ds.DrawText(text, rect, color, fmt): identical
+    // layout semantics (the rect is the DirectWrite layout box — alignment and
+    // wrapping come from the format, and text is NOT clipped to the box, exactly
+    // like DrawText), but the layout is cached instead of rebuilt per frame.
+    private void DrawCachedText(CanvasDrawingSession ds, string? text, Rect rect, Color color, CanvasTextFormat? fmt)
+    {
+        if (string.IsNullOrEmpty(text) || fmt is null) return;
+        float w = (float)Math.Max(0, rect.Width);
+        float h = (float)Math.Max(0, rect.Height);
+        var key = (text, fmt, w, h);
+        if (!_textLayoutCache.TryGetValue(key, out var layout))
+        {
+            // Backstop cap: a wholesale clear is a one-frame rebuild hiccup and
+            // only fires after thousands of distinct texts churned through.
+            if (_textLayoutCache.Count >= TextLayoutCacheMaxEntries)
+                ClearTextLayoutCache();
+            layout = new CanvasTextLayout(ds, text, fmt, w, h);
+            _textLayoutCache[key] = layout;
+        }
+        ds.DrawTextLayout(layout, (float)rect.X, (float)rect.Y, color);
+    }
+
+    // Compact-mode operator glyph formats, keyed by exact font size — previously
+    // a new CanvasTextFormat was allocated + disposed for every compact node
+    // every frame. Header heights are a small quantized set, so this holds 1-3
+    // entries for the process lifetime. CanvasTextFormat is device-independent
+    // (like the six shared _im*Format instances), so no device-loss handling.
+    private readonly System.Collections.Generic.Dictionary<float, CanvasTextFormat> _imCompactFormats = new();
+
+    private CanvasTextFormat GetCompactFormat(double headerH)
+    {
+        float size = (float)Math.Max(14, headerH);
+        if (_imCompactFormats.TryGetValue(size, out var fmt)) return fmt;
+        fmt = new CanvasTextFormat
+        {
+            FontFamily = "Segoe UI", FontSize = size,
+            HorizontalAlignment = CanvasHorizontalAlignment.Center,
+            VerticalAlignment = CanvasVerticalAlignment.Center,
+            WordWrapping = CanvasWordWrapping.NoWrap,
+        };
+        _imCompactFormats[size] = fmt;
+        return fmt;
+    }
+
     private void DrawWire(CanvasControl sender, CanvasDrawingSession ds, LinkViewModel link, Rect visible)
     {
         var from = link.LastFromAnchor;
@@ -921,23 +995,17 @@ public sealed partial class LogicCanvasView
         if (!string.IsNullOrEmpty(node.Title))
         {
             double titleH = node.HasDefiner ? headerH * 0.58 : headerH;
-            ds.DrawText(node.Title, new Rect(nx + 10, ny, Math.Max(0, nw - 20), titleH), _imText, _imTitleFormat);
+            DrawCachedText(ds, node.Title, new Rect(nx + 10, ny, Math.Max(0, nw - 20), titleH), _imText, _imTitleFormat);
             if (node.HasDefiner && !string.IsNullOrEmpty(node.Definer))
-                ds.DrawText(node.Definer, new Rect(nx + 10, ny + titleH, Math.Max(0, nw - 20), headerH - titleH), _imSubText, _imDefinerFormat);
+                DrawCachedText(ds, node.Definer, new Rect(nx + 10, ny + titleH, Math.Max(0, nw - 20), headerH - titleH), _imSubText, _imDefinerFormat);
         }
 
         if (node.HasCompactSymbol)
         {
             // Compact mode hides the socket labels behind one large centred
             // operator glyph (mirrors NodeView's compact affordance).
-            using var compactFmt = new CanvasTextFormat
-            {
-                FontFamily = "Segoe UI", FontSize = (float)Math.Max(14, headerH),
-                HorizontalAlignment = CanvasHorizontalAlignment.Center,
-                VerticalAlignment = CanvasVerticalAlignment.Center,
-                WordWrapping = CanvasWordWrapping.NoWrap,
-            };
-            ds.DrawText(node.CompactSymbol, new Rect(nx, ny + headerH, nw, Math.Max(0, nh - headerH)), _imText, compactFmt);
+            var compactFmt = GetCompactFormat(headerH);
+            DrawCachedText(ds, node.CompactSymbol, new Rect(nx, ny + headerH, nw, Math.Max(0, nh - headerH)), _imText, compactFmt);
         }
         else
         {
@@ -955,7 +1023,7 @@ public sealed partial class LogicCanvasView
                     // Label is confined to the space LEFT of the pill so it never
                     // paints under it (pill starts at px = label end + gap).
                     double lblW = Math.Max(0, px - (nx + 14) - 4);
-                    ds.DrawText(s.Label ?? string.Empty, new Rect(nx + 14, rowCY - 9, lblW, 18), _imText, _imLabelFormat);
+                    DrawCachedText(ds, s.Label, new Rect(nx + 14, rowCY - 9, lblW, 18), _imText, _imLabelFormat);
                     DrawValuePill(ds, px, py, pw, ph, s.PillDisplayText, ml);
                 }
                 else
@@ -963,7 +1031,7 @@ public sealed partial class LogicCanvasView
                     // No pill on this row — the label may use the input column but,
                     // like the pill, must stop before the output-label column.
                     double lblW = Math.Max(0, InputRightBoundary(nx, nw, node) - (nx + 14));
-                    ds.DrawText(s.Label ?? string.Empty,
+                    DrawCachedText(ds, s.Label,
                         new Rect(nx + 14, rowCY - 9, lblW, 18), _imText, _imLabelFormat);
                 }
             }
@@ -974,7 +1042,7 @@ public sealed partial class LogicCanvasView
                 // retained Auto output column — no longer a fixed % band that overlapped
                 // the input pills.
                 double outLblW = NodeGeometry.EstimateTextWidth(s.Label, 12.0);
-                ds.DrawText(s.Label ?? string.Empty,
+                DrawCachedText(ds, s.Label,
                     new Rect(nx + nw - 16 - outLblW, rowCY - 9, Math.Max(0, outLblW + 2), 18), _imText, _imLabelRightFormat);
             }
 
@@ -1018,7 +1086,7 @@ public sealed partial class LogicCanvasView
         var pillRect = new Rect(pillX, pillY, pillW, pillH);
         ds.FillRoundedRectangle(pillRect, 4, 4, _imPillFill);
         var fmt = (multiline ? _imPillFormatWrap : _imPillFormat) ?? _imPillFormat;
-        ds.DrawText(text, new Rect(pillX + 5, pillY + 2, Math.Max(0, pillW - 10), Math.Max(0, pillH - 4)), _imText, fmt);
+        DrawCachedText(ds, text, new Rect(pillX + 5, pillY + 2, Math.Max(0, pillW - 10), Math.Max(0, pillH - 4)), _imText, fmt);
     }
 
     // Exact rect of an INPUT socket's value pill — the SINGLE source
@@ -1148,12 +1216,12 @@ public sealed partial class LogicCanvasView
                 // toggle hit-test in TryBeginInlineEditAtCanvasPoint — keep
                 // the three in lockstep.
                 var boolColor = m.BoolValue ? _imText : _imSubText;
-                ds.DrawText(m.BoolGlyph, new Rect(nx + 8, rowCY - 9, 18, 18), boolColor, _imLabelFormat);
-                ds.DrawText(m.Key, new Rect(nx + 32, rowCY - 9, Math.Max(0, nw - 40), 18), boolColor, _imLabelFormat);
+                DrawCachedText(ds, m.BoolGlyph, new Rect(nx + 8, rowCY - 9, 18, 18), boolColor, _imLabelFormat);
+                DrawCachedText(ds, m.Key, new Rect(nx + 32, rowCY - 9, Math.Max(0, nw - 40), 18), boolColor, _imLabelFormat);
             }
             else
             {
-                ds.DrawText(m.Key, new Rect(nx + 8, rowCY - 9, Math.Max(0, nw * 0.5), 18), _imSubText, _imLabelFormat);
+                DrawCachedText(ds, m.Key, new Rect(nx + 8, rowCY - 9, Math.Max(0, nw * 0.5), 18), _imSubText, _imLabelFormat);
                 // Middle-attr rows have no output column on their line, so the pill
                 // uses the right portion of the full body width (Key …… [pill]).
                 double mpX = nx + nw * 0.42;
@@ -1265,12 +1333,14 @@ public sealed partial class LogicCanvasView
         return CanvasGeometry.CreatePath(pb);
     }
 
-    // Drop every cached CanvasGeometry (wire beziers + pin/knot templates).
+    // Drop every cached CanvasGeometry (wire beziers + pin/knot templates) and
+    // the cached text layouts.
     // Called from the CreateResources hook (device created / lost+recreated)
     // and the per-draw DPI check; everything rebuilds lazily on next use.
     private void ReleaseDeviceGeometryCaches()
     {
         ClearWireGeometryCache();
+        ClearTextLayoutCache();
         _pinChevronGeom?.Dispose();     _pinChevronGeom = null;
         _pinTriangleGeom?.Dispose();    _pinTriangleGeom = null;
         _pinDiamondGeom?.Dispose();     _pinDiamondGeom = null;
@@ -1401,7 +1471,7 @@ public sealed partial class LogicCanvasView
         ds.FillRoundedRectangle(rect, 8, 8, Color.FromArgb(0x1F, fc.R, fc.G, fc.B)); // translucent body
         ds.DrawRoundedRectangle(rect, 8, 8, frame.IsSelected ? _imSelection : fc, frame.IsSelected ? 2f : 1.5f);
         if (!string.IsNullOrEmpty(frame.Label))
-            ds.DrawText(frame.Label, new Rect(frame.X + 10, frame.Y + 4, Math.Max(0, frame.Width - 20), 22), fc, _imTitleFormat);
+            DrawCachedText(ds, frame.Label, new Rect(frame.X + 10, frame.Y + 4, Math.Max(0, frame.Width - 20), 22), fc, _imTitleFormat);
 
         // Bottom-right resize affordance — a small swatch echoing the retained
         // path's visible handle so the (otherwise invisible) resize border is

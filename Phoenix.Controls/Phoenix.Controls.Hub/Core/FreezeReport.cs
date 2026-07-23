@@ -87,7 +87,9 @@ namespace Phoenix.Controls.Hub.Core
             TimeSpan tdrWindow,
             string? dumpPath,
             string? textPath,
-            int maxBreadcrumbs = 30)
+            int maxBreadcrumbs = 30,
+            string? resourceUsage = null,
+            string? architectStatus = null)
         {
             var sb = new StringBuilder(16 * 1024);
             sb.AppendLine("Phoenix Controls FREEZE REPORT");
@@ -97,10 +99,19 @@ namespace Phoenix.Controls.Hub.Core
                           $"(trip threshold {ctx.ThresholdSeconds.ToString("F0", CultureInfo.InvariantCulture)}s)");
             sb.AppendLine($"UI thread: managed={ctx.UiManagedThreadId} os=0x{ctx.UiOsThreadId:X}");
             sb.AppendLine($"Last traced UI activity: '{ctx.LastActivity}' (started {ctx.LastActivityAge}; {ctx.ScopeState})");
+            if (!string.IsNullOrEmpty(architectStatus))
+                sb.AppendLine($"Architect: {architectStatus}");
             sb.AppendLine();
 
             sb.AppendLine(">>> LIKELY CAUSE <<<");
             sb.AppendLine(SynthesizeLikelyCause(uiThreadFrames, tdrHits));
+            sb.AppendLine();
+
+            // Resource usage at capture time — sampled by the capture worker
+            // (~0.5s window). Answers "was the GPU / CPU / RAM actually under
+            // load when it froze" per freeze instead of by recollection.
+            sb.AppendLine("RESOURCE USAGE (sampled at capture, ~0.5s window):");
+            sb.AppendLine(string.IsNullOrEmpty(resourceUsage) ? "  (unavailable)" : resourceUsage);
             sb.AppendLine();
 
             sb.AppendLine("UI THREAD top frames:");
