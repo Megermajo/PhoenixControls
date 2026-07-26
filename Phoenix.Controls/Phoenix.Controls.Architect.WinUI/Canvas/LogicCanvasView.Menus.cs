@@ -418,6 +418,15 @@ public sealed partial class LogicCanvasView
     /// each containing one MenuFlyoutItem per template. Click on a leaf
     /// spawns the corresponding node at the captured pointer location.
     ///
+    /// A crowded category (Platforms had 70 nodes in one flat wall) whose
+    /// templates carry a <see cref="NodeTemplate.SubGroup"/> tag gains a
+    /// SECOND level: one nested MenuFlyoutSubItem per sub-group (Platforms →
+    /// Twitch / YouTube / Kick / …; Flow Control → Branch & Select / Loops &
+    /// Sequence / Gates & Timing), ordered by the authored
+    /// <see cref="NodeRegistry.SubGroupOrder"/>. Categories with no tagged
+    /// nodes render exactly as before — a flat leaf list — so only the six
+    /// opted-in categories pick up the nesting.
+    ///
     /// The "All nodes…" type-to-filter palette stays available through the
     /// "Spawn Node… (search)" entry below the cascade for users who'd
     /// rather type than click through.
@@ -431,15 +440,77 @@ public sealed partial class LogicCanvasView
                 Text = group.Key,
                 Icon = new FontIcon { Glyph = GlyphNew, FontFamily = new FontFamily(IconFontFamily) },
             };
-            foreach (var template in group.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase))
+
+            // Leaf factory shared by the flat and the sub-grouped paths so the
+            // spawn wiring stays byte-identical either way. A MenuFlyoutItem can
+            // only live in one parent, so each leaf is minted fresh.
+            MenuFlyoutItem MakeLeaf(NodeTemplate template)
             {
                 string title = template.Title;
                 var item = new MenuFlyoutItem { Text = title };
                 item.Click += (_, _) => SpawnNodeAtHostPoint(title, hostPoint);
-                sub.Items.Add(item);
+                return item;
             }
+
+            if (group.Any(t => !string.IsNullOrEmpty(t.SubGroup)))
+            {
+                BuildSubGroupedCategory(sub, group, MakeLeaf);
+            }
+            else
+            {
+                foreach (var template in group.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase))
+                    sub.Items.Add(MakeLeaf(template));
+            }
+
             if (sub.Items.Count > 0)
                 flyout.Items.Add(sub);
+        }
+    }
+
+    /// <summary>
+    /// Emit the second-level sub-group cascade for a category whose templates
+    /// carry <see cref="NodeTemplate.SubGroup"/> tags. Sub-groups render in the
+    /// authored order captured at registration
+    /// (<see cref="NodeRegistry.SubGroupOrder"/>); any bucket present in the
+    /// data but absent from that order (defensive — most notably the "Other"
+    /// catch-all that collects a newly-added node someone forgot to tag) is
+    /// appended alphabetically, with "Other" pinned last so nothing is ever
+    /// silently dropped. Leaves inside each sub-group stay Title-sorted, matching
+    /// the flat path.
+    /// </summary>
+    private static void BuildSubGroupedCategory(MenuFlyoutSubItem parent,
+        System.Linq.IGrouping<string, NodeTemplate> category,
+        Func<NodeTemplate, MenuFlyoutItem> makeLeaf)
+    {
+        const string OtherBucket = "Other";
+
+        var buckets = category
+            .GroupBy(t => string.IsNullOrEmpty(t.SubGroup) ? OtherBucket : t.SubGroup,
+                     StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var authored = NodeRegistry.SubGroupOrder
+            .Where(p => string.Equals(p.Category, category.Key, StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.SubGroup)
+            .ToList();
+
+        int Rank(string groupName)
+        {
+            if (string.Equals(groupName, OtherBucket, StringComparison.OrdinalIgnoreCase))
+                return int.MaxValue;               // untagged catch-all always last
+            int idx = authored.FindIndex(a => string.Equals(a, groupName, StringComparison.OrdinalIgnoreCase));
+            return idx >= 0 ? idx : int.MaxValue - 1; // tagged-but-unordered: just before Other
+        }
+
+        foreach (var bucket in buckets
+                     .OrderBy(b => Rank(b.Key))
+                     .ThenBy(b => b.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var groupSub = new MenuFlyoutSubItem { Text = bucket.Key };
+            foreach (var template in bucket.OrderBy(t => t.Title, StringComparer.OrdinalIgnoreCase))
+                groupSub.Items.Add(makeLeaf(template));
+            if (groupSub.Items.Count > 0)
+                parent.Items.Add(groupSub);
         }
     }
 
@@ -513,12 +584,14 @@ public sealed partial class LogicCanvasView
     /// the Comment Frame entry is the only frame-affordance worth glance-
     /// discovering). The spawn category cascade stays — it's the primary
     /// "I know which kind of node I want, just let me click through" path.
-    /// When the user right-clicks empty canvas WITH a multi-selection
-    /// active the menu instead surfaces the selection-operation set
-    /// (Delete N / Duplicate / Group / Wrap-in-Frame / Align / Distribute)
-    /// so the canvas-wide right-click can drive the live selection from
-    /// any blank patch instead of forcing the user to right-click one of
-    /// the selected nodes.
+    /// Right-clicking empty canvas ALWAYS shows this spawn menu — even with an
+    /// active selection — and leaves the selection untouched (Majo: blank-space
+    /// right-click should give the default add-node menu, not the selected
+    /// node's actions). Selection operations (Delete / Duplicate / Group /
+    /// Align / …) stay reachable by right-clicking ON a selected node
+    /// (<see cref="ShowNodeMenu"/>), where the target is unambiguous. A prior
+    /// 0.11.x branch surfaced the selection-operation set here on any active
+    /// selection; that was removed per the feedback above.
     /// </summary>
     private void ShowEmptyCanvasMenu(Point hostPoint)
     {
@@ -533,20 +606,6 @@ public sealed partial class LogicCanvasView
         }
 
         var capturedPoint = hostPoint;
-
-        int selNodes  = _vm?.SelectedNodes.Count  ?? 0;
-        int selLinks  = _vm?.SelectedLinks.Count  ?? 0;
-        int selFrames = _vm?.SelectedFrames.Count ?? 0;
-        int selTotal  = selNodes + selLinks + selFrames;
-        bool hasSelection = selTotal > 0;
-
-        if (hasSelection)
-        {
-            var selFlyout = NewStyledMenuFlyout($"SELECTION · {selTotal}");
-            BuildSelectionActionItems(selFlyout, selNodes, selTotal);
-            selFlyout.ShowAt(HostRoot, hostPoint);
-            return;
-        }
 
         var flyout = NewStyledMenuFlyout("SPAWN NODE");
 
@@ -584,70 +643,6 @@ public sealed partial class LogicCanvasView
         }
 
         flyout.ShowAt(HostRoot, hostPoint);
-    }
-
-    /// <summary>
-    /// 0.11.x polish — selection-aware variant of the empty-canvas menu.
-    /// When the user right-clicks empty canvas while a multi-selection is
-    /// active, the menu shows the operation set that ordinarily lives on
-    /// the node menu so the live selection can be driven from any blank
-    /// patch of canvas. Mirrors the per-action gating from
-    /// <see cref="ShowNodeMenu"/> — Align / Distribute hide for &lt; 2 / &lt; 3
-    /// nodes respectively; Group / Wrap need 2+ nodes.
-    /// </summary>
-    private void BuildSelectionActionItems(MenuFlyout flyout, int selNodes, int selTotal)
-    {
-        flyout.Items.Add(NewMenuItem(
-            selTotal > 1 ? $"Delete {selTotal} item(s)" : "Delete",
-            GlyphDelete,
-            () => DeleteSelection(),
-            "Del"));
-
-        if (selNodes >= 1)
-        {
-            flyout.Items.Add(NewMenuItem(
-                selNodes > 1 ? $"Duplicate {selNodes} nodes" : "Duplicate",
-                GlyphNew,
-                () => DuplicateSelection(),
-                "Ctrl+D"));
-        }
-
-        if (selNodes >= 2)
-        {
-            flyout.Items.Add(new MenuFlyoutSeparator());
-
-            flyout.Items.Add(NewMenuItem(
-                $"Group {selNodes} nodes (Collapse to Macro)",
-                GlyphNew,
-                () => CollapseSelectionToMacro(),
-                "Ctrl+G"));
-
-            flyout.Items.Add(NewMenuItem(
-                $"Wrap {selNodes} nodes in Frame",
-                GlyphNew,
-                () => WrapSelectionInFrame()));
-
-            var alignSub = new MenuFlyoutSubItem { Text = $"Align {selNodes} nodes" };
-            void AddAlign(string label, Action action) =>
-                alignSub.Items.Add(NewMenuItem(label, string.Empty, action));
-            AddAlign("Left",   () => AlignSelected(AlignAxis.Left));
-            AddAlign("Center", () => AlignSelected(AlignAxis.Center));
-            AddAlign("Right",  () => AlignSelected(AlignAxis.Right));
-            AddAlign("Top",    () => AlignSelected(AlignAxis.Top));
-            AddAlign("Middle", () => AlignSelected(AlignAxis.Middle));
-            AddAlign("Bottom", () => AlignSelected(AlignAxis.Bottom));
-            flyout.Items.Add(alignSub);
-
-            if (selNodes >= 3)
-            {
-                var distSub = new MenuFlyoutSubItem { Text = $"Distribute {selNodes} nodes" };
-                void AddDist(string label, Action action) =>
-                    distSub.Items.Add(NewMenuItem(label, string.Empty, action));
-                AddDist("Horizontally", () => DistributeSelected(DistributeAxis.Horizontal));
-                AddDist("Vertically",   () => DistributeSelected(DistributeAxis.Vertical));
-                flyout.Items.Add(distSub);
-            }
-        }
     }
 
     /// <summary>

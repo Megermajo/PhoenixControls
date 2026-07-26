@@ -251,9 +251,22 @@ public static class RecentSiblingsStore
         // A pending debounced flush can be killed by the host's
         // Environment.Exit(0); ProcessExit still runs on that path, so a
         // one-time hook guarantees the last mutation lands on disk.
+        // (The Hub's coordinated shutdown now ends in TerminateProcess, which
+        // SKIPS ProcessExit — that path calls FlushNow() explicitly instead.)
         if (s_exitFlushHooked) return;
         s_exitFlushHooked = true;
         AppDomain.CurrentDomain.ProcessExit += (_, _) => TryFlush();
+    }
+
+    /// <summary>
+    /// Explicit flush entry point for host shutdown paths that terminate the
+    /// process without running <c>AppDomain.ProcessExit</c> (the Hub's
+    /// TerminateProcess-based coordinated exit). Idempotent — a flush with no
+    /// pending mutation is a no-op. Never throws.
+    /// </summary>
+    public static void FlushNow()
+    {
+        try { TryFlush(); } catch { /* shutdown best-effort */ }
     }
 
     private static void TryFlush()

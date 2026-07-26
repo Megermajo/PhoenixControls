@@ -257,7 +257,7 @@ namespace Phoenix.Controls.Hub.Core
             catch { /* best-effort */ }
         }
 
-        // ── WebView2 child cleanup (freeze-recovery path) ───────────────────
+        // ── WebView2 child cleanup (freeze-recovery + coordinated-shutdown paths) ──
 
         private const string WebViewImageFile = "msedgewebview2.exe";
 
@@ -268,8 +268,11 @@ namespace Phoenix.Controls.Hub.Core
         /// Uses a Toolhelp process snapshot to find direct children by parent PID
         /// (the BCL exposes no parent-PID accessor). Best-effort; every step is
         /// guarded so this can never break the relaunch it precedes.
+        /// Public because the coordinated-shutdown exit (Hub.WinUI's
+        /// HubProcessExit) ends the process with the same TerminateProcess
+        /// pattern and needs the identical child cleanup first.
         /// </summary>
-        private static void KillOwnWebViewChildren(int selfPid)
+        public static void KillOwnWebViewChildren(int selfPid)
         {
             var childPids = new List<int>();
             IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -298,7 +301,9 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     using var child = SysProcess.GetProcessById(pid);
                     child.Kill(entireProcessTree: true);
-                    GlobalLogger.Log($"Freeze-recovery: terminated orphan-prone WebView2 child pid {pid}.",
+                    // Neutral wording — this runs on BOTH the freeze-recovery
+                    // relaunch and the normal coordinated-shutdown exit.
+                    GlobalLogger.Log($"Terminated orphan-prone WebView2 child pid {pid} before process exit.",
                         "HangRecovery", LogLevel.System);
                 }
                 catch (ArgumentException) { /* already gone */ }

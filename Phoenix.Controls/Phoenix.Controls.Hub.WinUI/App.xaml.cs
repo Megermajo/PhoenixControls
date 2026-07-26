@@ -22,6 +22,14 @@ public partial class App : Application
     private Mutex? _instanceMutex;
     private UiHangWatchdog? _hangWatchdog;
 
+    /// <summary>
+    /// The live main window, exposed for shutdown-shaped flows that must
+    /// close the Hub through the full coordinated path (UpdateApplyFlow's
+    /// <see cref="MainWindow.CloseForShutdown"/> route) instead of
+    /// <c>Application.Current.Exit()</c>. Null before OnLaunched finishes.
+    /// </summary>
+    internal MainWindow? MainWindowForShutdown => _main;
+
     public App()
     {
         // Close the WinUI text-input (IME/TSF) nested-message-loop freeze BEFORE
@@ -35,6 +43,20 @@ public partial class App : Application
         // Visualist preview panels). Must run before the first CoreWebView2 init;
         // the constructor is the earliest safe point.
         ConfigureWebView2UserDataFolder();
+
+        // Keep the dispatcher alive past the last window close. The default
+        // (OnLastWindowClose) starts the natural WinUI exit — XAML dispatcher
+        // teardown, Application.Start returning, then the CLR/native
+        // ExitProcess DLL-detach chain — CONCURRENTLY with MainWindow's
+        // shutdown coordinator. That native teardown is exactly where a
+        // wedge leaves an unkillable zombie Hub (mutex + install-tree locks
+        // held → the next auto-update fails until a reboot). With
+        // OnExplicitShutdown the ONLY ways this process ends are the
+        // coordinator's TerminateProcess hard exit (HubProcessExit) and the
+        // explicit pre-boot Exit() calls (single-instance duplicate, ToS
+        // decline, splash error) — no last-window race, no native teardown
+        // on the normal close path.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
 
         InitializeComponent();
 

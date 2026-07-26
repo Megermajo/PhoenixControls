@@ -1729,6 +1729,12 @@ public sealed class UpdateRunner
         "Phoenix.Controls.Architect.WinUI",
         "Phoenix.Controls.Visualist",
         "Phoenix.Controls.Visualist.WinUI",
+        // The slim WebView2 viewer shell runs from {app}\Viewer and maps its
+        // images from the install tree like the pillars do. It was missing
+        // from this list, so a running Viewer sailed past the graceful-close
+        // + force-kill passes and only surfaced at swap time as a Restart-
+        // Manager locker.
+        "Phoenix.Controls.Viewer",
     };
 
     /// <summary>
@@ -1841,7 +1847,15 @@ public sealed class UpdateRunner
                     proc.Kill(entireProcessTree: true);
                     proc.WaitForExit(2000);
                 }
-                catch (Exception ex) { Log($"  kill failed: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    // A suite process that refuses TerminateProcess is stuck
+                    // inside Windows process teardown (native DLL shutdown) —
+                    // no external action short of a reboot clears it. Name
+                    // that condition so a failed update's log reads as a
+                    // diagnosis instead of a bare error.
+                    Log($"  kill failed: {ex.Message} (a process refusing TerminateProcess is stuck in Windows process teardown; only a reboot clears it)");
+                }
                 finally { proc.Dispose(); }
             }
         }
@@ -2094,6 +2108,48 @@ public sealed class UpdateRunner
                 // catches genuinely-stuck Hubs.
             }
             await Task.Delay(250).ConfigureAwait(false);
+        }
+
+        // Last-resort: the PID survived the whole window even though the
+        // WaitForSuiteShutdown pass already asked nicely (CloseMainWindow)
+        // and force-killed by image name. A Hub that is merely wedged SHORT
+        // of Windows process teardown (stuck ProcessExit handler, dead
+        // window with a live pump) still dies to a direct TerminateProcess;
+        // one that is already stuck INSIDE ExitProcess's DLL-detach chain
+        // ignores/refuses the kill — log that diagnosis explicitly so the
+        // updater.log names the reboot-only condition instead of a bare
+        // timeout. (Hub builds with the coordinated TerminateProcess exit
+        // no longer produce such zombies; this rescues sessions closed by
+        // an older build.)
+        try
+        {
+            using var proc = Process.GetProcessById(sentinel.Pid);
+            Log($"sentinel PID {sentinel.Pid} still alive after {timeout.TotalSeconds:F0}s -- attempting last-resort kill.");
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+                if (proc.WaitForExit(5000))
+                {
+                    Log($"sentinel PID {sentinel.Pid} terminated by last-resort kill; proceeding.");
+                    return true;
+                }
+                Log($"sentinel PID {sentinel.Pid} ignored TerminateProcess -- the process is stuck inside " +
+                    "Windows process teardown (native DLL shutdown); only a reboot clears it. Aborting.");
+            }
+            catch (Exception kx)
+            {
+                Log($"last-resort kill of sentinel PID {sentinel.Pid} failed: {kx.Message} -- the process is " +
+                    "likely stuck inside Windows process teardown; only a reboot clears it. Aborting.");
+            }
+        }
+        catch (ArgumentException)
+        {
+            Log($"sentinel PID {sentinel.Pid} exited at the last check; proceeding.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log($"last-resort sentinel check failed: {ex.Message}");
         }
 
         Log($"sentinel PID {sentinel.Pid} did not exit within {timeout.TotalSeconds:F0}s.");

@@ -67,6 +67,19 @@ namespace Phoenix.Controls.Architect.Core
         public HashSet<string> RequiredInputs { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
 
+        // Optional second-level grouping inside a Category, used only by the
+        // right-click "Spawn ►" cascade to break a crowded category flyout into
+        // themed sub-menus (e.g. Platforms → Twitch / YouTube / Kick; Flow
+        // Control → Branch & Select / Loops & Sequence / Gates & Timing).
+        // Empty = the node renders as a flat leaf directly under its Category,
+        // exactly as before this field existed — so only the categories whose
+        // nodes opt in via NodeRegistry.SetSubGroup pick up the extra level.
+        // Render-only metadata: never touches the exporter, the .phxg JSON, or
+        // command routing (same discipline as DisplayName / IconGlyph). The
+        // display order of the sub-groups comes from the SetSubGroup call
+        // sequence (see NodeRegistry.SubGroupOrder), not from this string.
+        public string SubGroup { get; set; } = string.Empty;
+
         // Registration-time lookup caches over Inputs/Outputs. The socket lists
         // are only populated inside AddTemplate and templates are immutable
         // post-RegisterDefaults, so these are computed once there instead of per
@@ -114,6 +127,23 @@ namespace Phoenix.Controls.Architect.Core
     public static partial class NodeRegistry
     {
         private static readonly Dictionary<string, NodeTemplate> _templates = new();
+
+        // Display order of the right-click "Spawn ►" sub-groups, captured in the
+        // sequence SetSubGroup first names each (Category, SubGroup) pair during
+        // RegisterDefaults. The menu builder walks this so the sub-menus render
+        // in an authored order (Twitch before YouTube; Branch before Loops)
+        // rather than alphabetically. Single source of truth for both the tag
+        // and its order — the UI never re-lists the group names. Frozen after
+        // RegisterDefaults like the template set itself.
+        private static readonly List<(string Category, string SubGroup)> _subGroupOrder = new();
+
+        /// <summary>
+        /// The authored (Category, SubGroup) order captured from the SetSubGroup
+        /// call sequence. Consumed by the right-click spawn cascade to order the
+        /// nested sub-menus of a crowded category. Empty for any category whose
+        /// nodes never opted into a sub-group.
+        /// </summary>
+        public static IReadOnlyList<(string Category, string SubGroup)> SubGroupOrder => _subGroupOrder;
 
         // Color palette for socket data types
         public static readonly Color ColExec    = Color.White;

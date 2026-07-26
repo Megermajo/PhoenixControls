@@ -253,13 +253,27 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     //   1. Synchronous handler-detach + dispose (cheap, no thread work).
     //   2. Spawn a background coordinator that awaits the slow tear-downs
     //      in parallel with an aggregate hard cap of ShutdownTimeoutMs.
-    //   3. After the coordinator completes (or the timeout fires), call
-    //      Environment.Exit(0) so the CLR can't be held alive by a
-    //      foreground thread someone forgot to mark Background.
+    //   3. After the coordinator completes (or the timeout fires), end the
+    //      process via HubProcessExit.TerminateSelf — a TerminateProcess
+    //      hard exit that can't be held alive by a forgotten foreground
+    //      thread AND can't wedge in native DLL teardown.
     //
-    // Environment.Exit is the load-bearing fallback. Diagnostic logging
-    // surfaces *which* tear-down stalled so future sessions can fix the
-    // root cause without re-introducing the hang.
+    // Why TerminateProcess and not Environment.Exit(0): Environment.Exit
+    // still runs the Windows ExitProcess sequence (ProcessExit handlers,
+    // then every DLL's DLL_PROCESS_DETACH under the loader lock). With
+    // XAML / WebView2 / Win2D / TSF / AV hooks in-process, a wedge there
+    // left a window-less zombie Hub that held the single-instance mutex
+    // and the install tree's file locks — and a process stuck inside
+    // ExitProcess often can't be force-killed, so the next auto-update
+    // failed until a reboot. TerminateSelf flushes what must survive
+    // (sibling-replay store, rolling file log), kills our WebView2
+    // children, then TerminateProcess-es — nothing left that can hang.
+    // App.xaml.cs pins DispatcherShutdownMode.OnExplicitShutdown so the
+    // natural last-window-close exit (the same wedge-prone native
+    // teardown) can never race this coordinator.
+    //
+    // Diagnostic logging surfaces *which* tear-down stalled so future
+    // sessions can fix the root cause without re-introducing the hang.
     private const int ShutdownTimeoutMs = 4000;
 
     private void OnMainWindowClosed(object sender, WindowEventArgs args)
@@ -354,12 +368,16 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         _services = null;
 
         // Step 4 — background coordinator. Awaits every slow tear-down
-        // in parallel, applies an aggregate 4 s hard cap, and calls
-        // Environment.Exit when done. Runs on Task.Run so the rest of
-        // Window.Closed can return and the message pump can exit.
+        // in parallel, applies an aggregate 4 s hard cap, and hard-exits
+        // via HubProcessExit.TerminateSelf when done. Runs on Task.Run so
+        // the rest of Window.Closed can return; the dispatcher keeps
+        // pumping meanwhile (DispatcherShutdownMode.OnExplicitShutdown)
+        // instead of starting the wedge-prone natural exit.
         _ = Task.Run(async () =>
         {
             var swTotal = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
             using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(ShutdownTimeoutMs));
             var ct = cts.Token;
 
@@ -439,16 +457,16 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             swTotal.Stop();
             GlobalLogger.Log(
                 $"Shutdown coordinator complete (elapsed {swTotal.ElapsedMilliseconds}ms). " +
-                "Calling Environment.Exit(0) to guarantee the CLR releases.",
+                "Hard-terminating the process (TerminateProcess) so native DLL teardown can't wedge a zombie.",
                 "MainWindow.Shutdown", LogLevel.System);
-
-            // Belt-and-braces. Even after WhenAll resolves, any forgotten
-            // foreground thread / undisposed System.Threading.Timer can
-            // keep the process alive. Environment.Exit(0) bypasses all of
-            // that and matches the lifecycle the user expects when the
-            // last Hub window closes.
-            try { Environment.Exit(0); }
-            catch { /* already exiting */ }
+            }
+            finally
+            {
+                // The exit MUST happen even if the coordinator body faulted in
+                // a way the per-step catches didn't cover — under
+                // OnExplicitShutdown nothing else ends this process.
+                Services.HubProcessExit.TerminateSelf("coordinated shutdown");
+            }
         });
     }
 
@@ -718,6 +736,25 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // Route through Close() so AppWindow.Closing still fires and the
         // unsaved-work prompt path (OnAppWindowClosing) gets its chance to
         // intercept. Calling Application.Current.Exit() would bypass it.
+        Close();
+    }
+
+    /// <summary>
+    /// Close the main window WITHOUT the unsaved-work prompt — used by the
+    /// update-apply flow, which must never block Hub exit behind a dialog
+    /// (the Updater force-closes the suite ~10s in; a prompt would just lose
+    /// that race along with the user's answer). Pre-marks the close-prompt
+    /// gate as already answered so OnAppWindowClosing passes straight
+    /// through; the Closed handler then runs the full shutdown coordinator
+    /// exactly like a normal close, ending in the TerminateProcess hard
+    /// exit — so the Updater's sentinel-PID wait reliably sees Hub die
+    /// (Application.Current.Exit() here used to skip Window.Closed entirely
+    /// and exit through the wedge-prone natural teardown with every service
+    /// still live).
+    /// </summary>
+    public void CloseForShutdown()
+    {
+        Interlocked.Exchange(ref _promptState, PromptCompleted);
         Close();
     }
 
@@ -1173,7 +1210,14 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 OpenFolder(ResolveStreamerBotDirectory());
                 break;
             case "exit":
-                Application.Current.Exit();
+                // Route through Close() like the traffic-light X so the
+                // unsaved-work prompt AND the shutdown coordinator both run.
+                // Application.Current.Exit() skipped Window.Closed entirely —
+                // no teardown, no coordinator, and the process left through
+                // the natural XAML/CLR exit whose native DLL teardown can
+                // wedge into an unkillable zombie (the "app doesn't shut
+                // down, update fails until reboot" report).
+                Close();
                 break;
         }
     }

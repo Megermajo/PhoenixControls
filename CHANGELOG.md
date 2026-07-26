@@ -7,6 +7,25 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.0.2607261 - 2026.07.26
+
+> Heads up — if this particular update fails to install once, restart the PC and run it again; from this version on, that cause is gone.
+
+**Fixed**
+- Closing the Hub now always ends the app completely — no invisible leftover process in Task Manager.
+- Updates no longer fail to install after the app was used and closed — restarting the PC is no longer needed.
+- The Hub can no longer refuse to start because an invisible leftover from the previous session was still running.
+- Leftover browser helper processes are cleaned up when the Hub closes.
+- File → Exit now behaves like the window's close button — it asks about unsaved Architect or Visualist work first.
+- File → Exit and "Install & restart" now run the full shutdown instead of skipping it.
+- The updater clears a stuck old instance on its own before installing.
+- The updater's log now states clearly when Windows was still holding the old files and that a restart clears it.
+- The updater now also closes the separate Viewer window before installing an update.
+- Right-clicking empty canvas in Architect now always opens the add-node menu.
+- Right-clicking empty canvas no longer clears the nodes you had selected.
+- Architect's right-click "Spawn" menu is easier to browse — crowded categories now open as themed sub-menus.
+- The Platforms, Events, Flow Control, Databank, OBS, and Collections node lists are grouped instead of one long flat list.
+
 ## Hotfix - 1.0.2607231 - 2026.07.23
 
 > Heads up — the freeze investigation is still ongoing. This update lightens the load on the areas where freezes have occurred and adds deeper diagnostics to close in on the remaining cause; it is not the final fix yet.

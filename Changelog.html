@@ -386,6 +386,37 @@
     <!-- RELEASES START -->
     <article class="release">
       <header class="release-head">
+        <div class="release-version">v1.0.2607261</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-07-26</div>
+      </header>
+
+      <div class="release-heads-up">
+        If this particular update fails to install once, restart the PC and run it again; from this version on, that cause is gone.
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Closing the Hub now always ends the app completely — no invisible leftover process in Task Manager.</li>
+          <li>Updates no longer fail to install after the app was used and closed — restarting the PC is no longer needed.</li>
+          <li>The Hub can no longer refuse to start because an invisible leftover from the previous session was still running.</li>
+          <li>Leftover browser helper processes are cleaned up when the Hub closes.</li>
+          <li>File → Exit now behaves like the window's close button — it asks about unsaved Architect or Visualist work first.</li>
+          <li>File → Exit and "Install &amp; restart" now run the full shutdown instead of skipping it.</li>
+          <li>The updater clears a stuck old instance on its own before installing.</li>
+          <li>The updater's log now states clearly when Windows was still holding the old files and that a restart clears it.</li>
+          <li>The updater now also closes the separate Viewer window before installing an update.</li>
+          <li>Right-clicking empty canvas in Architect now always opens the add-node menu.</li>
+          <li>Right-clicking empty canvas no longer clears the nodes you had selected.</li>
+          <li>Architect's right-click "Spawn" menu is easier to browse — crowded categories now open as themed sub-menus.</li>
+          <li>The Platforms, Events, Flow Control, Databank, OBS, and Collections node lists are grouped instead of one long flat list.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
         <div class="release-version">v1.0.2607231</div>
         <div class="release-name">Hotfix</div>
         <div class="release-date">2026-07-23</div>

@@ -445,6 +445,11 @@ namespace Phoenix.Controls.Architect.Core
             SetRequiredInputs("Audio.Play",    "Path");
             SetRequiredInputs("Audio.PlayTts", "Text");
 
+            // Second-level sub-group tags for the crowded right-click "Spawn ►"
+            // categories. Runs last: every template must already exist so the
+            // tags land and the (Category, SubGroup) display order is captured.
+            RegisterSubGroupTags();
+
             GlobalLogger.Log($"NodeRegistry: {_templates.Count} templates registered across {GetCategoryCount()} categories.",
                 "NodeRegistry", LogLevel.System);
         }
@@ -619,6 +624,241 @@ namespace Phoenix.Controls.Architect.Core
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 t.RequiredInputs.Add(name.Trim());
             }
+        }
+
+        /// <summary>
+        /// Tags a registered template with a second-level <see
+        /// cref="NodeTemplate.SubGroup"/> for the right-click "Spawn ►" cascade
+        /// (see <c>LogicCanvasView.BuildSpawnCategoryCascade</c>). The FIRST time
+        /// a given (Category, group) pair is seen, its display order is recorded
+        /// in <see cref="_subGroupOrder"/> — so authoring the SetSubGroup calls
+        /// in the order you want the sub-menus to appear (Twitch before YouTube,
+        /// Branch before Loops) is all that's needed; the UI never re-lists them.
+        /// Silently no-ops on an unknown title (typo in the tag block) so one bad
+        /// line doesn't cascade into a static-init failure for the whole registry.
+        /// </summary>
+        private static void SetSubGroup(string title, string group)
+        {
+            if (string.IsNullOrWhiteSpace(group)) return;
+            if (!_templates.TryGetValue(title, out var t)) return;
+            string trimmed = group.Trim();
+            t.SubGroup = trimmed;
+            bool alreadySeen = false;
+            foreach (var pair in _subGroupOrder)
+            {
+                if (string.Equals(pair.Category, t.Category, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(pair.SubGroup, trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    alreadySeen = true;
+                    break;
+                }
+            }
+            if (!alreadySeen) _subGroupOrder.Add((t.Category, trimmed));
+        }
+
+        /// <summary>
+        /// Assigns the second-level sub-group tags that turn the six crowded
+        /// right-click "Spawn ►" category flyouts into themed sub-menus. Order of
+        /// the calls IS the display order of the sub-menus (see
+        /// <see cref="SetSubGroup"/>). Called once from <see
+        /// cref="RegisterDefaults"/> after every template is registered. Every
+        /// node in a tagged category is listed here; a node left untagged still
+        /// appears — the cascade drops it into a trailing "Other" sub-menu so
+        /// nothing is ever silently lost when a new node is added to one of these
+        /// categories without a tag.
+        /// </summary>
+        private static void RegisterSubGroupTags()
+        {
+            // ── Platforms (grab-bag of every external target) ─────────────────
+            // Cross-platform chat helpers sit above the per-platform action sets.
+            SetSubGroup("Chat.Send",         "Chat (all platforms)");
+            SetSubGroup("Chat.MessageCount", "Chat (all platforms)");
+
+            // Twitch — the fat single-platform bucket (chat, moderation, channel,
+            // polls/predictions, reward management all under one roof).
+            SetSubGroup("Twitch.SendChat",          "Twitch");
+            SetSubGroup("Twitch.Reply",             "Twitch");
+            SetSubGroup("Twitch.Whisper",           "Twitch");
+            SetSubGroup("Twitch.Announcement",      "Twitch");
+            SetSubGroup("Twitch.Shoutout",          "Twitch");
+            SetSubGroup("Twitch.Timeout",           "Twitch");
+            SetSubGroup("Twitch.Ban",               "Twitch");
+            SetSubGroup("Twitch.Unban",             "Twitch");
+            SetSubGroup("Twitch.Mod",               "Twitch");
+            SetSubGroup("Twitch.Unmod",             "Twitch");
+            SetSubGroup("Twitch.Vip",               "Twitch");
+            SetSubGroup("Twitch.Unvip",             "Twitch");
+            SetSubGroup("Twitch.DeleteMessage",     "Twitch");
+            SetSubGroup("Twitch.SlowMode",          "Twitch");
+            SetSubGroup("Twitch.FollowerMode",      "Twitch");
+            SetSubGroup("Twitch.SubOnlyMode",       "Twitch");
+            SetSubGroup("Twitch.Marker",            "Twitch");
+            SetSubGroup("Twitch.CreateClip",        "Twitch");
+            SetSubGroup("Twitch.UpdateChannel",     "Twitch");
+            SetSubGroup("Twitch.CreatePoll",        "Twitch");
+            SetSubGroup("Twitch.EndPoll",           "Twitch");
+            SetSubGroup("Twitch.CreatePrediction",  "Twitch");
+            SetSubGroup("Twitch.ResolvePrediction", "Twitch");
+            SetSubGroup("Twitch.UpdateRewardCost",  "Twitch");
+            SetSubGroup("Twitch.SetRewardEnabled",  "Twitch");
+            SetSubGroup("Twitch.FulfillRedemption", "Twitch");
+            SetSubGroup("Twitch.RejectRedemption",  "Twitch");
+
+            // YouTube.
+            SetSubGroup("YouTube.SendChat",       "YouTube");
+            SetSubGroup("YouTube.SetTitle",       "YouTube");
+            SetSubGroup("YouTube.SetDescription", "YouTube");
+            SetSubGroup("YouTube.Timeout",        "YouTube");
+            SetSubGroup("YouTube.Ban",            "YouTube");
+            SetSubGroup("YouTube.CreatePoll",     "YouTube");
+            SetSubGroup("YouTube.EndPoll",        "YouTube");
+
+            // Kick.
+            SetSubGroup("Kick.SendChat",         "Kick");
+            SetSubGroup("Kick.Reply",            "Kick");
+            SetSubGroup("Kick.Timeout",          "Kick");
+            SetSubGroup("Kick.Untimeout",        "Kick");
+            SetSubGroup("Kick.Ban",              "Kick");
+            SetSubGroup("Kick.Unban",            "Kick");
+            SetSubGroup("Kick.DeleteMessage",    "Kick");
+            SetSubGroup("Kick.SetTitle",         "Kick");
+            SetSubGroup("Kick.SetCategory",      "Kick");
+            SetSubGroup("Kick.SetRewardCost",    "Kick");
+            SetSubGroup("Kick.SetRewardEnabled", "Kick");
+
+            // Discord.
+            SetSubGroup("Discord.Webhook",     "Discord");
+            SetSubGroup("Discord.SendMessage", "Discord");
+            SetSubGroup("Discord.SendEmbed",   "Discord");
+            SetSubGroup("Discord.AddRole",     "Discord");
+            SetSubGroup("Discord.RemoveRole",  "Discord");
+            SetSubGroup("Discord.React",       "Discord");
+            SetSubGroup("Discord.GetUser",     "Discord");
+
+            // Web / HTTP (raw requests + the generic API.Call helper).
+            SetSubGroup("HTTP.Get",       "Web / HTTP");
+            SetSubGroup("HTTP.Post",      "Web / HTTP");
+            SetSubGroup("HTTP.Put",       "Web / HTTP");
+            SetSubGroup("HTTP.Patch",     "Web / HTTP");
+            SetSubGroup("HTTP.Delete",    "Web / HTTP");
+            SetSubGroup("HTTP.ParseJson", "Web / HTTP");
+            SetSubGroup("API.Call",       "Web / HTTP");
+
+            // Audio.
+            SetSubGroup("Audio.Play",      "Audio");
+            SetSubGroup("Audio.PlayTts",   "Audio");
+            SetSubGroup("Audio.SetVolume", "Audio");
+
+            // Files.
+            SetSubGroup("File.ReadText",  "Files");
+            SetSubGroup("File.WriteText", "Files");
+            SetSubGroup("File.ReadJSON",  "Files");
+            SetSubGroup("File.WriteJSON", "Files");
+
+            // Streamer.bot passthrough.
+            SetSubGroup("StreamerBot.DoAction", "Streamer.bot");
+            SetSubGroup("StreamerBot.GetUser",  "Streamer.bot");
+
+            // ── Events ────────────────────────────────────────────────────────
+            SetSubGroup("Twitch.Subscription", "Twitch");
+            SetSubGroup("Twitch.Resub",        "Twitch");
+            SetSubGroup("Twitch.GiftSub",      "Twitch");
+            SetSubGroup("Twitch.GiftBomb",     "Twitch");
+            SetSubGroup("Twitch.Raid",         "Twitch");
+            SetSubGroup("Twitch.Cheer",        "Twitch");
+            SetSubGroup("Twitch.Follow",       "Twitch");
+            SetSubGroup("Twitch.PointRedeem",  "Twitch");
+            SetSubGroup("Twitch.InWhisper",    "Twitch");
+
+            SetSubGroup("Stream.GoingLive",    "Stream & Schedule");
+            SetSubGroup("Stream.SessionEnd",   "Stream & Schedule");
+            SetSubGroup("Schedule.Cron",       "Stream & Schedule");
+            SetSubGroup("Schedule.RunAt",      "Stream & Schedule");
+            SetSubGroup("Schedule.Recurring",  "Stream & Schedule");
+
+            SetSubGroup("System.Startup",      "System & Input");
+            SetSubGroup("System.Hotkey",       "System & Input");
+            SetSubGroup("System.Clipboard",    "System & Input");
+            SetSubGroup("State.OnChange",      "System & Input");
+
+            SetSubGroup("Chat.Message",         "Chat & Signals");
+            SetSubGroup("Bus.OnMessage",        "Chat & Signals");
+            SetSubGroup("HTTP.WebhookListener", "Chat & Signals");
+            SetSubGroup("WS.Server",            "Chat & Signals");
+            SetSubGroup("OBS.Event",            "Chat & Signals");
+
+            SetSubGroup("Event.Trigger",  "Custom Events");
+            SetSubGroup("Event.Executor", "Custom Events");
+            SetSubGroup("Event.Return",   "Custom Events");
+
+            // ── Flow Control ────────────────────────────────────────────────────
+            SetSubGroup("Logic.Branch", "Branch & Select");
+            SetSubGroup("Logic.If",     "Branch & Select");
+            SetSubGroup("Logic.Switch", "Branch & Select");
+            SetSubGroup("Flow.Select",  "Branch & Select");
+            SetSubGroup("Flow.IsValid", "Branch & Select");
+
+            SetSubGroup("Flow.ForEach",   "Loops & Sequence");
+            SetSubGroup("Flow.ForLoop",   "Loops & Sequence");
+            SetSubGroup("Flow.WhileLoop", "Loops & Sequence");
+            SetSubGroup("Logic.Sequence", "Loops & Sequence");
+
+            SetSubGroup("Flow.DoOnce",   "Gates & Timing");
+            SetSubGroup("Flow.DoN",      "Gates & Timing");
+            SetSubGroup("Flow.FlipFlop", "Gates & Timing");
+            SetSubGroup("Flow.Cooldown", "Gates & Timing");
+            SetSubGroup("Flow.Delay",    "Gates & Timing");
+
+            // ── Databank ────────────────────────────────────────────────────────
+            SetSubGroup("DB.GetVariable", "Variables");
+            SetSubGroup("DB.SetVariable", "Variables");
+            SetSubGroup("DB.Increment",   "Variables");
+            SetSubGroup("DB.CheckExists", "Variables");
+            SetSubGroup("DB.DeleteVar",   "Variables");
+
+            SetSubGroup("DB.FindRow",   "Rows");
+            SetSubGroup("DB.FetchRow",  "Rows");
+            SetSubGroup("DB.GetCell",   "Rows");
+            SetSubGroup("DB.SetCell",   "Rows");
+            SetSubGroup("DB.InsertRow", "Rows");
+            SetSubGroup("DB.DeleteRow", "Rows");
+            SetSubGroup("DB.RowCount",  "Rows");
+
+            SetSubGroup("DB.GetColumn",  "Table");
+            SetSubGroup("DB.ClearTable", "Table");
+
+            // ── OBS ─────────────────────────────────────────────────────────────
+            SetSubGroup("OBS.SetScene",             "Scenes & Sources");
+            SetSubGroup("OBS.SetSourceVisible",     "Scenes & Sources");
+            SetSubGroup("OBS.RefreshBrowserSource", "Scenes & Sources");
+            SetSubGroup("OBS.SetSourcePosition",    "Scenes & Sources");
+            SetSubGroup("OBS.SetSourceScale",       "Scenes & Sources");
+            SetSubGroup("OBS.SetSourceRotation",    "Scenes & Sources");
+
+            SetSubGroup("OBS.StartRecording",   "Recording & Streaming");
+            SetSubGroup("OBS.StopRecording",    "Recording & Streaming");
+            SetSubGroup("OBS.StartStreaming",   "Recording & Streaming");
+            SetSubGroup("OBS.StopStreaming",    "Recording & Streaming");
+            SetSubGroup("OBS.SaveReplayBuffer", "Recording & Streaming");
+
+            SetSubGroup("OBS.SetFilterVisible", "Filters & Capture");
+            SetSubGroup("OBS.TakeScreenshot",   "Filters & Capture");
+
+            // ── Collections ─────────────────────────────────────────────────────
+            SetSubGroup("Array.Make",    "Build");
+            SetSubGroup("Array.Literal", "Build");
+
+            SetSubGroup("Array.Get",      "Access");
+            SetSubGroup("Array.Length",   "Access");
+            SetSubGroup("Array.Contains", "Access");
+            SetSubGroup("Array.Unpack",   "Access");
+
+            SetSubGroup("Array.Push",    "Transform");
+            SetSubGroup("Array.Filter",  "Transform");
+            SetSubGroup("Array.Sort",    "Transform");
+            SetSubGroup("Array.Shuffle", "Transform");
+            SetSubGroup("Array.Reverse", "Transform");
+            SetSubGroup("Array.Unique",  "Transform");
         }
     }
 }

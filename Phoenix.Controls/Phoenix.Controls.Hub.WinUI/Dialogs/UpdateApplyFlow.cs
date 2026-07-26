@@ -55,9 +55,20 @@ internal static class UpdateApplyFlow
             _ = progressDialog.ShowAsync();
         }
 
-        // The Updater waits on the sentinel PID before mutating files, so
-        // the dialog gets ~30s of polling visibility before Hub goes down.
-        Application.Current.Exit();
+        // Exit Hub through the SAME coordinated-close path as the X button,
+        // minus the unsaved-work prompt (never block the update behind a
+        // dialog). Application.Current.Exit() here used to skip
+        // Window.Closed entirely — no teardown coordinator, and the process
+        // left through the natural XAML/CLR exit whose native DLL teardown
+        // can wedge into a zombie the Updater then times out on ("Hub did
+        // not exit within 30 seconds"). CloseForShutdown runs the full
+        // teardown and ends in a TerminateProcess hard exit, so the
+        // Updater's sentinel-PID wait reliably sees Hub die.
+        var main = (Application.Current as App)?.MainWindowForShutdown;
+        if (main is not null)
+            main.CloseForShutdown();
+        else
+            Application.Current.Exit(); // pre-MainWindow fallback — unreachable in practice
         return true;
     }
 }
