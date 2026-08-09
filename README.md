@@ -36,7 +36,7 @@
 > **100% of the source in this repository was authored by AI** — directed, reviewed,
 > and shipped by **Megermajo**. No human-written code was committed.
 > Treat every file accordingly: read before you run, and audit anything you bind
-> to live credentials.
+> to live credentials. Sadly I am unable to write code myself or I would have...
 
 ---
 
