@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Hub.Core
@@ -45,9 +43,6 @@ namespace Phoenix.Controls.Hub.Core
 
         private readonly ConcurrentDictionary<string, Process> _activeProcesses = new ConcurrentDictionary<string, Process>();
 
-        public event Action<Process>? OnProcessStarted;
-        public event Action<string>? OnProcessTerminated;
-
         private ProcessManager() { }
 
         public Process CreateProcess(string id, string title)
@@ -87,11 +82,9 @@ namespace Phoenix.Controls.Hub.Core
                 displaced.IsActive = false;
                 // Wake every waiter on the displaced process so they don't hang forever.
                 foreach (var signal in displaced.Signals.Values) signal.TrySetResult(false);
-                SafeEvent.Raise(OnProcessTerminated, id, "ProcessManager", "OnProcessTerminated");
             }
 
             GlobalLogger.Log($"New Persistent Process Started: {title} ({id})", "ProcessManager", Shared.Models.LogLevel.System);
-            SafeEvent.Raise(OnProcessStarted, stored, "ProcessManager", "OnProcessStarted");
             return stored;
         }
 
@@ -104,17 +97,8 @@ namespace Phoenix.Controls.Hub.Core
                 foreach (var signal in process.Signals.Values) signal.TrySetResult(false);
                 
                 GlobalLogger.Log($"Persistent Process Terminated: {process.Title}", "ProcessManager", Shared.Models.LogLevel.System);
-                SafeEvent.Raise(OnProcessTerminated, id, "ProcessManager", "OnProcessTerminated");
             }
         }
-
-        public Process? GetProcess(string id)
-        {
-            _activeProcesses.TryGetValue(id, out var p);
-            return p;
-        }
-
-        public IEnumerable<Process> GetAllProcesses() => _activeProcesses.Values;
 
         // Bounded cache. Without this, a long-running process with an active
         // interceptor on a high-traffic event type leaks memory until process

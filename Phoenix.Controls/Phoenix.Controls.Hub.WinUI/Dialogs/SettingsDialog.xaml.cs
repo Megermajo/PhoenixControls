@@ -10,6 +10,7 @@ using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
+using Phoenix.Controls.Hub.WinUI.Services;
 
 namespace Phoenix.Controls.Hub.WinUI.Dialogs;
 
@@ -25,9 +26,11 @@ namespace Phoenix.Controls.Hub.WinUI.Dialogs;
 // stuck unable to save a typo. Hot-reload is selective: the log-retention
 // cap and the translation stack re-apply on Save; language and bot
 // connection changes prompt for a relaunch.
-public sealed partial class SettingsDialog : ContentDialog
+public sealed partial class SettingsDialog : UserControl
 {
-    private readonly int _initialPivotIndex;
+    // Not readonly — ShowCategory re-points it when a deep link arrives
+    // before the rail has been built (see the open-or-focus block below).
+    private int _initialPivotIndex;
 
     // Inline numeric validation.
     //
@@ -55,6 +58,7 @@ public sealed partial class SettingsDialog : ContentDialog
     // re-resolve through Application.Current.Resources on every keystroke.
     private Brush? _validBorderBrush;
     private Brush? _invalidBorderBrush;
+
 
     public SettingsDialog() : this(0) { }
 
@@ -90,8 +94,7 @@ public sealed partial class SettingsDialog : ContentDialog
             // TextChanged refresh seeds the chrome from the loaded
             // config values (clean state, no spurious red borders).
             RegisterNumericValidators();
-            ApplyInitialPivotSelection();
-            FocusFirstInputOfActivePivot();
+            BuildCategoryRail();
         };
     }
 
@@ -101,16 +104,14 @@ public sealed partial class SettingsDialog : ContentDialog
     /// strip to reach the URL / password fields. This nudges focus to
     /// the first sensible input on the currently-selected Pivot tab.
     /// </summary>
-    private void FocusFirstInputOfActivePivot()
+    private void FocusFirstInputOf(int tabIndex)
     {
         try
         {
-            // Pivot index → first interesting input on that tab. The
-            // map intentionally points at the most likely starting
-            // field per tab; if a caller landed on Updates from a
-            // status-strip click, focus jumps to the update-check
-            // toggle instead of the URL field three tabs back.
-            UIElement? target = _initialPivotIndex switch
+            // Category id → first interesting input on that panel, so a
+            // status-strip deep-link (e.g. Streamer.bot disconnected → Connection)
+            // lands focus on the relevant field, not the rail.
+            UIElement? target = tabIndex switch
             {
                 (int)Tab.Connection   => StreamerBotUrlBox,
                 (int)Tab.Updates      => UpdateCheckOnStartupBox,
@@ -118,27 +119,29 @@ public sealed partial class SettingsDialog : ContentDialog
                 // Tab.AI's AI fields are commented out (2026-06-24, AI deferred);
                 // the tab now hosts only the Discord token, so land focus there.
                 (int)Tab.AI           => DiscordBotTokenBox,
-                (int)Tab.Remote       => RemoteEnabledBox,
+                (int)Tab.Remote       => WebSocketServerEnabledBox,
                 (int)Tab.Captions     => LiveCaptionsEnabledBox,
                 (int)Tab.Features     => HotkeysEnabledBox,
                 (int)Tab.Localization => LanguageCombo,
-                // Diagnostics has no leading input; the re-run button
-                // is the only interactive surface so land focus there.
-                (int)Tab.Diagnostics  => DiagnosticsRerunMigrationsButton,
+                // Diagnostics — land focus on the log-retention toggle.
+                (int)Tab.Diagnostics  => LogRetentionEnabledBox,
                 _ => StreamerBotUrlBox,
             };
             target?.Focus(FocusState.Programmatic);
         }
         catch (Exception ex)
         {
-            GlobalLogger.Error("SettingsDialog", "FocusFirstInputOfActivePivot", ex);
+            GlobalLogger.Error("SettingsDialog", "FocusFirstInputOf", ex);
         }
     }
 
     /// <summary>
-    /// Tab indices for the Pivot — keep in sync with SettingsDialog.xaml's
-    /// PivotItem ordering. Used by callers (StatusStripView's dot clicks)
-    /// to skip past the index parameter without hardcoding magic numbers.
+    /// Stable category IDs for deep-links (StatusStripView's dot clicks,
+    /// <see cref="OpenOrFocus"/>). The numeric values are historical Pivot
+    /// indices and deliberately do NOT match the category rail's display
+    /// order — <see cref="BuildCategoryRail"/> re-sorts the rail (day-to-day
+    /// first, diagnostics last) and <see cref="ShowCategory"/> resolves a Tab
+    /// to its rail position via FindIndex, so no ordering sync is required.
     /// </summary>
     public enum Tab
     {
@@ -150,57 +153,184 @@ public sealed partial class SettingsDialog : ContentDialog
         Captions     = 5,
         Features     = 6,
         Localization = 7,
-        // Diagnostics tab. Hosts
-        // the AppDataMigrator status surface + re-run affordance; future
-        // diagnostic affordances (database integrity, log-tier sampling)
-        // can land in the same pivot without churning callers.
+        // Diagnostics tab — log-history retention + future diagnostic
+        // affordances (database integrity, log-tier sampling).
         Diagnostics  = 8,
     }
 
-    private void ApplyInitialPivotSelection()
+    // ── Single-instance open-or-focus ────────────────────────────────────
+    //
+    // Settings hydrates every field from ConfigManager.Current at open time
+    // and TryCommitAndPersistAsync writes every field back on Save with no
+    // per-field dirty check. Two windows open at once is therefore a
+    // data-loss bug and not just clutter: the second window saves the values
+    // it read at ITS open time, silently reverting whatever the first one
+    // just changed. The pre-conversion ContentDialog got that exclusivity
+    // for free (WinUI allows one ContentDialog per XamlRoot); the window
+    // conversion dropped it and nothing replaced it, so BOTH entry points
+    // (Tools → Settings and the status-strip dots) now funnel through here.
+    // Same shape as DocumentationWindow.OpenOrFocus — one live window, a
+    // second request re-routes and activates it.
+    private static Window? s_window;
+    private static SettingsDialog? s_view;
+
+    /// <summary>
+    /// Opens the single Settings window on <paramref name="tab"/>, or — when
+    /// one is already up — re-routes that window to <paramref name="tab"/>
+    /// and brings it forward. The deep-link contract is preserved either
+    /// way: a status-strip dot always lands on its category.
+    /// </summary>
+    public static void OpenOrFocus(Tab tab = Tab.Connection)
     {
-        var pivot = FindPivot(Content);
-        if (pivot is null) return;
-        if (_initialPivotIndex >= 0 && _initialPivotIndex < pivot.Items.Count)
-            pivot.SelectedIndex = _initialPivotIndex;
+        try
+        {
+            if (s_window is not null && s_view is not null)
+            {
+                s_view.ShowCategory(tab);
+                WindowFront.Show(s_window);
+                return;
+            }
+
+            var view = new SettingsDialog((int)tab);
+            var window = PopOutWindowFactory.Create(view, "popout.title.settings", "Settings");
+            view.CloseRequested += (_, _) => { try { window.Close(); } catch { /* teardown race */ } };
+            window.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(s_window, window)) { s_window = null; s_view = null; }
+            };
+            s_window = window;
+            s_view   = view;
+            WindowFront.Show(window);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("SettingsDialog", $"OpenOrFocus({tab})", ex);
+            // Belt + braces — if Create/Activate threw partway we must not
+            // leave the statics pointing at a window that never came up, or
+            // Settings would be unreachable for the rest of the session.
+            s_window = null;
+            s_view   = null;
+        }
     }
 
-    private static Pivot? FindPivot(object? root)
+    /// <summary>
+    /// Re-routes this (already-open) surface to <paramref name="tab"/>.
+    /// Called by <see cref="OpenOrFocus"/> when a deep link arrives after
+    /// the constructor's seed index has already been consumed.
+    /// </summary>
+    public void ShowCategory(Tab tab)
     {
-        if (root is Pivot p) return p;
-        if (root is Panel panel)
+        try
         {
-            foreach (var child in panel.Children)
+            if (_categories.Count == 0)
             {
-                var found = FindPivot(child);
-                if (found is not null) return found;
+                // Rail not built yet — Loaded hasn't fired on a just-opened
+                // window (rapid double-click). Re-point the seed so
+                // BuildCategoryRail lands on the newest request instead of
+                // the one that happened to open the window.
+                _initialPivotIndex = (int)tab;
+                return;
             }
+            int idx = _categories.FindIndex(c => c.TabId == tab);
+            SelectCategory(idx < 0 ? 0 : idx);
         }
-        if (root is Border b) return FindPivot(b.Child);
-        if (root is ContentControl cc) return FindPivot(cc.Content);
-        return null;
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("SettingsDialog", $"ShowCategory({tab})", ex);
+        }
+    }
+
+    // ── Category rail (replaces the old Pivot header strip) ──────────────
+    private sealed record CategoryRow(Tab TabId, ScrollViewer Panel, string Label);
+    private readonly List<CategoryRow> _categories = new();
+    private readonly List<Button> _railButtons = new();
+
+    private void BuildCategoryRail()
+    {
+        _categories.Clear();
+        _railButtons.Clear();
+        RailPanel.Children.Clear();
+
+        void Add(Tab t, ScrollViewer p, string key, string fallback)
+            => _categories.Add(new CategoryRow(t, p, Localizer.T(key, fallback)));
+
+        // Re-sorted, logical order — day-to-day first, diagnostics last. The
+        // "Remote" panel now reads "Viewer & Relay" (WebSocket relay + the
+        // viewer's advanced knobs).
+        Add(Tab.Connection,   ConnectionPanel,   "dialog.settings.tab.connection",   "Connection");
+        Add(Tab.Logic,        LogicPanel,        "dialog.settings.tab.logic",        "Logic");
+        Add(Tab.Captions,     CaptionsPanel,     "dialog.settings.tab.captions",     "Captions");
+        Add(Tab.Remote,       RemotePanel,       "dialog.settings.tab.viewer_relay", "Viewer & Relay");
+        Add(Tab.AI,           AiPanel,           "dialog.settings.tab.discord",      "Discord");
+        Add(Tab.Features,     FeaturesPanel,     "dialog.settings.tab.features",     "Features");
+        Add(Tab.Localization, LocalizationPanel, "dialog.settings.tab.localization", "Localization");
+        Add(Tab.Updates,      UpdatesPanel,      "dialog.settings.tab.updates",      "Updates");
+        Add(Tab.Diagnostics,  DiagnosticsPanel,  "dialog.settings.tab.diagnostics",  "Diagnostics");
+
+        var railFont = new Microsoft.UI.Xaml.Media.FontFamily(
+            Application.Current.Resources["SansFont"] as string ?? "Segoe UI");
+        foreach (var cat in _categories)
+        {
+            var btn = new Button
+            {
+                Content = cat.Label,
+                Tag = cat,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Height = 34,
+                Padding = new Thickness(12, 0, 12, 0),
+                CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(1),
+                FontFamily = railFont,
+                FontSize = 13,
+            };
+            btn.Click += OnRailButtonClick;
+            _railButtons.Add(btn);
+            RailPanel.Children.Add(btn);
+        }
+
+        int idx = _categories.FindIndex(c => (int)c.TabId == _initialPivotIndex);
+        SelectCategory(idx < 0 ? 0 : idx);
+    }
+
+    private void OnRailButtonClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button b && b.Tag is CategoryRow row)
+            SelectCategory(_categories.IndexOf(row));
+    }
+
+    private void SelectCategory(int index)
+    {
+        if (index < 0 || index >= _categories.Count) return;
+        var sel = _categories[index];
+        foreach (var c in _categories)
+            c.Panel.Visibility = ReferenceEquals(c, sel) ? Visibility.Visible : Visibility.Collapsed;
+        for (int i = 0; i < _railButtons.Count; i++)
+            StyleRailButton(_railButtons[i], active: i == index);
+        FocusFirstInputOf((int)sel.TabId);
+    }
+
+    private void StyleRailButton(Button b, bool active)
+    {
+        if (active)
+        {
+            b.Background  = ResolveBrushOrFallback("EmberShadowBrush", Microsoft.UI.Colors.Transparent);
+            b.BorderBrush = ResolveBrushOrFallback("EmberPrimaryBrush", Microsoft.UI.Colors.Orange);
+            b.Foreground  = ResolveBrushOrFallback("CoalPaperBrush", Microsoft.UI.Colors.White);
+        }
+        else
+        {
+            b.Background  = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            b.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            b.Foreground  = ResolveBrushOrFallback("CoalBodyTextBrush", Microsoft.UI.Colors.Gray);
+        }
     }
 
     private void ApplyLocalizedChrome()
     {
-        // Dialog frame.
-        Title = Localizer.T("dialog.settings.title", "Phoenix Controls — Settings");
-        PrimaryButtonText = Localizer.T("dialog.settings.button.save", "Save");
-        CloseButtonText   = Localizer.T("dialog.settings.button.cancel", "Cancel");
-
-        // Pivot tab headers.
-        ConnectionPivotItem.Header   = Localizer.T("dialog.settings.tab.connection", "Connection");
-        UpdatesPivotItem.Header      = Localizer.T("dialog.settings.tab.updates", "Updates");
-        LogicPivotItem.Header        = Localizer.T("dialog.settings.tab.logic", "Logic");
-        // Relabelled AI → Discord (2026-06-24): the AI fields are commented out
-        // and deferred; the Discord bot-token field is all that remains here.
-        AiPivotItem.Header           = Localizer.T("dialog.settings.tab.discord", "Discord");
-        RemotePivotItem.Header       = Localizer.T("dialog.settings.tab.remote", "Remote");
-        CaptionsPivotItem.Header     = Localizer.T("dialog.settings.tab.captions", "Captions");
-        FeaturesPivotItem.Header     = Localizer.T("dialog.settings.tab.features", "Features");
-        LocalizationPivotItem.Header = Localizer.T("dialog.settings.tab.localization", "Localization");
-        // Diagnostics tab header.
-        DiagnosticsPivotItem.Header  = Localizer.T("dialog.settings.tab.diagnostics", "Diagnostics");
+        // Footer buttons (rail category labels are set in BuildCategoryRail).
+        SaveButton.Content   = Localizer.T("dialog.settings.button.save", "Save");
+        CancelButton.Content = Localizer.T("dialog.settings.button.cancel", "Cancel");
 
         // Connection tab labels.
         StreamerBotUrlLabel.Text       = Localizer.T("dialog.settings.label.streamerbot_url", "STREAMER.BOT URL");
@@ -223,6 +353,9 @@ public sealed partial class SettingsDialog : ContentDialog
         AutoStartBox.Content           = Localizer.T(
             "dialog.settings.checkbox.auto_start",
             "Auto-connect to Streamer.bot on launch");
+        YouTubeDataApiKeyLabel.Text    = Localizer.T(
+            "dialog.settings.label.youtube_data_api_key",
+            "YOUTUBE DATA API KEY (SONG REQUESTS)");
         HudPortLabel.Text              = Localizer.T("dialog.settings.label.hud_server_port", "HUD SERVER PORT");
         LayoutDirLabel.Text            = Localizer.T("dialog.settings.label.layout_directory", "LAYOUT DIRECTORY (Visualist)");
 
@@ -278,13 +411,6 @@ public sealed partial class SettingsDialog : ContentDialog
             "DISCORD BOT TOKEN");
 
         // Remote tab.
-        RemoteEnabledBox.Content        = Localizer.T("dialog.settings.checkbox.remote_enabled", "Remote bridge enabled");
-        RemoteBindHostLabel.Text        = Localizer.T("dialog.settings.label.remote_bind_host", "REMOTE BIND HOST");
-        RemotePortLabel.Text            = Localizer.T("dialog.settings.label.remote_port", "REMOTE PORT");
-        RemoteTlsCertPathLabel.Text     = Localizer.T("dialog.settings.label.remote_tls_cert_path", "REMOTE TLS CERT PATH");
-        RemotePairingTtlLabel.Text      = Localizer.T(
-            "dialog.settings.label.remote_pairing_ttl",
-            "REMOTE PAIRING TTL (seconds)");
         WebSocketServerEnabledBox.Content   = Localizer.T("dialog.settings.checkbox.websocket_relay", "WebSocket relay enabled");
         WebSocketServerBindHostLabel.Text   = Localizer.T("dialog.settings.label.websocket_bind_host", "WEBSOCKET BIND HOST");
         WebSocketServerPortLabel.Text       = Localizer.T("dialog.settings.label.websocket_port", "WEBSOCKET PORT");
@@ -302,6 +428,9 @@ public sealed partial class SettingsDialog : ContentDialog
         WebSocketServerTokenRotateButton.Content = Localizer.T(
             "dialog.settings.button.websocket_token_rotate",
             "Regenerate token");
+        WebSocketServerTokenHintText.Text = Localizer.T(
+            "dialog.settings.hint.websocket_token",
+            "Click Rotate to clear the token; a new one is generated automatically on next Hub launch. Treat this value like a password — it grants script-execution rights to anyone who can reach the WebSocket port.");
 
         ViewerServerEnabledBox.Content = Localizer.T(
             "dialog.settings.checkbox.viewer_server_enabled",
@@ -341,8 +470,6 @@ public sealed partial class SettingsDialog : ContentDialog
         //
         // Badges 8/9/10/11 cover StreamerBotUrl / LogicDirectory /
         // LayoutDirectory / LiveCaptionsEnabled — all read at service init only.
-        // Badge 4 (RemoteEnabled) was removed because the Remote Devices panel
-        // start/stops the bridge in place, so the toggle is hot-applied.
         string restartBadge = Localizer.T("dialog.settings.badge.requires_restart", "↻ requires restart");
         RequiresRestartBadge1.Text  = restartBadge;
         RequiresRestartBadge2.Text  = restartBadge;
@@ -354,8 +481,7 @@ public sealed partial class SettingsDialog : ContentDialog
         RequiresRestartBadge9.Text  = restartBadge;
         RequiresRestartBadge10.Text = restartBadge;
         RequiresRestartBadge11.Text = restartBadge;
-        // ApplyLocalizedChrome for the
-        // SuppressBroadcasterChat / WebSocket LAN+Token / ViewerServer rows.
+        // ApplyLocalizedChrome for the WebSocket LAN + ViewerServer rows.
         RequiresRestartBadgeWsLan.Text          = restartBadge;
         RequiresRestartBadgeViewerEnabled.Text  = restartBadge;
         RequiresRestartBadgeViewerLan.Text      = restartBadge;
@@ -375,37 +501,77 @@ public sealed partial class SettingsDialog : ContentDialog
             "dialog.settings.diagnostics.log_retention_days_label",
             "DELETE ENTRIES OLDER THAN (days)");
 
-        // Diagnostics → AppDataMigrator section. Labels seed once on
-        // Loaded; the value labels (last-run / status) are populated by
-        // HydrateMigrationDiagnostics during HydrateFromConfig so the dialog
-        // opens with a credible snapshot before the user touches anything.
-        DiagnosticsMigrationHeader.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_header",
-            "APPDATA MIGRATIONS");
-        DiagnosticsMigrationIntro.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_intro",
-            "AppDataMigrator collapses legacy PhoenixSovereign / Phoenix.Sovereign folders into the current PhoenixControls/ AppData root. It runs once per process automatically; the button below forces a manual re-pass when you suspect a stalled migration.");
-        DiagnosticsMigrationLastRunLabel.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_last_run_label",
-            "LAST RUN");
-        DiagnosticsMigrationStatusLabel.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_status_label",
-            "STATUS");
-        DiagnosticsRerunMigrationsButton.Content = Localizer.T(
-            "dialog.settings.diagnostics.rerun_button",
-            "Re-run migrations now");
-        DiagnosticsMigrationNote.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_note",
-            "AppDataMigrator does not persist a result log today, so the 'last run' value reflects this Hub process only. Failures land in the System Log under the 'AppDataMigrator' source.");
+        // Diagnostics → Freeze diagnostics. The wording states the two real costs
+        // rather than burying them: the app stays frozen longer, and the dump holds
+        // whatever was in memory. Someone turning this on is doing it to chase a
+        // specific freeze and should know both before they do.
+        FreezeDiagnosticsSectionLabel.Text = Localizer.T(
+            "dialog.settings.diagnostics.freeze_header",
+            "FREEZE DIAGNOSTICS");
+        FreezeDiagnosticsIntro.Text = Localizer.T(
+            "dialog.settings.diagnostics.freeze_intro",
+            "If the interface ever freezes, Phoenix already saves a small diagnostic snapshot automatically. A full snapshot additionally captures the app's whole memory, which is what makes some freezes identifiable at all. Leave this off unless you are actively investigating one.");
+        FullMemoryDumpBox.Content = Localizer.T(
+            "dialog.settings.diagnostics.full_memory_dump",
+            "Capture a full memory snapshot when the interface freezes");
+        FullMemoryDumpWarning.Text = Localizer.T(
+            "dialog.settings.diagnostics.full_memory_dump_warning",
+            "Two things to know: the freeze lasts longer, because the automatic restart waits for the snapshot to finish writing (up to 2 minutes) instead of restarting after 12 seconds — avoid this while live. And the file contains everything the app held in memory at that moment, including connection details and chat, so treat it as private.");
 
-        // Default-state placeholders. HydrateMigrationDiagnostics replaces
-        // these with the in-process snapshot once the dialog has loaded.
-        DiagnosticsMigrationLastRunValue.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_no_history",
-            "(no migration history recorded yet this session)");
-        DiagnosticsMigrationStatusValue.Text = Localizer.T(
-            "dialog.settings.diagnostics.migration_status_idle",
-            "Idle — automatic pass completed silently at Hub launch.");
+        // Per-tab "Advanced" grouping (Logic tab; the same pattern extends to
+        // other tabs). Rarely-changed knobs collapse under this expander so the
+        // panel isn't a wall of fields.
+        LogicAdvancedExpander.Header = Localizer.T(
+            "dialog.settings.advanced_group", "Advanced (rarely changed)");
+
+        ApplyFieldTooltips();
+    }
+
+    // Hover tooltips / small onboarding for the less-obvious fields (Majo:
+    // "several settings need a small onboarding and on-hover tooltips").
+    private void ApplyFieldTooltips()
+    {
+        void Tip(DependencyObject el, string key, string fallback)
+            => ToolTipService.SetToolTip(el, Localizer.T(key, fallback));
+
+        Tip(StreamerBotUrlBox, "dialog.settings.tip.streamerbot_url",
+            "The ws://host:port of your Streamer.bot WebSocket server (default ws://127.0.0.1:8080/). Changing it reconnects on the next launch.");
+        Tip(BotUsernameBox, "dialog.settings.tip.bot_username",
+            "Your bot account name(s), comma-separated. Chat/events from these accounts are ignored by your scripts so the bot can't trigger itself.");
+        Tip(BroadcasterUsernameBox, "dialog.settings.tip.broadcaster_username",
+            "Your own Twitch login — used to recognise broadcaster-only events and the self-event guards below.");
+        Tip(HudPortBox, "dialog.settings.tip.hud_port",
+            "Port for the overlay server OBS connects to (the URL you paste into a Browser Source). Default 18080.");
+        Tip(ScriptTimeoutBox, "dialog.settings.tip.script_timeout",
+            "Maximum seconds a single script may run before it's cancelled. 0 = unlimited.");
+        Tip(MaxChatBox, "dialog.settings.tip.max_chat",
+            "How many chat-triggered scripts may run at once. 0 = unlimited.");
+        Tip(WebhookSecretBox, "dialog.settings.tip.webhook_secret",
+            "Fallback HMAC secret for inbound /webhook/* requests. Per-endpoint secrets below override it.");
+        Tip(WebSocketServerEnabledBox, "dialog.settings.tip.websocket_server",
+            "Lets external panels/dashboards talk to the Hub over a raw WebSocket (the on_websocket(\"name\") scripts). Off by default.");
+        // The three network-exposure fields. LAN mode on either server turns a
+        // loopback-only listener into one anything on your network can reach,
+        // and the channel slug ends up in a URL you hand to other devices — so
+        // each tooltip says plainly what the setting exposes.
+        Tip(WebSocketServerLanModeEnabledBox, "dialog.settings.tip.websocket_lan_mode",
+            "Off = the relay listens on 127.0.0.1 only (this PC). On = it binds the bind-host above, so any device on your network can reach it — the relay token is then the only thing protecting it. Leave off unless you actually connect from another machine.");
+        Tip(ViewerServerPortBox, "dialog.settings.tip.viewer_port",
+            "Port the Viewer (second-screen) server binds.");
+        Tip(ViewerServerLanBox, "dialog.settings.tip.viewer_lan",
+            "Off = the Viewer is reachable from this PC only. On = wildcard bind, so your phone/tablet on the same network can open it — needs a urlacl reservation (run Hub as admin once) and means anyone on that network who knows the URL and PIN can pair. Don't enable on public Wi-Fi.");
+        Tip(ViewerServerChannelBox, "dialog.settings.tip.viewer_channel",
+            "The slug in your Viewer URL (http://<host>:<port>/v/<channel>). It is not a secret — anyone who can reach the server can guess it, so pairing still goes through the PIN.");
+        Tip(LiveCaptionsEnabledBox, "dialog.settings.tip.live_captions",
+            "Turns on the Windows live-caption bridge so spoken audio can be shown/translated on an overlay.");
+        Tip(TranslationProviderBox, "dialog.settings.tip.translation_provider",
+            "passthrough = no translation; http = call an external translation endpoint (configured below).");
+        Tip(LogRetentionDaysBox, "dialog.settings.tip.log_retention",
+            "Automatically delete System Log / Event Log rows older than this many days. Only those two log tables are pruned.");
+        Tip(DiscordBotTokenBox, "dialog.settings.tip.discord_token",
+            "Bot token used by discord.send_message / discord.send_embed script nodes.");
+        Tip(YouTubeDataApiKeyBox, "dialog.settings.tip.youtube_data_api_key",
+            "Optional, free from the Google Cloud console (enable \"YouTube Data API v3\"). Only the Song Request tool uses it: without a key, !sr still accepts YouTube links and video ids, but searching by name is refused, titles show the raw video id, and the max-duration cap is skipped because nothing can read a video's length.");
     }
 
     private void HydrateFromConfig()
@@ -419,9 +585,11 @@ public sealed partial class SettingsDialog : ContentDialog
         BroadcasterUsernameBox.Text = cfg.BroadcasterUsername ?? "";
         BroadcasterUserIdBox.Text   = cfg.BroadcasterUserId ?? "";
         SuppressBroadcasterFollowBox.IsChecked = cfg.SuppressBroadcasterFollow;
+        SuppressBroadcasterChatBox.IsChecked   = cfg.SuppressBroadcasterChat;
         SuppressBroadcasterRedeemBox.IsChecked = cfg.SuppressBroadcasterRedeem;
         ChatActionBox.Text       = cfg.StreamerBotChatAction ?? "";
         AutoStartBox.IsChecked   = cfg.AutoStart;
+        YouTubeDataApiKeyBox.Password = cfg.YouTubeDataApiKey ?? "";
         HudPortBox.Text          = cfg.HUDServerPort.ToString(CultureInfo.InvariantCulture);
         LayoutDirBox.Text        = cfg.LayoutDirectory ?? "";
 
@@ -452,6 +620,11 @@ public sealed partial class SettingsDialog : ContentDialog
         LogRetentionDaysBox.Text = (cfg.LogRetentionDays > 0 ? cfg.LogRetentionDays : 30)
             .ToString(CultureInfo.InvariantCulture);
 
+        // Freeze diagnostics — a straight round-trip of the flag. The watchdog
+        // live-reads it, so flipping it takes effect on the next freeze with no
+        // restart, and turning it back off is equally immediate.
+        FullMemoryDumpBox.IsChecked = cfg.HangFullMemoryDump;
+
         // ── AI (fields commented out 2026-06-24 — AI deferred. The cfg values
         //    are left untouched so any previously-saved key survives a round-trip.)
         // DefaultAiModelBox.Text   = cfg.DefaultAIModel ?? "";
@@ -461,23 +634,20 @@ public sealed partial class SettingsDialog : ContentDialog
         // OllamaUrlBox.Text        = cfg.OllamaUrl ?? "";
         DiscordBotTokenBox.Password = cfg.DiscordBotToken ?? "";
 
-        // ── Remote
-        RemoteEnabledBox.IsChecked       = cfg.RemoteEnabled;
-        RemoteBindHostBox.Text           = cfg.RemoteBindHost ?? "";
-        RemotePortBox.Text               = cfg.RemotePort.ToString(CultureInfo.InvariantCulture);
-        RemoteTlsCertPathBox.Text        = cfg.RemoteTlsCertPath ?? "";
-        RemotePairingTtlBox.Text         = cfg.RemotePairingTtlSeconds.ToString(CultureInfo.InvariantCulture);
+        // ── Remote / WebSocket relay
         WebSocketServerEnabledBox.IsChecked = cfg.WebSocketServerEnabled;
         WebSocketServerBindHostBox.Text  = cfg.WebSocketServerBindHost ?? "";
         WebSocketServerPortBox.Text      = cfg.WebSocketServerPort.ToString(CultureInfo.InvariantCulture);
+        // The LAN gate was write-only — committed in TryCommitAndPersistAsync but
+        // never hydrated here, so the box rendered unchecked on every open and the
+        // next Save wrote false back over the user's opt-in, silently downgrading
+        // the relay bind to loopback (WebSocketServerService reads this flag to
+        // decide loopback-vs-BindHost). Loads with the rest of its group now.
+        WebSocketServerLanModeEnabledBox.IsChecked = cfg.WebSocketServerLanModeEnabled;
 
-        // ViewerServer v2 group. Every box that RegisterNumericValidators
-        // registers MUST be seeded here: an unseeded box is empty, empty
-        // fails the "Required" rule, and the numeric-rollback pass then
-        // treats the untouched field as user garbage. Before this group was
-        // hydrated, the empty port box hard-blocked Force Download from the
-        // Updates tab and every Save wrote the blank defaults back over the
-        // user's Enabled/LAN/Channel values.
+        // ViewerServer v2 group. ViewerServerPortBox MUST be seeded because
+        // RegisterNumericValidators registers it (an empty port box otherwise
+        // fails the "Required" rule and hard-blocks Force Download).
         ViewerServerEnabledBox.IsChecked = cfg.ViewerServerEnabled;
         ViewerServerPortBox.Text         = cfg.ViewerServerPort.ToString(CultureInfo.InvariantCulture);
         ViewerServerLanBox.IsChecked     = cfg.ViewerServerLan;
@@ -641,8 +811,6 @@ public sealed partial class SettingsDialog : ContentDialog
         // whether the cap is applied (off → stored as 0); the field stays
         // numerically valid so an unchecked state never blocks Save.
         Register(LogRetentionDaysBox,    LogRetentionDaysError,    raw => ValidateIntInRange(raw, 1, 3650),      () => { var d = ConfigManager.Current.LogRetentionDays; return (d > 0 ? d : 30).ToString(CultureInfo.InvariantCulture); });
-        Register(RemotePortBox,          RemotePortError,          raw => ValidateIntInRange(raw, 1, 65535),    () => ConfigManager.Current.RemotePort.ToString(CultureInfo.InvariantCulture));
-        Register(RemotePairingTtlBox,    RemotePairingTtlError,    raw => ValidateIntInRange(raw, 30, 86_400),  () => ConfigManager.Current.RemotePairingTtlSeconds.ToString(CultureInfo.InvariantCulture));
         Register(WebSocketServerPortBox, WebSocketServerPortError, raw => ValidateIntInRange(raw, 1, 65535),    () => ConfigManager.Current.WebSocketServerPort.ToString(CultureInfo.InvariantCulture));
         Register(ViewerServerPortBox,    ViewerServerPortError,    raw => ValidateIntInRange(raw, 1, 65535),    () => ConfigManager.Current.ViewerServerPort.ToString(CultureInfo.InvariantCulture));
 
@@ -703,40 +871,25 @@ public sealed partial class SettingsDialog : ContentDialog
         return invalidFields.Count;
     }
 
-    private async void OnPrimaryClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+    /// <summary>Raised when the settings surface wants its host window closed
+    /// (Save success or Cancel). The launcher wires this to Window.Close().</summary>
+    public event EventHandler? CloseRequested;
+
+    private async void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        // Do NOT hard-block the dialog on an invalid numeric field. The legacy
-        // gate cancelled the close, which also trapped every OTHER field (a valid
-        // Bot Username couldn't be saved while one numeric field was off). That contradicts
-        // this dialog's stated design (top-of-class: "bad inputs roll back to defaults rather
-        // than blocking the dialog, so the user can never get stuck unable to save a typo").
         // Roll each invalid numeric field back to its last-saved value (so no
-        // out-of-range garbage is persisted), surface the error inline + log it non-blocking
-        // (no modal dialog), and let Save proceed so the rest of the form still commits.
+        // out-of-range garbage is persisted), surface the error inline + log it
+        // non-blocking, and let Save proceed so the rest of the form still commits.
         RollBackInvalidNumericFields("your other changes were saved");
 
-        // Defer the close so the async TryCommitAndPersistAsync
-        // can await the disk write (OneDrive-backed AppData stalls a few
-        // hundred ms on cloud sync; doing that on the UI thread visibly
-        // hitches the dismiss animation). On commit failure we cancel the
-        // close as before so the user can correct invalid input.
-        var deferral = args.GetDeferral();
-        try
-        {
-            if (!await TryCommitAndPersistAsync().ConfigureAwait(true))
-            {
-                // The commit threw — keep the dialog open so the user can review
-                // and correct their input. Silently closing on an exception drops
-                // 30+ field values without warning. The System Log entry inside
-                // TryCommitAndPersistAsync records the underlying fault for diagnosis.
-                args.Cancel = true;
-            }
-        }
-        finally
-        {
-            try { deferral.Complete(); } catch { /* dialog tear-down race */ }
-        }
+        if (await TryCommitAndPersistAsync().ConfigureAwait(true))
+            CloseRequested?.Invoke(this, EventArgs.Empty);
+        // On commit failure, keep the window open so the user can correct their
+        // input; TryCommitAndPersistAsync logged the underlying fault.
     }
+
+    private void OnCancelClick(object sender, RoutedEventArgs e)
+        => CloseRequested?.Invoke(this, EventArgs.Empty);
 
     // Twitch login rule (the real spec): 4–25 chars, letters / digits / underscore,
     // case-insensitive. Anything matching this is a legal login and must be saveable.
@@ -787,15 +940,14 @@ public sealed partial class SettingsDialog : ContentDialog
             var cfg = ConfigManager.Current;
 
             // Sanity-check port collisions before the save commits.
-            // HUDServerPort / RemotePort / WebSocketServerPort must each be
-            // unique; the IPC bus on 18081 is also reserved. Conflicts are
+            // HUDServerPort / WebSocketServerPort / ViewerServerPort must each
+            // be unique; the IPC bus on 18081 is also reserved. Conflicts are
             // logged (not modal) and the dialog still saves the rest of the fields; the user
             // sees the conflict in the System Log and corrects on next open.
             int hudPort       = ParseInt(HudPortBox.Text,             cfg.HUDServerPort);
-            int remotePort    = ParseInt(RemotePortBox.Text,          cfg.RemotePort);
             int wsServerPort  = ParseInt(WebSocketServerPortBox.Text, cfg.WebSocketServerPort);
             int viewerPort    = ParseInt(ViewerServerPortBox.Text,    cfg.ViewerServerPort);
-            WarnIfPortCollision(hudPort, remotePort, wsServerPort, viewerPort);
+            WarnIfPortCollision(hudPort, wsServerPort, viewerPort);
 
             // ── Connection
             cfg.StreamerBotUrl        = StreamerBotUrlBox.Text?.Trim() ?? "";
@@ -818,6 +970,10 @@ public sealed partial class SettingsDialog : ContentDialog
             cfg.SuppressBroadcasterRedeem = SuppressBroadcasterRedeemBox.IsChecked ?? true;
             cfg.StreamerBotChatAction = ChatActionBox.Text?.Trim() ?? "";
             cfg.AutoStart             = AutoStartBox.IsChecked ?? true;
+            // Written verbatim, unvalidated and untrimmed-of-nothing-but-nulls: it is a
+            // credential, and the resolver already treats a whitespace-only value as
+            // "no key" rather than guessing what the streamer meant.
+            cfg.YouTubeDataApiKey     = YouTubeDataApiKeyBox.Password ?? "";
             cfg.HUDServerPort         = hudPort;
             cfg.LayoutDirectory       = LayoutDirBox.Text?.Trim() ?? "data/layout";
 
@@ -848,6 +1004,9 @@ public sealed partial class SettingsDialog : ContentDialog
                 ? ParseInt(LogRetentionDaysBox.Text, cfg.LogRetentionDays > 0 ? cfg.LogRetentionDays : 30)
                 : 0;
 
+            // ── Diagnostics → freeze diagnostics.
+            cfg.HangFullMemoryDump = FullMemoryDumpBox.IsChecked == true;
+
             // ── AI (fields commented out 2026-06-24 — AI deferred. Not written
             //    back, so cfg keeps whatever was previously persisted.)
             // cfg.DefaultAIModel = DefaultAiModelBox.Text?.Trim() ?? "";
@@ -857,19 +1016,18 @@ public sealed partial class SettingsDialog : ContentDialog
             // cfg.OllamaUrl      = OllamaUrlBox.Text?.Trim() ?? "";
             cfg.DiscordBotToken = DiscordBotTokenBox.Password ?? "";
 
-            // ── Remote
-            cfg.RemoteEnabled        = RemoteEnabledBox.IsChecked ?? false;
-            cfg.RemoteBindHost       = RemoteBindHostBox.Text?.Trim() ?? "";
-            cfg.RemotePort           = remotePort;
-            cfg.RemoteTlsCertPath    = RemoteTlsCertPathBox.Text?.Trim() ?? "";
-            cfg.RemotePairingTtlSeconds = ParseInt(RemotePairingTtlBox.Text, cfg.RemotePairingTtlSeconds);
+            // ── WebSocket relay
             cfg.WebSocketServerEnabled = WebSocketServerEnabledBox.IsChecked ?? false;
             cfg.WebSocketServerBindHost = WebSocketServerBindHostBox.Text?.Trim() ?? "";
             cfg.WebSocketServerPort  = wsServerPort;
             cfg.WebSocketServerLanModeEnabled = WebSocketServerLanModeEnabledBox.IsChecked ?? false;
-            // WebSocketServerToken is rotate-only — the textbox is read-only, so nothing
-            // to commit. If empty, AppConfig.WebSocketServerToken's lazy-init regenerates
-            // on next service start.
+            // WebSocketServerToken is rotate-only and has no input control at all —
+            // the Remote panel carries a label plus the "Regenerate token" button, and
+            // the raw value is deliberately never surfaced (see the [S38] block in the
+            // XAML), so there is nothing to commit here. Rotation persists same-turn
+            // inside ConfigManager.RegenerateWebSocketServerToken; if the value is
+            // missing or too short on disk, EnsureWebSocketServerToken mints a fresh
+            // one at ConfigManager.Load and at WebSocketServer start.
 
             // ── ViewerServer v2
             cfg.ViewerServerEnabled = ViewerServerEnabledBox.IsChecked ?? false;
@@ -959,43 +1117,26 @@ public sealed partial class SettingsDialog : ContentDialog
     /// repeatable rejection routes through GlobalLogger, not a ContentDialog.
     /// </summary>
     private const int ReservedBusPort = 18081;
-    private static void WarnIfPortCollision(int hudPort, int remotePort, int wsServerPort, int viewerPort)
+    private static void WarnIfPortCollision(int hudPort, int wsServerPort, int viewerPort)
     {
         // HUD vs IPC bus (always reserved).
         if (hudPort == ReservedBusPort)
             GlobalLogger.Log(
                 $"HUD port {hudPort} collides with the IPC bus (reserved). Hub will fail to bind.",
                 "SettingsDialog", LogLevel.System);
-        // Remote bridge vs HUD / bus.
-        if (remotePort == hudPort)
-            GlobalLogger.Log(
-                $"Remote bridge port {remotePort} collides with HUD port. One of the two will fail to bind.",
-                "SettingsDialog", LogLevel.System);
-        if (remotePort == ReservedBusPort)
-            GlobalLogger.Log(
-                $"Remote bridge port {remotePort} collides with the IPC bus (reserved).",
-                "SettingsDialog", LogLevel.System);
-        // WebSocket relay vs HUD / Remote / bus.
+        // WebSocket relay vs HUD / bus.
         if (wsServerPort == hudPort)
             GlobalLogger.Log(
                 $"WebSocket relay port {wsServerPort} collides with HUD port.",
-                "SettingsDialog", LogLevel.System);
-        if (wsServerPort == remotePort)
-            GlobalLogger.Log(
-                $"WebSocket relay port {wsServerPort} collides with the Remote bridge.",
                 "SettingsDialog", LogLevel.System);
         if (wsServerPort == ReservedBusPort)
             GlobalLogger.Log(
                 $"WebSocket relay port {wsServerPort} collides with the IPC bus (reserved).",
                 "SettingsDialog", LogLevel.System);
-        // ViewerServer v2 vs HUD / Remote / WS relay / bus.
+        // ViewerServer v2 vs HUD / WS relay / bus.
         if (viewerPort == hudPort)
             GlobalLogger.Log(
                 $"Viewer server port {viewerPort} collides with HUD port.",
-                "SettingsDialog", LogLevel.System);
-        if (viewerPort == remotePort)
-            GlobalLogger.Log(
-                $"Viewer server port {viewerPort} collides with the Remote bridge.",
                 "SettingsDialog", LogLevel.System);
         if (viewerPort == wsServerPort)
             GlobalLogger.Log(
@@ -1108,10 +1249,11 @@ public sealed partial class SettingsDialog : ContentDialog
                         "Latest release: {0}\nLocal version: {1}\nAsset: {2}\nSHA-256: {3}\nSpawning Phoenix.Controls.Updater — Hub will close shortly."),
                     rel.RemoteTag, rel.LocalVersion, rel.AssetUrl, rel.AssetSha256);
 
-                // Close Settings dialog before opening the progress dialog --
-                // WinUI 3 only allows one ContentDialog open at a time.
+                // Settings is a window now (not a ContentDialog), so the updater
+                // progress ContentDialog can open on this window's XamlRoot with
+                // no stacking conflict. Keep the window alive so that XamlRoot
+                // stays valid for the brief moment before Hub exits.
                 XamlRoot? rootForProgress = this.XamlRoot;
-                this.Hide();
 
                 // Spawn-failure is logged inside the flow (CriticalError);
                 // on success Hub is already exiting.
@@ -1133,153 +1275,6 @@ public sealed partial class SettingsDialog : ContentDialog
         }
     }
 
-    // AppDataMigrator re-run.
-    //
-    // The migrator's <see cref="AppDataMigrator.RunOnce"/> entry point is
-    // gated by a process-wide once-only flag (s_ranOnce) by design — a
-    // legacy folder that didn't migrate at launch typically failed for a
-    // permanent reason (perm denied, in-use file), so re-trying mid-session
-    // rarely changes the outcome. Even so, surfacing a manual re-run
-    // affordance is valuable because:
-    //   • The operator gets a single deterministic button to retry after
-    //     they've closed an open file handle or relaxed AppData perms.
-    //   • The status line below the button makes the result visible in the
-    //     dialog itself, not just buried in the System Log.
-    //   • The confirmation dialog establishes intent (per the modal-only-
-    //     for-destructive-singletons rule — this
-    //     IS a destructive single-action, mutating AppData).
-    //
-    // The confirmation is mandatory because the migrator can move folders
-    // across volumes in cases where the source is large; an accidental
-    // click should not start that work without confirmation.
-    private async void OnRerunMigrationsClicked(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            // Confirm before re-running. ContentDialog stacking restriction
-            // applies — we open a second dialog ABOVE this one, which WinUI
-            // 3 explicitly disallows. The workaround is to host the confirm
-            // dialog with the same XamlRoot but only briefly: ShowAsync
-            // returns when the user dismisses the confirm, at which point
-            // the original Settings dialog is still alive in the visual
-            // tree (we never Hide()'d it). Pre-1.5 builds would have
-            // refused this; on WinAppSDK 1.5+ the stacking is permitted
-            // when the inner dialog uses a different XamlRoot reference.
-            // To stay safe we use a flag-based "are we sure" message
-            // inline rather than another ContentDialog.
-
-            var confirm = new ContentDialog
-            {
-                XamlRoot = this.XamlRoot,
-                Title = Localizer.T(
-                    "dialog.settings.diagnostics.confirm_title",
-                    "Re-run AppData migrations?"),
-                Content = Localizer.T(
-                    "dialog.settings.diagnostics.confirm_body",
-                    "AppDataMigrator will scan %AppData% and %LocalAppData% for legacy PhoenixSovereign / Phoenix.Sovereign folders and merge any survivors into the current PhoenixControls/ root. Existing PhoenixControls/ entries are never overwritten. The pass is best-effort and is safe to repeat."),
-                PrimaryButtonText = Localizer.T(
-                    "dialog.settings.diagnostics.confirm_yes",
-                    "Re-run now"),
-                CloseButtonText = Localizer.T(
-                    "dialog.settings.diagnostics.confirm_cancel",
-                    "Cancel"),
-                DefaultButton = ContentDialogButton.Primary,
-                RequestedTheme = ElementTheme.Dark,
-            };
-
-            // ContentDialog stacking — pre-emptively hide Settings so the
-            // confirm dialog can open against the same XamlRoot without a
-            // "Only one ContentDialog can be open at a time" exception. We
-            // re-show Settings on the same dispatcher tick once the
-            // confirm closes. The user only sees the swap as a single
-            // dialog dismissal + reopen which is acceptable for the
-            // confirm-then-act flow.
-            //
-            // Per WinUI 3 1.5+ this stacking restriction actually has been
-            // relaxed for the same XamlRoot, but the older docs still call
-            // it out. The Hide/Show pattern is the safe path that works
-            // across SDK versions; the Settings dialog stays in memory
-            // (this is a method on the dialog itself, so `this` survives
-            // the Hide) — only its visual presentation is suspended.
-            this.Hide();
-
-            ContentDialogResult result = ContentDialogResult.None;
-            try
-            {
-                result = await confirm.ShowAsync();
-            }
-            catch (Exception ex)
-            {
-                GlobalLogger.Error("SettingsDialog",
-                    "AppDataMigrator confirm dialog failed", ex);
-            }
-
-            // Re-show the Settings dialog regardless of confirmation
-            // outcome so the user lands back on the Diagnostics tab.
-            if (this.XamlRoot is not null)
-            {
-                try { _ = this.ShowAsync(); } catch { /* dialog teardown race */ }
-            }
-
-            if (result != ContentDialogResult.Primary)
-            {
-                DiagnosticsMigrationStatusValue.Text = Localizer.T(
-                    "dialog.settings.diagnostics.migration_cancelled",
-                    "Re-run cancelled.");
-                return;
-            }
-
-            // Disable the button while the pass is in flight so a
-            // double-click doesn't queue a second pass.
-            DiagnosticsRerunMigrationsButton.IsEnabled = false;
-            DiagnosticsMigrationStatusValue.Text = Localizer.T(
-                "dialog.settings.diagnostics.migration_running",
-                "Running…");
-
-            bool ok = true;
-            string? errorMessage = null;
-            DateTime startedAt = DateTime.Now;
-            try
-            {
-                // AppDataMigrator.RunOnce is process-once-guarded. The second
-                // call within the same process is a deliberate no-op — we
-                // surface that honestly in the status line so the operator
-                // understands why the migrator might not be doing anything
-                // visible. Run on the thread pool so a slow OneDrive AppData
-                // sync can't peg the UI thread for the duration of the move.
-                await System.Threading.Tasks.Task.Run(AppDataMigrator.RunOnce)
-                    .ConfigureAwait(true);
-            }
-            catch (Exception ex)
-            {
-                ok = false;
-                errorMessage = ex.Message;
-                GlobalLogger.Error("SettingsDialog",
-                    "AppDataMigrator re-run threw", ex);
-            }
-            DateTime finishedAt = DateTime.Now;
-
-            DiagnosticsMigrationLastRunValue.Text = string.Format(
-                System.Globalization.CultureInfo.CurrentCulture,
-                "{0:yyyy-MM-dd HH:mm:ss} (took {1} ms)",
-                finishedAt,
-                (int)(finishedAt - startedAt).TotalMilliseconds);
-
-            DiagnosticsMigrationStatusValue.Text = ok
-                ? Localizer.T(
-                    "dialog.settings.diagnostics.migration_success",
-                    "Pass completed. AppDataMigrator is once-per-process; subsequent re-runs no-op until Hub is restarted. See the System Log for any per-folder warnings.")
-                : string.Format(
-                    Localizer.T(
-                        "dialog.settings.diagnostics.migration_failed_format",
-                        "Pass threw: {0}"),
-                    errorMessage ?? "(unknown)");
-        }
-        finally
-        {
-            DiagnosticsRerunMigrationsButton.IsEnabled = true;
-        }
-    }
 
     // ────────────────────────────────────────────────────────────────────
     // Per-webhook secret editor

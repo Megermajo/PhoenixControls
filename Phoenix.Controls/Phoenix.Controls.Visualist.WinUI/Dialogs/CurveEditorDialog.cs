@@ -89,8 +89,8 @@ public sealed class CurveEditorDialog : ContentDialog
         Title = "Edit Curve";
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "Save";
-        CloseButtonText = "Cancel";
+        PrimaryButtonText = Localizer.T("common.button.save", "Save");
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Primary;
 
         // ── Visual tree (formerly the <Grid Width="460"> body) ────────────
@@ -304,6 +304,7 @@ public sealed class CurveEditorDialog : ContentDialog
     private void ApplyLocalization()
     {
         Title               = Localizer.T("visualist.curve.title",          "Edit Curve");
+        EyebrowText.Text    = Localizer.T("visualist.dialog.curve.eyebrow", "VISUALIST · CURVE");
         SubtitleText.Text   = Localizer.T("visualist.curve.subtitle",       "Pick an easing curve for this keyframe.");
         CurveTypeLabel.Text = Localizer.T("visualist.curve.section.type",   "CURVE TYPE");
         PreviewLabel.Text   = Localizer.T("visualist.curve.section.preview","PREVIEW");

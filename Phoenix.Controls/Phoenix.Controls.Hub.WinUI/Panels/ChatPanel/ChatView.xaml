@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.ChatPanel"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
@@ -37,6 +38,7 @@
                                    VerticalAlignment="Center"
                                    Foreground="{StaticResource CoalSecondaryTextBrush}"
                                    ToolTipService.ToolTip="Messages buffered / ring-buffer capacity"
+                                   loc:Localize.TooltipKey="panel.chat.count.tip"
                                    Text="{x:Bind ViewModel.CountText, Mode=OneWay}" />
                         <Border Width="1" Background="{StaticResource CoalDividerBrush}" Margin="2,2" />
                         <Button x:Name="PopOutButton"
@@ -73,8 +75,10 @@
                           ViewChanged="OnChatScrollViewChanged"
                           Padding="0,4,0,4">
                 <ItemsRepeater ItemsSource="{x:Bind ViewModel.Rows, Mode=OneWay}"
+                               hdr:RowDataContext.Supply="True"
                                AutomationProperties.LiveSetting="Polite"
-                               AutomationProperties.Name="Chat messages">
+                               AutomationProperties.Name="Chat messages"
+                               loc:Localize.AutomationKey="panel.chat.list.a11y">
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate x:DataType="local:ChatRowVm">
                             <Grid Padding="14,5,14,5" ColumnSpacing="8">

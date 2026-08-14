@@ -118,6 +118,20 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("List", ColList) },
                 new Dictionary<string, string> { { "TableName", "" }, { "Column", "" } });
 
+            // ★ Added in the 2026-08 tool-node cut as the generic replacement for the
+            // retired per-tool leaderboard reads (Loyalty.Top / Rank.Top): top-N rows
+            // of ANY open table, ordered numerically DESC by ValueColumn. Two outputs
+            // — Labels (LabelColumn values, e.g. names) and Values (the ranking
+            // numbers), rank-aligned CSVs — backed by ONE db.top(...) read via the
+            // DB.Top hoist arm in ScriptExporter.ResolveOutputFromNode (the Quote.Get
+            // multi-output pattern; "Databank" being a _pureDataCategory only routes
+            // single-expression nodes, so the arm sits ahead of the category handler).
+            AddTemplate("DB.Top", "Databank", Color.Gold,
+                Localizer.T("architect.node.bubble.db_top"),
+                new[] { ("TableName", ColString), ("ValueColumn", ColString), ("LabelColumn", ColString), ("Count", ColNumber) },
+                new[] { ("Labels", ColList), ("Values", ColList) },
+                new Dictionary<string, string> { { "TableName", "" }, { "ValueColumn", "" }, { "LabelColumn", "" }, { "Count", "5" } });
+
             AddTemplate("DB.FetchRow", "Databank", Color.Gold,
                 Localizer.T("architect.node.bubble.db_fetchrow"),
                 new[] { ("Flow", ColExec), ("TableName", ColString), ("RowId", ColNumber) },

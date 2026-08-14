@@ -10,7 +10,8 @@ namespace Phoenix.Controls.Architect.WinUI.Databank;
 
 // IRelationalSource implementation backed by the running DB
 // singleton. Writes route through DB's already-validated identifier guards
-// + system-table protections so the Databank tab inherits the same safety
+// + its two table-protection registries (the write lock on data, the
+// app-owned lock on schema) so the Databank tab inherits the same safety
 // invariants the script-engine db.* commands enforce.
 //
 // DB ensures its own lock + WAL setup; we never reach for a
@@ -156,16 +157,21 @@ public sealed class DbRelationalSource : IRelationalSource
                 "DbRelationalSource", LogLevel.System);
             cols = 0;
         }
-        return new TableInfo(tableName, rows, cols, DB.IsSystemTableName(tableName));
+        return new TableInfo(
+            tableName, rows, cols,
+            IsSystem:   DB.IsSystemTableName(tableName),
+            IsAppOwned: DB.IsAppOwnedTableName(tableName));
     }
 
     public async Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct = default)
     {
-        // Include system tables — the Architect Databank Browser groups them
-        // under a "System" header and renders them as read-only so power-users
-        // can inspect Vars / EventLog / SystemHistory without opening a SQLite
-        // viewer. The destructive toolbar buttons still gate on
-        // TableInfo.IsSystem so we don't lose the defense-in-depth guard.
+        // Include the protected tables — the Architect Databank Browser groups
+        // the write-locked ones under a "System" header and renders them
+        // read-only so power-users can inspect them without opening a SQLite
+        // viewer. Both flags are stamped here from the two DB registries: the
+        // data affordances gate on TableInfo.IsSystem, the schema affordances
+        // on TableInfo.IsAppOwned, so neither kind of control is left enabled
+        // over an operation the persistence layer refuses.
         var names = await _db.GetAllTableNamesAsync().ConfigureAwait(false);
         var infos = new List<TableInfo>(names.Count);
         foreach (var name in names)
@@ -201,7 +207,10 @@ public sealed class DbRelationalSource : IRelationalSource
                     "DbRelationalSource", LogLevel.System);
                 cols = 0;
             }
-            infos.Add(new TableInfo(name, rows, cols, DB.IsSystemTableName(name)));
+            infos.Add(new TableInfo(
+                name, rows, cols,
+                IsSystem:   DB.IsSystemTableName(name),
+                IsAppOwned: DB.IsAppOwnedTableName(name)));
         }
         return infos;
     }
@@ -323,29 +332,42 @@ public sealed class DbRelationalSource : IRelationalSource
     {
         ct.ThrowIfCancellationRequested();
 
-        // Vars is a protected system table on SetCellAsync, but the
-        // segregated SetVariableAsync write path exists for exactly this
-        // case. Route VarValue edits through it so the Databank Browser can
-        // edit values in-place; leave non-VarValue Vars columns
-        // (VarKey / LastModified) on the locked-down SetCellAsync path so
-        // the PK + timestamp schema contract stays intact for other tables.
-        if (string.Equals(tableName, "Vars", System.StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(columnName, "VarValue", System.StringComparison.OrdinalIgnoreCase))
-        {
-            string? key = await _db.GetVarKeyByRowIdAsync(rowId).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                // Row vanished between snapshot + edit (rare — concurrent
-                // delete). Fall through to SetCellAsync which will log the
-                // system-table rejection rather than silently dropping.
-                await _db.SetCellAsync(tableName, rowId, columnName, newValue ?? string.Empty).ConfigureAwait(false);
-                return;
-            }
-            await _db.SetVariableAsync(key, newValue ?? string.Empty).ConfigureAwait(false);
-            return;
-        }
+        // ONE write path for every table, Vars included. The old code detoured
+        // a Vars/VarValue edit through DB.SetVariableAsync because SetCellAsync
+        // refused the whole table; the 2026-08 unlock dropped Vars from the
+        // write-lock registry, so that detour stopped being a workaround and
+        // became a HOLE: SetVariableAsync is the script engine's own key-
+        // addressed writer and carries no reserved-key guard (the engine writes
+        // its global._* / state.* bookkeeping through it), whereas SetCellAsync
+        // screens every rowid-addressed Vars write through DB's per-row
+        // engine-key gate. Going back through SetCellAsync puts browser edits
+        // under that gate — the same one that already refuses a VarKey rename
+        // into a reserved key from this very method.
+        bool wrote = await _db.SetCellAsync(tableName, rowId, columnName, newValue ?? string.Empty)
+            .ConfigureAwait(false);
 
-        await _db.SetCellAsync(tableName, rowId, columnName, newValue ?? string.Empty).ConfigureAwait(false);
+        // The one thing the retired detour DID carry that the rowid path does
+        // not: SetVariableAsync's upsert ends in `LastModified=CURRENT_TIMESTAMP`.
+        // That upsert and the column's CREATE TABLE default are the only two
+        // things in the codebase that ever write it, so a rowid UPDATE of
+        // VarValue leaves the stamp untouched — and a browser edit would show
+        // the grid a LastModified older than the value sitting next to it.
+        // Re-stamped here in the UTC second-precision
+        // shape SQLite's CURRENT_TIMESTAMP produces, and only after the value
+        // write came back ACCEPTED — a row the engine-key gate refused must not
+        // collect a fresh timestamp for a change that never landed. The column
+        // cannot go missing underneath this: Vars is app-owned, so DDL against
+        // it is refused.
+        if (wrote
+            && string.Equals(tableName, "Vars", System.StringComparison.OrdinalIgnoreCase)
+            && string.Equals(columnName, "VarValue", System.StringComparison.OrdinalIgnoreCase))
+        {
+            await _db.SetCellAsync(
+                tableName, rowId, "LastModified",
+                System.DateTime.UtcNow.ToString(
+                    "yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture))
+                .ConfigureAwait(false);
+        }
     }
 
     public async Task DeleteRowAsync(string tableName, long rowId, CancellationToken ct = default)

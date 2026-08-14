@@ -53,38 +53,35 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
     private Phoenix.Controls.Architect.WinUI.Services.AutosaveService? _autosave;
 
-    // One-shot guards for Loaded / Unloaded handler bodies.
+    // One-shot guard for the Loaded handler body.
     // Hub.MainWindow caches `_architectView` and re-parents it on pillar-tab
-    // swap; WinUI fires Loaded again on every reattach (and Unloaded on
-    // every detach). Without these guards, every tab swap re-runs
-    // StartAutosaveAndScanForSurvivors, InitializeAsync, ApplyPersistedLayout
-    // AndState, and the symmetrical Unloaded body calls Dispose / StopAutosave
-    // a second time — leaking timers, accumulating autosave instances, and
-    // double-disposing the AVM. Flip the flag on first fire; ignore the rest.
+    // swap; WinUI fires Loaded again on every reattach. Without this guard,
+    // every tab swap re-runs StartAutosaveAndScanForSurvivors, InitializeAsync
+    // and ApplyPersistedLayoutAndState — leaking timers and accumulating
+    // autosave instances. Flip the flag on first fire; ignore the rest.
     private bool _loadedOnceRan;
-    private bool _unloadedOnceRan;
-    private double _inspectorMaxHeight = 280.0;
-    /// <summary>
-    /// Right-rail inspector card vertical cap. The InspectorThumb splitter
-    /// was removed (the chevron roll-up replaced it
-    /// as the size affordance), but the cap is still persisted across
-    /// sessions via ConfigManager.ArchitectInspectorHeight and pushed into
-    /// InspectorRegion.MaxHeight on load so a long Description doesn't run
-    /// off the bottom of the card. Reads / writes through the property keep
-    /// the clamp envelope in place.
-    /// </summary>
-    public double InspectorMaxHeight
-    {
-        get => _inspectorMaxHeight;
-        private set
-        {
-            double clamped = System.Math.Clamp(value, 120.0, 720.0);
-            if (System.Math.Abs(_inspectorMaxHeight - clamped) < 0.5) return;
-            _inspectorMaxHeight = clamped;
-            if (InspectorRegion is not null)
-                InspectorRegion.MaxHeight = clamped;
-        }
-    }
+    // One-shot guard for the REAL pillar teardown (<see cref="ShutdownPillar"/>),
+    // which is driven from Hub MainWindow's Closed handler at app shutdown — NOT
+    // from Unloaded. A pillar-tab detach raises Unloaded on this cached instance;
+    // that is a tab-blur, not a teardown (see the ctor note where the Unloaded
+    // hooks used to live).
+    private bool _pillarShutdownRan;
+    // ★ 2026-08-14 — the persisted InspectorMaxHeight property is GONE.
+    //
+    // It read ConfigManager.ArchitectInspectorHeight and pushed it into
+    // InspectorRegion.MaxHeight, clamped [120, 720]. The only thing that ever
+    // WROTE that config key was the InspectorThumb drag handler, deleted on
+    // 2026-05-24 (bb705f86) — so on any profile that predates the deletion the
+    // value froze at whatever the user last dragged, with no in-app way to
+    // change it, and FlushPersistLayout re-wrote the frozen number on every
+    // debounce so it could never age out either. On Majo's live profile it was
+    // 588.8, which is why a selected node with a long Description produced a
+    // ~627 px card and the "whole side panel" report.
+    //
+    // The cap is now derived from the canvas pane at layout time
+    // (ApplyInspectorCardHeightCap), which is a number that cannot go stale and
+    // additionally keeps the card clear of the minimap. See
+    // InspectorCardMaxHeight below.
 
     // 0.10.0 — column splitters between Rail / Canvas
     // and Canvas / Inspector. HorizontalChange is delta px since last
@@ -123,8 +120,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // OnInspectorColumnSplitterDragDelta /
     // OnInspectorColumnSplitterKeyDown removed alongside the
     // InspectorSplitterCol column in MainView.xaml. The chevron toggle is
-    // now the only inspector-visibility affordance and the inspector
-    // width is fixed at the persisted ArchitectInspectorColumnWidth.
+    // the only inspector-visibility affordance. ★ 2026-08-14 — and the card's
+    // width is now a markup constant, not a persisted value, so there is no
+    // longer a stored number that no control can reach.
 
     // ─── Rail collapse / docked Inspector ──
 
@@ -132,24 +130,36 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private const double RailCollapsedWidth  = 32.0;
 
     /// <summary>
-    /// Default docked-Inspector column width when a fresh
-    /// install (or stale config) doesn't have a persisted width yet. Slim
-    /// enough to honour the "slim panel" invariant while still fitting the
-    /// Description paragraph at a
-    /// readable wrap. LogicInspector caps its own content at MaxWidth=320
-    /// internally so a wider drag still produces a readable layout.
+    /// Width of the floating inspector card, expanded. Matches the
+    /// <c>MaxWidth</c> LogicInspector applies to its own content, so the card
+    /// and its body agree instead of leaving a dead strip of card surface
+    /// beside a narrower body (which is what a persisted column width above
+    /// 320 used to produce).
     /// </summary>
-    private const double InspectorDockedDefaultWidth = 320.0;
+    private const double InspectorCardWidth = 320.0;
 
     /// <summary>
-    /// Minimum splitter-drag width for the docked
-    /// Inspector. Below this the column-width clamp snaps the inspector
-    /// closed (sets visibility to false) so the user can dismiss it by
-    /// dragging the splitter all the way right. The MinWidth on the
-    /// ColumnDefinition itself stays at 0 so programmatic
-    /// <c>Width = new GridLength(0)</c> still hides the column.
+    /// Hard ceiling for the floating card. A config surface pinned over a
+    /// graph must stay a card; past this it reads as a side panel again,
+    /// which is the exact defect this replaced.
     /// </summary>
-    private const double InspectorDockedMinWidth = 200.0;
+    private const double InspectorCardMaxHeight = 420.0;
+
+    /// <summary>
+    /// Floor for the computed cap, so a very short window still leaves the
+    /// card usable (its own ScrollViewer takes over below this).
+    /// </summary>
+    private const double InspectorCardMinHeight = 160.0;
+
+    /// <summary>
+    /// Vertical space reserved at the bottom of the canvas pane for the
+    /// minimap overlay — 140 px of map + its 12 px bottom margin + a 12 px
+    /// gap. The card's computed cap subtracts this so a long Description can
+    /// never grow the card down over the minimap. Both surfaces live in the
+    /// same bottom-right/top-right column band, and the card wins on ZIndex,
+    /// so without this the minimap simply disappears behind it.
+    /// </summary>
+    private const double MiniMapReservedHeight = 164.0;
 
     // ─── Short panel open/close width animation ────────────────────────────
     // Per-window copy (chrome helpers stay per-window). Tweens a Grid
@@ -160,7 +170,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // resize). The returned timer lets the next toggle cancel an in-flight tween.
     private const double PanelAnimMs = 170.0;
     private Microsoft.UI.Xaml.DispatcherTimer? _railWidthTween;
-    private Microsoft.UI.Xaml.DispatcherTimer? _inspectorWidthTween;
+    // _inspectorWidthTween is gone with the inspector column — the floating
+    // card toggles between two markup widths with no GridLength to animate.
+    // AnimatePanelColumnWidth stays: the LeftRail still uses it.
 
     private static Microsoft.UI.Xaml.DispatcherTimer? AnimatePanelColumnWidth(
         Microsoft.UI.Xaml.Controls.ColumnDefinition? col,
@@ -280,10 +292,13 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     }
 
     /// <summary>
-    /// Width of the InspectorColumn when the
-    /// inspector body is rolled up. Just enough for the chevron button to
-    /// stay clickable so the user can re-expand. Matches the
-    /// <see cref="RailCollapsedWidth"/> idiom on the LeftRail side.
+    /// Width of the floating inspector card when the body is rolled up. Just
+    /// enough for the chevron button to stay clickable so the user can
+    /// re-expand. Matches the <see cref="RailCollapsedWidth"/> idiom on the
+    /// LeftRail side, and exactly the chevron button's own width — which is
+    /// why the header's padding is dropped to 0 in the rolled-up state
+    /// (32 px of button does not fit inside 32 px of card with 6 px of
+    /// padding either side, and a Border does not clip its children).
     /// </summary>
     private const double InspectorRolledUpWidth = 32.0;
 
@@ -302,60 +317,95 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// </summary>
     private void ApplyInspectorVisibleToColumn(bool visible, bool animate = true)
     {
-        if (InspectorColumn is null) return;
+        if (InspectorHost is null) return;
         _inspectorExpanded = visible;
-        double target;
-        if (visible)
-        {
-            var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
-            double w = cfg.ArchitectInspectorColumnWidth > 0
-                ? cfg.ArchitectInspectorColumnWidth
-                : InspectorDockedDefaultWidth;
-            double maxW = double.IsInfinity(InspectorColumn.MaxWidth) ? 9999.0 : InspectorColumn.MaxWidth;
-            target = System.Math.Clamp(w, InspectorDockedMinWidth, maxW);
-        }
-        else
-        {
-            // Rolled up — column holds at chevron-strip width so the user
-            // can re-expand.
-            target = InspectorRolledUpWidth;
-        }
+        _ = animate;   // no width tween any more — see the note above.
+
+        double target = visible ? InspectorCardWidth : InspectorRolledUpWidth;
+        InspectorHost.Width = target;
+
+        // Header: the title only fits (and only means anything) in the
+        // expanded card. In the rolled-up tab the 32 px chevron IS the whole
+        // control, so the padding goes with the title or the button overflows
+        // its own card.
+        if (InspectorTitleText is not null)
+            InspectorTitleText.Visibility = visible
+                ? Microsoft.UI.Xaml.Visibility.Visible
+                : Microsoft.UI.Xaml.Visibility.Collapsed;
+        if (InspectorHeaderBorder is not null)
+            InspectorHeaderBorder.Padding = visible
+                ? new Microsoft.UI.Xaml.Thickness(6, 5, 6, 5)
+                : new Microsoft.UI.Xaml.Thickness(0);
+
+        if (InspectorRegion is not null)
+            InspectorRegion.Visibility = visible
+                ? Microsoft.UI.Xaml.Visibility.Visible
+                : Microsoft.UI.Xaml.Visibility.Collapsed;
+
         UpdateInspectorChevronGlyph(visible);
-        // Animate the inspector roll-up/down. On expand, reveal the
-        // body BEFORE growing so it slides in; on collapse, shrink first then
-        // collapse the body on completion so it fades with the width. Boot /
-        // persisted-state restore passes animate:false for an instant layout.
-        if (visible)
+
+        // Tell the canvas how much of its right edge is now covered, so Home /
+        // F / minimap-jump / the blank-open guard all aim at the region the
+        // user can actually see. This is the half of the fix that stops graph
+        // content being centred underneath the card.
+        PublishInspectorViewportInset();
+    }
+
+    /// <summary>
+    /// Declare the floating card's footprint to the canvas as a right-edge
+    /// viewport inset. Covers the card width plus its right margin; the
+    /// rolled-up tab reports its 32 px too, because it occludes just the same.
+    /// </summary>
+    private void PublishInspectorViewportInset()
+    {
+        try
         {
-            if (InspectorRegion is not null)
-                InspectorRegion.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-            if (animate)
-                _inspectorWidthTween = AnimatePanelColumnWidth(InspectorColumn, target, _inspectorWidthTween);
-            else
-            {
-                _inspectorWidthTween?.Stop();
-                InspectorColumn.Width = new GridLength(target, GridUnitType.Pixel);
-            }
+            if (_logicCanvasView is null) return;
+            double w = InspectorHost is not null && !double.IsNaN(InspectorHost.Width)
+                ? InspectorHost.Width
+                : InspectorCardWidth;
+            // + the host's right margin (12) so the inset matches the painted
+            // footprint rather than the control box.
+            _logicCanvasView.ViewportInsetRight = w + 12.0;
+        }
+        catch (System.Exception ex)
+        {
+            Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                "Architect.MainView", "PublishInspectorViewportInset", ex);
+        }
+    }
+
+    /// <summary>
+    /// Cap the floating card's height from the live canvas-pane height, and
+    /// keep it clear of the minimap. Replaces the persisted (and unchangeable)
+    /// ArchitectInspectorHeight.
+    /// </summary>
+    private void ApplyInspectorCardHeightCap(double paneHeight)
+    {
+        if (InspectorCardRoot is null || paneHeight <= 0) return;
+        double avail = paneHeight - 12.0 /* card top margin */ - MiniMapReservedHeight;
+        InspectorCardRoot.MaxHeight = System.Math.Clamp(
+            System.Math.Min(InspectorCardMaxHeight, avail),
+            InspectorCardMinHeight,
+            InspectorCardMaxHeight);
+    }
+
+    // Clip the floating host to its own box. A Border does not clip its
+    // children, so without this the 32 px rolled-up tab lets the header's
+    // content bleed past the card's fill onto the canvas.
+    private RectangleGeometry? _inspectorHostClip;
+    private void OnInspectorHostSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        var rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+        if (_inspectorHostClip is null)
+        {
+            _inspectorHostClip = new RectangleGeometry { Rect = rect };
+            fe.Clip = _inspectorHostClip;
         }
         else
         {
-            if (animate)
-            {
-                _inspectorWidthTween = AnimatePanelColumnWidth(
-                    InspectorColumn, target, _inspectorWidthTween,
-                    () =>
-                    {
-                        if (InspectorRegion is not null)
-                            InspectorRegion.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                    });
-            }
-            else
-            {
-                _inspectorWidthTween?.Stop();
-                InspectorColumn.Width = new GridLength(target, GridUnitType.Pixel);
-                if (InspectorRegion is not null)
-                    InspectorRegion.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-            }
+            _inspectorHostClip.Rect = rect;
         }
     }
 
@@ -370,11 +420,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         try
         {
             InspectorChevronButton.Content = expanded ? "" : "";
-            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(InspectorChevronButton,
-                expanded ? "Roll up Inspector" : "Show Inspector");
+            string chevronLabel = expanded
+                ? Localizer.T("architect.main.inspector.chevron.rollup", "Roll up Inspector")
+                : Localizer.T("architect.main.inspector.chevron.show", "Show Inspector");
+            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(InspectorChevronButton, chevronLabel);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-                InspectorChevronButton,
-                expanded ? "Roll up Inspector" : "Show Inspector");
+                InspectorChevronButton, chevronLabel);
         }
         catch (System.Exception ex)
         {
@@ -433,7 +484,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// Each splitter drag fires DragDelta at ~60 Hz; ConfigManager.Save
     /// writes the whole AppConfig JSON on every call, so coalescing keeps
     /// the user-drag interaction off the disk hot path. 400 ms timer is
-    /// long enough that a single drag flushes once; the Unloaded teardown
+    /// long enough that a single drag flushes once; the ShutdownPillar teardown
     /// also flushes any pending tick.
     /// </summary>
     private DispatcherTimer? _persistLayoutTimer;
@@ -458,7 +509,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <param name="synchronous">
     /// When false (the debounced-timer path) the write is deferred to a
     /// background thread so a slow disk never stalls the UI. When true (the
-    /// Unloaded teardown path) the write runs synchronously so the final
+    /// ShutdownPillar teardown path) the write runs synchronously so the final
     /// layout state is guaranteed to land before the window/VM goes away.
     /// </param>
     private void FlushPersistLayout(bool synchronous = false)
@@ -466,14 +517,13 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         try
         {
             var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
-            cfg.ArchitectInspectorHeight       = _inspectorMaxHeight;
             if (RailColumn      is not null) cfg.ArchitectRailColumnWidth      = RailColumn.ActualWidth;
-            // Only persist the inspector column width when
-            // the dock is actually visible. When hidden (Width=0), preserve
-            // the previously persisted width so a hide → show cycle restores
-            // the user's last-chosen size instead of forcing the default.
-            if (InspectorColumn is not null && InspectorColumn.ActualWidth >= InspectorDockedMinWidth)
-                cfg.ArchitectInspectorColumnWidth = InspectorColumn.ActualWidth;
+            // ★ ArchitectInspectorHeight / ArchitectInspectorColumnWidth are no
+            // longer written here. Both were echo-writes: the affordances that
+            // set them were deleted in 2026-05-24, so every flush persisted the
+            // value the previous flush had restored, which is what made a
+            // legacy 588.8 / 314.4 pair immortal. The card's geometry is markup
+            // + layout now, so there is nothing left to remember.
             cfg.ArchitectShowGrid              = _viewModel.LogicCanvas.ShowGrid;
             cfg.ArchitectDebugTraceEnabled     = _viewModel.LiveDebugEnabled;
             cfg.ArchitectLastActiveTab         = _viewModel.IsLogicActive ? "logic" : "databank";
@@ -489,29 +539,6 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                 "Architect.MainView", "FlushPersistLayout", ex);
         }
-    }
-
-    /// <summary>
-    /// KeyDown on the InspectorThumb — Left/Right arrows nudge the inspector
-    /// column width by ±16px (clamped to MinWidth/MaxWidth). Mirrors the
-    /// vertical drag affordance for keyboard users.
-    /// </summary>
-    private void OnInspectorThumbKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
-    {
-        if (InspectorColumn is null) return;
-        double delta = 0;
-        if (e.Key == Windows.System.VirtualKey.Left)  delta = -16;
-        if (e.Key == Windows.System.VirtualKey.Right) delta = +16;
-        if (delta == 0) return;
-        double min = InspectorColumn.MinWidth > 0 ? InspectorColumn.MinWidth : 0;
-        double max = InspectorColumn.MaxWidth > 0 && !double.IsInfinity(InspectorColumn.MaxWidth)
-            ? InspectorColumn.MaxWidth
-            : double.PositiveInfinity;
-        double next = InspectorColumn.ActualWidth + delta;
-        if (next < min) next = min;
-        if (next > max) next = max;
-        InspectorColumn.Width = new Microsoft.UI.Xaml.GridLength(next, Microsoft.UI.Xaml.GridUnitType.Pixel);
-        e.Handled = true;
     }
 
     /// <summary>Raised when the embedded chrome's pillar tab is clicked.
@@ -701,7 +728,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             if (DispatcherQueue is null) return;
             DispatcherQueue.TryEnqueue(() => SetStatus(
-                ".phxg saved — .phx export failed (Hub will keep running the old script). See System Log.",
+                Localizer.T("architect.main.status.phx_export_failed",
+                    ".phxg saved — .phx export failed (Hub will keep running the old script). See System Log."),
                 ArchitectStatusLight.Yellow));
         };
         _viewModel.PropertyChanged += (_, e) =>
@@ -738,6 +766,15 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             RegisterStatusZoneTooltips(); // live hover resolvers
             RefreshZoomBadge(); // seed the badge
             RefreshBusStatusDot(Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.IsConnected);
+            // InfoBar.Title rides loc:Localize.Key in markup (the probe resolves
+            // Title); Message has no attached-property slot of its own, so it
+            // resolves here — current value in, localized value out, exactly the
+            // fallback contract loc:Localize uses.
+            if (LiveDebugDropInfoBar is not null)
+            {
+                LiveDebugDropInfoBar.Message = Localizer.T(
+                    "architect.main.infobar.live_debug_drop.body", LiveDebugDropInfoBar.Message);
+            }
             StartAutosaveAndScanForSurvivors();
             // Drive deferred ctor work through InitializeAsync
             // so file I/O (--open routing via CliBootstrap) doesn't block the
@@ -766,50 +803,26 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // every chrome-menu handler.
             RestoreCanvasFocus();
         };
-        Unloaded += (_, _) =>
-        {
-            // One-shot: pillar-tab detach fires Unloaded again on
-            // every swap; teardown (StopAutosave, AVM.Dispose, etc.) must
-            // run exactly once. Skipping this guard caused Dispose-twice
-            // and StopAutosave-twice on the FIRST tab swap away from Architect.
-            if (_unloadedOnceRan) return;
-            _unloadedOnceRan = true;
-            // Flush any pending layout-persist tick on teardown so a fast
-            // close right after a splitter drag still captures the move.
-            try { _persistLayoutTimer?.Stop(); FlushPersistLayout(synchronous: true); } catch { /* best-effort */ }
-            // Unhook the LogicCanvas PropertyChanged subscription so the
-            // old VM can be collected if a new MainView is constructed
-            // (pillar-tab swap). The AVM.Dispose chain handles the AVM's
-            // own subscriptions; this is the MainView-owned hook.
-            try { _viewModel.LogicCanvas.PropertyChanged -= OnCanvasVmPropertyChanged; }
-            catch { /* best-effort */ }
-            // — unhook the Chrome menu subscriptions so
-            // a pillar-tab swap doesn't grow Chrome's invocation list by
-            // ~18 handlers per MainView reconstruction.
-            UnhookChromeHandlers();
-            // Unhook the rail-driven toggles so a pillar-tab
-            // swap doesn't accumulate handlers on the cached Rail.
-            try { Rail.RailCollapseToggled       -= OnRailCollapseToggled; }      catch { /* best-effort */ }
-            try { Rail.InspectorToggleRequested  -= OnInspectorToggleRequested; } catch { /* best-effort */ }
-            // Unhook the ArchitectBusClient singleton subscriptions wired once
-            // in the ctor below. These MUST live inside the _unloadedOnceRan
-            // one-shot so they pair 1:1 with the single ctor-time subscribe —
-            // a standalone (unguarded) Unloaded lambda fired on every
-            // pillar-tab detach, letting the singleton's invocation list drift
-            // (leaked handlers across reattach, ObjectDisposed when a stale
-            // handler fires).
-            try { Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStatusChanged
-                    -= OnBusConnectionStatusChanged; } catch { /* best-effort */ }
-            try { Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStateChanged
-                    -= OnBusConnectionStateChanged; } catch { /* best-effort */ }
-            // Close the floating Inspector window so it doesn't linger past
-            // the host's lifetime (a pillar-tab swap or full Hub close).
-            // The window persists its geometry on Closed regardless of
-            // whether the user clicked X or we close it here.
-            try { Phoenix.Controls.Architect.WinUI.Hosting.InspectorWindow.CloseIfOpen(); }
-            catch { /* best-effort */ }
-            StopAutosave();
-        };
+        // The Architect pillar MainView is created ONCE and cached for the whole
+        // Hub session (MainWindow._architectView). Switching pillar tabs — or
+        // opening a Pre-Builds tool tab — only removes it from the visual tree:
+        // that is a tab-blur, NOT a pillar teardown. The old code subscribed
+        // Unloaded and ran the FULL teardown there (StopAutosave, the LogicCanvas
+        // PropertyChanged unhook, UnhookChromeHandlers, the two ArchitectBusClient
+        // unsubscribes, InspectorWindow.CloseIfOpen, AVM.Dispose). Because that
+        // body was a one-shot and the Loaded body is guarded by its own separate
+        // one-shot, the FIRST time the user left the Architect tab the pillar
+        // permanently lost autosave, the chrome menus, the F1/F4 canvas chords —
+        // and, via ArchitectViewModel.Dispose dropping GraphMutatedAny, the ONLY
+        // thing that flips IsDirty on a direct graph edit. Post-round-trip edits
+        // therefore left IsDirty false, so Hub's close gate skipped the save
+        // prompt and the shutdown coordinator hard-terminated with the streamer's
+        // work unsaved and no autosave snapshot to recover from.
+        //
+        // The teardown now lives in ShutdownPillar(), invoked once from Hub
+        // MainWindow's Closed handler at real app shutdown. Mirrors Visualist's
+        // MainView, which fixed the identical bug the same way. We deliberately
+        // do NOT subscribe Unloaded.
 
         Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStatusChanged
             += OnBusConnectionStatusChanged;
@@ -820,12 +833,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // and the bus drops.
         Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStateChanged
             += OnBusConnectionStateChanged;
-        // NOTE: the matching -= for these two bus subscriptions now lives in
-        // the _unloadedOnceRan one-shot teardown block above (next to the
-        // Chrome/Rail unhooks), so subscribe-in-ctor pairs with exactly one
-        // unsubscribe. Previously a separate, unguarded Unloaded lambda here
-        // ran on every pillar-tab detach, drifting the singleton's handler
-        // count across reattach.
+        // NOTE: the matching -= for these two bus subscriptions lives in
+        // ShutdownPillar() (next to the Chrome/Rail unhooks), so subscribe-in-ctor
+        // pairs with exactly one unsubscribe at real app close. Previously a
+        // separate, unguarded Unloaded lambda here ran on every pillar-tab detach,
+        // drifting the singleton's handler count across reattach.
 
         // Surface .phxg load failures via the InfoBar at MainView Row 2 — the
         // user with a corrupt graph used to see only an empty canvas plus a
@@ -835,29 +847,15 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // editor windows reuse the same VM but not this UserControl).
         Phoenix.Controls.Architect.Core.GraphSerializer.OnLoadFailed -= ShowLoadFailureInfoBar;
         Phoenix.Controls.Architect.Core.GraphSerializer.OnLoadFailed += ShowLoadFailureInfoBar;
-        Unloaded += (_, _) =>
-            Phoenix.Controls.Architect.Core.GraphSerializer.OnLoadFailed -= ShowLoadFailureInfoBar;
+        // The matching -= lives in ShutdownPillar(). It used to sit on a bare
+        // (unguarded) Unloaded lambda, so the FIRST pillar-tab detach killed the
+        // load-failure InfoBar for the rest of the session.
 
-        // ArchitectViewModel
-        // implements IDisposable to unhook the canvas/databank/bus event
-        // subscriptions it wired in its ctor. Without an Unloaded handler
-        // invoking Dispose, those subscriptions kept the AVM alive past
-        // MainView teardown (pillar-tab swap / window close).
-        // Use the same _unloadedOnceRan one-shot as the autosave
-        // teardown above so a pillar-tab detach doesn't Dispose the AVM
-        // twice (subscriptions are already gone after the first pass).
-        bool avmDisposed = false;
-        Unloaded += (_, _) =>
-        {
-            if (avmDisposed) return;
-            avmDisposed = true;
-            try { _viewModel.Dispose(); }
-            catch (Exception ex)
-            {
-                Phoenix.Controls.Shared.Services.GlobalLogger.Error(
-                    "MainView", "Architect ViewModel Dispose", ex);
-            }
-        };
+        // ArchitectViewModel implements IDisposable to unhook the
+        // canvas/databank/bus event subscriptions it wired in its ctor. That
+        // Dispose is also part of ShutdownPillar() — running it on Unloaded
+        // (tab-blur) dropped LogicCanvas.GraphMutatedAny, which is the only
+        // signal that marks the graph dirty on a direct edit.
 
         _placeholderLogicInspector.DataContext = _viewModel.LogicInspector;
         _placeholderDatabankInspector.DataContext = _viewModel.DatabankInspector;
@@ -870,6 +868,60 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // ctor; deferred to InitializeAsync (driven from Loaded) so a
         // --open <path> doesn't hold up MainView construction with a
         // GraphSerializer load + wildcard cascade on the synchronous path.
+    }
+
+    /// <summary>
+    /// Real pillar teardown — invoked ONCE from Hub MainWindow's Closed handler
+    /// at app shutdown, NOT on tab-blur. Symmetric to every subscription made in
+    /// the ctor, plus the layout-persist flush, the autosave stop and the
+    /// ArchitectViewModel dispose. Hosting this here (rather than on Unloaded)
+    /// is what keeps autosave, dirty-tracking and the chrome menus alive across
+    /// a pillar-tab round-trip — see the ctor note where the Unloaded hooks used
+    /// to live. Idempotent + guarded so a teardown fault can't crash app close.
+    /// </summary>
+    public void ShutdownPillar()
+    {
+        if (_pillarShutdownRan) return;
+        _pillarShutdownRan = true;
+
+        // Flush any pending layout-persist tick on teardown so a fast
+        // close right after a splitter drag still captures the move.
+        try { _persistLayoutTimer?.Stop(); FlushPersistLayout(synchronous: true); } catch { /* best-effort */ }
+        // Unhook the LogicCanvas PropertyChanged subscription. The AVM.Dispose
+        // chain handles the AVM's own subscriptions; this is the MainView-owned
+        // hook.
+        try { _viewModel.LogicCanvas.PropertyChanged -= OnCanvasVmPropertyChanged; }
+        catch { /* best-effort */ }
+        // Unhook the Chrome menu subscriptions (~18 handlers) symmetrically with
+        // HookChromeHandlers.
+        UnhookChromeHandlers();
+        // Unhook the rail-driven toggles.
+        try { Rail.RailCollapseToggled       -= OnRailCollapseToggled; }      catch { /* best-effort */ }
+        try { Rail.InspectorToggleRequested  -= OnInspectorToggleRequested; } catch { /* best-effort */ }
+        // Unhook the ArchitectBusClient singleton subscriptions wired once in the
+        // ctor. These pair 1:1 with that single subscribe.
+        try { Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStatusChanged
+                -= OnBusConnectionStatusChanged; } catch { /* best-effort */ }
+        try { Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.OnConnectionStateChanged
+                -= OnBusConnectionStateChanged; } catch { /* best-effort */ }
+        // Static GraphSerializer load-failure hook — subscribed once in the ctor.
+        try { Phoenix.Controls.Architect.Core.GraphSerializer.OnLoadFailed -= ShowLoadFailureInfoBar; }
+        catch { /* best-effort */ }
+        // Close the floating Inspector window so it doesn't linger past the
+        // host's lifetime. The window persists its geometry on Closed regardless
+        // of whether the user clicked X or we close it here.
+        try { Phoenix.Controls.Architect.WinUI.Hosting.InspectorWindow.CloseIfOpen(); }
+        catch { /* best-effort */ }
+        StopAutosave();
+
+        // AVM last — its Dispose drops the canvas / databank / bus subscriptions
+        // the handlers above may still have been observing.
+        try { _viewModel.Dispose(); }
+        catch (Exception ex)
+        {
+            Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                "MainView", "Architect ViewModel Dispose", ex);
+        }
     }
 
     /// <summary>
@@ -1040,13 +1092,16 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 if (!ok)
                 {
                     SetStatus(
-                        $"Failed to load {System.IO.Path.GetFileName(picked)} — file unreadable or malformed. See System Log.",
+                        string.Format(Localizer.T("architect.main.status.load_failed_format",
+                            "Failed to load {0} — file unreadable or malformed. See System Log."),
+                            System.IO.Path.GetFileName(picked)),
                         ArchitectStatusLight.Red);
                 }
                 else
                 {
                     SetStatus(
-                        $"Opened {System.IO.Path.GetFileName(picked)}.",
+                        string.Format(Localizer.T("architect.main.status.opened_format", "Opened {0}."),
+                            System.IO.Path.GetFileName(picked)),
                         ArchitectStatusLight.Green);
                 }
                 return;
@@ -1062,7 +1117,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (spawned is null)
             {
                 SetStatus(
-                    $"Failed to load {System.IO.Path.GetFileName(picked)} — file unreadable or malformed. See System Log.",
+                    string.Format(Localizer.T("architect.main.status.load_failed_format",
+                        "Failed to load {0} — file unreadable or malformed. See System Log."),
+                        System.IO.Path.GetFileName(picked)),
                     ArchitectStatusLight.Red);
             }
         }
@@ -1104,7 +1161,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <inheritdoc/>
     public string CurrentDocumentDisplayName =>
         string.IsNullOrEmpty(_viewModel.LoadedFilePath)
-            ? "(unsaved)"
+            ? Localizer.T("architect.main.caption.unsaved", "(unsaved)")
             : Path.GetFileName(_viewModel.LoadedFilePath);
 
     /// <inheritdoc/>
@@ -1168,7 +1225,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         var heading = new TextBlock
         {
-            Text       = "Databank tab unavailable",
+            Text       = Localizer.T("architect.main.databank_failure.title", "Databank tab unavailable"),
             FontSize   = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = textErr,
@@ -1177,7 +1234,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         };
         var body = new TextBlock
         {
-            Text       = "Architect couldn't show the databank browser. See the System Log for the full exception — this is usually a missing theme token or a renamed binding after a recent merge.",
+            Text       = Localizer.T("architect.main.databank_failure.body",
+                "Architect couldn't show the databank browser. See the System Log for the full exception — this is usually a missing theme token or a renamed binding after a recent merge."),
             FontSize   = 12,
             Foreground = textBody,
             TextWrapping = TextWrapping.Wrap,
@@ -1185,7 +1243,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         };
         var detail = new TextBox
         {
-            Text       = ex?.ToString() ?? "(no exception captured)",
+            Text       = ex?.ToString()
+                         ?? Localizer.T("architect.main.databank_failure.no_exception", "(no exception captured)"),
             FontSize   = 11,
             FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
             IsReadOnly = true,
@@ -1282,20 +1341,38 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// </summary>
     private void ApplyPersistedLayoutAndState()
     {
+        // Whether the inspector restore below actually ran. The camera routines
+        // read VisibleViewportWidth from the first paint on and the card defaults
+        // visible in markup, so the ViewportInsetRight publication inside
+        // ApplyInspectorVisibleToColumn must survive ANY earlier restore failure —
+        // otherwise Home / F / minimap jumps measure the painted width for the
+        // whole session and re-create the covered-nodes bug the floating card
+        // fixed. The finally re-runs only the inspector step, never the rest.
+        bool inspectorApplied = false;
         try
         {
             var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
 
-            // Inspector height cap — preserve the previous user-chosen drag.
-            if (cfg.ArchitectInspectorHeight > 0)
-                InspectorMaxHeight = cfg.ArchitectInspectorHeight;
+            // ★ One-shot retirement of the two orphaned inspector geometry
+            // keys. Neither has had an affordance to change it since
+            // 2026-05-24, and a legacy pair (Majo's profile: 588.8 / 314.4)
+            // otherwise survives forever because the flush re-wrote what the
+            // restore had just read. Zero is this config's own "no recall,
+            // use the layout default" sentinel, so clearing them is inert for
+            // the code that no longer reads them and makes the retirement
+            // legible in the file rather than leaving stale numbers behind.
+            if (!cfg.ArchitectInspectorCardMigrated)
+            {
+                cfg.ArchitectInspectorHeight      = 0;
+                cfg.ArchitectInspectorColumnWidth = 0;
+                cfg.ArchitectInspectorCardMigrated = true;
+                Phoenix.Controls.Shared.Services.ConfigManager.SaveDeferred(
+                    Phoenix.Controls.Shared.Core.Paths.AppConfigJson);
+            }
 
-            // Column widths — clamp to declared MinWidth/MaxWidth so a stale
-            // config from a different layout doesn't wedge the columns out
-            // of range. The docked Inspector column is
-            // gone (Width=0), so InspectorColumnWidth recall is no longer
-            // applied here; the floating InspectorWindow owns its own
-            // geometry via InspectorWindowStateStore.
+            // Rail width — clamp to the declared MinWidth/MaxWidth so a stale
+            // config from a different layout doesn't wedge the column out of
+            // range. The inspector no longer has a column to restore.
             if (cfg.ArchitectRailColumnWidth > 0 && RailColumn is not null && !cfg.ArchitectRailCollapsed)
             {
                 double w = System.Math.Clamp(cfg.ArchitectRailColumnWidth,
@@ -1313,10 +1390,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // steady state before we spawn a floating window on top.
             ApplyRailCollapsedToColumn(cfg.ArchitectRailCollapsed, animate: false);
 
-            // Restore the docked Inspector when
-            // ArchitectInspectorVisible was true at last shutdown. Routes
-            // through ApplyInspectorVisibleToColumn so the column-width
-            // restore honours the persisted ArchitectInspectorColumnWidth.
+            // Restore the Inspector card when ArchitectInspectorVisible was
+            // true at last shutdown. ★ 2026-08-14 — the only thing restored is
+            // that boolean; the card's width and height cap are markup and
+            // layout now, so there is no persisted geometry to honour.
             // Pre-fix this branch spawned a floating InspectorWindow — the
             // floating window infrastructure is still in the
             // codebase but no longer the default surface.
@@ -1338,6 +1415,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             }
             ApplyInspectorVisibleToColumn(cfg.ArchitectInspectorVisible, animate: false);
             Rail.SetInspectorVisibleGlyph(cfg.ArchitectInspectorVisible);
+            inspectorApplied = true;
 
             // Show-grid toggle. The default (true) wins until the user has
             // explicitly flipped it — which is what cfg.ArchitectShowGrid
@@ -1378,6 +1456,34 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                 "Architect.MainView", "ApplyPersistedLayoutAndState", ex);
+        }
+        finally
+        {
+            if (!inspectorApplied)
+            {
+                try
+                {
+                    bool visible = true;   // the spec default: inspector open
+                    try
+                    {
+                        var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
+                        // A pre-migration profile carries a stale false from the
+                        // floating-window era; honour the persisted value only once
+                        // the docked migration has actually run (it runs — and
+                        // persists — on the next successful pass, not here).
+                        if (cfg.ArchitectInspectorDockedMigrated)
+                            visible = cfg.ArchitectInspectorVisible;
+                    }
+                    catch { /* config unreadable — the default stands */ }
+                    ApplyInspectorVisibleToColumn(visible, animate: false);
+                    Rail.SetInspectorVisibleGlyph(visible);
+                }
+                catch (System.Exception ex2)
+                {
+                    Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                        "Architect.MainView", "inspector inset fallback", ex2);
+                }
+            }
         }
     }
 
@@ -1435,9 +1541,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         var dlg = new ContentDialog
         {
-            Title = $"Restore '{Path.GetFileName(_viewModel.LoadedFilePath)}' from backup",
-            PrimaryButtonText = "Restore",
-            CloseButtonText = "Cancel",
+            Title = string.Format(
+                Localizer.T("architect.dialog.restore_backup.title", "Restore '{0}' from backup"),
+                Path.GetFileName(_viewModel.LoadedFilePath)),
+            PrimaryButtonText = Localizer.T("common.button.restore", "Restore"),
+            CloseButtonText = Localizer.T("common.button.cancel", "Cancel"),
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = XamlRoot,
             Content = list,
@@ -1457,19 +1565,27 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             _viewModel.LoadedFilePath!, b2.Path);
         if (!ok)
         {
-            SetStatus($"Restore from '{Path.GetFileName(b2.Path)}' failed — see System Log.",
+            SetStatus(string.Format(
+                    Localizer.T("architect.main.restore.failed_format",
+                        "Restore from '{0}' failed — see System Log."),
+                    Path.GetFileName(b2.Path)),
                 ArchitectStatusLight.Red);
             return;
         }
         var reloaded = await _viewModel.OpenAsync(_viewModel.LoadedFilePath!);
         if (reloaded)
         {
-            SetStatus($"Restored from {Path.GetFileName(b2.Path)} (bak{b2.Slot}).",
+            SetStatus(string.Format(
+                    Localizer.T("architect.main.restore.done_format", "Restored from {0} (bak{1})."),
+                    Path.GetFileName(b2.Path), b2.Slot),
                 ArchitectStatusLight.Green);
         }
         else
         {
-            SetStatus($"Restored '{Path.GetFileName(b2.Path)}' but reload failed — see System Log.",
+            SetStatus(string.Format(
+                    Localizer.T("architect.main.restore.reload_failed_format",
+                        "Restored '{0}' but reload failed — see System Log."),
+                    Path.GetFileName(b2.Path)),
                 ArchitectStatusLight.Yellow);
         }
     }
@@ -1499,6 +1615,13 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             _canvasPaneClip.Rect = rect;
         }
+
+        // The floating card lives over this pane, so its cap tracks the pane's
+        // height. Riding the existing SizeChanged deliberately: MainView must
+        // not subscribe Unloaded (a pillar-tab detach is a tab-blur, not a
+        // teardown — ReviewFix_winui_Tests pins that), and adding a Loaded /
+        // Unloaded pair for this would be the wrong lifecycle anyway.
+        ApplyInspectorCardHeightCap(e.NewSize.Height);
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -1568,9 +1691,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             {
                 if (LoadErrorInfoBar is null) return;
                 string fileName = string.IsNullOrEmpty(filePath)
-                    ? "(unknown file)"
+                    ? Localizer.T("architect.main.load_error.unknown_file", "(unknown file)")
                     : Path.GetFileName(filePath);
-                LoadErrorInfoBar.Title   = $"Couldn't open {fileName}";
+                LoadErrorInfoBar.Title   = string.Format(
+                    Localizer.T("architect.main.load_error.title_format", "Couldn't open {0}"), fileName);
                 LoadErrorInfoBar.Message = $"{ex.GetType().Name}: {ex.Message}";
                 LoadErrorInfoBar.IsOpen  = true;
             }
@@ -1581,7 +1705,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     private void UpdateChromeFilename()
     {
         string fname = string.IsNullOrEmpty(_viewModel.LoadedFilePath)
-            ? "(unsaved)"
+            ? Localizer.T("architect.main.caption.unsaved", "(unsaved)")
             : Path.GetFileName(_viewModel.LoadedFilePath);
         // Pre-T15 dirty marker — bullet prefix when graph has unsaved edits.
         if (_viewModel.IsDirty) fname = "• " + fname;
@@ -1793,21 +1917,25 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             string status = StatusLeft?.Text ?? string.Empty;
             string file = string.IsNullOrEmpty(_viewModel.LoadedFilePath)
-                ? "(unsaved graph)"
+                ? Localizer.T("architect.main.status.tip.unsaved_graph", "(unsaved graph)")
                 : _viewModel.LoadedFilePath!;
             return string.IsNullOrEmpty(status) ? file : $"{status}\n{file}";
         });
         SetStatusZoneTooltip(ArchitectStatusZone.Center, () =>
             _viewModel.LiveDebugEnabled
-                ? "Live Debug Trace is on — nodes pulse as Hub executes them."
-                : "Live Debug Trace is off (View → Live Debug Trace / Ctrl+Shift+D).");
+                ? Localizer.T("architect.main.status.tip.live_debug_on",
+                    "Live Debug Trace is on — nodes pulse as Hub executes them.")
+                : Localizer.T("architect.main.status.tip.live_debug_off",
+                    "Live Debug Trace is off (View → Live Debug Trace / Ctrl+Shift+D)."));
         SetStatusZoneTooltip(ArchitectStatusZone.Right, () =>
         {
             try
             {
                 var g = _viewModel.LogicCanvas.Graph;
-                return $"{g.Nodes.Count} node(s) · {g.Links.Count} link(s) · "
-                     + $"{g.Frames.Count} frame(s) · {g.Macros.Count} macro(s)";
+                return string.Format(
+                    Localizer.T("architect.main.status.tip.counts_format",
+                        "{0} node(s) · {1} link(s) · {2} frame(s) · {3} macro(s)"),
+                    g.Nodes.Count, g.Links.Count, g.Frames.Count, g.Macros.Count);
             }
             catch { return null; }
         });
@@ -1819,8 +1947,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         try
         {
             var g = _viewModel.LogicCanvas.Graph;
-            StatusRight.Text = $"{g.Nodes.Count} nodes · {g.Links.Count} links";
-            StatusCenter.Text = _viewModel.LiveDebugEnabled ? "Debug Mode active" : string.Empty;
+            StatusRight.Text = string.Format(
+                Localizer.T("architect.main.status.counts_format", "{0} nodes · {1} links"),
+                g.Nodes.Count, g.Links.Count);
+            StatusCenter.Text = _viewModel.LiveDebugEnabled
+                ? Localizer.T("architect.main.status.debug_mode", "Debug Mode active")
+                : string.Empty;
         }
         catch
         {
@@ -2182,7 +2314,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // message "gives way to the canvas" instead of re-rendering.
             _viewModel.NewGraph();
             _logicCanvasView.BeginBlankCanvasFromNew();
-            SetStatus("New graph.", ArchitectStatusLight.Green);
+            SetStatus(Localizer.T("architect.main.status.new_graph", "New graph."),
+                ArchitectStatusLight.Green);
             return;
         }
         ArchitectWindowRegistry.OpenNew();
@@ -2275,13 +2408,16 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 if (!ok)
                 {
                     SetStatus(
-                        $"Failed to load {Path.GetFileName(path)} — file unreadable or malformed. See System Log.",
+                        string.Format(Localizer.T("architect.main.status.load_failed_format",
+                            "Failed to load {0} — file unreadable or malformed. See System Log."),
+                            Path.GetFileName(path)),
                         ArchitectStatusLight.Red);
                 }
                 else
                 {
                     SetStatus(
-                        $"Opened {Path.GetFileName(path)}.",
+                        string.Format(Localizer.T("architect.main.status.opened_format", "Opened {0}."),
+                            Path.GetFileName(path)),
                         ArchitectStatusLight.Green);
                 }
                 RememberArchitectDir(path);
@@ -2306,7 +2442,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (spawned is null)
             {
                 SetStatus(
-                    $"Failed to load {Path.GetFileName(path)} — file unreadable or malformed. See System Log.",
+                    string.Format(Localizer.T("architect.main.status.load_failed_format",
+                        "Failed to load {0} — file unreadable or malformed. See System Log."),
+                        Path.GetFileName(path)),
                     ArchitectStatusLight.Red);
             }
             RememberArchitectDir(path);
@@ -2393,8 +2531,14 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // post-modal case). One yellow status line beats a modal in the hot
             // path — the underlying details are already in System Log.
             string summary = errorCount > 0
-                ? $"Saved with {errorCount} error(s) + {warningCount} warning(s) — see System Log."
-                : $"Saved with {warningCount} warning(s) — see System Log.";
+                ? string.Format(
+                    Localizer.T("architect.main.save.warn_errors_format",
+                        "Saved with {0} error(s) + {1} warning(s) — see System Log."),
+                    errorCount, warningCount)
+                : string.Format(
+                    Localizer.T("architect.main.save.warnings_format",
+                        "Saved with {0} warning(s) — see System Log."),
+                    warningCount);
             SetStatus(summary, ArchitectStatusLight.Yellow);
             return true;
         }
@@ -2426,7 +2570,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 // up front (no mutation window between gate and write).
                 if (!await ConfirmSaveValidationAsync())
                 {
-                    SetStatus("Save cancelled — validation rejected.", ArchitectStatusLight.Yellow);
+                    SetStatus(Localizer.T("architect.main.save.cancelled_validation",
+                        "Save cancelled — validation rejected."), ArchitectStatusLight.Yellow);
                     return;
                 }
 
@@ -2440,19 +2585,24 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 {
                     Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                         "Architect.MainView", "Save (known path)", ex);
-                    SetStatus($"Save failed: {ex.GetType().Name} — see System Log.",
+                    SetStatus(string.Format(
+                            Localizer.T("architect.main.save.failed_exception_format",
+                                "Save failed: {0} — see System Log."),
+                            ex.GetType().Name),
                         ArchitectStatusLight.Red);
                     return;
                 }
                 if (!savedOk)
                 {
-                    SetStatus("Save failed — could not write the .phxg (disk full / permission / I-O). See System Log.",
+                    SetStatus(Localizer.T("architect.main.save.write_failed",
+                            "Save failed — could not write the .phxg (disk full / permission / I-O). See System Log."),
                         ArchitectStatusLight.Red);
                     return;
                 }
                 Phoenix.Controls.Architect.WinUI.Services.RecentFiles.TouchDeferred(_viewModel.LoadedFilePath!);
                 DispatcherQueue?.TryEnqueue(RebuildChromeRecentMenu);
-                SetStatus($"Saved {Path.GetFileName(_viewModel.LoadedFilePath)}.", ArchitectStatusLight.Green);
+                SetStatus(string.Format(Localizer.T("architect.main.save.saved_format", "Saved {0}."),
+                    Path.GetFileName(_viewModel.LoadedFilePath)), ArchitectStatusLight.Green);
                 return;
             }
 
@@ -2486,7 +2636,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // made while the picker was open is caught.
             if (!await ConfirmSaveValidationAsync())
             {
-                SetStatus("Save cancelled — validation rejected.", ArchitectStatusLight.Yellow);
+                SetStatus(Localizer.T("architect.main.save.cancelled_validation",
+                    "Save cancelled — validation rejected."), ArchitectStatusLight.Yellow);
                 return;
             }
 
@@ -2497,20 +2648,25 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             {
                 Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                     "Architect.MainView", "Save As", ex);
-                SetStatus($"Save failed: {ex.GetType().Name} — see System Log.",
+                SetStatus(string.Format(
+                        Localizer.T("architect.main.save.failed_exception_format",
+                            "Save failed: {0} — see System Log."),
+                        ex.GetType().Name),
                     ArchitectStatusLight.Red);
                 return;
             }
             if (!savedAsOk)
             {
-                SetStatus("Save failed — could not write the .phxg (disk full / permission / I-O). See System Log.",
+                SetStatus(Localizer.T("architect.main.save.write_failed",
+                        "Save failed — could not write the .phxg (disk full / permission / I-O). See System Log."),
                     ArchitectStatusLight.Red);
                 return;
             }
             Phoenix.Controls.Architect.WinUI.Services.RecentFiles.TouchDeferred(path);
             DispatcherQueue?.TryEnqueue(RebuildChromeRecentMenu);
             RememberArchitectDir(path);
-            SetStatus($"Saved {Path.GetFileName(path)}.", ArchitectStatusLight.Green);
+            SetStatus(string.Format(Localizer.T("architect.main.save.saved_format", "Saved {0}."),
+                Path.GetFileName(path)), ArchitectStatusLight.Green);
         }
         finally
         {
@@ -2577,7 +2733,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     {
         try
         {
-            if (_unloadedOnceRan) return;
+            if (_pillarShutdownRan) return;
             if (survivors.Count == 0)
             {
                 _autosaveSurvivors = null;
@@ -2610,9 +2766,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (LoadErrorInfoBar is not null)
             {
                 LoadErrorInfoBar.Severity = Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning;
-                LoadErrorInfoBar.Title   = $"{survivors.Count} autosave / crash survivor(s) found";
-                LoadErrorInfoBar.Message =
-                    "A previous session left unsaved work. Click Recover… to restore or discard each file.";
+                LoadErrorInfoBar.Title   = string.Format(
+                    Localizer.T("architect.main.recovery.infobar_title_format",
+                        "{0} autosave / crash survivor(s) found"),
+                    survivors.Count);
+                LoadErrorInfoBar.Message = Localizer.T("architect.main.recovery.infobar_body",
+                    "A previous session left unsaved work. Click Recover… to restore or discard each file.");
                 LoadErrorInfoBar.IsOpen  = true;
             }
             if (AutosaveRecoverButton is not null)
@@ -2670,8 +2829,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         var dlg = new ContentDialog
         {
-            Title = "Recover unsaved work",
-            CloseButtonText = "Close",
+            Title = Localizer.T("architect.dialog.recover_autosave.title", "Recover unsaved work"),
+            CloseButtonText = Localizer.T("common.button.close", "Close"),
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = XamlRoot,
         };
@@ -2683,7 +2842,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             {
                 panel.Children.Add(new TextBlock
                 {
-                    Text = "All survivors handled.",
+                    Text = Localizer.T("architect.main.recovery.all_handled", "All survivors handled."),
                     Foreground = (Brush?)Application.Current.Resources["CoalSecondaryTextBrush"],
                 });
                 return;
@@ -2722,7 +2881,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 Grid.SetColumn(info, 0);
                 row.Children.Add(info);
 
-                var recoverBtn = new Button { Content = "Recover", Margin = new Thickness(6, 0, 0, 0) };
+                var recoverBtn = new Button
+                {
+                    Content = Localizer.T("architect.main.recovery.recover_button", "Recover"),
+                    Margin = new Thickness(6, 0, 0, 0),
+                };
                 var captured = s;
                 recoverBtn.Click += async (_, _) =>
                 {
@@ -2736,7 +2899,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 Grid.SetColumn(recoverBtn, 1);
                 row.Children.Add(recoverBtn);
 
-                var discardBtn = new Button { Content = "Discard", Margin = new Thickness(6, 0, 0, 0) };
+                var discardBtn = new Button
+                {
+                    Content = Localizer.T("common.button.discard", "Discard"),
+                    Margin = new Thickness(6, 0, 0, 0),
+                };
                 discardBtn.Click += (_, _) =>
                 {
                     if (DiscardSurvivor(captured))
@@ -2762,7 +2929,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         _autosaveSurvivors = remaining.Count == 0 ? null : remaining;
         if (remaining.Count == 0) DismissAutosaveInfoBar();
         else if (LoadErrorInfoBar is not null)
-            LoadErrorInfoBar.Title = $"{remaining.Count} autosave / crash survivor(s) found";
+            LoadErrorInfoBar.Title = string.Format(
+                Localizer.T("architect.main.recovery.infobar_title_format",
+                    "{0} autosave / crash survivor(s) found"),
+                remaining.Count);
     }
 
     private static string ResolveRecoveryTarget(
@@ -2789,7 +2959,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             string target = ResolveRecoveryTarget(s);
             if (!File.Exists(s.Path))
             {
-                SetStatus($"Recovery source already gone: {Path.GetFileName(s.Path)}", ArchitectStatusLight.Yellow);
+                SetStatus(string.Format(
+                        Localizer.T("architect.main.recovery.source_gone_format",
+                            "Recovery source already gone: {0}"),
+                        Path.GetFileName(s.Path)),
+                    ArchitectStatusLight.Yellow);
                 return true; // treat as handled — nothing to recover.
             }
 
@@ -2808,9 +2982,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             try { File.Delete(s.Path); } catch { /* leave source if locked; copy already landed */ }
 
             bool opened = await _viewModel.OpenAsync(dest).ConfigureAwait(true);
-            SetStatus(opened
-                ? $"Recovered {Path.GetFileName(dest)}."
-                : $"Recovered {Path.GetFileName(dest)} but reload failed — open it manually.",
+            SetStatus(string.Format(
+                    opened
+                        ? Localizer.T("architect.main.recovery.recovered_format", "Recovered {0}.")
+                        : Localizer.T("architect.main.recovery.recovered_reload_failed_format",
+                            "Recovered {0} but reload failed — open it manually."),
+                    Path.GetFileName(dest)),
                 opened ? ArchitectStatusLight.Green : ArchitectStatusLight.Yellow);
             if (opened) RememberArchitectDir(dest);
             return true;
@@ -2819,7 +2996,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                 "Architect.Recovery", $"Recover '{s.Path}'", ex);
-            SetStatus("Recovery failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.main.recovery.failed", "Recovery failed — see System Log."),
+                ArchitectStatusLight.Red);
             return false;
         }
     }
@@ -2894,7 +3072,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // touching status-bar / InfoBar directly is safe.
     private void OnAutosaveSucceeded(string fileName)
     {
-        try { SetStatus($"Autosaved {fileName}", ArchitectStatusLight.Green); }
+        try
+        {
+            SetStatus(string.Format(
+                    Localizer.T("architect.main.autosave.saved_format", "Autosaved {0}"), fileName),
+                ArchitectStatusLight.Green);
+        }
         catch (Exception ex) { Phoenix.Controls.Shared.Services.GlobalLogger.Error("Architect.Autosave", "success status", ex); }
     }
 
@@ -2905,14 +3088,16 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // Brief warning light immediately; a persistent InfoBar once a few
             // ticks in a row have failed (so a one-off transient blip doesn't
             // nag, but a genuinely-stuck path does).
-            SetStatus("Autosave failed", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.main.autosave.failed", "Autosave failed"), ArchitectStatusLight.Red);
             if (consecutiveFailures >= 3 && LoadErrorInfoBar is not null)
             {
                 LoadErrorInfoBar.Severity = Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning;
-                LoadErrorInfoBar.Title    = "Autosave is failing";
-                LoadErrorInfoBar.Message  =
-                    $"The last {consecutiveFailures} autosaves failed ({ex.GetType().Name}: {ex.Message}). " +
-                    "Your recovery file may be stale — save manually to a writable location.";
+                LoadErrorInfoBar.Title    = Localizer.T("architect.main.autosave.failing_title",
+                    "Autosave is failing");
+                LoadErrorInfoBar.Message  = string.Format(
+                    Localizer.T("architect.main.autosave.failing_body_format",
+                        "The last {0} autosaves failed ({1}: {2}). Your recovery file may be stale — save manually to a writable location."),
+                    consecutiveFailures, ex.GetType().Name, ex.Message);
                 LoadErrorInfoBar.IsOpen   = true;
             }
         }
@@ -2929,7 +3114,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     {
         if (!await ConfirmSaveValidationAsync())
         {
-            SetStatus("Save cancelled — validation rejected.", ArchitectStatusLight.Yellow);
+            SetStatus(Localizer.T("architect.main.save.cancelled_validation",
+                    "Save cancelled — validation rejected."), ArchitectStatusLight.Yellow);
             return;
         }
 
@@ -2956,13 +3142,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         Phoenix.Controls.Architect.WinUI.Services.RecentFiles.TouchDeferred(path);
         DispatcherQueue?.TryEnqueue(RebuildChromeRecentMenu);
         RememberArchitectDir(path);
-        SetStatus($"Saved {Path.GetFileName(path)}.", ArchitectStatusLight.Green);
-    }
-
-    private void InitWithHostWindow(object picker)
-    {
-        var hwnd = WindowNative.GetWindowHandle(_hostWindow);
-        InitializeWithWindow.Initialize(picker, hwnd);
+        SetStatus(string.Format(Localizer.T("architect.main.save.saved_format", "Saved {0}."),
+                Path.GetFileName(path)), ArchitectStatusLight.Green);
     }
 
     // ─── Chrome handler hook / unhook ──────────────────
@@ -2971,8 +3152,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     // pillar-tab swap rebuilt MainView and added another ~25 handlers to
     // the same Chrome events, growing the invocation list without bound.
     // Naming the methods lets HookChromeHandlers / UnhookChromeHandlers pair
-    // symmetrically; UnhookChromeHandlers is invoked from the Unloaded
-    // handler below.
+    // symmetrically; UnhookChromeHandlers is invoked from ShutdownPillar()
+    // (Hub's app-close path), NOT from Unloaded — a pillar-tab detach is a
+    // tab-blur, and unhooking there left the chrome menus dead for the session.
 
     private void HookChromeHandlers()
     {
@@ -3185,7 +3367,8 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     {
         if (string.IsNullOrEmpty(_viewModel.LoadedFilePath))
         {
-            SetStatus("Refresh Script: save the graph first (export needs a path).",
+            SetStatus(Localizer.T("architect.main.refresh_script.needs_path",
+                    "Refresh Script: save the graph first (export needs a path)."),
                 ArchitectStatusLight.Yellow);
             RestoreCanvasFocus();
             return;
@@ -3194,15 +3377,18 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         {
             var phx = await _viewModel.ExportPhxBesideAsync(_viewModel.LoadedFilePath!).ConfigureAwait(true);
             SetStatus(string.IsNullOrEmpty(phx)
-                ? "Refresh Script failed — see System Log."
-                : $"Refreshed {Path.GetFileName(phx)}.",
+                ? Localizer.T("architect.main.refresh_script.failed", "Refresh Script failed — see System Log.")
+                : string.Format(
+                    Localizer.T("architect.main.refresh_script.done_format", "Refreshed {0}."),
+                    Path.GetFileName(phx)),
                 string.IsNullOrEmpty(phx) ? ArchitectStatusLight.Red : ArchitectStatusLight.Green);
         }
         catch (Exception ex)
         {
             Phoenix.Controls.Shared.Services.GlobalLogger.Error(
                 "Architect.MainView", "Refresh Script (F5)", ex);
-            SetStatus("Refresh Script failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.main.refresh_script.failed", "Refresh Script failed — see System Log."),
+                ArchitectStatusLight.Red);
         }
         RestoreCanvasFocus();
     }
@@ -3290,7 +3476,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             }
             if (sub.Items.Count == 0)
             {
-                sub.Items.Add(new MenuFlyoutItem { Text = "(no recent files)", IsEnabled = false });
+                sub.Items.Add(new MenuFlyoutItem
+                {
+                    Text = Localizer.T("architect.main.recent.empty", "(no recent files)"),
+                    IsEnabled = false,
+                });
             }
         }
         catch (Exception ex)
@@ -3313,7 +3503,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (!System.IO.File.Exists(path))
             {
                 Phoenix.Controls.Architect.WinUI.Services.RecentFiles.Remove(path);
-                SetStatus($"Recent entry missing: {Path.GetFileName(path)}", ArchitectStatusLight.Yellow);
+                SetStatus(string.Format(
+                        Localizer.T("architect.main.recent.missing_format", "Recent entry missing: {0}"),
+                        Path.GetFileName(path)),
+                    ArchitectStatusLight.Yellow);
                 return;
             }
 
@@ -3324,9 +3517,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             if (embeddedIsBlank)
             {
                 bool ok = await _viewModel.OpenAsync(path).ConfigureAwait(true);
-                SetStatus(ok
-                    ? $"Opened {Path.GetFileName(path)}."
-                    : $"Failed to load {Path.GetFileName(path)} — see System Log.",
+                SetStatus(string.Format(
+                        ok
+                            ? Localizer.T("architect.main.status.opened_format", "Opened {0}.")
+                            : Localizer.T("architect.main.status.load_failed_short_format",
+                                "Failed to load {0} — see System Log."),
+                        Path.GetFileName(path)),
                     ok ? ArchitectStatusLight.Green : ArchitectStatusLight.Red);
                 RememberArchitectDir(path);
             }
@@ -3335,7 +3531,10 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
                 var spawned = await ArchitectWindowRegistry.OpenFileAsync(path);
                 if (spawned is null)
                 {
-                    SetStatus($"Failed to load {Path.GetFileName(path)} — see System Log.",
+                    SetStatus(string.Format(
+                            Localizer.T("architect.main.status.load_failed_short_format",
+                                "Failed to load {0} — see System Log."),
+                            Path.GetFileName(path)),
                         ArchitectStatusLight.Red);
                 }
                 RememberArchitectDir(path);

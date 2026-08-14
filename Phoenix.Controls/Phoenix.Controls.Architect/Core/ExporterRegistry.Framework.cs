@@ -90,8 +90,6 @@ namespace Phoenix.Controls.Architect.Core
         public void ProcessNode(Node n, int indent)
             => _e.CtxProcessNode(n, indent);
 
-        public string CommandName(string title) => ScriptExporter.CtxCommandName(title);
-        public string ComputeInline(Node n) => _e.CtxComputeInlineValue(n);
         public string GetDbGetResultVar(Node n) => ScriptExporter.CtxGetDbGetResultVar(n);
         public string StripQuotes(string s) => ScriptExporter.CtxStripQuotes(s);
         public string IdPrefix(Node n, int chars = 12) => ScriptExporter.CtxIdPrefix(n, chars);
@@ -101,11 +99,8 @@ namespace Phoenix.Controls.Architect.Core
         public string ExportMacroSubGraph(Graph macroGraph, string macroContextId)
             => _e.CtxExportMacroSubGraph(macroGraph, macroContextId);
 
-        public HashSet<string> Visited => _e.CtxVisited;
-        public HashSet<string> BlockedForBranch => _e.CtxBlockedForBranch;
         public Dictionary<string, string> NodeResultVars => _e.CtxNodeResultVars;
         public Graph Graph => _e.CtxGraph;
-        public int CurrentIndent => _e.CtxCurrentIndent;
         public string MacroContextId => _e.CtxMacroContextId;
     }
 

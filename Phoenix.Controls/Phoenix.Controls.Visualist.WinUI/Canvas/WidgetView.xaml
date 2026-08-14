@@ -2,7 +2,8 @@
 <UserControl
     x:Class="Phoenix.Controls.Visualist.WinUI.Canvas.WidgetView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization">
 
     <!-- R1 (enter-widget restore) — a double-tap on the widget BODY enters its
          node editor (parity with the pre-WinUI WidgetEditorForm double-click).
@@ -16,7 +17,8 @@
         BorderBrush="{StaticResource CoalMutedTextBrush}"
         Background="{StaticResource CoalOverlay33Brush}"
         DoubleTapped="OnWidgetBodyDoubleTapped"
-        ToolTipService.ToolTip="Double-click to edit this widget's triggers">
+        ToolTipService.ToolTip="Double-click to edit this widget's triggers"
+        loc:Localize.TooltipKey="visualist.canvas.widget.enter.tip">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
@@ -55,16 +57,28 @@
                  previewer is off, the layer is unsaved, or a crop fails — the
                  labeled-rectangle fallback is never removed. Per
                  feedback_visualist_architect_chrome_independence this overlay is
-                 Visualist-only; Architect has no analogue. -->
+                 Visualist-only; Architect has no analogue.
+
+                 V12 — Stretch was "Fill", which stretched the FROZEN pre-resize
+                 crop to the new rect for the whole duration of a resize gesture,
+                 so the content visibly distorted until commit re-cropped it.
+                 UniformToFill preserves the crop's aspect and still fills the
+                 slot; the excess is cropped rather than squashed. UniformToFill
+                 renders past the element bounds, and WinUI panels don't clip, so
+                 OnLivePreviewImageSizeChanged stamps a per-element Clip tracking
+                 this row — WidgetFrame.Clip alone would contain the bleed at the
+                 widget edge but let it wash over the semi-transparent pill strip
+                 and name footer below. -->
             <Image
                 Grid.Row="0"
                 x:Name="LivePreviewImage"
                 Visibility="Collapsed"
                 Opacity="0.85"
-                Stretch="Fill"
+                Stretch="UniformToFill"
                 IsHitTestVisible="False"
                 HorizontalAlignment="Stretch"
-                VerticalAlignment="Stretch" />
+                VerticalAlignment="Stretch"
+                SizeChanged="OnLivePreviewImageSizeChanged" />
 
             <!--  (P1-U1) — inline value-pill strip. Five pills:
                  x / y / w / h / preset. Each is a Border with read-only TextBlock + edit
@@ -99,7 +113,8 @@
                             BorderThickness="1"
                             CornerRadius="3"
                             Padding="3,0"
-                            ToolTipService.ToolTip="x (px)">
+                            ToolTipService.ToolTip="x (px)"
+                            loc:Localize.TooltipKey="visualist.canvas.widget.pill.x.tip">
                         <Grid>
                             <TextBlock x:Name="PillXText"
                                        FontFamily="{StaticResource MonoFont}"
@@ -135,7 +150,8 @@
                             BorderThickness="1"
                             CornerRadius="3"
                             Padding="3,0"
-                            ToolTipService.ToolTip="y (px)">
+                            ToolTipService.ToolTip="y (px)"
+                            loc:Localize.TooltipKey="visualist.canvas.widget.pill.y.tip">
                         <Grid>
                             <TextBlock x:Name="PillYText"
                                        FontFamily="{StaticResource MonoFont}"
@@ -168,7 +184,8 @@
                             BorderThickness="1"
                             CornerRadius="3"
                             Padding="3,0"
-                            ToolTipService.ToolTip="width (px)">
+                            ToolTipService.ToolTip="width (px)"
+                            loc:Localize.TooltipKey="visualist.canvas.widget.pill.w.tip">
                         <Grid>
                             <TextBlock x:Name="PillWText"
                                        FontFamily="{StaticResource MonoFont}"
@@ -201,7 +218,8 @@
                             BorderThickness="1"
                             CornerRadius="3"
                             Padding="3,0"
-                            ToolTipService.ToolTip="height (px)">
+                            ToolTipService.ToolTip="height (px)"
+                            loc:Localize.TooltipKey="visualist.canvas.widget.pill.h.tip">
                         <Grid>
                             <TextBlock x:Name="PillHText"
                                        FontFamily="{StaticResource MonoFont}"
@@ -239,7 +257,8 @@
                             BorderThickness="1"
                             CornerRadius="3"
                             Padding="3,0"
-                            ToolTipService.ToolTip="preset">
+                            ToolTipService.ToolTip="preset"
+                            loc:Localize.TooltipKey="visualist.canvas.widget.pill.preset.tip">
                         <TextBlock x:Name="PillPresetText"
                                    FontFamily="{StaticResource MonoFont}"
                                    FontSize="9"
@@ -273,6 +292,7 @@
                         Foreground="{StaticResource CoalBodyTextBrush}"
                         TextTrimming="CharacterEllipsis"
                         ToolTipService.ToolTip="Double-click to rename"
+                        loc:Localize.TooltipKey="visualist.canvas.widget.rename.tip"
                         Text="(widget)"
                         DoubleTapped="OnWidgetNameDoubleTapped" />
                     <!-- IsTabStop=False — see PillXBox. Rename commits via

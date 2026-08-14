@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.Foundation;
@@ -148,6 +149,26 @@ public sealed partial class WidgetView : UserControl
             };
             WidgetFrame.SizeChanged += OnWidgetFrameSizeChanged;
         }
+
+        // V12 — LivePreviewImage is Stretch="UniformToFill", which renders past
+        // the element's slot by design (that overflow IS the crop). WidgetFrame's
+        // clip stops it leaving the widget, but the pill strip and name footer
+        // sit INSIDE the frame on semi-transparent backgrounds, so without a
+        // second clip the preview washes over them mid-resize. Same sentinel-seed
+        // + re-stamp idiom as the frame clip above.
+        if (LivePreviewImage is not null)
+        {
+            LivePreviewImage.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
+            {
+                Rect = new Rect(0, 0, ClipSentinel, ClipSentinel),
+            };
+        }
+    }
+
+    private void OnLivePreviewImageSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (LivePreviewImage?.Clip is RectangleGeometry rg)
+            rg.Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
     }
 
     private void OnWidgetFrameSizeChanged(object sender, SizeChangedEventArgs e)
@@ -445,7 +466,8 @@ public sealed partial class WidgetView : UserControl
         PillYText.Text = _editWidget.Rect.Y.ToString();
         PillWText.Text = _editWidget.Rect.Width.ToString();
         PillHText.Text = _editWidget.Rect.Height.ToString();
-        PillPresetText.Text = _editWidget.Preset?.ToString() ?? "(none)";
+        PillPresetText.Text = _editWidget.Preset?.ToString()
+                              ?? Localizer.T("visualist.canvas.widget.preset_none", "(none)");
     }
 
     // ── X pill ──────────────────────────────────────────────────────────
@@ -604,11 +626,19 @@ public sealed partial class WidgetView : UserControl
     // the nullable WidgetPreset?). Selection commits via _onCommit. Mirrors
     // the bool-glyph branch of Architect's MiddleAttributeRowTemplate in
     // spirit: a click commits a discrete choice rather than free-form text.
+    //
+    // ★ V8 — picking AlertBox here sets the preset TAG only. It does NOT compile the alert
+    // chain (that is the Inspector's ALERT BOX section / the preset gallery's Apply), and
+    // it deliberately cannot RE-ATTACH a widget the author detached: this pill never
+    // touches AlertBoxSettings at all, so `Detached` survives a round-trip through any
+    // other preset and back. The compiler is the only writer, and it refuses a detached
+    // widget at its own single choke point.
     private static readonly WidgetPreset?[] s_pillPresets = new WidgetPreset?[]
     {
         null,
         WidgetPreset.Image, WidgetPreset.Video, WidgetPreset.Text, WidgetPreset.Audio,
         WidgetPreset.WebSource, WidgetPreset.Particles, WidgetPreset.Chat, WidgetPreset.CC,
+        WidgetPreset.AlertBox, WidgetPreset.Player,
     };
 
     private void OnPillPresetTapped(object sender, TappedRoutedEventArgs e)

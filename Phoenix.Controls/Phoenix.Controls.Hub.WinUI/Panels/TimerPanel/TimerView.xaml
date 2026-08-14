@@ -1,0 +1,1832 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.TimerPanel.TimerView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.TimerPanel"
+    xmlns:common="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Timer page"
+    AutomationProperties.HelpText="Run a subathon countdown: create one, pick the active timer, watch the big countdown, add time, set per-event rules, milestones, and Happy Hour."
+    loc:Localize.AutomationKey="panel.timer.page.a11y"
+    loc:Localize.HelpTextKey="panel.timer.page.help">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- House ember/coal re-skin for the stock Fluent controls on this
+                     page. Timer is a hand-rolled Giveaway-grammar page rather than
+                     one of the five config tools ToolControlStyles was written for,
+                     so the merge was checked type by type first: the types the
+                     dictionary touches that exist in THIS file are TextBox and
+                     ComboBox. There is no CheckBox / Pivot / Expander anywhere
+                     here — the page's five "toggles" are hand-rolled Border+Ellipse
+                     pills painted from ApplyPillToggle in the code-behind, and the
+                     dictionary carries no Button or Border styling, so none of the
+                     page's own chrome is reachable from it.
+
+                     One ToggleSwitch DOES now exist under this view: the master
+                     switch inside the ToolPageHeader band. It picks the implicit
+                     ToggleSwitch style up once parented, which is the intended
+                     house pairing — every converted tool page merges this same
+                     dictionary and hosts the same band.
+
+                     Every TextBox here already sets Background / Foreground /
+                     BorderBrush / FontFamily locally and a local value outranks an
+                     implicit-style setter, so their resting look is unchanged; what
+                     the merge moves is their hover / focus / placeholder / selection
+                     states, plus the two otherwise-unstyled ComboBoxes, off the
+                     viewer's OS accent colour and onto the house tokens. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- House shell grammar — the 48px header band, the section-card
+                     surface and the button / text tiers. Timer was one of only TWO
+                     panels with zero Tool* adoption: every recipe this page needed
+                     had been retyped inline, which is why it read as a different
+                     author's page. Keyed styles only, no BasedOn, merged per view —
+                     the three constraints in ToolShellStyles' own header still hold. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+        <!-- Default badge / toggle ember tints — the only page-local brushes left.
+             TmBrassHeroBrush and TmScrimBrush are gone: they were byte-identical to
+             ToolBrassHeroBrush / ToolScrimBrush in the dictionary above. The two
+             TmStatus* tints went with the hero status pill, whose text now renders
+             in the header band. -->
+        <SolidColorBrush x:Key="TmEmberTint08Brush" Color="#14E5A24E" />
+        <SolidColorBrush x:Key="TmEmberBorderBrush" Color="#73E5A24E" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ════════════════════ HEADER BAND ════════════════════
+             48px: tool name · master switch · one lowercase state phrase.
+
+             The switch is the CLOCK GATE, not a tool enable — Timer has no
+             tool-wide boolean, and of the page's candidates this is the only
+             honest two-way one. ON starts the selected timer (or resumes it if
+             it is paused); OFF PAUSES it and never stops it, so the band cannot
+             throw a live subathon's accrual away in one click. STOP and RESET
+             keep their own buttons, which the switch could not express anyway.
+
+             The phrase is the SAME predicate the hero status pill used
+             (TimerViewModel.StatePillText / StatePillBrush) — the pill below the
+             countdown is deleted, not re-worded, so the four run states still
+             read exactly as the service reports them. Only WHERE it renders
+             changed. -->
+        <common:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ════════════════════ TOP ACTION STRIP ════════════════════
+             The picker is the page's selection mechanism and has no home in the
+             header band, so this row stays. CREATE keeps its neutral chrome
+             rather than moving to the header's brass CTA: the page's one hero
+             verb is START, and ToolShellStyles allows exactly one brass CTA per
+             visible surface. -->
+        <Border Grid.Row="1"
+                Background="{StaticResource CoalSurfaceBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="14,10">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />   <!-- Create -->
+                    <ColumnDefinition Width="Auto" />   <!-- Picker -->
+                    <ColumnDefinition Width="*" />      <!-- spacer -->
+                    <ColumnDefinition Width="Auto" />   <!-- Set-default toggle -->
+                    <ColumnDefinition Width="Auto" />   <!-- Delete (danger) -->
+                </Grid.ColumnDefinitions>
+
+                <!-- [Create new timer] -->
+                <Button Grid.Column="0"
+                        x:Name="CreateButton"
+                        Style="{StaticResource ToolSecondaryButtonStyle}"
+                        Click="OnCreateClick"
+                        AutomationProperties.Name="Create new timer"
+                        loc:Localize.AutomationKey="panel.timer.strip.create.a11y">
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                        <TextBlock Text="CREATE TIMER"
+                                   Style="{StaticResource ToolStripLabelTextStyle}"
+                                   loc:Localize.Key="panel.timer.strip.create.label" />
+                    </StackPanel>
+                </Button>
+
+                <!-- Timer PICKER — a button that opens a search/filter Flyout -->
+                <Button Grid.Column="1"
+                        x:Name="PickerButton"
+                        Width="360"
+                        Height="30"
+                        Padding="10,0"
+                        HorizontalContentAlignment="Stretch"
+                        Background="{StaticResource CoalShellBrush}"
+                        BorderBrush="{StaticResource CoalDividerBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{StaticResource Radius1Corner}"
+                        AutomationProperties.Name="Active timer picker"
+                        loc:Localize.AutomationKey="panel.timer.picker.a11y">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE916;" FontSize="12"
+                                  Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind ViewModel.PickerButtonTitle, Mode=OneWay}"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="12" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text="{x:Bind ViewModel.PickerButtonId, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                        <Border Grid.Column="2"
+                                Visibility="{x:Bind ViewModel.PickerButtonDefaultVisibility, Mode=OneWay}"
+                                Background="{StaticResource TmEmberTint08Brush}"
+                                BorderBrush="{StaticResource TmEmberBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource Radius1Corner}"
+                                Padding="5,2"
+                                VerticalAlignment="Center"
+                                ToolTipService.ToolTip="Default — public / unnamed timer.* nodes target this timer"
+                                loc:Localize.TooltipKey="panel.timer.picker.default_badge.tip">
+                            <StackPanel Orientation="Horizontal" Spacing="3">
+                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE718;" FontSize="9"
+                                          Foreground="{StaticResource EmberPrimaryBrush}" />
+                                <TextBlock Text="DEFAULT"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="9" FontWeight="Bold" CharacterSpacing="120"
+                                           Foreground="{StaticResource EmberPrimaryBrush}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.timer.picker.default_badge.label" />
+                            </StackPanel>
+                        </Border>
+                        <FontIcon Grid.Column="3" FontFamily="Segoe MDL2 Assets" Glyph="&#xE70D;" FontSize="10"
+                                  Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                    </Grid>
+
+                    <Button.Flyout>
+                        <Flyout x:Name="PickerFlyout" Placement="Bottom">
+                            <Flyout.FlyoutPresenterStyle>
+                                <Style TargetType="FlyoutPresenter">
+                                    <Setter Property="Background" Value="{StaticResource CoalRaisedBrush}" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource CoalDividerBrush}" />
+                                    <Setter Property="BorderThickness" Value="1" />
+                                    <Setter Property="CornerRadius" Value="{StaticResource Radius2Corner}" />
+                                    <Setter Property="Padding" Value="4" />
+                                    <Setter Property="MaxWidth" Value="420" />
+                                    <Setter Property="MinWidth" Value="360" />
+                                </Style>
+                            </Flyout.FlyoutPresenterStyle>
+                            <Grid Width="360" RowSpacing="4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBox Grid.Row="0"
+                                         x:Name="PickerFilterBox"
+                                         PlaceholderText="filter by name or slug…"
+                                         loc:Localize.PlaceholderKey="panel.timer.picker.filter.placeholder"
+                                         Background="{StaticResource CoalShellBrush}"
+                                         Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                         BorderBrush="{StaticResource CoalDividerBrush}"
+                                         BorderThickness="1"
+                                         FontFamily="{StaticResource MonoFont}"
+                                         FontSize="11"
+                                         Margin="2,2,2,4"
+                                         Text="{x:Bind ViewModel.PickerFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <ScrollViewer Grid.Row="1"
+                                              MaxHeight="260"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollMode="Disabled">
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.PickerItems, Mode=OneWay}"
+                                                   common:RowDataContext.Supply="True">
+                                        <ItemsRepeater.ItemTemplate>
+                                            <DataTemplate x:DataType="local:TimerPickerItemVm">
+                                                <Button HorizontalAlignment="Stretch"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        Background="Transparent"
+                                                        BorderThickness="0"
+                                                        Padding="10,7"
+                                                        Click="OnPickerItemClick"
+                                                        Tag="{x:Bind Slug}">
+                                                    <Grid ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0" Spacing="2">
+                                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                <TextBlock Text="{x:Bind Name}"
+                                                                           FontFamily="{StaticResource SansFont}"
+                                                                           FontSize="12" FontWeight="SemiBold"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                                                                <TextBlock Text="DEFAULT"
+                                                                           Visibility="{x:Bind DefaultBadgeVisibility}"
+                                                                           FontFamily="{StaticResource MonoFont}"
+                                                                           FontSize="9" CharacterSpacing="100"
+                                                                           Foreground="{StaticResource EmberPrimaryBrush}"
+                                                                           VerticalAlignment="Center"
+                                                                           loc:Localize.Key="panel.timer.picker.row.default_badge" />
+                                                            </StackPanel>
+                                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                                <TextBlock Text="{x:Bind DisplayId}"
+                                                                           FontFamily="{StaticResource MonoFont}"
+                                                                           FontSize="10"
+                                                                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                                                <TextBlock Text="·" FontFamily="{StaticResource MonoFont}"
+                                                                           FontSize="10"
+                                                                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                                                <TextBlock Text="{x:Bind StateText}"
+                                                                           FontFamily="{StaticResource MonoFont}"
+                                                                           FontSize="10"
+                                                                           Foreground="{x:Bind StateBrush}" />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="1" Text="{x:Bind RemainingText}"
+                                                                   FontFamily="{StaticResource MonoFont}"
+                                                                   FontSize="12"
+                                                                   HorizontalAlignment="Right"
+                                                                   VerticalAlignment="Center"
+                                                                   Foreground="{StaticResource CoalBodyTextBrush}" />
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
+                                </ScrollViewer>
+
+                                <Border Grid.Row="2" Height="1" Margin="6,4"
+                                        Background="{StaticResource CoalDividerBrush}" />
+
+                                <Button Grid.Row="3"
+                                        x:Name="PickerCreateButton"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Left"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Padding="10,7"
+                                        Click="OnPickerCreateClick">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                                  Foreground="{StaticResource Ember200Brush}" />
+                                        <TextBlock Text="New timer…"
+                                                   FontFamily="{StaticResource SansFont}"
+                                                   FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource Ember200Brush}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.picker.create.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+
+                <!-- Set-default toggle -->
+                <Button Grid.Column="3"
+                        x:Name="DefaultToggleButton"
+                        Style="{StaticResource ToolChipButtonStyle}"
+                        IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                        Click="OnToggleDefaultClick"
+                        ToolTipService.ToolTip="When ON, this is the active timer across the app."
+                        loc:Localize.TooltipKey="panel.timer.strip.default_toggle.tip">
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Border x:Name="DefaultTogglePill"
+                                Width="26" Height="14" CornerRadius="8"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="1">
+                            <Ellipse x:Name="DefaultToggleKnob"
+                                     Width="10" Height="10"
+                                     HorizontalAlignment="Left"
+                                     VerticalAlignment="Center"
+                                     Margin="1,0,0,0" />
+                        </Border>
+                        <!-- Style, then a LOCAL Foreground from ApplyDefaultToggleVisual:
+                             a local value outranks a style setter, so the ember/secondary
+                             accent still tracks the pill. -->
+                        <TextBlock x:Name="DefaultToggleLabel"
+                                   Text="{x:Bind ViewModel.DefaultToggleLabel, Mode=OneWay}"
+                                   Style="{StaticResource ToolStripLabelTextStyle}" />
+                    </StackPanel>
+                </Button>
+
+                <!-- [Delete timer] — danger -->
+                <!-- Danger chrome is IDENTICAL to secondary by house rule — only the
+                     glyph turns red. The key names the intent. -->
+                <Button Grid.Column="4"
+                        x:Name="DeleteButton"
+                        Style="{StaticResource ToolDangerButtonStyle}"
+                        IsEnabled="{x:Bind ViewModel.CanDelete, Mode=OneWay}"
+                        Click="OnDeleteClick"
+                        AutomationProperties.Name="Delete timer"
+                        loc:Localize.AutomationKey="panel.timer.strip.delete.a11y">
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                  Foreground="{StaticResource ErrBrush}" />
+                        <TextBlock Text="DELETE TIMER"
+                                   Style="{StaticResource ToolStripLabelTextStyle}"
+                                   loc:Localize.Key="panel.timer.strip.delete.label" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- ════════════════════ TWO-COLUMN BODY ════════════════════ -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.4*" />
+                <!-- The live column is a FIXED 300, not a share of the window: a
+                     star column turned the goals list and the activity feed into
+                     a half-empty 600px void on a wide monitor. -->
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ───────────── LEFT: TimerDetail ───────────── -->
+            <ScrollViewer Grid.Column="0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Disabled"
+                          Visibility="{x:Bind ViewModel.DetailVisibility, Mode=OneWay}">
+                <StackPanel Spacing="12" Padding="14">
+
+                    <!-- Mode badge — Subathon / Countdown / Stopwatch.
+                         What stood here: an "ACTIVE TIMER" eyebrow, the timer's name
+                         in DisplayFont 28, this badge, and a "slug <value>" row. The
+                         picker button one row up already renders the NAME (SemiBold
+                         12) and the SLUG (mono) and a DEFAULT badge, and the header
+                         band above it names the tool — so three of the four were the
+                         second and third rendering of the same identity, ~80 px of
+                         it. The mode is the one fact the strip does not carry. -->
+                    <Border Background="{StaticResource CoalCardBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                            CornerRadius="{StaticResource Radius1Corner}"
+                            Padding="8,2" HorizontalAlignment="Left">
+                        <TextBlock Text="{x:Bind ViewModel.ModeLabel, Mode=OneWay}"
+                                   FontFamily="{StaticResource SansFont}" FontSize="10"
+                                   FontWeight="SemiBold" CharacterSpacing="80"
+                                   Foreground="{StaticResource EmberPrimaryBrush}" />
+                    </Border>
+
+                    <!-- BIG countdown display -->
+                    <Border Background="{StaticResource CoalShellBrush}"
+                            BorderBrush="{StaticResource CoalCardBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource Radius2Corner}"
+                            Padding="20,18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="{x:Bind ViewModel.CountdownText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="64" CharacterSpacing="30"
+                                       Foreground="{StaticResource CoalPaperBrush}"
+                                       HorizontalAlignment="Center"
+                                       AutomationProperties.Name="Time remaining"
+                                       loc:Localize.AutomationKey="panel.timer.countdown.a11y" />
+                            <!-- Progress bar (remaining vs. Max cap) — Subathon-only. The
+                                 metric is remaining/max-cap, which is 0 (dead) for a Countdown
+                                 without a cap and always 0 for a Stopwatch (no RemainingMs). -->
+                            <Border Height="4" CornerRadius="2"
+                                    Background="{StaticResource CoalRaisedBrush}"
+                                    Visibility="{x:Bind ViewModel.SubathonSettingsVisibility, Mode=OneWay}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="{x:Bind ViewModel.CountdownProgressBarLength, Mode=OneWay}" />
+                                        <ColumnDefinition Width="{x:Bind ViewModel.CountdownProgressRestLength, Mode=OneWay}" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" CornerRadius="2"
+                                            Background="{StaticResource EmberPrimaryBrush}" />
+                                </Grid>
+                            </Border>
+                            <!-- The hand-rolled status pill (pulsing dot + StatePillText)
+                                 used to sit here. It is the same predicate the header
+                                 band's state phrase now renders, and a page that says
+                                 "running · counting down" twice on one screen is the
+                                 clutter this pass exists to remove. The pulse dot goes
+                                 with it: the 64px number ticking once a second is a
+                                 better "is it alive" tell than a 6px ellipse, and it
+                                 costs no storyboard. -->
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Control buttons row -->
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <!-- START keeps the page's ONE brass CTA. The header band
+                             deliberately does not enable its own: ToolShellStyles
+                             allows exactly one per visible surface, and on a watch
+                             page the hero verb is START, not "new timer". -->
+                        <Button x:Name="StartButton"
+                                Style="{StaticResource ToolBrassCtaStyle}"
+                                IsEnabled="{x:Bind ViewModel.CanStart, Mode=OneWay}"
+                                Click="OnStartClick"
+                                AutomationProperties.Name="Start timer"
+                                loc:Localize.AutomationKey="panel.timer.controls.start.a11y">
+                            <TextBlock Text="START"
+                                       Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                       loc:Localize.Key="panel.timer.controls.start.label" />
+                        </Button>
+                        <Button x:Name="PauseResumeButton"
+                                Style="{StaticResource ToolSecondaryButtonStyle}"
+                                IsEnabled="{x:Bind ViewModel.CanPauseResume, Mode=OneWay}"
+                                Click="OnPauseResumeClick">
+                            <TextBlock Text="{x:Bind ViewModel.PauseResumeLabel, Mode=OneWay}"
+                                       Style="{StaticResource ToolStripLabelTextStyle}" />
+                        </Button>
+                        <Button x:Name="ResetButton"
+                                Style="{StaticResource ToolSecondaryButtonStyle}"
+                                IsEnabled="{x:Bind ViewModel.CanReset, Mode=OneWay}"
+                                Click="OnResetClick">
+                            <TextBlock Text="RESET"
+                                       Style="{StaticResource ToolStripLabelTextStyle}"
+                                       loc:Localize.Key="panel.timer.controls.reset.label" />
+                        </Button>
+                        <Button x:Name="StopButton"
+                                Style="{StaticResource ToolSecondaryButtonStyle}"
+                                IsEnabled="{x:Bind ViewModel.CanStop, Mode=OneWay}"
+                                Click="OnStopClick">
+                            <TextBlock Text="STOP"
+                                       Style="{StaticResource ToolStripLabelTextStyle}"
+                                       loc:Localize.Key="panel.timer.controls.stop.label" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Manual add / subtract / set time. House section card, with the
+                         one setter that genuinely differs (12,10 — this is a single
+                         control row, not a stacked card) kept as a local override. -->
+                    <Border Style="{StaticResource ToolSectionCardStyle}"
+                            Padding="12,10">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock Text="ADJUST"
+                                       Style="{StaticResource ToolEyebrowTextStyle}"
+                                       VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.timer.adjust.eyebrow" />
+                            <TextBox x:Name="AddDurationBox"
+                                     Width="96"
+                                     PlaceholderText="5m"
+                                     loc:Localize.PlaceholderKey="panel.timer.adjust.amount.placeholder"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                     BorderBrush="{StaticResource CoalDividerBrush}"
+                                     BorderThickness="1"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="11"
+                                     TextAlignment="Right"
+                                     VerticalAlignment="Center"
+                                     IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                     KeyDown="OnAddDurationKeyDown"
+                                     ToolTipService.ToolTip="Duration — bare number = seconds; else 90s / 5m / 1h30m / 2h / 1d, or a clock value like 01:30:00. Enter runs + ADD; click = SET to overwrite the clock instead."
+                                     AutomationProperties.Name="Adjust amount (duration) — Enter adds"
+                                     loc:Localize.TooltipKey="panel.timer.adjust.amount.tip"
+                                     loc:Localize.AutomationKey="panel.timer.adjust.amount.a11y"
+                                     Text="{x:Bind ViewModel.AddDurationDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <!-- + ADD is this box's Enter action, so it carries the ↵
+                                 glyph. Enter used to run ADD with nothing naming it,
+                                 next to a "= SET" button — the keyboard default stays
+                                 the non-destructive one and is now attributed. -->
+                            <Button x:Name="AddTimeButton" Height="28" Padding="12,0"
+                                    Background="{StaticResource CoalCardBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource Radius1Corner}"
+                                    IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                    Click="OnAddTimeClick"
+                                    ToolTipService.ToolTip="Add the amount to the clock — also what Enter does in the box."
+                                    AutomationProperties.Name="Add time (Enter)"
+                                    loc:Localize.TooltipKey="panel.timer.adjust.add.tip"
+                                    loc:Localize.AutomationKey="panel.timer.adjust.add.a11y">
+                                <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                                    <TextBlock Text="+ ADD" FontFamily="{StaticResource SansFont}"
+                                               FontSize="11" FontWeight="Bold" CharacterSpacing="80"
+                                               Foreground="{StaticResource Ember200Brush}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.timer.adjust.add.label" />
+                                    <TextBlock Text="&#x21B5;" FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="SubtractTimeButton" Height="28" Padding="12,0"
+                                    Background="{StaticResource CoalCardBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource Radius1Corner}"
+                                    IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                    Click="OnSubtractTimeClick">
+                                <TextBlock Text="– SUB" FontFamily="{StaticResource SansFont}"
+                                           FontSize="11" FontWeight="Bold" CharacterSpacing="80"
+                                           Foreground="{StaticResource CoalBodyTextBrush}"
+                                           loc:Localize.Key="panel.timer.adjust.sub.label" />
+                            </Button>
+                            <Button x:Name="SetTimeButton" Height="28" Padding="12,0"
+                                    Background="{StaticResource CoalCardBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource Radius1Corner}"
+                                    IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                    Click="OnSetTimeClick"
+                                    ToolTipService.ToolTip="Overwrite the clock with this amount. Click only — Enter adds. A set fires no goal or time-added line; setting a running countdown to zero fires ON ZERO."
+                                    AutomationProperties.Name="Set time (click only)"
+                                    loc:Localize.TooltipKey="panel.timer.adjust.set.tip"
+                                    loc:Localize.AutomationKey="panel.timer.adjust.set.a11y">
+                                <TextBlock Text="= SET" FontFamily="{StaticResource SansFont}"
+                                           FontSize="11" FontWeight="Bold" CharacterSpacing="80"
+                                           Foreground="{StaticResource CoalBodyTextBrush}"
+                                           loc:Localize.Key="panel.timer.adjust.set.label" />
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Stat tiles. Timer is a WATCH surface, so unlike the config
+                         pages it keeps its strip — these four are the subathon's live
+                         readout, not a dashboard of zeroes. What changed is the
+                         control: the page-local TmStatTile was a byte-for-byte copy
+                         of Panels/Common/ToolStatTile's recipe under a per-page name,
+                         so it is deleted and the page consumes the shared one
+                         (Eyebrow → Caption is the only API rename). -->
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <common:ToolStatTile Grid.Column="0" Caption="TOTAL ADDED"
+                                             Accent="True"
+                                             Value="{x:Bind ViewModel.TotalAddedValue, Mode=OneWay}"
+                                             loc:Localize.Key="panel.timer.stat.total_added.caption"
+                                             loc:Localize.Property="Caption" />
+                        <common:ToolStatTile Grid.Column="1" Caption="START"
+                                             Value="{x:Bind ViewModel.StartDurationValue, Mode=OneWay}"
+                                             loc:Localize.Key="panel.timer.stat.start.caption"
+                                             loc:Localize.Property="Caption" />
+                        <common:ToolStatTile Grid.Column="2" Caption="MAX CAP"
+                                             Value="{x:Bind ViewModel.MaxCapValue, Mode=OneWay}"
+                                             loc:Localize.Key="panel.timer.stat.max_cap.caption"
+                                             loc:Localize.Property="Caption" />
+                        <common:ToolStatTile Grid.Column="3" Caption="MILESTONES"
+                                             Value="{x:Bind ViewModel.MilestonesValue, Mode=OneWay}"
+                                             loc:Localize.Key="panel.timer.stat.milestones.caption"
+                                             loc:Localize.Property="Caption" />
+                    </Grid>
+
+                    <!-- Settings card — collapsible; the header row IS the toggle. -->
+                    <Border Style="{StaticResource ToolSectionCardStyle}">
+                        <StackPanel Spacing="0">
+                            <Button x:Name="SettingsHeaderButton"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="0,2"
+                                    Click="OnToggleSettingsClick"
+                                    ToolTipService.ToolTip="Collapse / expand the settings panel"
+                                    loc:Localize.TooltipKey="panel.timer.settings.toggle.tip"
+                                    AutomationProperties.Name="{x:Bind ViewModel.SettingsToggleAutomationName, Mode=OneWay}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="SETTINGS"
+                                               Style="{StaticResource ToolEyebrowTextStyle}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.timer.settings.eyebrow" />
+                                    <FontIcon Grid.Column="1"
+                                              FontFamily="Segoe MDL2 Assets"
+                                              Glyph="{x:Bind ViewModel.SettingsChevronGlyph, Mode=OneWay}"
+                                              FontSize="10"
+                                              Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                              VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+                            <StackPanel x:Name="SettingsBody"
+                                        Spacing="0"
+                                        Visibility="{x:Bind ViewModel.SettingsBodyVisibility, Mode=OneWay}"
+                                        Margin="0,6,0,0">
+
+                                <!-- Per-event time + Happy Hour are Subathon-only (the
+                                     mode that accrues time from stream events); collapsed
+                                     for Countdown / Stopwatch. -->
+                                <StackPanel Spacing="0"
+                                            Visibility="{x:Bind ViewModel.SubathonSettingsVisibility, Mode=OneWay}">
+                                <!-- Per-event time subsection -->
+                                <TextBlock Text="PER-EVENT TIME (seconds)"
+                                           Style="{StaticResource ToolSubLabelTextStyle}"
+                                           Margin="0,2,0,4"
+                                           loc:Localize.Key="panel.timer.settings.per_event.eyebrow" />
+
+                                <!-- Per-event rows. Each TextBox carries its TimerDraftField
+                                     in Tag; the shared OnDraftField* handlers commit on
+                                     Enter / focus loss and revert on Escape (numeric range
+                                     clamp only — no grammar control). -->
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Sub · Tier 1"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.sub_t1.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.SubT1Field}"
+                                                 IsEnabled="{x:Bind ViewModel.SubT1Field.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Sub Tier 1 seconds"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.sub_t1.a11y"
+                                                 Text="{x:Bind ViewModel.SubT1Field.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds added per Tier-1 sub"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.sub_t1.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Sub · Tier 2"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.sub_t2.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.SubT2Field}"
+                                                 IsEnabled="{x:Bind ViewModel.SubT2Field.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Sub Tier 2 seconds"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.sub_t2.a11y"
+                                                 Text="{x:Bind ViewModel.SubT2Field.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds added per Tier-2 sub"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.sub_t2.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Sub · Tier 3"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.sub_t3.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.SubT3Field}"
+                                                 IsEnabled="{x:Bind ViewModel.SubT3Field.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Sub Tier 3 seconds"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.sub_t3.a11y"
+                                                 Text="{x:Bind ViewModel.SubT3Field.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds added per Tier-3 sub"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.sub_t3.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Sub · Prime"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.sub_prime.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.SubPrimeField}"
+                                                 IsEnabled="{x:Bind ViewModel.SubPrimeField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Sub Prime seconds"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.sub_prime.a11y"
+                                                 Text="{x:Bind ViewModel.SubPrimeField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds added per Prime sub"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.sub_prime.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Bits · per 100"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.bits_per_100.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.BitsPer100Field}"
+                                                 IsEnabled="{x:Bind ViewModel.BitsPer100Field.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Seconds per 100 bits"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.bits_per_100.a11y"
+                                                 Text="{x:Bind ViewModel.BitsPer100Field.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds added per 100 bits"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.bits_per_100.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Tip · per $1"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.tip_per_unit.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.TipPerUnitField}"
+                                                 IsEnabled="{x:Bind ViewModel.TipPerUnitField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Seconds per one dollar tip"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.tip_per_unit.a11y"
+                                                 Text="{x:Bind ViewModel.TipPerUnitField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds per $1 · donation seam — no processor wired yet"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.tip_per_unit.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Follow"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.follow.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.FollowField}"
+                                                 IsEnabled="{x:Bind ViewModel.FollowField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Seconds per follow (0 = off)"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.follow.a11y"
+                                                 Text="{x:Bind ViewModel.FollowField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds per follow · 0 = off (bot-abuse)"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.follow.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Raid · per viewer"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.raid_per_viewer.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.RaidPerViewerField}"
+                                                 IsEnabled="{x:Bind ViewModel.RaidPerViewerField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 AutomationProperties.Name="Seconds per raid viewer (0 = off)"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.raid_per_viewer.a11y"
+                                                 Text="{x:Bind ViewModel.RaidPerViewerField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds per raid viewer · 0 = off"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.raid_per_viewer.hint" />
+                                    </Grid>
+                                </Border>
+                                </StackPanel>
+
+                                <!-- Countdown limits subsection — Start duration + Max cap apply
+                                     to any count-DOWN mode (Subathon + Countdown); the whole block
+                                     collapses for a Stopwatch, which counts up from zero with no
+                                     ceiling. Per-add cap (below) stays Subathon-only. -->
+                                <StackPanel Spacing="0"
+                                            Visibility="{x:Bind ViewModel.DurationLimitsVisibility, Mode=OneWay}">
+                                <TextBlock Text="COUNTDOWN LIMITS"
+                                           Style="{StaticResource ToolSubLabelTextStyle}"
+                                           Margin="0,10,0,4"
+                                           loc:Localize.Key="panel.timer.settings.limits.eyebrow" />
+
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Start duration"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.start_duration.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.StartDurationField}"
+                                                 IsEnabled="{x:Bind ViewModel.StartDurationField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 ToolTipService.ToolTip="Duration — bare number = seconds; else 90s / 5m / 1h30m / 2h / 1d, or a clock value like 01:30:00."
+                                                 AutomationProperties.Name="Start duration"
+                                                 loc:Localize.TooltipKey="panel.timer.settings.start_duration.tip"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.start_duration.label"
+                                                 Text="{x:Bind ViewModel.StartDurationField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="countdown starts here · e.g. 4h"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.start_duration.hint" />
+                                    </Grid>
+                                </Border>
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Max cap"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.max_cap.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.MaxCapField}"
+                                                 IsEnabled="{x:Bind ViewModel.MaxCapField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 ToolTipService.ToolTip="Duration — 0 = unlimited. Accepts 30m / 4h / 72h / 1d."
+                                                 AutomationProperties.Name="Max cap (0 = unlimited)"
+                                                 loc:Localize.TooltipKey="panel.timer.settings.max_cap.tip"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.max_cap.a11y"
+                                                 Text="{x:Bind ViewModel.MaxCapField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="ceiling on remaining · 0 = unlimited"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.max_cap.hint" />
+                                    </Grid>
+                                </Border>
+                                </StackPanel>
+
+                                <!-- Per-add cap — Subathon-only (only that mode accrues from
+                                     non-manual stream events; Countdown/Stopwatch never do, so
+                                     the single-event cap is dead there). -->
+                                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5"
+                                        Visibility="{x:Bind ViewModel.SubathonSettingsVisibility, Mode=OneWay}">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Per-add cap"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.settings.per_add_cap.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.PerAddCapField}"
+                                                 IsEnabled="{x:Bind ViewModel.PerAddCapField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 ToolTipService.ToolTip="Duration — 0 = no cap. Caps how much a single non-manual event can add."
+                                                 AutomationProperties.Name="Per-add cap (0 = no cap)"
+                                                 loc:Localize.TooltipKey="panel.timer.settings.per_add_cap.tip"
+                                                 loc:Localize.AutomationKey="panel.timer.settings.per_add_cap.a11y"
+                                                 Text="{x:Bind ViewModel.PerAddCapField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="max a single event adds · 0 = no cap"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.settings.per_add_cap.hint" />
+                                    </Grid>
+                                </Border>
+
+                                <!-- Pause-when-offline toggle -->
+                                <Border BorderBrush="{StaticResource CoalCardBrush}"
+                                        BorderThickness="0,0,0,1"
+                                        Padding="0,7">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   Text="Pause when offline"
+                                                   loc:Localize.Key="panel.timer.settings.pause_offline.label" />
+                                        <Button Grid.Column="1"
+                                                x:Name="PauseOfflineToggleButton"
+                                                Padding="6,4"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                Click="OnTogglePauseOfflineClick"
+                                                AutomationProperties.Name="Toggle pause when the stream is offline"
+                                                loc:Localize.AutomationKey="panel.timer.settings.pause_offline.a11y">
+                                            <Border x:Name="PauseOfflinePill"
+                                                    Width="26" Height="14" CornerRadius="8"
+                                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                                    BorderThickness="1">
+                                                <Ellipse x:Name="PauseOfflineKnob"
+                                                         Width="10" Height="10"
+                                                         HorizontalAlignment="Left"
+                                                         VerticalAlignment="Center"
+                                                         Margin="1,0,0,0" />
+                                            </Border>
+                                        </Button>
+                                        <TextBlock Grid.Column="2"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   Text="freeze the countdown while the stream is offline"
+                                                   loc:Localize.Key="panel.timer.settings.pause_offline.hint" />
+                                    </Grid>
+                                </Border>
+
+                                <!-- Happy Hour subsection — Subathon-only. -->
+                                <StackPanel Spacing="0"
+                                            Visibility="{x:Bind ViewModel.SubathonSettingsVisibility, Mode=OneWay}">
+                                <TextBlock Text="HAPPY HOUR"
+                                           Style="{StaticResource ToolSubLabelTextStyle}"
+                                           Margin="0,10,0,4"
+                                           loc:Localize.Key="panel.timer.happy_hour.eyebrow" />
+                                <Grid ColumnSpacing="8" Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0"
+                                             x:Name="HappyHourMultiplierBox"
+                                             Width="60"
+                                             PlaceholderText="2"
+                                             Background="{StaticResource CoalShellBrush}"
+                                             Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                             BorderBrush="{StaticResource CoalDividerBrush}"
+                                             BorderThickness="1"
+                                             FontFamily="{StaticResource MonoFont}"
+                                             FontSize="11"
+                                             TextAlignment="Right"
+                                             VerticalAlignment="Center"
+                                             IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                             ToolTipService.ToolTip="Multiplier on time added while Happy Hour runs (1 = none)."
+                                             AutomationProperties.Name="Happy Hour multiplier"
+                                             loc:Localize.TooltipKey="panel.timer.happy_hour.multiplier.tip"
+                                             loc:Localize.AutomationKey="panel.timer.happy_hour.multiplier.a11y"
+                                             Text="{x:Bind ViewModel.HappyHourMultiplierDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Grid.Column="1" Text="× for"
+                                               FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.timer.happy_hour.for.label" />
+                                    <TextBox Grid.Column="2"
+                                             x:Name="HappyHourDurationBox"
+                                             Width="72"
+                                             PlaceholderText="30m"
+                                             loc:Localize.PlaceholderKey="panel.timer.happy_hour.duration.placeholder"
+                                             Background="{StaticResource CoalShellBrush}"
+                                             Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                             BorderBrush="{StaticResource CoalDividerBrush}"
+                                             BorderThickness="1"
+                                             FontFamily="{StaticResource MonoFont}"
+                                             FontSize="11"
+                                             TextAlignment="Right"
+                                             VerticalAlignment="Center"
+                                             IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                             ToolTipService.ToolTip="Duration — bare number = seconds; else 90s / 5m / 1h30m / 2h / 1d, or a clock value like 01:30:00."
+                                             AutomationProperties.Name="Happy Hour duration"
+                                             loc:Localize.TooltipKey="panel.timer.happy_hour.duration.tip"
+                                             loc:Localize.AutomationKey="panel.timer.happy_hour.duration.a11y"
+                                             Text="{x:Bind ViewModel.HappyHourDurationDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <ComboBox Grid.Column="3"
+                                              x:Name="HappyHourScopeBox"
+                                              Width="96"
+                                              VerticalAlignment="Center"
+                                              IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                              ItemsSource="{x:Bind ViewModel.HappyHourScopes}"
+                                              SelectedItem="{x:Bind ViewModel.HappyHourScope, Mode=TwoWay}"
+                                              AutomationProperties.Name="Happy Hour scope"
+                                              loc:Localize.AutomationKey="panel.timer.happy_hour.scope.a11y" />
+                                    <Button Grid.Column="4"
+                                            x:Name="ApplyHappyHourButton"
+                                            Height="28" Padding="12,0"
+                                            HorizontalAlignment="Left"
+                                            Background="{StaticResource CoalCardBrush}"
+                                            BorderBrush="{StaticResource CoalDividerBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{StaticResource Radius1Corner}"
+                                            IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                            Click="OnApplyHappyHourClick">
+                                        <TextBlock Text="APPLY" FontFamily="{StaticResource SansFont}"
+                                                   FontSize="11" FontWeight="Bold" CharacterSpacing="80"
+                                                   Foreground="{StaticResource Ember200Brush}"
+                                                   loc:Localize.Key="panel.timer.happy_hour.apply.label" />
+                                    </Button>
+                                </Grid>
+                                <!-- The house hint tier also brings TextWrapping="Wrap",
+                                     which the inline copy lacked — a Happy Hour status
+                                     sentence used to clip rather than wrap. -->
+                                <TextBlock Text="{x:Bind ViewModel.HappyHourStatusText, Mode=OneWay}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ═══════════════ FEEDBACK card ═══════════════
+                         Chat line + overlay visual per timer event. Three cards, one per
+                         event that HAS an Architect event node (Timer.OnZero /
+                         OnMilestone / OnAdd) — subtract, start/stop/pause, happy hour and
+                         cap-reached deliberately get none, because they raise no script
+                         event and a tool-only response for them would be something no
+                         graph could reach. Every gate ships OFF. -->
+                    <Border Style="{StaticResource ToolSectionCardStyle}">
+                        <StackPanel Spacing="0">
+                            <TextBlock Text="FEEDBACK"
+                                       Style="{StaticResource ToolEyebrowTextStyle}"
+                                       loc:Localize.Key="panel.timer.feedback.eyebrow" />
+                            <TextBlock Margin="0,4,0,0"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Text="Post a chat line and/or fire an overlay trigger when this timer hits zero, reaches a goal, or gains time. Leave the message empty for a visual only; leave the layer empty for chat only."
+                                       loc:Localize.Key="panel.timer.feedback.hint" />
+                            <!-- Two runtime facts a streamer would otherwise read as a
+                                 broken feature. Both are real service behaviour:
+                                 SetTimeMsAsync re-seeds the milestone Reached flags
+                                 without collecting a crossing and never routes through
+                                 FireAddAsync — but it then runs EndIfZeroLocked, so a set
+                                 that lands a RUNNING countdown on zero fires Timer.OnZero
+                                 exactly like a tick crossing. And an add the max cap
+                                 refuses lands actual == 0, which skips the whole
+                                 post-lock block including FireAddAsync. -->
+                            <TextBlock Margin="0,4,0,0"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Text="A manual &quot;= SET&quot; re-seeds goals without firing them, but a set to zero on a running countdown fires ON ZERO. An add the max cap refuses adds no time and fires nothing at all."
+                                       loc:Localize.Key="panel.timer.feedback.set_hint" />
+                            <!-- The live gate is the Scheduling tool's posture (OnlyWhenLive
+                                 defaults on). TimerService starts _streamLive TRUE and only
+                                 flips it on an observed StreamOffline, so testing off-air
+                                 still posts — what this stops is a subathon announcing
+                                 itself to an empty channel hours after the stream ended. -->
+                            <TextBlock Margin="0,4,0,0"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Text="Chat lines are held once the stream is seen offline; overlay triggers still fire."
+                                       loc:Localize.Key="panel.timer.feedback.live_gate_hint" />
+
+                            <!-- ── ON ZERO ─────────────────────────────────── -->
+                            <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,1,0,0"
+                                    Margin="0,10,0,0" Padding="0,8,0,0">
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <Button x:Name="ZeroFeedbackToggleButton"
+                                                Padding="6,4"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                Click="OnToggleZeroFeedbackClick"
+                                                AutomationProperties.Name="Enable the on-zero response"
+                                                loc:Localize.AutomationKey="panel.timer.feedback.zero.toggle.a11y">
+                                            <Border x:Name="ZeroFeedbackPill"
+                                                    Width="26" Height="14" CornerRadius="8"
+                                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                                    BorderThickness="1">
+                                                <Ellipse x:Name="ZeroFeedbackKnob"
+                                                         Width="10" Height="10"
+                                                         HorizontalAlignment="Left"
+                                                         VerticalAlignment="Center"
+                                                         Margin="1,0,0,0" />
+                                            </Border>
+                                        </Button>
+                                        <TextBlock Text="{x:Bind ViewModel.ZeroFeedback.Eyebrow}"
+                                                   Style="{StaticResource ToolSubLabelTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="fires once when the countdown reaches 00:00:00"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.feedback.zero.hint" />
+                                    </StackPanel>
+                                    <TextBox PlaceholderText="{x:Bind ViewModel.ZeroFeedback.MessagePlaceholder}"
+                                             Background="{StaticResource CoalShellBrush}"
+                                             Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                             BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                             FontFamily="{StaticResource SansFont}" FontSize="12"
+                                             Tag="{x:Bind ViewModel.ZeroFeedback}"
+                                             IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                             GotFocus="OnFeedbackFieldGotFocus"
+                                             LostFocus="OnFeedbackFieldLostFocus"
+                                             KeyDown="OnFeedbackFieldKeyDown"
+                                             AutomationProperties.Name="On-zero chat message"
+                                             loc:Localize.AutomationKey="panel.timer.feedback.zero.message.a11y"
+                                             Text="{x:Bind ViewModel.ZeroFeedback.Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="{x:Bind ViewModel.ZeroFeedback.TokenHint}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ComboBox Width="150" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  PlaceholderText="layer (none)"
+                                                  Tag="{x:Bind ViewModel.ZeroFeedback}"
+                                                  IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                  ItemsSource="{x:Bind ViewModel.ZeroFeedback.LayerOptions}"
+                                                  DropDownOpened="OnFeedbackLayerComboOpened"
+                                                  LostFocus="OnFeedbackFieldLostFocus"
+                                                  loc:Localize.PlaceholderKey="panel.timer.feedback.zero.layer.placeholder"
+                                                  AutomationProperties.Name="On-zero overlay layer id"
+                                                  loc:Localize.AutomationKey="panel.timer.feedback.zero.layer.a11y"
+                                                  Text="{x:Bind ViewModel.ZeroFeedback.LayerId, Mode=TwoWay}" />
+                                        <ComboBox Width="150" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  PlaceholderText="trigger (none)"
+                                                  Tag="{x:Bind ViewModel.ZeroFeedback}"
+                                                  IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                  ItemsSource="{x:Bind ViewModel.ZeroFeedback.TriggerOptions}"
+                                                  DropDownOpened="OnFeedbackTriggerComboOpened"
+                                                  LostFocus="OnFeedbackFieldLostFocus"
+                                                  loc:Localize.PlaceholderKey="panel.timer.feedback.zero.trigger.placeholder"
+                                                  AutomationProperties.Name="On-zero overlay trigger name"
+                                                  loc:Localize.AutomationKey="panel.timer.feedback.zero.trigger.a11y"
+                                                  Text="{x:Bind ViewModel.ZeroFeedback.TriggerName, Mode=TwoWay}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ── ON MILESTONE ────────────────────────────── -->
+                            <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,1,0,0"
+                                    Margin="0,10,0,0" Padding="0,8,0,0">
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <Button x:Name="MilestoneFeedbackToggleButton"
+                                                Padding="6,4"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                Click="OnToggleMilestoneFeedbackClick"
+                                                AutomationProperties.Name="Enable the milestone response"
+                                                loc:Localize.AutomationKey="panel.timer.feedback.milestone.toggle.a11y">
+                                            <Border x:Name="MilestoneFeedbackPill"
+                                                    Width="26" Height="14" CornerRadius="8"
+                                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                                    BorderThickness="1">
+                                                <Ellipse x:Name="MilestoneFeedbackKnob"
+                                                         Width="10" Height="10"
+                                                         HorizontalAlignment="Left"
+                                                         VerticalAlignment="Center"
+                                                         Margin="1,0,0,0" />
+                                            </Border>
+                                        </Button>
+                                        <TextBlock Text="{x:Bind ViewModel.MilestoneFeedback.Eyebrow}"
+                                                   Style="{StaticResource ToolSubLabelTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="the default for every goal · a goal can override it"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.feedback.milestone.hint" />
+                                    </StackPanel>
+                                    <TextBox PlaceholderText="{x:Bind ViewModel.MilestoneFeedback.MessagePlaceholder}"
+                                             Background="{StaticResource CoalShellBrush}"
+                                             Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                             BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                             FontFamily="{StaticResource SansFont}" FontSize="12"
+                                             Tag="{x:Bind ViewModel.MilestoneFeedback}"
+                                             IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                             GotFocus="OnFeedbackFieldGotFocus"
+                                             LostFocus="OnFeedbackFieldLostFocus"
+                                             KeyDown="OnFeedbackFieldKeyDown"
+                                             AutomationProperties.Name="Default milestone chat message"
+                                             loc:Localize.AutomationKey="panel.timer.feedback.milestone.message.a11y"
+                                             Text="{x:Bind ViewModel.MilestoneFeedback.Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="{x:Bind ViewModel.MilestoneFeedback.TokenHint}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ComboBox Width="150" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  PlaceholderText="layer (none)"
+                                                  Tag="{x:Bind ViewModel.MilestoneFeedback}"
+                                                  IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                  ItemsSource="{x:Bind ViewModel.MilestoneFeedback.LayerOptions}"
+                                                  DropDownOpened="OnFeedbackLayerComboOpened"
+                                                  LostFocus="OnFeedbackFieldLostFocus"
+                                                  loc:Localize.PlaceholderKey="panel.timer.feedback.milestone.layer.placeholder"
+                                                  AutomationProperties.Name="Default milestone overlay layer id"
+                                                  loc:Localize.AutomationKey="panel.timer.feedback.milestone.layer.a11y"
+                                                  Text="{x:Bind ViewModel.MilestoneFeedback.LayerId, Mode=TwoWay}" />
+                                        <ComboBox Width="150" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  PlaceholderText="trigger (none)"
+                                                  Tag="{x:Bind ViewModel.MilestoneFeedback}"
+                                                  IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                  ItemsSource="{x:Bind ViewModel.MilestoneFeedback.TriggerOptions}"
+                                                  DropDownOpened="OnFeedbackTriggerComboOpened"
+                                                  LostFocus="OnFeedbackFieldLostFocus"
+                                                  loc:Localize.PlaceholderKey="panel.timer.feedback.milestone.trigger.placeholder"
+                                                  AutomationProperties.Name="Default milestone overlay trigger name"
+                                                  loc:Localize.AutomationKey="panel.timer.feedback.milestone.trigger.a11y"
+                                                  Text="{x:Bind ViewModel.MilestoneFeedback.TriggerName, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <TextBlock Text="Several goals crossed at once post as ONE line."
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               loc:Localize.Key="panel.timer.feedback.milestone.coalesce_hint" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ── ON TIME ADDED ───────────────────────────── -->
+                            <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,1,0,0"
+                                    Margin="0,10,0,0" Padding="0,8,0,0">
+                                <StackPanel Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <Button x:Name="AddFeedbackToggleButton"
+                                                Padding="6,4"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                Click="OnToggleAddFeedbackClick"
+                                                AutomationProperties.Name="Enable the time-added response"
+                                                loc:Localize.AutomationKey="panel.timer.feedback.add.toggle.a11y">
+                                            <Border x:Name="AddFeedbackPill"
+                                                    Width="26" Height="14" CornerRadius="8"
+                                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                                    BorderThickness="1">
+                                                <Ellipse x:Name="AddFeedbackKnob"
+                                                         Width="10" Height="10"
+                                                         HorizontalAlignment="Left"
+                                                         VerticalAlignment="Center"
+                                                         Margin="1,0,0,0" />
+                                            </Border>
+                                        </Button>
+                                        <TextBlock Text="{x:Bind ViewModel.AddFeedback.Eyebrow}"
+                                                   Style="{StaticResource ToolSubLabelTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="a burst posts as ONE summary line"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.feedback.add.hint" />
+                                    </StackPanel>
+                                    <TextBox PlaceholderText="{x:Bind ViewModel.AddFeedback.MessagePlaceholder}"
+                                             Background="{StaticResource CoalShellBrush}"
+                                             Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                             BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                             FontFamily="{StaticResource SansFont}" FontSize="12"
+                                             Tag="{x:Bind ViewModel.AddFeedback}"
+                                             IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                             GotFocus="OnFeedbackFieldGotFocus"
+                                             LostFocus="OnFeedbackFieldLostFocus"
+                                             KeyDown="OnFeedbackFieldKeyDown"
+                                             AutomationProperties.Name="Time-added chat message"
+                                             loc:Localize.AutomationKey="panel.timer.feedback.add.message.a11y"
+                                             Text="{x:Bind ViewModel.AddFeedback.Message, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="{x:Bind ViewModel.AddFeedback.TokenHint}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ComboBox Width="150" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  PlaceholderText="layer (none)"
+                                                  Tag="{x:Bind ViewModel.AddFeedback}"
+                                                  IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                  ItemsSource="{x:Bind ViewModel.AddFeedback.LayerOptions}"
+                                                  DropDownOpened="OnFeedbackLayerComboOpened"
+                                                  LostFocus="OnFeedbackFieldLostFocus"
+                                                  loc:Localize.PlaceholderKey="panel.timer.feedback.add.layer.placeholder"
+                                                  AutomationProperties.Name="Time-added overlay layer id"
+                                                  loc:Localize.AutomationKey="panel.timer.feedback.add.layer.a11y"
+                                                  Text="{x:Bind ViewModel.AddFeedback.LayerId, Mode=TwoWay}" />
+                                        <ComboBox Width="150" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  PlaceholderText="trigger (none)"
+                                                  Tag="{x:Bind ViewModel.AddFeedback}"
+                                                  IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                                  ItemsSource="{x:Bind ViewModel.AddFeedback.TriggerOptions}"
+                                                  DropDownOpened="OnFeedbackTriggerComboOpened"
+                                                  LostFocus="OnFeedbackFieldLostFocus"
+                                                  loc:Localize.PlaceholderKey="panel.timer.feedback.add.trigger.placeholder"
+                                                  AutomationProperties.Name="Time-added overlay trigger name"
+                                                  loc:Localize.AutomationKey="panel.timer.feedback.add.trigger.a11y"
+                                                  Text="{x:Bind ViewModel.AddFeedback.TriggerName, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Announce from"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.timer.feedback.add.min_seconds.label" />
+                                        <TextBox Grid.Column="1" Width="80"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="{x:Bind ViewModel.AddMinSecondsField}"
+                                                 IsEnabled="{x:Bind ViewModel.AddMinSecondsField.IsEnabled, Mode=OneWay}"
+                                                 KeyDown="OnDraftFieldKeyDown" LostFocus="OnDraftFieldLostFocus"
+                                                 ToolTipService.ToolTip="Seconds. A coalesced burst under this total is not announced at all — 0 announces every add."
+                                                 AutomationProperties.Name="Minimum seconds before a time-added response fires"
+                                                 loc:Localize.TooltipKey="panel.timer.feedback.add.min_seconds.tip"
+                                                 loc:Localize.AutomationKey="panel.timer.feedback.add.min_seconds.a11y"
+                                                 Text="{x:Bind ViewModel.AddMinSecondsField.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Grid.Column="2" Text="seconds in one burst · 0 = announce every add"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.timer.feedback.add.min_seconds.hint" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Button x:Name="RefreshFeedbackLayersButton"
+                                    Height="26" Padding="10,0"
+                                    Margin="0,10,0,0"
+                                    HorizontalAlignment="Left"
+                                    Background="{StaticResource CoalCardBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource Radius1Corner}"
+                                    Click="OnRefreshFeedbackLayersClick"
+                                    ToolTipService.ToolTip="Reload the layer and trigger lists from the running overlay registry"
+                                    AutomationProperties.Name="Refresh layer and trigger lists"
+                                    loc:Localize.TooltipKey="panel.timer.feedback.reload.tip"
+                                    loc:Localize.AutomationKey="panel.timer.feedback.reload.a11y">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="11"
+                                              Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                    <TextBlock Text="RELOAD LAYERS" FontFamily="{StaticResource SansFont}"
+                                               FontSize="10" FontWeight="Bold" CharacterSpacing="80"
+                                               Foreground="{StaticResource CoalBodyTextBrush}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.timer.feedback.reload.label" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Empty state (no timer selected) -->
+            <StackPanel Grid.Column="0"
+                        Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Spacing="8">
+                <TextBlock Text="No timer selected"
+                           Style="{StaticResource ToolEmptyTitleTextStyle}"
+                           loc:Localize.Key="panel.timer.empty.title" />
+                <TextBlock Text="Create one or pick an existing timer from the strip above."
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="12"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           HorizontalAlignment="Center"
+                           loc:Localize.Key="panel.timer.empty.body" />
+            </StackPanel>
+
+            <!-- ───────────── RIGHT: Milestones + Activity ───────────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Milestones header -->
+                    <common:PanelHeader Grid.Row="0" Eyebrow="GOALS" Title="Milestones"
+                                        EyebrowKey="panel.timer.milestones.eyebrow"
+                                        TitleKey="panel.timer.milestones.title" />
+
+                    <!-- Milestones add row -->
+                    <Border Grid.Row="1"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="12,8">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0"
+                                     x:Name="MilestoneLabelBox"
+                                     PlaceholderText="milestone label…"
+                                     loc:Localize.PlaceholderKey="panel.timer.milestones.add.label.placeholder"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                     BorderBrush="{StaticResource CoalDividerBrush}"
+                                     BorderThickness="1"
+                                     FontFamily="{StaticResource SansFont}"
+                                     FontSize="12"
+                                     VerticalAlignment="Center"
+                                     IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                     Text="{x:Bind ViewModel.MilestoneLabelDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Grid.Column="1"
+                                     x:Name="MilestoneTargetBox"
+                                     Width="72"
+                                     PlaceholderText="1h"
+                                     loc:Localize.PlaceholderKey="panel.timer.milestones.add.target.placeholder"
+                                     Background="{StaticResource CoalShellBrush}"
+                                     Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                     BorderBrush="{StaticResource CoalDividerBrush}"
+                                     BorderThickness="1"
+                                     FontFamily="{StaticResource MonoFont}"
+                                     FontSize="11"
+                                     TextAlignment="Right"
+                                     VerticalAlignment="Center"
+                                     IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                     KeyDown="OnMilestoneTargetKeyDown"
+                                     ToolTipService.ToolTip="Target remaining time the countdown must reach · e.g. 6h."
+                                     AutomationProperties.Name="Milestone target time"
+                                     loc:Localize.TooltipKey="panel.timer.milestones.add.target.tip"
+                                     loc:Localize.AutomationKey="panel.timer.milestones.add.target.a11y"
+                                     Text="{x:Bind ViewModel.MilestoneTargetDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button Grid.Column="2"
+                                    x:Name="AddMilestoneButton"
+                                    Height="28" Padding="10,0"
+                                    Background="{StaticResource CoalCardBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource Radius1Corner}"
+                                    IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                    Click="OnAddMilestoneClick"
+                                    AutomationProperties.Name="Add milestone"
+                                    loc:Localize.AutomationKey="panel.timer.milestones.add.a11y">
+                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                          Foreground="{StaticResource Ember200Brush}" />
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <!-- Milestones list -->
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled" MaxHeight="220">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Milestones, Mode=OneWay}"
+                                       common:RowDataContext.Supply="True"
+                                       AutomationProperties.Name="Milestones"
+                                       loc:Localize.AutomationKey="panel.timer.milestones.list.a11y">
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="local:TimerMilestoneRowVm">
+                                  <Border Padding="14,7"
+                                          BorderBrush="{StaticResource CoalRaisedBrush}"
+                                          BorderThickness="0,0,0,1">
+                                   <StackPanel Spacing="6">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- The time "pill" — now EDITABLE. It was a read-only
+                                             TextBlock with no service call behind it, so clicking
+                                             it did nothing at all and a mistyped goal could only
+                                             be deleted and re-added. Commits on Enter or
+                                             focus-loss; drafts are TwoWay so the Id-keyed
+                                             reconciler can refresh the row in place instead of
+                                             replacing it under the caret. -->
+                                        <TextBox Grid.Column="0" Width="76"
+                                                 Text="{x:Bind TargetDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Tag="{x:Bind Id}"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}"
+                                                 BorderThickness="1"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 FontWeight="SemiBold"
+                                                 TextAlignment="Right"
+                                                 VerticalAlignment="Center"
+                                                 Foreground="{StaticResource Ember200Brush}"
+                                                 GotFocus="OnMilestoneTargetGotFocus"
+                                                 LostFocus="OnMilestoneRowLostFocus"
+                                                 KeyDown="OnMilestoneRowKeyDown"
+                                                 ToolTipService.ToolTip="Target time — 6h, 90m, 1h30m, or a clock value like 01:30:00. Commits on Enter or when you click away."
+                                                 AutomationProperties.Name="Milestone target time"
+                                                 loc:Localize.TooltipKey="panel.timer.milestones.row.target.tip"
+                                                 loc:Localize.AutomationKey="panel.timer.milestones.row.target.a11y" />
+                                        <TextBox Grid.Column="1"
+                                                 Text="{x:Bind LabelDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Tag="{x:Bind Id}"
+                                                 Background="Transparent"
+                                                 BorderThickness="0"
+                                                 FontFamily="{StaticResource SansFont}" FontSize="12"
+                                                 VerticalAlignment="Center"
+                                                 Foreground="{x:Bind LabelBrush, Mode=OneWay}"
+                                                 GotFocus="OnMilestoneLabelGotFocus"
+                                                 LostFocus="OnMilestoneRowLostFocus"
+                                                 KeyDown="OnMilestoneRowKeyDown"
+                                                 AutomationProperties.Name="Milestone label"
+                                                 loc:Localize.AutomationKey="panel.timer.milestones.row.label.a11y" />
+                                        <Border Grid.Column="2"
+                                                Visibility="{x:Bind ReachedBadgeVisibility, Mode=OneWay}"
+                                                Background="{StaticResource TmEmberTint08Brush}"
+                                                BorderBrush="{StaticResource TmEmberBorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="{StaticResource Radius1Corner}"
+                                                Padding="5,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="REACHED"
+                                                       FontFamily="{StaticResource MonoFont}"
+                                                       FontSize="9" FontWeight="Bold" CharacterSpacing="120"
+                                                       Foreground="{StaticResource EmberPrimaryBrush}"
+                                                       loc:Localize.Key="panel.timer.milestones.row.reached" />
+                                        </Border>
+                                        <!-- Per-goal feedback, folded away by default: the
+                                             row's job is the goal itself, and three
+                                             permanently-open fields would push the list
+                                             down to two visible rows. The dot marks a goal
+                                             that overrides the timer-wide defaults. -->
+                                        <Button Grid.Column="3"
+                                                Width="24" Height="24" Padding="0"
+                                                MinWidth="0" MinHeight="0"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                VerticalAlignment="Center"
+                                                Click="OnToggleMilestoneRowFeedbackClick"
+                                                ToolTipService.ToolTip="This goal's own chat line and overlay trigger (empty = use the timer's defaults)"
+                                                AutomationProperties.Name="Milestone feedback overrides"
+                                                loc:Localize.TooltipKey="panel.timer.milestones.row.feedback.tip"
+                                                loc:Localize.AutomationKey="panel.timer.milestones.row.feedback.a11y">
+                                            <Grid>
+                                                <FontIcon FontFamily="Segoe MDL2 Assets"
+                                                          Glyph="{x:Bind FeedbackChevronGlyph, Mode=OneWay}"
+                                                          FontSize="10"
+                                                          Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                                <Ellipse Width="4" Height="4"
+                                                         HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                         Fill="{StaticResource EmberPrimaryBrush}"
+                                                         Visibility="{x:Bind FeedbackDotVisibility, Mode=OneWay}" />
+                                            </Grid>
+                                        </Button>
+                                        <Button Grid.Column="4"
+                                                Width="24" Height="24" Padding="0"
+                                                MinWidth="0" MinHeight="0"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                VerticalAlignment="Center"
+                                                Click="OnRemoveMilestoneClick"
+                                                Tag="{x:Bind Id}"
+                                                AutomationProperties.Name="Remove milestone"
+                                                loc:Localize.AutomationKey="panel.timer.milestones.row.remove.a11y">
+                                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="10"
+                                                      Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                        </Button>
+                                    </Grid>
+
+                                    <StackPanel Spacing="5"
+                                                Visibility="{x:Bind FeedbackBodyVisibility, Mode=OneWay}">
+                                        <TextBox PlaceholderText="this goal's own line — empty uses the timer default"
+                                                 loc:Localize.PlaceholderKey="panel.timer.milestones.row.message.placeholder"
+                                                 Text="{x:Bind MessageDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Background="{StaticResource CoalShellBrush}"
+                                                 Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                                 BorderBrush="{StaticResource CoalDividerBrush}" BorderThickness="1"
+                                                 FontFamily="{StaticResource SansFont}" FontSize="11"
+                                                 GotFocus="OnMilestoneFeedbackGotFocus"
+                                                 LostFocus="OnMilestoneFeedbackLostFocus"
+                                                 KeyDown="OnMilestoneFeedbackKeyDown"
+                                                 AutomationProperties.Name="Milestone chat message"
+                                                 loc:Localize.AutomationKey="panel.timer.milestones.row.message.a11y" />
+                                        <Grid ColumnSpacing="6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox Grid.Column="0" IsEditable="True"
+                                                      HorizontalAlignment="Stretch"
+                                                      FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                      PlaceholderText="layer"
+                                                      loc:Localize.PlaceholderKey="panel.timer.milestones.row.layer.placeholder"
+                                                      ItemsSource="{x:Bind LayerOptions}"
+                                                      Text="{x:Bind LayerIdDraft, Mode=TwoWay}"
+                                                      DropDownOpened="OnMilestoneLayerComboOpened"
+                                                      GotFocus="OnMilestoneFeedbackGotFocus"
+                                                      LostFocus="OnMilestoneFeedbackLostFocus"
+                                                      AutomationProperties.Name="Milestone overlay layer id"
+                                                      loc:Localize.AutomationKey="panel.timer.milestones.row.layer.a11y" />
+                                            <ComboBox Grid.Column="1" IsEditable="True"
+                                                      HorizontalAlignment="Stretch"
+                                                      FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                      PlaceholderText="trigger"
+                                                      loc:Localize.PlaceholderKey="panel.timer.milestones.row.trigger.placeholder"
+                                                      ItemsSource="{x:Bind TriggerOptions}"
+                                                      Text="{x:Bind TriggerNameDraft, Mode=TwoWay}"
+                                                      DropDownOpened="OnMilestoneTriggerComboOpened"
+                                                      GotFocus="OnMilestoneFeedbackGotFocus"
+                                                      LostFocus="OnMilestoneFeedbackLostFocus"
+                                                      AutomationProperties.Name="Milestone overlay trigger name"
+                                                      loc:Localize.AutomationKey="panel.timer.milestones.row.trigger.a11y" />
+                                        </Grid>
+                                        <TextBlock Text="tokens: {timer} · {slug} · {label}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   loc:Localize.Key="panel.timer.milestones.row.tokens_hint" />
+                                    </StackPanel>
+                                   </StackPanel>
+                                  </Border>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </ScrollViewer>
+
+                    <!-- Activity header -->
+                    <Border Grid.Row="3"
+                            BorderBrush="{StaticResource CoalCardBrush}"
+                            BorderThickness="0,1,0,1"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            Padding="12,6">
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <TextBlock Text="ACTIVITY"
+                                       Style="{StaticResource ToolEyebrowTextStyle}"
+                                       loc:Localize.Key="panel.timer.activity.eyebrow" />
+                            <TextBlock Text="this timer"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.timer.activity.scope_hint" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Activity feed -->
+                    <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Activity, Mode=OneWay}"
+                                       common:RowDataContext.Supply="True"
+                                       AutomationProperties.Name="Timer activity feed"
+                                       loc:Localize.AutomationKey="panel.timer.activity.list.a11y">
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="local:TimerActivityRowVm">
+                                    <Grid Padding="12,3" ColumnSpacing="8"
+                                          BorderBrush="{StaticResource CoalRaisedBrush}"
+                                          BorderThickness="0,0,0,1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="86" />
+                                            <ColumnDefinition Width="38" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{x:Bind Time}"
+                                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Level}"
+                                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                   FontWeight="Bold"
+                                                   Foreground="{x:Bind LevelBrush}" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind Message}"
+                                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{x:Bind MessageBrush}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ════════════════════ CREATE TIMER OVERLAY ════════════════════ -->
+        <Grid Grid.Row="0" Grid.RowSpan="3"
+              x:Name="CreateOverlay"
+              Background="{StaticResource ToolScrimBrush}"
+              Visibility="Collapsed">
+            <Border Width="420"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource EmberShadowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource Radius2Corner}"
+                    Padding="28,24">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="NEW TIMER"
+                               Style="{StaticResource ToolEyebrowTextStyle}"
+                               loc:Localize.Key="panel.timer.create.eyebrow" />
+                    <TextBlock Text="Name the timer"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="22"
+                               Foreground="{StaticResource CoalPaperBrush}"
+                               loc:Localize.Key="panel.timer.create.title" />
+                    <TextBox x:Name="CreateNameBox"
+                             PlaceholderText="e.g. October Subathon"
+                             loc:Localize.PlaceholderKey="panel.timer.create.name.placeholder"
+                             Background="{StaticResource CoalShellBrush}"
+                             Foreground="{StaticResource CoalPrimaryTextBrush}"
+                             BorderBrush="{StaticResource CoalDividerBrush}"
+                             BorderThickness="1"
+                             FontFamily="{StaticResource SansFont}"
+                             FontSize="13"
+                             KeyDown="OnCreateNameKeyDown"
+                             Text="{x:Bind ViewModel.CreateNameDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <!-- Timer kind — index order must match ModeFromIndex in TimerViewModel. -->
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Kind"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="11" FontWeight="SemiBold" CharacterSpacing="80"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   loc:Localize.Key="panel.timer.create.kind.label" />
+                        <ComboBox x:Name="CreateModeBox"
+                                  HorizontalAlignment="Stretch"
+                                  FontFamily="{StaticResource SansFont}" FontSize="13"
+                                  AutomationProperties.Name="Timer kind"
+                                  loc:Localize.AutomationKey="panel.timer.create.kind.a11y"
+                                  SelectedIndex="{x:Bind ViewModel.CreateModeIndex, Mode=TwoWay}">
+                            <ComboBoxItem Content="Subathon — counts down; stream events add time"
+                                          loc:Localize.Key="panel.timer.create.kind.subathon" />
+                            <ComboBoxItem Content="Countdown — counts down from a set duration"
+                                          loc:Localize.Key="panel.timer.create.kind.countdown" />
+                            <ComboBoxItem Content="Stopwatch — counts up from zero"
+                                          loc:Localize.Key="panel.timer.create.kind.stopwatch" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button x:Name="CreateCancelButton"
+                                Style="{StaticResource ToolSecondaryButtonStyle}"
+                                Click="OnCreateCancelClick">
+                            <TextBlock Text="CANCEL"
+                                       Style="{StaticResource ToolStripLabelTextStyle}"
+                                       loc:Localize.Key="panel.timer.create.cancel.label" />
+                        </Button>
+                        <!-- The overlay's own brass CTA. It does not compete with START:
+                             the scrim makes this a separate visible surface. -->
+                        <Button x:Name="CreateConfirmButton"
+                                Style="{StaticResource ToolBrassCtaStyle}"
+                                Click="OnCreateConfirmClick">
+                            <TextBlock Text="CREATE"
+                                       Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                       loc:Localize.Key="panel.timer.create.confirm.label" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

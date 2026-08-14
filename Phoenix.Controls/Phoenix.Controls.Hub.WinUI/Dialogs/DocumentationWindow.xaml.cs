@@ -38,7 +38,6 @@ public sealed partial class DocumentationWindow : Window
     public sealed class CategoryRow
     {
         public string Name       { get; init; } = "";
-        public int    Count      { get; init; }
         public string CountLabel { get; init; } = "";
         public IReadOnlyList<HubFeature> Features { get; init; } = Array.Empty<HubFeature>();
     }
@@ -255,7 +254,6 @@ public sealed partial class DocumentationWindow : Window
             _categories.Add(new CategoryRow
             {
                 Name       = cat,
-                Count      = members.Count,
                 CountLabel = string.Format(
                     CultureInfo.InvariantCulture,
                     Localizer.T("dialog.documentation.count_format", "{0} feature(s)"),

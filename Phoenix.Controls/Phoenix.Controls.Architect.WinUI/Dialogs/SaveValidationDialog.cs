@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Architect.Core;
+using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.WinUI.Dialogs;
 
@@ -66,11 +67,11 @@ public sealed class SaveValidationDialog : ContentDialog
 
     public SaveValidationDialog()
     {
-        Title = "Validation";
+        Title = Localizer.T("architect.dialog.save_validation.title", "Validation");
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "Save anyway";
-        SecondaryButtonText = "Cancel";
+        PrimaryButtonText = Localizer.T("architect.dialog.save_validation.save_anyway", "Save anyway");
+        SecondaryButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Secondary;
 
         var root = new Grid { Width = 540, Height = 320 };
@@ -112,12 +113,23 @@ public sealed class SaveValidationDialog : ContentDialog
         var d = new SaveValidationDialog { XamlRoot = root };
         bool hasErrors = warnings.Any(w => w.Severity == ValidationSeverity.Error);
         d.HeaderText.Text = hasErrors
-            ? $"This graph has {warnings.Count(w => w.Severity == ValidationSeverity.Error)} error(s) and {warnings.Count(w => w.Severity == ValidationSeverity.Warning)} warning(s). Saving anyway will produce a .phx the engine may refuse to run."
-            : $"This graph has {warnings.Count} validator warning(s). Saving is safe — review the issues below or proceed.";
-        d.Title = hasErrors ? "Validation errors" : "Validation warnings";
+            ? string.Format(
+                Localizer.T("architect.dialog.save_validation.body_errors_format",
+                    "This graph has {0} error(s) and {1} warning(s). Saving anyway will produce a .phx the engine may refuse to run."),
+                warnings.Count(w => w.Severity == ValidationSeverity.Error),
+                warnings.Count(w => w.Severity == ValidationSeverity.Warning))
+            : string.Format(
+                Localizer.T("architect.dialog.save_validation.body_warnings_format",
+                    "This graph has {0} validator warning(s). Saving is safe — review the issues below or proceed."),
+                warnings.Count);
+        d.Title = hasErrors
+            ? Localizer.T("architect.dialog.save_validation.title_errors", "Validation errors")
+            : Localizer.T("architect.dialog.save_validation.title_warnings", "Validation warnings");
         d.WarningList.ItemsSource = warnings.Select(w => new Row
         {
-            SeverityText = w.Severity == ValidationSeverity.Error ? "ERROR" : "WARNING",
+            SeverityText = w.Severity == ValidationSeverity.Error
+                ? Localizer.T("architect.dialog.save_validation.severity.error", "ERROR")
+                : Localizer.T("architect.dialog.save_validation.severity.warning", "WARNING"),
             Message      = w.Message,
             AccentBrush  = ResolveAccent(w.Severity),
         }).ToList();

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.ToolActivityFeed"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.Common">
+    <!--
+        House activity card — the Giveaway activity log (GiveawayView.xaml:684-742)
+        generalised so every rebuilt tool page renders its feed identically.
+
+        Structure verbatim: a CoalShell card with an opaque CoalCard border at
+        Radius1Corner and MinHeight 160, a hairline header band (Padding 12,6)
+        carrying an ember eyebrow plus a mono scope subtitle, and a height-capped
+        ScrollViewer over an ItemsRepeater.
+
+        Row template columns are 86 / 38 / * — the 38 is Timer's
+        (TimerView.xaml:1699-1702), not Giveaway's 30, because the shared kind
+        vocabulary includes four-character tokens like DROP / WARN / PLAY.
+
+        NO EMPTY STATE, deliberately. An empty collection renders an empty scroll
+        region; the reference has no empty state and inventing one here would let
+        a feed with no real source look furnished. The build spec's rule is that a
+        tool with no honest source ships with NO activity card at all rather than
+        an empty one.
+
+        The SCOPE subtitle is load-bearing, not decoration: it is what keeps a
+        session-only in-memory feed from reading as durable history ("this
+        session") and a tool-wide feed from wearing an entity-scoped label ("this
+        tool"). Callers must set it.
+    -->
+    <Border Background="{StaticResource CoalShellBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource Radius1Corner}"
+            MinHeight="160">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="0,0,0,1"
+                    Padding="12,6">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock x:Name="TitleText"
+                               Text="ACTIVITY"
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               CharacterSpacing="180"
+                               Foreground="{StaticResource EmberPrimaryBrush}" />
+                    <TextBlock x:Name="ScopeText"
+                               Visibility="Collapsed"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="10"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
+            <ScrollViewer x:Name="RowsScroll"
+                          Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Disabled"
+                          MaxHeight="240">
+                <!-- ItemsSource is assigned once from code-behind. The repeater's
+                     source is never REASSIGNED by this control after that: a
+                     caller changing ItemsSource swaps the whole collection, which
+                     is a documented virtualization / scroll-position hazard, so
+                     the intended usage is one stable ObservableCollection per
+                     panel that the VM mutates in place. -->
+                <ItemsRepeater x:Name="Rows"
+                               local:RowDataContext.Supply="True">
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:ToolActivityRowVm">
+                            <Grid Padding="12,3"
+                                  ColumnSpacing="8"
+                                  BorderBrush="{StaticResource CoalRaisedBrush}"
+                                  BorderThickness="0,0,0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="86" />
+                                    <ColumnDefinition Width="38" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind Time}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind Level}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11"
+                                           FontWeight="Bold"
+                                           Foreground="{x:Bind LevelBrush}" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{x:Bind Message}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           Foreground="{x:Bind MessageBrush}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</UserControl>

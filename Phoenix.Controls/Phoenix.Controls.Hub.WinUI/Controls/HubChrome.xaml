@@ -3,7 +3,8 @@
     x:Class="Phoenix.Controls.Hub.WinUI.Controls.HubChrome"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Controls">
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization">
 
     <UserControl.Resources>
         <!-- Implicit MenuFlyoutPresenter style — applies to every submenu
@@ -143,14 +144,19 @@
                              Pillar="Visualist"
                              Margin="2,0,0,0" />
 
-            <!-- 4th tab: Giveaway. NOT a PillarKind pillar (those ordinals are
-                 load-bearing and represent only the three surface-swap
-                 surfaces). This tab opens an independent pop-out window via a
-                 distinct GiveawayTabClicked event — it never swaps
-                 MainPaneRegion content and never becomes "active", so it stays
-                 in the inactive PillarTab visual state. Styled to match
-                 PillarTab inline (G sigil box + "GIVEAWAY" label). -->
-            <Border x:Name="GiveawayTab"
+            <!-- 4th tab: Pre-Builds. NOT a PillarKind pillar (those ordinals are
+                 load-bearing and represent only the three surface-swap surfaces),
+                 but it now behaves like one: clicking it foregrounds the
+                 Pre-Builds surface (PreBuildsHostView — rail + tool page) in
+                 MainPaneRegion, and the tab paints ACTIVE while the three pillar
+                 tabs go inactive. Majo asked for the tools "lined up left similar
+                 to the Settings layout" instead of the dropdown this tab used to
+                 drop, so the MenuFlyout and its ▾ chevron are gone.
+
+                 Styled to match PillarTab inline (sigil box + label), including
+                 the active coal-card body with the ember top edge, so the four
+                 tabs read as one strip. -->
+            <Border x:Name="PreBuildsTab"
                     Grid.Column="3"
                     Height="30"
                     Margin="2,0,0,0"
@@ -162,33 +168,37 @@
                     UseSystemFocusVisuals="True"
                     FocusVisualPrimaryBrush="{StaticResource EmberPrimaryBrush}"
                     FocusVisualSecondaryBrush="{StaticResource CoalCardBrush}"
-                    PointerEntered="OnGiveawayTabPointerEntered"
-                    PointerExited="OnGiveawayTabPointerExited"
-                    PointerPressed="OnGiveawayTabPointerPressed"
-                    KeyDown="OnGiveawayTabKeyDown"
-                    AutomationProperties.Name="Giveaway"
-                    ToolTipService.ToolTip="Giveaway — opens in its own window">
+                    PointerEntered="OnPreBuildsTabPointerEntered"
+                    PointerExited="OnPreBuildsTabPointerExited"
+                    PointerPressed="OnPreBuildsTabPointerPressed"
+                    KeyDown="OnPreBuildsTabKeyDown"
+                    AutomationProperties.Name="Pre-Builds"
+                    ToolTipService.ToolTip="Pre-built stream tools">
+                <Border.BorderBrush>
+                    <!-- Per-tab brush so the active ember top edge can be assigned
+                         without mutating the frozen theme instance (same reason
+                         PillarTab owns its own copies). -->
+                    <SolidColorBrush x:Name="PreBuildsTabBorderBrush" Color="Transparent" />
+                </Border.BorderBrush>
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Border Width="18" Height="18"
                             CornerRadius="2"
                             BorderThickness="1"
                             BorderBrush="{StaticResource CoalDividerSubtleBrush}"
                             Background="{StaticResource EmberShadowBrush}">
-                        <TextBlock Text="G"
-                                   FontFamily="{StaticResource DisplayFont}"
-                                   FontSize="12" FontWeight="Bold"
-                                   Foreground="{StaticResource CoalPaperBrush}"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center" />
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE71D;" FontSize="11"
+                                  Foreground="{StaticResource CoalPaperBrush}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock x:Name="GiveawayTabLabel"
-                               Text="GIVEAWAY"
+                    <TextBlock x:Name="PreBuildsTabLabel"
+                               Text="Pre-Builds"
                                FontFamily="{StaticResource DisplayFont}"
                                FontSize="14"
                                CharacterSpacing="80"
                                VerticalAlignment="Center">
                         <TextBlock.Foreground>
-                            <SolidColorBrush x:Name="GiveawayTabLabelBrush" Color="#9C8A72" />
+                            <SolidColorBrush x:Name="PreBuildsTabLabelBrush" Color="#9C8A72" />
                         </TextBlock.Foreground>
                     </TextBlock>
                 </StackPanel>
@@ -252,6 +262,8 @@
                         Content="&#xE711;"
                         ToolTipService.ToolTip="Close file"
                         AutomationProperties.Name="Close current file"
+                        loc:Localize.TooltipKey="chrome.hub.document.close.tip"
+                        loc:Localize.AutomationKey="chrome.hub.document.close.a11y"
                         Visibility="Collapsed"
                         Click="OnCloseFileClicked" />
             </StackPanel>

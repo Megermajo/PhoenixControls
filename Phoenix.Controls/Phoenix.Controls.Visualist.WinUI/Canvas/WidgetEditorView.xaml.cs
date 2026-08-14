@@ -74,6 +74,11 @@ public sealed partial class WidgetEditorView : UserControl
     public WidgetEditorView()
     {
         InitializeComponent();
+        // Restore the user's persisted manual timeline height (null = auto). The
+        // resize handle writes it back on release; ComputeDesiredTimelineHeight
+        // clamps it to [Min, ResizeMax] so a stored value stays sane across
+        // widgets with differing track counts.
+        try { _userTimelineHeight = VisualistUserConfig.Instance.TimelineHeight; } catch { /* config best-effort */ }
         DataContextChanged += OnDataContextChanged;
         Loaded   += OnLoaded;
         Unloaded += OnUnloaded;
@@ -170,6 +175,10 @@ public sealed partial class WidgetEditorView : UserControl
         // this closes the outbound select → manipulator direction.
         GraphCanvas.OnSelectedNodeChanged -= OnGraphNodeSelectionChanged;
         GraphCanvas.OnSelectedNodeChanged += OnGraphNodeSelectionChanged;
+
+        // V6 — Test Run's target selector. Built once (idempotent across Loaded cycles)
+        // and BEFORE the first ApplyButtonGating, because the gate now reads _testTarget.
+        InitTestTargetAffordance();
 
         ApplyEmbeddedPreviewVisibility();
         ApplyButtonGating();
@@ -307,6 +316,13 @@ public sealed partial class WidgetEditorView : UserControl
         try { _statusClearTimer?.Stop(); } catch { }
         _statusClearTimer = null;
 
+        // V11 — stop the preview debounce so a tick armed by the last playhead
+        // write can't fire after the view is detached (it would touch node views
+        // on a recycled canvas). The Tick subscription stays wired: this view is
+        // a reused singleton that goes Unloaded → Loaded on every re-enter, and
+        // RequestPreviewRefreshAtPlayhead re-uses the same timer instance.
+        try { _previewRefreshDebounce?.Stop(); } catch { }
+
         // Drop the audio-mixer flyout subscription.
         if (AudioMixerFlyout is not null)
         {
@@ -408,6 +424,10 @@ public sealed partial class WidgetEditorView : UserControl
                 // engine in step when the scrub came from the user (not from a
                 // playback tick — guarded inside SyncPlaybackToPlayhead).
                 SyncPlaybackToPlayhead();
+                // V11 — node-body preview thumbnails follow the playhead. Debounced
+                // + gesture-gated (see RequestPreviewRefreshAtPlayhead); this arm only
+                // arms the timer, it never walks the graph inline.
+                RequestPreviewRefreshAtPlayhead();
                 break;
         }
     }
@@ -425,7 +445,7 @@ public sealed partial class WidgetEditorView : UserControl
         // "entered a widget" model and is the gesture authors expect.
         var back = new Button
         {
-            Content          = "← Back",
+            Content          = Localizer.T("visualist.widget.tabs.back", "← Back"),
             Padding          = new Thickness(8, 0, 8, 0),
             Background       = ResolveBrushTinted("CoalCardBrush", 0xFF, 0x2A, 0x26, 0x20),
             BorderThickness  = new Thickness(0),
@@ -433,7 +453,7 @@ public sealed partial class WidgetEditorView : UserControl
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin           = new Thickness(0, 0, 6, 0),
         };
-        ToolTipService.SetToolTip(back, "Back to the Layer Canvas");
+        ToolTipService.SetToolTip(back, Localizer.T("visualist.widget.tabs.back.tip", "Back to the Layer Canvas"));
         back.Click += (s, e) => FindPillarMainView()?.ShowLayerCanvas();
         TriggerTabStrip.Children.Add(back);
 
@@ -759,10 +779,14 @@ public sealed partial class WidgetEditorView : UserControl
         {
             // The "+" is disabled without a selected widget, but guard
             // anyway and tell the user why instead of silently no-oping.
-            SetStatus("Select or enter a widget before adding a trigger.");
+            SetStatus(Localizer.T("visualist.widget.status.select_widget_first",
+                "Select or enter a widget before adding a trigger."));
             return;
         }
-        string? name = await PromptForName("New Trigger", "onTrigger:new", "");
+        // "onTrigger:new" is the persisted trigger-name grammar, not prose — it
+        // stays English in every language (see the trigger-name rule).
+        string? name = await PromptForName(
+            Localizer.T("visualist.widget.trigger.add.title", "New Trigger"), "onTrigger:new", "");
         if (string.IsNullOrWhiteSpace(name)) return;
         // vm.AddTrigger returns null on empty / duplicate / invalid name.
         // The pre-fix code discarded the result, so a rejected add looked like a
@@ -771,19 +795,27 @@ public sealed partial class WidgetEditorView : UserControl
         if (vm.AddTrigger(name, out var status) is null)
         {
             SetStatus(status == VisualistViewModel.AddTriggerStatus.Duplicate
-                ? $"A trigger named \"{VisualistViewModel.NormalizeTriggerName(name)}\" already exists."
-                : $"\"{name.Trim()}\" isn't a valid trigger name — use letters, digits and underscores (e.g. onTrigger:raid).");
+                ? string.Format(
+                    Localizer.T("visualist.widget.trigger.duplicate_format",
+                        "A trigger named \"{0}\" already exists."),
+                    VisualistViewModel.NormalizeTriggerName(name))
+                : string.Format(
+                    Localizer.T("visualist.widget.trigger.invalid_format",
+                        "\"{0}\" isn't a valid trigger name — use letters, digits and underscores (e.g. onTrigger:raid)."),
+                    name.Trim()));
         }
     }
 
     private async System.Threading.Tasks.Task PromptRenameTrigger(VisualistViewModel vm, string oldName)
     {
-        string? name = await PromptForName("Rename Trigger", oldName, oldName);
+        string? name = await PromptForName(
+            Localizer.T("visualist.widget.trigger.rename.title", "Rename Trigger"), oldName, oldName);
         if (string.IsNullOrWhiteSpace(name)) return;
         if (string.Equals(name, oldName, StringComparison.Ordinal)) return;
         if (!vm.RenameTrigger(oldName, name))
         {
-            SetStatus("Rename failed — name is invalid or in use.");
+            SetStatus(Localizer.T("visualist.widget.status.rename_failed",
+                "Rename failed — name is invalid or in use."));
             return;
         }
         // Zoom-state key follows the rename. _zoomByTrigger is keyed
@@ -818,10 +850,13 @@ public sealed partial class WidgetEditorView : UserControl
         var dlg = new ContentDialog
         {
             XamlRoot           = XamlRoot,
-            Title              = "Delete trigger?",
-            Content            = $"This deletes trigger \"{name}\" — its graph and timeline are removed. Undo restores them.",
-            PrimaryButtonText  = "Delete",
-            CloseButtonText    = "Cancel",
+            Title              = Localizer.T("visualist.widget.trigger.delete.title", "Delete trigger?"),
+            Content            = string.Format(
+                Localizer.T("visualist.widget.trigger.delete.body_format",
+                    "This deletes trigger \"{0}\" — its graph and timeline are removed. Undo restores them."),
+                name),
+            PrimaryButtonText  = Localizer.T("common.button.delete", "Delete"),
+            CloseButtonText    = Localizer.T("common.cancel", "Cancel"),
             DefaultButton      = ContentDialogButton.Close,
         };
         var res = await dlg.ShowAsync();
@@ -842,8 +877,8 @@ public sealed partial class WidgetEditorView : UserControl
             XamlRoot           = XamlRoot,
             Title              = title,
             Content            = input,
-            PrimaryButtonText  = "OK",
-            CloseButtonText    = "Cancel",
+            PrimaryButtonText  = Localizer.T("common.ok", "OK"),
+            CloseButtonText    = Localizer.T("common.cancel", "Cancel"),
             DefaultButton      = ContentDialogButton.Primary,
         };
         var res = await dlg.ShowAsync();
@@ -925,7 +960,7 @@ public sealed partial class WidgetEditorView : UserControl
     {
         if (_vm?.ActiveTriggerObject?.Timeline is not WidgetTimeline tl)
         {
-            SetStatus("No trigger selected.");
+            SetStatus(Localizer.T("visualist.widget.status.no_trigger", "No trigger selected."));
             return;
         }
         double maxKf = tl.SortedKeyframes.Count > 0 ? tl.SortedKeyframes.Max(k => k.TimeMs) : 0;
@@ -933,14 +968,16 @@ public sealed partial class WidgetEditorView : UserControl
         // (mirrors the pre-WinUI FitDurationToKeyframes math).
         double fit = Math.Ceiling((maxKf + 200) / 100.0) * 100.0;
         if (fit < 1000) fit = 1000;
-        if (Math.Abs(fit - tl.DurationMs) < 0.5) { SetStatus("Duration already fits."); return; }
+        if (Math.Abs(fit - tl.DurationMs) < 0.5) { SetStatus(Localizer.T("visualist.widget.status.duration_fits", "Duration already fits.")); return; }
         _vm.Document?.PushUndo();
         tl.DurationMs = fit;
         _vm.Document?.MarkDirty();
         _vm.NotifyActiveTriggerChanged();
         SyncDurationBox();
         RedrawTimeline();
-        SetStatus($"Duration fit to {fit:0} ms.");
+        SetStatus(string.Format(
+            Localizer.T("visualist.widget.status.duration_fit_format", "Duration fit to {0} ms."),
+            fit.ToString("0")));
     }
 
     // ─── empty-state + Back navigation ──────────────────────────
@@ -1016,6 +1053,38 @@ public sealed partial class WidgetEditorView : UserControl
     private const double TrackAreaTop   = 16;   // clear the tick-label band
     private const double TrackMinHeight = 10;
     private const double TrackMaxHeight = 26;
+
+    // ─── dynamic timeline height (Change 1 + 2) ────────────────────
+    //
+    // Pre-fix the timeline track area was height-locked at the row's
+    // MinHeight (~48px): a single animated Color pin = 4 tracks, and the
+    // lower tracks were squeezed into an unreachable sliver. The surface now
+    // GROWS with the track count — desired height = TrackAreaTop + n *
+    // per-track band + bottom pad — clamped to an auto ceiling of
+    // TimelineMaxVisibleTracks. This changes ONLY the vertical (Y) layout;
+    // the time↔X math (TimeToX / XToTime) still derives purely from
+    // ActualWidth, so every scrub / keyframe-drag coordinate stays identical.
+    //
+    // A hand-rolled N/S resize handle lets the user override the auto height
+    // by dragging the top edge (Change 2). The chosen height is held in
+    // _userTimelineHeight and persisted to VisualistUserConfig.TimelineHeight —
+    // restored on init (ctor) and written on drag-release (EndTimelineResize).
+    private const double TimelineMinHeight        = 48;   // historical compact floor
+    private const double TimelinePerTrackHeight   = 24;   // comfortable per-track band
+    private const double TimelineBottomPad        = 8;
+    private const int    TimelineMaxVisibleTracks = 7;    // auto-grow ceiling
+    private const double TimelineResizeMaxHeight  = 420;  // manual drag ceiling
+
+    // User-dragged timeline height override (null = follow the auto-grow
+    // formula). Session-local; the resize handle writes it.
+    private double? _userTimelineHeight;
+
+    // Rotated diamond marker size (Change 3) — enlarged 9→13 so a keyframe is
+    // easy to grab at low zoom. Half is the center offset used both when the
+    // marker is created and in the drag fast path, kept as one constant so the
+    // two never drift.
+    private const double KeyframeMarkerSize = 13.0;
+    private const double KeyframeMarkerHalf = KeyframeMarkerSize / 2.0;
 
     // Explicit timeline Z-order. Pre-fix the layering was implicit in
     // the Children.Add() call sequence (ticks → baselines → markers → playhead),
@@ -1182,17 +1251,26 @@ public sealed partial class WidgetEditorView : UserControl
     private void RedrawTimeline()
     {
         double w = TimelineSurface.ActualWidth;
-        double h = TimelineSurface.ActualHeight;
-        // Bug #3 (timeline ruler ticks vanish on re-enter) — guard the zero-size
-        // case BEFORE clearing. Re-entering the widget editor recycles this
-        // singleton view; the re-entry relayout can fire a transient SizeChanged
-        // with a not-yet-measured (0×0) surface. If we Clear()'d first and then
-        // bailed on the zero-size guard, the ruler ticks were wiped and never
-        // repainted — re-entering the SAME widget doesn't change the DataContext,
-        // so OnDataContextChanged's RedrawTimeline never runs to rebuild them.
-        // Leaving the existing children in place until we can actually draw makes
-        // a transient 0-size pass a no-op instead of a destructive wipe.
-        if (w <= 0 || h <= 0) { UpdateZoomChip(); return; }
+        // Change 1 — the track area height now GROWS with the track count (or
+        // honours the user's resize-handle override) instead of being locked to
+        // the row MinHeight. Drive the surface Height from the computed value so
+        // the Auto-sized timeline row grows with it, and lay out against that
+        // same value (not the not-yet-updated ActualHeight) so the first pass
+        // paints at the final size. This is a pure Y-axis change — the X/time
+        // math below is untouched.
+        double h = ComputeDesiredTimelineHeight();
+        ApplyTimelineSurfaceHeight(h);
+        // Bug #3 (timeline ruler ticks vanish on re-enter) — guard the not-yet-
+        // measured case BEFORE clearing. Re-entering the widget editor recycles
+        // this singleton view; the re-entry relayout can fire a transient
+        // SizeChanged with a 0-width surface. If we Clear()'d first and then
+        // bailed, the ruler ticks were wiped and never repainted — re-entering
+        // the SAME widget doesn't change the DataContext, so OnDataContextChanged's
+        // RedrawTimeline never runs to rebuild them. Leaving the existing children
+        // in place until we can actually draw makes a transient pass a no-op
+        // instead of a destructive wipe. (h is always a positive computed value
+        // now, so the width check is the meaningful guard.)
+        if (w <= 0) { UpdateZoomChip(); return; }
         TimelineSurface.Children.Clear();
         _playheadLine = null;
         _playheadHalo = null;
@@ -1329,14 +1407,15 @@ public sealed partial class WidgetEditorView : UserControl
             var normalStroke = ResolveBrush("Ember700Brush", 0x4A, 0x2A, 0x08); // safe resolve
 
             // Off-screen cull in TIME space, not a fixed pixel margin.
-            // A rotated 9px diamond has a ~6.4px half-diagonal, so the old ±8px
-            // pixel margin was borderline; more importantly, a pixel margin makes
-            // the visible-edge tail shrink (in ms) as you zoom in, which is the
-            // wrong direction. Cull markers whose TimeMs falls outside the visible
-            // window [leftMs, rightMs] expanded by a small px tail converted to ms
-            // at the current zoom, so the cull tail is a constant ~10px regardless
-            // of zoom and a marker straddling the edge is never clipped.
-            const double cullTailPx = 10.0;
+            // A rotated 13px diamond (Change 3) has a ~9.2px half-diagonal, so
+            // the cull tail must exceed that or a marker straddling the edge gets
+            // clipped; a pixel margin also makes the visible-edge tail shrink (in
+            // ms) as you zoom in, which is the wrong direction. Cull markers whose
+            // TimeMs falls outside the visible window [leftMs, rightMs] expanded
+            // by a small px tail converted to ms at the current zoom, so the cull
+            // tail is a constant ~12px regardless of zoom and a marker straddling
+            // the edge is never clipped.
+            const double cullTailPx = 12.0;
             double cullTailMs  = (cullTailPx / pxPerSec) * 1000.0;
             double cullLeftMs  = scrollOffsetMs - cullTailMs;
             double cullRightMs = scrollOffsetMs + visibleSpanMs + cullTailMs;
@@ -1356,8 +1435,12 @@ public sealed partial class WidgetEditorView : UserControl
                 bool selected = ReferenceEquals(_selectedKeyframe, kf);
                 var marker = new Microsoft.UI.Xaml.Shapes.Rectangle
                 {
-                    Width  = 9,
-                    Height = 9,
+                    // Change 3 — 13×13 (was 9×9) so the diamond is an easy grab
+                    // target at low zoom; still a rotated square, so the look is
+                    // unchanged bar the size. The hit area is the marker itself,
+                    // so the larger rect enlarges the grab zone directly.
+                    Width  = KeyframeMarkerSize,
+                    Height = KeyframeMarkerSize,
                     // Fill is the per-curve colour; selection moves to the
                     // STROKE (gold, heavier) so the curve identity is never lost
                     // when a keyframe is selected.
@@ -1366,7 +1449,7 @@ public sealed partial class WidgetEditorView : UserControl
                     StrokeThickness = selected ? 1.75 : 0.75,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment   = VerticalAlignment.Top,
-                    Margin = new Thickness(x - 4.5, trackRow.CenterY - 4.5, 0, 0),
+                    Margin = new Thickness(x - KeyframeMarkerHalf, trackRow.CenterY - KeyframeMarkerHalf, 0, 0),
                     RenderTransform = new RotateTransform { Angle = 45 },
                     RenderTransformOrigin = new Point(0.5, 0.5),
                     IsHitTestVisible = true,
@@ -1379,6 +1462,12 @@ public sealed partial class WidgetEditorView : UserControl
                 // isolates events) can't mutate a different keyframe.
                 marker.PointerMoved    += (s, args) => OnKeyframeMarkerMoved(s, args, captureKf);
                 marker.PointerReleased += OnKeyframeMarkerReleased;
+                // Capture-lost / canceled recovery — a swallowed release after a
+                // window re-activation (alt-tab back in) would otherwise leave
+                // _draggingKeyframe armed so the keyframe tracks the cursor. Same
+                // drag-stick class the node/pan/lasso gestures guard against.
+                marker.PointerCaptureLost += OnKeyframeMarkerCaptureLost;
+                marker.PointerCanceled    += OnKeyframeMarkerCaptureLost;
                 // Hover cursor affordance — restores the WinForms
                 // baseline's "hover to discover drag" hint lost in the per-marker
                 // port. ProtectedCursor is protected and only settable from this
@@ -1623,6 +1712,17 @@ public sealed partial class WidgetEditorView : UserControl
         // accident.
         if (_draggingKeyframe is not Keyframe kf) return;
         if (!ReferenceEquals(kf, captureKf)) return;
+
+        // Stale-gesture guard — a keyframe drag only continues while the left
+        // button is held. A swallowed activation release (alt-tab back in) would
+        // otherwise leave the marker tracking the cursor. Settle like a release.
+        if (!e.GetCurrentPoint(TimelineSurface).Properties.IsLeftButtonPressed)
+        {
+            EndKeyframeDrag(sender as FrameworkElement, e.Pointer);
+            e.Handled = true;
+            return;
+        }
+
         if (_vm?.ActiveTriggerObject?.Timeline is not WidgetTimeline tl) return;
 
         double durationMs = tl.DurationMs > 0 ? tl.DurationMs : 5000;
@@ -1636,6 +1736,15 @@ public sealed partial class WidgetEditorView : UserControl
         double xInTimeline = e.GetCurrentPoint(TimelineSurface).Position.X;
         double newMs = XToTime(Math.Clamp(xInTimeline, 0, w), zoom.PxPerSec, zoom.ScrollOffsetMs);
         newMs = Math.Clamp(newMs, 0, durationMs);
+        // Change 4 — snap (AFTER the clamp) to the 100ms grid + sibling
+        // keyframes on the SAME track, unless Alt is held (momentary precise
+        // drop, matching the WidgetGraphCanvas Alt-suppress convention). The
+        // playhead is NOT a snap target here — it is slaved to this drag
+        // (_vm.PlayheadMs = newMs below), so snapping to it would be degenerate.
+        // Re-clamp defensively; a snap target is in-range by construction.
+        newMs = Math.Clamp(
+            SnapTimelineMs(newMs, zoom.PxPerSec, kf.ParameterPath, includePlayhead: false),
+            0, durationMs);
         if (Math.Abs(newMs - kf.TimeMs) < 0.5) return; // sub-frame jitter → ignore
 
         if (!_keyframeDragDirty)
@@ -1655,7 +1764,7 @@ public sealed partial class WidgetEditorView : UserControl
         if (_draggingMarkerRect is { } markerRect)
         {
             double x = TimeToX(newMs, zoom.PxPerSec, zoom.ScrollOffsetMs);
-            markerRect.Margin = new Thickness(x - 4.5, _draggingMarkerCenterY - 4.5, 0, 0);
+            markerRect.Margin = new Thickness(x - KeyframeMarkerHalf, _draggingMarkerCenterY - KeyframeMarkerHalf, 0, 0);
             _playheadMsCache = newMs;
             RepositionPlayheadForTime(newMs);
         }
@@ -1669,26 +1778,40 @@ public sealed partial class WidgetEditorView : UserControl
 
     private void OnKeyframeMarkerReleased(object sender, PointerRoutedEventArgs e)
     {
-        if (sender is FrameworkElement marker)
-        {
-            try { marker.ReleasePointerCapture(e.Pointer); } catch { /* best-effort */ }
-        }
+        EndKeyframeDrag(sender as FrameworkElement, e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnKeyframeMarkerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        if (_draggingKeyframe is null) return; // not an armed keyframe gesture
+        EndKeyframeDrag(sender as FrameworkElement, e.Pointer);
+    }
+
+    /// <summary>
+    /// Idempotent teardown for a keyframe-marker drag, shared by
+    /// <see cref="OnKeyframeMarkerReleased"/>, the capture-lost handler, and the
+    /// stale-gesture guard in <see cref="OnKeyframeMarkerMoved"/>. State is cleared
+    /// BEFORE releasing capture so the synchronous PointerCaptureLost this raises
+    /// re-enters as a no-op instead of double-committing.
+    /// </summary>
+    private void EndKeyframeDrag(FrameworkElement? marker, Microsoft.UI.Xaml.Input.Pointer? pointer)
+    {
         bool dragged = _keyframeDragDirty;
-        if (_keyframeDragDirty && _vm?.Document is { } doc)
-        {
-            doc.MarkDirty();
-        }
         _draggingKeyframe   = null;
         _keyframeDragDirty  = false;
         _draggingMarkerRect = null;
+        if (marker is not null && pointer is not null)
+        {
+            try { marker.ReleasePointerCapture(pointer); } catch { /* already lost — harmless */ }
+        }
         // One full reconciliation pass for a drag that actually moved — the
         // per-move fast path only slid the dragged marker + playhead, so the
-        // release rebuild settles everything (marker child order, playhead
-        // cache re-sync) in a single redraw instead of one per pointer-move.
-        // A plain click (no move) changed nothing the press-time redraw
-        // didn't already paint.
+        // release rebuild settles everything (marker child order, playhead cache
+        // re-sync) in a single redraw. A plain click (no move) changed nothing the
+        // press-time redraw didn't already paint.
+        if (dragged && _vm?.Document is { } doc) doc.MarkDirty();
         if (dragged) RedrawTimeline();
-        e.Handled = true;
     }
 
     // ─── keyframe hover cursor affordance ────────────────────
@@ -1747,6 +1870,202 @@ public sealed partial class WidgetEditorView : UserControl
             _trackRows[i].Height  = rowH;
             _trackRows[i].CenterY = top + rowH / 2.0;
         }
+    }
+
+    // ─── dynamic timeline height + resize + snap helpers ──────────
+
+    // Distinct animated-parameter (track) count for the active trigger — the
+    // number of dope-sheet rows. Mirrors BuildTrackRows' distinct-ParameterPath
+    // pass without needing the surface height, so the desired height can be
+    // computed BEFORE the track rows are laid out.
+    private int CountDistinctTrackPaths()
+    {
+        var kfs = _vm?.ActiveTriggerObject?.Timeline?.Keyframes;
+        if (kfs is null || kfs.Count == 0) return 0;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var k in kfs)
+        {
+            string p = k?.ParameterPath ?? "";
+            if (p.Length == 0) continue;
+            seen.Add(p);
+        }
+        return seen.Count;
+    }
+
+    // Desired timeline surface height. Honours the user's resize-handle
+    // override when set; otherwise grows with the track count up to the
+    // TimelineMaxVisibleTracks ceiling (beyond which BuildTrackRows compresses
+    // rows inside the existing TrackMin/Max clamp). Never below TimelineMinHeight.
+    private double ComputeDesiredTimelineHeight()
+    {
+        double pad = TrackAreaTop + TimelineBottomPad;
+        if (_userTimelineHeight is double uh)
+            return Math.Clamp(uh, TimelineMinHeight, TimelineResizeMaxHeight);
+        int n = Math.Max(1, CountDistinctTrackPaths());
+        double autoH    = pad + n * TimelinePerTrackHeight;
+        double maxAutoH = pad + TimelineMaxVisibleTracks * TimelinePerTrackHeight;
+        return Math.Clamp(autoH, TimelineMinHeight, maxAutoH);
+    }
+
+    // Drive the surface Height from the computed/overridden value. Only writes
+    // when it actually changes (Height defaults to NaN = Auto) so a redraw that
+    // didn't move the height doesn't kick off a redundant SizeChanged →
+    // RedrawTimeline round-trip. The timeline row is Auto, so growing the
+    // surface grows the row.
+    private void ApplyTimelineSurfaceHeight(double desiredH)
+    {
+        if (TimelineSurface is null) return;
+        double cur = TimelineSurface.Height;
+        if (double.IsNaN(cur) || Math.Abs(cur - desiredH) > 0.5)
+        {
+            TimelineSurface.Height    = desiredH;
+            TimelineSurface.MinHeight = desiredH;
+        }
+    }
+
+    // ─── timeline resize handle (Change 2) ─────────────────────────
+    //
+    // Hand-rolled N/S splitter on the timeline's top edge — WinUI 3 ships no
+    // GridSplitter. Button-held guard + capture-lost teardown mirror the
+    // MainView rail-splitter pattern. Dragging UP grows the track area (and,
+    // because Row 3 is Auto and the graph row is star-sized, shrinks the graph);
+    // dragging DOWN shrinks it. Pointer Y is read against `this` — a stable
+    // frame that does NOT move as the row resizes — to avoid drag feedback.
+    private bool   _timelineResizeDrag;
+    private double _resizeDragStartY;
+    private double _resizeStartHeight;
+
+    private void OnTimelineResizeEntered(object sender, PointerRoutedEventArgs e)
+    {
+        try { ProtectedCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeNorthSouth); }
+        catch { /* cursor API unavailable in designer / pre-app — ignore */ }
+        // T11-9 — ember hover accent on the grabber pill (skip if a drag is live).
+        if (!_timelineResizeDrag) SetTimelinePill("EmberDeepBrush");
+    }
+
+    private void OnTimelineResizeExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (_timelineResizeDrag) return; // keep the resize cursor + highlight through the drag
+        try { ProtectedCursor = null; } catch { /* best-effort */ }
+        SetTimelinePill("CoalDividerBrush");
+    }
+
+    // T11-9 — paint the timeline N/S handle's grabber pill for hover/drag
+    // affordance, matching the MainView side-splitter treatment. The pill is the
+    // handle Border's single child; a missing token degrades to a no-op.
+    private void SetTimelinePill(string brushKey)
+    {
+        if (TimelineResizeHandle?.Child is Border pill
+            && Application.Current?.Resources is { } res
+            && res.TryGetValue(brushKey, out var v) && v is Brush b)
+            pill.Background = b;
+    }
+
+    private void OnTimelineResizePressed(object sender, PointerRoutedEventArgs e)
+    {
+        _timelineResizeDrag = true;
+        _resizeDragStartY   = e.GetCurrentPoint(this).Position.Y;
+        _resizeStartHeight  = _userTimelineHeight ?? ComputeDesiredTimelineHeight();
+        SetTimelinePill("EmberPrimaryBrush");
+        if (sender is UIElement el) { try { el.CapturePointer(e.Pointer); } catch { /* best-effort */ } }
+        e.Handled = true;
+    }
+
+    private void OnTimelineResizeMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_timelineResizeDrag) return;
+        var pp = e.GetCurrentPoint(this);
+        // Stale-gesture guard — settle like a release if the button was let go
+        // during a swallowed release (alt-tab back in).
+        if (!pp.Properties.IsLeftButtonPressed) { EndTimelineResize(sender as UIElement, e.Pointer); return; }
+        // Dragging the top handle UP (smaller Y) grows the track area.
+        double dy   = _resizeDragStartY - pp.Position.Y;
+        double newH = Math.Clamp(_resizeStartHeight + dy, TimelineMinHeight, TimelineResizeMaxHeight);
+        _userTimelineHeight = newH;
+        RedrawTimeline(); // applies the new height + relays out the track rows
+        e.Handled = true;
+    }
+
+    private void OnTimelineResizeReleased(object sender, PointerRoutedEventArgs e)
+        => EndTimelineResize(sender as UIElement, e.Pointer);
+
+    private void OnTimelineResizeCaptureLost(object sender, PointerRoutedEventArgs e)
+        => EndTimelineResize(sender as UIElement, e.Pointer);
+
+    private void EndTimelineResize(UIElement? handle, Microsoft.UI.Xaml.Input.Pointer? pointer)
+    {
+        _timelineResizeDrag = false;
+        if (handle is not null && pointer is not null)
+        { try { handle.ReleasePointerCapture(pointer); } catch { /* already lost — harmless */ } }
+        try { ProtectedCursor = null; } catch { /* best-effort */ }
+        SetTimelinePill("CoalDividerBrush");   // T11-9 — back to resting pill
+
+        // Persist the chosen height so it survives across sessions. Guarded so a
+        // config-write fault can't break the resize interaction.
+        try { VisualistUserConfig.Instance.Update(c => c.TimelineHeight = _userTimelineHeight); }
+        catch (Exception ex) { GlobalLogger.Error("Visualist.WinUI", "persist timeline height", ex); }
+    }
+
+    // ─── timeline snapping (Change 4) ──────────────────────────────
+    //
+    // Snap a proposed time to strong targets — the 100ms grid, and keyframes
+    // (same-track for a keyframe drag, any-track for a scrub) — within a small
+    // PIXEL threshold at the current zoom (so the grab radius feels the same at
+    // every zoom level). Alt held suspends snap for a precise drop: the modifier
+    // disables the active constraint rather than adding one, matching the
+    // WidgetGraphCanvas Alt-suppress convention. Callers apply this AFTER their
+    // own clamp — a snap target is always in-range by construction.
+    private const double SnapThresholdPx = 8.0;   // grab radius, in pixels
+    private const double SnapGridMs      = 100.0; // hard 100ms grid
+
+    // VirtualKey.Menu == Alt. Local mirror of WidgetGraphCanvas.IsAltDown so the
+    // hold-to-suspend-snap gesture reads identically across the two surfaces.
+    private static bool IsAltDown()
+        => (InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu)
+            & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
+
+    private double SnapTimelineMs(double proposedMs, double pxPerSec,
+                                  string? sameTrackPath, bool includePlayhead)
+    {
+        if (IsAltDown()) return proposedMs;        // power-user precise drop
+        if (pxPerSec <= 0) return proposedMs;
+        double thresholdMs = (SnapThresholdPx / pxPerSec) * 1000.0;
+        if (thresholdMs <= 0) return proposedMs;
+
+        double bestMs   = proposedMs;
+        double bestDist = thresholdMs;             // only snap within threshold
+        void Consider(double target)
+        {
+            if (double.IsNaN(target) || double.IsInfinity(target)) return;
+            double d = Math.Abs(target - proposedMs);
+            if (d < bestDist) { bestDist = d; bestMs = target; }
+        }
+
+        // Nearest 100ms gridline.
+        Consider(Math.Round(proposedMs / SnapGridMs) * SnapGridMs);
+
+        // Playhead — only meaningful when it is NOT slaved to the caller's drag
+        // (scrub passes false; keyframe drag passes false because the playhead
+        // follows the dragged keyframe there).
+        if (includePlayhead && _vm is not null) Consider(_vm.PlayheadMs);
+
+        // Keyframe times. A keyframe drag restricts to the SAME track and skips
+        // the keyframe being dragged; a scrub (sameTrackPath == null) snaps to
+        // any keyframe.
+        var kfs = _vm?.ActiveTriggerObject?.Timeline?.SortedKeyframes;
+        if (kfs is not null)
+        {
+            foreach (var k in kfs)
+            {
+                if (k is null) continue;
+                if (ReferenceEquals(k, _draggingKeyframe)) continue;
+                if (sameTrackPath is not null
+                    && !string.Equals(k.ParameterPath, sameTrackPath, StringComparison.Ordinal))
+                    continue;
+                Consider(k.TimeMs);
+            }
+        }
+        return bestMs;
     }
 
     // Distinct per-curve colour. Hue rotates by the golden angle so any
@@ -1851,7 +2170,9 @@ public sealed partial class WidgetEditorView : UserControl
         _vm.Document?.MarkDirty();
         _vm.NotifyActiveTriggerChanged();
         RedrawTimeline();
-        SetStatus($"Keyframe added at {t:0} ms.");
+        SetStatus(string.Format(
+            Localizer.T("visualist.widget.status.keyframe_added_format", "Keyframe added at {0} ms."),
+            t.ToString("0")));
         e.Handled = true;
     }
 
@@ -1911,7 +2232,9 @@ public sealed partial class WidgetEditorView : UserControl
         }
         if (double.IsNaN(best))
         {
-            SetStatus(dir < 0 ? "No earlier keyframe." : "No later keyframe.");
+            SetStatus(dir < 0
+                ? Localizer.T("visualist.widget.status.no_earlier_keyframe", "No earlier keyframe.")
+                : Localizer.T("visualist.widget.status.no_later_keyframe", "No later keyframe."));
             return;
         }
         _playheadMsCache = best;
@@ -1936,6 +2259,13 @@ public sealed partial class WidgetEditorView : UserControl
         double clampedX = Math.Clamp(xInTimeline, 0, w);
         double newMs = XToTime(clampedX, zoom.PxPerSec, zoom.ScrollOffsetMs);
         newMs = Math.Clamp(newMs, 0, durationMs);
+        // Change 4 — snap (AFTER the clamp) to the 100ms grid + keyframe times
+        // (any track), unless Alt is held. Reciprocal of keyframe drag:
+        // scrubbing near a keyframe drops the playhead onto it. No "snap to
+        // playhead" — the playhead is what's moving.
+        newMs = Math.Clamp(
+            SnapTimelineMs(newMs, zoom.PxPerSec, sameTrackPath: null, includePlayhead: false),
+            0, durationMs);
         _playheadMsCache = newMs;
 
         if (_vm is not null) _vm.PlayheadMs = newMs;
@@ -1954,11 +2284,14 @@ public sealed partial class WidgetEditorView : UserControl
         }
 
         // Reposition the playhead line + halo without a full RedrawTimeline
-        // (smooth scrubbing — no re-allocation of every tick mark per move).
+        // (smooth scrubbing — no re-allocation of every tick mark per move). Use
+        // the SNAPPED time's X (not the raw cursor X) so the visible playhead
+        // lands on the snap target rather than trailing behind it.
+        double snappedX = TimeToX(newMs, zoom.PxPerSec, zoom.ScrollOffsetMs);
         if (_playheadLine is not null)
-            _playheadLine.Margin = new Thickness(clampedX, 0, 0, 0);
+            _playheadLine.Margin = new Thickness(snappedX, 0, 0, 0);
         if (_playheadHalo is not null)
-            _playheadHalo.Margin = new Thickness(clampedX - 3, 0, 0, 0);
+            _playheadHalo.Margin = new Thickness(snappedX - 3, 0, 0, 0);
     }
 
     // Lightweight playhead reposition for automated playback (Task 6). Maps the
@@ -2253,29 +2586,291 @@ public sealed partial class WidgetEditorView : UserControl
     private string ActiveTriggerName()
         => string.IsNullOrEmpty(_vm?.ActiveTrigger) ? "onStartup" : _vm!.ActiveTrigger;
 
-    // ─── Test Run ────────────────────────────────────────────────
+    // ─── Test Run + Test Target (V6) ─────────────────────────────
     //
-    // Fire-and-forget VISUAL_TRIGGER for the active trigger over the bus so the
-    // live OBS source executes it. Disabled when the bus is offline so an offline
-    // click can't pile into the bounded outbound queue. Feedback goes to the
-    // status bar — no modal.
+    // Fire the active trigger. Historically this ONLY sent a fire-and-forget
+    // VISUAL_TRIGGER over the bus, i.e. it only ever addressed the live OBS source.
+    //
+    // V6 made that a dead end for the most common authoring loop. Hub now excludes
+    // Visualist preview sockets from layer presence (an editor pane is no longer
+    // indistinguishable from an OBS Browser Source), so with only a preview open
+    // LayerRuntime.EnqueueTriggerAsync takes its inactive-layer fast-succeed: no
+    // RUN_TRIGGER is produced, nothing renders, and because the Test Run payload
+    // carries an empty WaitId nothing surfaces the swallow — the status bar still
+    // said "Test Run sent". Correct presence, useless button.
+    //
+    // So Test Run gained a TARGET. The default addresses BOTH the open design
+    // surfaces and the bus, which is what makes "fire a test with only a preview
+    // open" render something again without needing the author to discover anything.
+    // The two isolating targets exist for when they want to be sure which surface
+    // they are looking at. Every path reports the target it actually reached, so the
+    // author is never guessing whose pixels those are.
+    //
+    // ── Three invariants this region must keep (each one is a fixed bug) ──────────
+    //
+    // (1) "live OBS (bus)" is claimed ONLY when the layer has real PRODUCTION presence.
+    //     A successful SendVisualTriggerAsync proves the BUS took the envelope, which is
+    //     precisely the signal the doc-comment above says must not be trusted: Hub's
+    //     LayerRuntime then discards it on the inactive-layer fast-succeed. With OBS
+    //     closed the author was told the OBS target was reached while zero pixels moved —
+    //     a false confirmation from the very affordance that exists to remove them. See
+    //     HasProductionPresence + BuildTestRunStatus.
+    //
+    // (2) The two transports must never BOTH drive the same pane. LayerRegistry's
+    //     GetConnections is deliberately kind-blind (a preview pane is a real socket that
+    //     must keep receiving frames), so a bus RUN_TRIGGER fans out to the open preview
+    //     sockets as well. Doing the local SET_ACTIVE_TRIGGER/SCRUB/PLAY on top of that
+    //     ran every pane TWICE: both passes bump the audio activation, so a one-shot alert
+    //     sound played twice in the pane, and the two transports fought over the same
+    //     widget's timeline. Local dispatch is therefore the FALLBACK, taken only when the
+    //     wire cannot reach those sockets. See busDrivesPreviews in OnTestRunClicked.
+    //
+    // (3) A surface counts as reached only when its post actually went out. The WebView2
+    //     bridge no-ops while CoreWebView2 is uninitialised (the documented intermittent
+    //     detached-tree case), so a non-null reference plus a Visibility check proved
+    //     nothing. The panels' PostScrub/PostPlay now return bool. See
+    //     DispatchTestToPreviewSurfaces.
+    private enum TestTarget
+    {
+        /// <summary>Default — every open Visualist preview surface AND the bus (live OBS).</summary>
+        PreviewAndObs = 0,
+
+        /// <summary>Bus only. The pre-V6 behaviour, kept for "prove it works on stream".</summary>
+        ObsOnly = 1,
+
+        /// <summary>Open preview surfaces only. Never touches the bus.</summary>
+        PreviewOnly = 2,
+    }
+
+    private TestTarget _testTarget = TestTarget.PreviewAndObs;
+
+    // Target-name label inside the Test Run button's content, and the flyout items,
+    // built in code — see InitTestTargetAffordance for why this is not XAML.
+    private TextBlock? _testTargetLabel;
+    private bool _testTargetAffordanceReady;
+    private RadioMenuFlyoutItem? _targetItemBoth;
+    private RadioMenuFlyoutItem? _targetItemObs;
+    private RadioMenuFlyoutItem? _targetItemPreview;
+
+    /// <summary>
+    /// Builds the Test Target selector: the current target is written into the Test Run
+    /// button's own label, and a three-item radio <see cref="MenuFlyout"/> is attached as
+    /// the button's context flyout so the author can pin a target.
+    ///
+    /// <para>WHY CODE-BEHIND and not a <c>SplitButton</c> in WidgetEditorView.xaml: the XAML
+    /// is outside this sprint's edit scope (V6 owns this code-behind for the Test Target work
+    /// only). A SplitButton with the same MenuFlyout is the better shape and the toolbar
+    /// already has a Flyout precedent next door on the audio-mixer button — promote it when
+    /// the XAML is free. Nothing else has to change: the target state, the dispatch and the
+    /// reporting all live in this region.</para>
+    ///
+    /// <para>Discovery is deliberately cheap because it does not have to carry the feature:
+    /// the DEFAULT target already drives the previews, so an author who never finds the
+    /// flyout still gets a rendering Test Run. The label states the current target and the
+    /// tooltip states how to change it.</para>
+    ///
+    /// <para>★ THE SELECTOR MUST NOT RIDE A GATED CONTROL. This flyout hangs off the Test
+    /// Run button's <c>ContextFlyout</c>, and WinUI routes no input to a disabled control.
+    /// While <see cref="ApplyButtonGating"/> still disabled the button whenever the pinned
+    /// target needed the bus and the bus was down, the target selector became unreachable
+    /// at exactly the moment the author needed to leave the target that had stopped
+    /// working — and the field is not persisted, so the only recovery was restarting the
+    /// pillar. ApplyButtonGating no longer consults bus state for that reason; the
+    /// bus-offline rejection is REPORTED from <see cref="OnTestRunClicked"/> instead. If
+    /// this flyout is ever moved back onto a conditionally-enabled part, that trap comes
+    /// straight back.</para>
+    /// </summary>
+    private void InitTestTargetAffordance()
+    {
+        if (_testTargetAffordanceReady || TestRunButton is null) return;
+        _testTargetAffordanceReady = true;
+
+        try
+        {
+            // Rebuild the button content so the target label has a stable identity
+            // (reaching into the XAML-declared StackPanel by child index would break the
+            // moment anyone reorders it).
+            _testTargetLabel = new TextBlock
+            {
+                FontSize            = 11,
+                VerticalAlignment   = VerticalAlignment.Center,
+                Opacity             = 0.75,
+            };
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            content.Children.Add(new TextBlock { Text = "▶", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = Localizer.T("visualist.widget.toolbar.test_run.label", "Test Run"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(_testTargetLabel);
+            TestRunButton.Content = content;
+
+            _targetItemBoth = new RadioMenuFlyoutItem
+            {
+                Text      = Localizer.T("visualist.widget.test_target.both", "Preview + live OBS"),
+                GroupName = "WidgetEditorTestTarget",
+                IsChecked = true,
+            };
+            _targetItemObs = new RadioMenuFlyoutItem
+            {
+                Text      = Localizer.T("visualist.widget.test_target.obs", "Live OBS only"),
+                GroupName = "WidgetEditorTestTarget",
+            };
+            _targetItemPreview = new RadioMenuFlyoutItem
+            {
+                Text      = Localizer.T("visualist.widget.test_target.preview", "This preview only"),
+                GroupName = "WidgetEditorTestTarget",
+            };
+            _targetItemBoth.Click    += (_, _) => SetTestTarget(TestTarget.PreviewAndObs);
+            _targetItemObs.Click     += (_, _) => SetTestTarget(TestTarget.ObsOnly);
+            _targetItemPreview.Click += (_, _) => SetTestTarget(TestTarget.PreviewOnly);
+
+            var flyout = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
+            flyout.Items.Add(_targetItemBoth);
+            flyout.Items.Add(_targetItemObs);
+            flyout.Items.Add(_targetItemPreview);
+            TestRunButton.ContextFlyout = flyout;
+
+            ApplyTestTargetLabel();
+        }
+        catch (Exception ex)
+        {
+            // A failed affordance must not cost the author the button itself: Test Run keeps
+            // working at its default target with the XAML label it was declared with.
+            GlobalLogger.Error("WidgetEditorView", "InitTestTargetAffordance", ex);
+        }
+    }
+
+    private void SetTestTarget(TestTarget target)
+    {
+        _testTarget = target;
+        ApplyTestTargetLabel();
+        // Re-poll the gate. The target no longer influences it (see ApplyButtonGating —
+        // bus state is deliberately not a gate, so the flyout on the button can never be
+        // locked away), but the layer-saved / widget-selected conditions may have moved
+        // since the last poll and the label change is a natural refresh point.
+        ApplyButtonGating();
+        SetStatus(string.Format(
+            Localizer.T("visualist.widget.status.test_target_format", "Test Run target: {0}."),
+            DescribeTarget(target)));
+    }
+
+    private static string DescribeTarget(TestTarget target) => target switch
+    {
+        TestTarget.ObsOnly     => Localizer.T("visualist.widget.test_target.describe.obs", "live OBS only"),
+        TestTarget.PreviewOnly => Localizer.T("visualist.widget.test_target.describe.preview", "this preview only"),
+        _                      => Localizer.T("visualist.widget.test_target.describe.both", "preview + live OBS"),
+    };
+
+    private void ApplyTestTargetLabel()
+    {
+        if (_testTargetLabel is not null)
+        {
+            _testTargetLabel.Text = _testTarget switch
+            {
+                TestTarget.ObsOnly     => Localizer.T("visualist.widget.test_target.chip.obs", "· OBS"),
+                TestTarget.PreviewOnly => Localizer.T("visualist.widget.test_target.chip.preview", "· Preview"),
+                _                      => Localizer.T("visualist.widget.test_target.chip.both", "· Preview + OBS"),
+            };
+        }
+        if (_targetItemBoth    is not null) _targetItemBoth.IsChecked    = _testTarget == TestTarget.PreviewAndObs;
+        if (_targetItemObs     is not null) _targetItemObs.IsChecked     = _testTarget == TestTarget.ObsOnly;
+        if (_targetItemPreview is not null) _targetItemPreview.IsChecked = _testTarget == TestTarget.PreviewOnly;
+        if (TestRunButton is not null)
+        {
+            ToolTipService.SetToolTip(TestRunButton, string.Format(
+                Localizer.T("visualist.widget.toolbar.test_run.target_tip_format",
+                    "Run this trigger — target: {0}. Right-click to change the target."),
+                DescribeTarget(_testTarget)));
+        }
+    }
+
+    /// <summary>
+    /// Does this layer have real PRODUCTION presence — i.e. is an OBS Browser Source
+    /// attached right now?
+    ///
+    /// <para>WHY THIS EXISTS: a successful <c>SendVisualTriggerAsync</c> only proves the BUS
+    /// accepted the envelope. Hub's <c>LayerRuntime.EnqueueTriggerAsync</c> then consults
+    /// <c>LayerRegistry.IsLayerActive</c> and takes its inactive-layer fast-succeed when the
+    /// layer has no production socket — the trigger is discarded, and because Test Run's
+    /// payload carries an empty <c>WaitId</c> nothing surfaces the swallow. Claiming the OBS
+    /// target from the send alone told the author their overlay had fired while OBS was
+    /// closed.</para>
+    ///
+    /// <para>HOW IT RESOLVES: through the rail rows the VM already maintains from
+    /// <c>ILayerRegistrySource</c> — <c>SeedActiveFromSource</c> writes
+    /// <c>row.Active = IsLayerActive(id)</c> and <c>LiveLayerChanged</c> keeps it current.
+    /// Post-V6 both of those are PRODUCTION-scoped (an editor socket is neither presence nor
+    /// a transition), so the row is exactly the signal wanted, and Visualist gets it without
+    /// referencing Hub — the pillar-isolation rule means <c>LayerRegistry</c> itself is
+    /// unreachable from here. It also guarantees this status line can never contradict the
+    /// presence dot the author is looking at in the rail.</para>
+    ///
+    /// <para>SIBLING WINDOWS (was a known limitation, now closed): siblings used to be
+    /// constructed with <c>layerSource: null</c>, so no rail row was ever Active there and
+    /// this returned false even with an OBS source attached. That was reasoned about as
+    /// cosmetic — a status line that under-claims is the safe direction — but the reasoning
+    /// only covered the STATUS TEXT. The same flag also gates DISPATCH one method down:
+    /// <c>busDrivesPreviews</c> went false, so <c>OnTestRunClicked</c> ran the preview
+    /// dispatch AND the bus trigger, and Hub's fan-out is kind-blind, so the pane was driven
+    /// twice — the double-dispatch invariant (2) of this region explicitly forbids. Siblings
+    /// now receive <c>VisualistWindowRegistry.AmbientLayerSource</c>, published by Hub, so
+    /// they answer the same as the embedded surface.
+    ///
+    /// <b>The transferable lesson:</b> when a flag is documented as affecting only a
+    /// cosmetic surface, check every OTHER read of it before believing that.</para>
+    /// </summary>
+    private bool HasProductionPresence(string layerId)
+    {
+        var rows = _vm?.Layers;
+        if (rows is null || string.IsNullOrEmpty(layerId)) return false;
+        try
+        {
+            foreach (var row in rows)
+            {
+                // Skip the synthetic "(unsaved)" row — it has no file, so no HUD presence.
+                if (row.IsUnsaved) continue;
+                // Same keying as VisualistViewModel.LayerIdFor / Hub's LayerRegistry: the
+                // filename stem, NOT Layer.Name.
+                string id = System.IO.Path.GetFileNameWithoutExtension(row.FileName);
+                if (string.Equals(id, layerId, StringComparison.OrdinalIgnoreCase)) return row.Active;
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("WidgetEditorView", $"HasProductionPresence('{layerId}')", ex);
+        }
+        return false;
+    }
+
     private async void OnTestRunClicked(object sender, RoutedEventArgs e)
     {
-        if (!VisualistBusClient.Instance.IsConnected)
+        bool wantsBus = _testTarget != TestTarget.PreviewOnly;
+        bool wantsPreview = _testTarget != TestTarget.ObsOnly;
+
+        // Only the OBS-only target is dead in the water without the bus; the other two
+        // degrade to their preview half (see the send-time IsConnected re-check below, which
+        // is what keeps an offline click off the bounded outbound queue).
+        //
+        // This rejection is REPORTED here rather than pre-empted by disabling the button:
+        // the Test Target flyout hangs off this button's ContextFlyout, and a disabled
+        // control receives no input, so gating it locked the author into the target that
+        // had just stopped working. See ApplyButtonGating + InitTestTargetAffordance.
+        if (wantsBus && !wantsPreview && !VisualistBusClient.Instance.IsConnected)
         {
-            SetStatus("Test Run unavailable — Hub bus is offline.");
+            SetStatus(Localizer.T("visualist.widget.status.test_run.bus_offline",
+                "Test Run unavailable — Hub bus is offline. Right-click Test Run to pick a preview target."));
             return;
         }
         string? layerId = ResolveLayerId();
         if (layerId is null)
         {
-            SetStatus("Test Run unavailable — save the layer first.");
+            SetStatus(Localizer.T("visualist.widget.status.test_run.unsaved",
+                "Test Run unavailable — save the layer first."));
             return;
         }
         LayerWidget? widget = _vm?.SelectedWidget;
         if (widget is null || string.IsNullOrEmpty(widget.Id))
         {
-            SetStatus("Test Run unavailable — no widget selected.");
+            SetStatus(Localizer.T("visualist.widget.status.test_run.no_widget",
+                "Test Run unavailable — no widget selected."));
             return;
         }
         string triggerName = ActiveTriggerName();
@@ -2283,19 +2878,245 @@ public sealed partial class WidgetEditorView : UserControl
         TestRunButton.IsEnabled = false;
         try
         {
-            await VisualistBusClient.Instance.SendVisualTriggerAsync(layerId, widget.Id, triggerName);
-            SetStatus($"Test Run sent: {widget.Name} · {triggerName}");
+            bool hasProduction = HasProductionPresence(layerId);
+            bool busReachable  = wantsBus && VisualistBusClient.Instance.IsConnected;
+
+            // ★ ONE transport per pane. Hub fans a bus RUN_TRIGGER out over
+            // LayerRegistry.GetConnections, which is deliberately kind-blind — so when the
+            // wire can reach the layer at all, the open preview panes are ALREADY driven by
+            // it. Adding the local SET_ACTIVE_TRIGGER/SCRUB/PLAY on top ran each pane twice
+            // (double audio activation → a one-shot alert sound playing twice; two
+            // transports racing the same widget's timeline). So: wire when the wire can
+            // reach them (this is exactly the pre-V6 behaviour), local ONLY as the fallback
+            // for a layer with no production socket, where Hub's inactive-layer
+            // fast-succeed means no RUN_TRIGGER is produced at all.
+            bool busDrivesPreviews = wantsPreview && busReachable && hasProduction;
+
+            int previewSurfaces = 0;
+            bool busSent = false;
+            string? busError = null;
+
+            if (busDrivesPreviews)
+            {
+                // Bus first here (the usual preview-first ordering is inverted on purpose):
+                // the local path is the fallback, and we can only know whether it is needed
+                // after the send either succeeds or throws.
+                (busSent, busError) = await TrySendVisualTriggerAsync(layerId, widget.Id, triggerName);
+                if (!busSent) previewSurfaces = DispatchTestToPreviewSurfaces(widget, triggerName);
+            }
+            else
+            {
+                // Previews first: the local WebView2 bridge is synchronous, so the author
+                // sees the frame move before the bus round-trip resolves.
+                if (wantsPreview) previewSurfaces = DispatchTestToPreviewSurfaces(widget, triggerName);
+                if (busReachable)
+                    (busSent, busError) = await TrySendVisualTriggerAsync(layerId, widget.Id, triggerName);
+            }
+
+            SetStatus(BuildTestRunStatus(widget, triggerName, layerId, wantsBus, wantsPreview,
+                                         previewSurfaces, busSent, busError,
+                                         hasProduction, busDrivesPreviews && busSent));
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("WidgetEditorView", "Test Run", ex);
-            SetStatus($"Test Run failed: {ex.Message}");
+            SetStatus(string.Format(
+                Localizer.T("visualist.widget.status.test_run.failed_format", "Test Run failed: {0}"),
+                ex.Message));
         }
         finally
         {
-            // Re-gate against live bus state (it may have dropped during the send).
+            // Re-gate (layer-saved / widget-selected may have changed under a long send).
             ApplyButtonGating();
         }
+    }
+
+    /// <summary>
+    /// Fire-and-forget VISUAL_TRIGGER over the bus, reporting (sent, error) instead of
+    /// throwing. Extracted so <see cref="OnTestRunClicked"/> can order the bus send before
+    /// or after the local preview dispatch without duplicating the try/catch.
+    /// </summary>
+    private static async System.Threading.Tasks.Task<(bool Sent, string? Error)> TrySendVisualTriggerAsync(
+        string layerId, string widgetId, string triggerName)
+    {
+        try
+        {
+            await VisualistBusClient.Instance.SendVisualTriggerAsync(layerId, widgetId, triggerName);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("WidgetEditorView", "Test Run", ex);
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Composes the one line the author reads to know WHERE the trigger went. Naming the
+    /// reached surfaces is the point of the whole affordance — a generic "Test Run sent" is
+    /// exactly what let the pre-V6 swallow go unnoticed, since the bus accepted a
+    /// VISUAL_TRIGGER that LayerRuntime then discarded.
+    ///
+    /// <para>★ <paramref name="busSent"/> alone must NEVER print as a reached OBS target.
+    /// It means "the bus accepted the envelope", which is the exact signal the swallow hides
+    /// behind: without production presence Hub discards the trigger. So the OBS claim is
+    /// gated on <paramref name="hasProductionPresence"/>, and the ungated case says so
+    /// plainly instead of quietly dropping the target from the list — the author needs to
+    /// know their overlay is not attached, not merely that OBS went unmentioned.</para>
+    ///
+    /// <para><paramref name="previewsDrivenByBus"/> covers the default target on a live
+    /// layer: the panes are driven by the same RUN_TRIGGER fan-out that reaches OBS, so
+    /// <paramref name="previewSurfaces"/> is 0 by design and reporting "hit nothing" would
+    /// be wrong.</para>
+    /// </summary>
+    private static string BuildTestRunStatus(LayerWidget widget, string triggerName, string layerId,
+        bool wantsBus, bool wantsPreview, int previewSurfaces, bool busSent, string? busError,
+        bool hasProductionPresence, bool previewsDrivenByBus)
+    {
+        // Each reached-surface fragment is its own key: the line is assembled from
+        // them, so a translator needs the pieces AND the frames. widget.Name and
+        // triggerName are user/persisted data and are interpolated, never translated.
+        var reached = new List<string>();
+        if (previewsDrivenByBus)
+        {
+            reached.Add(Localizer.T("visualist.widget.test_run.reached.bus_and_previews",
+                "live OBS (bus) + every open preview"));
+        }
+        else
+        {
+            if (previewSurfaces == 1) reached.Add(Localizer.T("visualist.widget.test_run.reached.preview", "preview"));
+            else if (previewSurfaces > 1) reached.Add(string.Format(
+                Localizer.T("visualist.widget.test_run.reached.previews_format", "{0} previews"),
+                previewSurfaces));
+            if (busSent && hasProductionPresence) reached.Add(Localizer.T("visualist.widget.test_run.reached.bus", "live OBS (bus)"));
+        }
+
+        string head = $"{widget.Name} · {triggerName}";
+        string busNote = busError is not null
+            ? string.Format(
+                Localizer.T("visualist.widget.test_run.note.bus_failed_format", " (bus failed: {0})"),
+                busError)
+            : (busSent && !hasProductionPresence
+                ? string.Format(
+                    Localizer.T("visualist.widget.test_run.note.no_obs_format",
+                        " (bus accepted, but no OBS source is attached to '{0}' — nothing rendered on stream)"),
+                    layerId)
+                : "");
+
+        if (reached.Count > 0) return string.Format(
+            Localizer.T("visualist.widget.test_run.summary_format", "Test Run → {0}: {1}{2}"),
+            string.Join(" + ", reached), head, busNote);
+
+        if (busError is not null) return string.Format(
+            Localizer.T("visualist.widget.status.test_run.failed_format", "Test Run failed: {0}"),
+            busError);
+        if (busSent)
+        {
+            // Implies !hasProductionPresence — the only way the bus can be the sole
+            // transport and still reach nobody.
+            string previewHalf = wantsPreview
+                ? Localizer.T("visualist.widget.test_run.note.no_preview_took", ", and no preview surface took it")
+                : "";
+            return string.Format(
+                Localizer.T("visualist.widget.test_run.nothing.bus_only_format",
+                    "Test Run hit nothing — bus accepted, but no OBS source is attached to '{0}'{1}: nothing rendered on stream."),
+                layerId, previewHalf);
+        }
+        if (wantsBus && !VisualistBusClient.Instance.IsConnected && !wantsPreview)
+            return Localizer.T("visualist.widget.test_run.unavailable.bus_offline",
+                "Test Run unavailable — Hub bus is offline.");
+        if (wantsPreview && !wantsBus)
+            return Localizer.T("visualist.widget.test_run.nothing.no_preview",
+                "Test Run hit nothing — no preview surface is open (open the embedded preview or a popout).");
+        return Localizer.T("visualist.widget.test_run.nothing.none",
+            "Test Run hit nothing — no preview is open and the Hub bus is offline.");
+    }
+
+    /// <summary>
+    /// Renders the active trigger in every Visualist design surface this editor can reach,
+    /// returning how many took it.
+    ///
+    /// <para>This bypasses the bus entirely and uses the existing design-time WebView2
+    /// bridge (the same messages the timeline transport sends), so it is unaffected by the
+    /// V6 presence rules by construction: no RUN_TRIGGER, no VISUAL_COMPLETE, nothing that
+    /// could resolve a script's wait. A preview must never be able to answer for a
+    /// production overlay — that is the bug V6 fixed, and this affordance must not
+    /// reintroduce it through the front door.</para>
+    ///
+    /// <para>Per surface it SCRUBS to 0 and then PLAYS. Both halves are needed:
+    /// compositor.js's handlePlay starts from the CURRENT cursor
+    /// (<c>startMs: triggerContext.timeMs</c>), so without the scrub a second Test Run would
+    /// resume from wherever the last one stopped; and a trigger with no authored timeline
+    /// duration is a no-op for handlePlay, so the scrub is what makes an untimed trigger
+    /// render at all rather than reporting a target it never painted.</para>
+    ///
+    /// <para>★ A SURFACE COUNTS ONLY WHEN THE POST ACTUALLY WENT OUT. The count used to come
+    /// from a non-null reference plus a Visibility check, but the panels' post methods
+    /// silently return when their WebView2 bridge is not initialised — the documented
+    /// intermittent detached-tree case this editor carries a retry for. The status line then
+    /// claimed a pane that took nothing: the same false-confirmation class this affordance
+    /// exists to remove. <c>PostScrub</c> reports delivery (the SCRUB is the one message
+    /// every surface always gets), so it is the gate for both the PLAY and the tally.</para>
+    /// </summary>
+    private int DispatchTestToPreviewSurfaces(LayerWidget widget, string triggerName)
+    {
+        double durationMs = _vm?.ActiveTriggerObject?.Timeline?.DurationMs ?? 0;
+        if (!double.IsFinite(durationMs) || durationMs < 0) durationMs = 0;
+        int hit = 0;
+
+        // 1) The embedded single-widget pane. The Visibility + config checks stay as cheap
+        //    pre-filters (a collapsed pane, or preview turned off in settings, has no live
+        //    WebView2 at all) — but delivery is what decides the tally.
+        if (EmbeddedPreview is not null
+            && EmbeddedPreview.Visibility == Visibility.Visible
+            && VisualistUserConfig.Instance.EditorEmbeddedPreviewEnabled)
+        {
+            try
+            {
+                EmbeddedPreview.SetActiveTrigger(triggerName);
+                if (EmbeddedPreview.PostScrub(0))
+                {
+                    if (durationMs > 0) EmbeddedPreview.PostPlay(durationMs, loop: false);
+                    hit++;
+                }
+            }
+            catch (Exception ex) { GlobalLogger.Error("WidgetEditorView", "TestRun → embedded preview", ex); }
+        }
+
+        // 2) The single-WIDGET popout this editor owns.
+        var widgetPane = _widgetPreviewWindow?.WidgetPreview;
+        if (widgetPane is not null)
+        {
+            try
+            {
+                widgetPane.SetActiveTrigger(triggerName);
+                if (widgetPane.PostScrub(0))
+                {
+                    if (durationMs > 0) widgetPane.PostPlay(durationMs, loop: false);
+                    hit++;
+                }
+            }
+            catch (Exception ex) { GlobalLogger.Error("WidgetEditorView", "TestRun → widget popout", ex); }
+        }
+
+        // 3) The pillar-owned full-LAYER popout. It hosts a whole layer rather than one
+        //    widget, so its bridge is addressed per call (no SetActiveTrigger); the scrub
+        //    carries the widget + trigger it should sample.
+        var layerPane = FindPillarMainView()?.ActiveLayerPreviewWindow?.Preview;
+        if (layerPane is not null)
+        {
+            try
+            {
+                if (layerPane.PostScrub(widget.Id, triggerName, 0))
+                {
+                    if (durationMs > 0) layerPane.PostPlay(widget.Id, triggerName, durationMs, loop: false);
+                    hit++;
+                }
+            }
+            catch (Exception ex) { GlobalLogger.Error("WidgetEditorView", "TestRun → layer popout", ex); }
+        }
+
+        return hit;
     }
 
     // ─── Bus connection indicator ────────────────────────────────────────
@@ -2345,17 +3166,33 @@ public sealed partial class WidgetEditorView : UserControl
                 GlobalLogger.Error("WidgetEditorView", "ApplyBusConnectionState", ex);
                 BusStatusDot.Fill = new SolidColorBrush(Microsoft.UI.Colors.Gray);
             }
-            ToolTipService.SetToolTip(BusStatusDot, connected ? "Hub bus connected" : "Hub bus offline");
+            ToolTipService.SetToolTip(BusStatusDot, connected
+                ? Localizer.T("visualist.widget.toolbar.bus.connected.tip", "Hub bus connected")
+                : Localizer.T("visualist.widget.toolbar.bus.offline.tip", "Hub bus offline"));
         }
         ApplyButtonGating();
     }
 
-    // Enable Test Run only when the bus is online AND the layer is saved AND a
-    // widget is selected. Preview-popout buttons gate on the config toggle.
+    // Enable Test Run when the layer is saved AND a widget is selected. Preview-popout
+    // buttons gate on the config toggle.
+    //
+    // ★ BUS STATE IS DELIBERATELY NOT A GATE HERE. V6 first made the bus requirement
+    // target-scoped (only "live OBS only" needs it), but even that was wrong for a reason
+    // that has nothing to do with the send: the Test Target flyout is attached to this
+    // button's ContextFlyout, and WinUI routes no input to a disabled control. Disabling
+    // the button for the bus-needing target made the target SELECTOR unreachable at exactly
+    // the moment the author needed to leave the target that had stopped working — and the
+    // target is not persisted, so the only recovery was restarting the pillar.
+    //
+    // Nothing is lost by dropping it. The original gate existed so an offline click
+    // couldn't pile into the bounded outbound queue, and OnTestRunClicked still guarantees
+    // that: the OBS-only target returns early with "Hub bus is offline" before any send,
+    // and the other two re-check IsConnected before touching the client. So the offline
+    // click is now REPORTED rather than pre-empted, which is also the more honest UX — a
+    // disabled button with a tooltip is not an explanation.
     private void ApplyButtonGating()
     {
-        bool canTestRun = VisualistBusClient.Instance.IsConnected
-                       && ResolveLayerId() is not null
+        bool canTestRun = ResolveLayerId() is not null
                        && _vm?.SelectedWidget is not null;
         if (TestRunButton is not null) TestRunButton.IsEnabled = canTestRun;
 
@@ -2429,7 +3266,9 @@ public sealed partial class WidgetEditorView : UserControl
             newWidth,
             Controls.WidgetSinglePreviewPanel.MinPreviewWidth,
             Controls.WidgetSinglePreviewPanel.MaxPreviewWidth));
-        SetStatus($"Preview width: {newWidth}px");
+        SetStatus(string.Format(
+            Localizer.T("visualist.widget.status.preview_width_format", "Preview width: {0}px"),
+            newWidth));
     }
 
     // A node was selected/deselected in the graph; light (or clear) the
@@ -2506,7 +3345,7 @@ public sealed partial class WidgetEditorView : UserControl
         // only need the node-body TranslateX/Y / Scale / Rotation pills to catch up,
         // which RefreshNode does without touching selection or the manipulator.
         GraphCanvas.RefreshNode(change.NodeId);
-        SetStatus("Applied manipulator change.");
+        SetStatus(Localizer.T("visualist.widget.status.manipulator_applied", "Applied manipulator change."));
     }
 
     // Bug #3 — a right-pane Inspector param edit writes node.Attributes via
@@ -2554,20 +3393,22 @@ public sealed partial class WidgetEditorView : UserControl
     private void OnPreviewLayerClicked(object sender, RoutedEventArgs e)
     {
         if (!VisualistUserConfig.Instance.EditorPopoutPreviewEnabled) return;
-        if (ResolveLayerId() is null) { SetStatus("Preview unavailable — save the layer first."); return; }
+        if (ResolveLayerId() is null) { SetStatus(Localizer.T("visualist.widget.status.preview_unsaved", "Preview unavailable — save the layer first.")); return; }
         // Route through the shared pillar-owned popout so the editor and
         // the layer-canvas command bar use one window.
         bool ok = FindPillarMainView()?.PreviewLayer() == true;
-        SetStatus(ok ? "Opened layer preview." : "Could not open layer preview.");
+        SetStatus(ok
+            ? Localizer.T("visualist.widget.status.preview_layer_opened", "Opened layer preview.")
+            : Localizer.T("visualist.widget.status.preview_layer_failed", "Could not open layer preview."));
     }
 
     private void OnPreviewWidgetClicked(object sender, RoutedEventArgs e)
     {
         if (!VisualistUserConfig.Instance.EditorPopoutPreviewEnabled) return;
         string? layerId = ResolveLayerId();
-        if (layerId is null) { SetStatus("Preview unavailable — save the layer first."); return; }
+        if (layerId is null) { SetStatus(Localizer.T("visualist.widget.status.preview_unsaved", "Preview unavailable — save the layer first.")); return; }
         LayerWidget? widget = _vm?.SelectedWidget;
-        if (widget is null || string.IsNullOrEmpty(widget.Id)) { SetStatus("Select a widget to preview."); return; }
+        if (widget is null || string.IsNullOrEmpty(widget.Id)) { SetStatus(Localizer.T("visualist.widget.status.preview_no_widget", "Select a widget to preview.")); return; }
 
         if (_widgetPreviewWindow is not null)
         {
@@ -2584,12 +3425,12 @@ public sealed partial class WidgetEditorView : UserControl
             win.Closed += (_, _) => _widgetPreviewWindow = null;
             _widgetPreviewWindow = win;
             Phoenix.Controls.Visualist.WinUI.Hosting.WindowFront.Show(win);
-            SetStatus("Opened widget preview.");
+            SetStatus(Localizer.T("visualist.widget.status.preview_widget_opened", "Opened widget preview."));
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("WidgetEditorView", "OnPreviewWidgetClicked", ex);
-            SetStatus("Could not open widget preview.");
+            SetStatus(Localizer.T("visualist.widget.status.preview_widget_failed", "Could not open widget preview."));
         }
     }
 
@@ -2609,32 +3450,51 @@ public sealed partial class WidgetEditorView : UserControl
         if (_playback.IsPlaying)
         {
             _playback.Pause();
-            SetStatus("Paused.");
+            SetStatus(Localizer.T("visualist.widget.status.paused", "Paused."));
         }
         else
         {
             var tl = _vm?.ActiveTriggerObject?.Timeline;
             if (tl is null || tl.DurationMs <= 0)
             {
-                SetStatus("Nothing to play — this trigger has no timeline duration.");
+                SetStatus(Localizer.T("visualist.widget.status.nothing_to_play",
+                    "Nothing to play — this trigger has no timeline duration."));
                 return;
             }
             _playback.Play();
-            SetStatus("Playing.");
+            SetStatus(Localizer.T("visualist.widget.status.playing", "Playing."));
         }
     }
 
     private void OnStopClicked(object sender, RoutedEventArgs e)
     {
         _playback?.Stop();
-        SetStatus("Stopped.");
+
+        // ★ AFTER Stop(), never before. Stop() sets IsPlaying=false (which posts STOP_PLAY
+        // when it was playing) and then TimeMs=0, and that time write posts a SCRUB that
+        // RE-PINS the widget's design-time clock at frame 0. Releasing first would be
+        // undone by that scrub a moment later.
+        //
+        // Pause holds the frame it stopped on — the author's playhead still describes what
+        // is on screen. STOP is the gesture that says otherwise, so it is the one that
+        // hands every widget back to the ambient clock. Without this the whole-layer
+        // preview had no reachable release: a bare playhead drag pinned a widget for the
+        // page's life and _seedWidgetAnimator refuses a pinned widget, so its ambient
+        // animation was dead until the page reloaded.
+        var preview = FindPillarMainView()?.ActiveLayerPreviewWindow?.Preview;
+        preview?.PostReleaseTimeCursor();
+        EmbeddedPreview?.PostReleaseTimeCursor();
+
+        SetStatus(Localizer.T("visualist.widget.status.stopped", "Stopped."));
     }
 
     private void OnLoopToggled(object sender, RoutedEventArgs e)
     {
         if (_playback is null) return;
         _playback.Loop = LoopToggle?.IsChecked == true;
-        SetStatus(_playback.Loop ? "Loop on." : "Loop off.");
+        SetStatus(_playback.Loop
+            ? Localizer.T("visualist.widget.status.loop_on", "Loop on.")
+            : Localizer.T("visualist.widget.status.loop_off", "Loop off."));
     }
 
     // Guard so a playback-driven PlayheadMs write doesn't recurse back into the
@@ -2725,7 +3585,71 @@ public sealed partial class WidgetEditorView : UserControl
         }
     }
 
+    // ─── V11: playhead-following node-body previews ──────────────────────
+
+    // UI-thread debounce for the node-body preview refresh. Same idiom (and the
+    // same 150 ms) as HexPatternOverlay's resize debounce, for the same reason:
+    // PlayheadMs is written per pointer-move during a scrub and ~30× a second
+    // during playback, and NodeEvaluator.EvaluatePreviews is a synchronous
+    // whole-graph walk — running it per write would put exactly the kind of
+    // per-frame work back on the UI thread that the perf pass removed.
+    //
+    // Because Stop()+Start() restarts the interval, a write storm never reaches
+    // Tick at all: the timer only elapses ~150 ms after the LAST write, i.e. on
+    // scrub-settle / playback-stop. DispatcherTimer (not Threading.Timer) so the
+    // Tick lands on the UI thread — the refresh touches node views.
+    private DispatcherTimer? _previewRefreshDebounce;
+
+    // Arm (or re-arm) the debounce. Cheap by design: every PlayheadMs write lands
+    // here, and all it does is restart a timer. PlayheadMs's setter already drops
+    // idempotent writes, so a scrub that doesn't move costs nothing at all.
+    private void RequestPreviewRefreshAtPlayhead()
+    {
+        if (_previewRefreshDebounce is null)
+        {
+            _previewRefreshDebounce = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(150),
+            };
+            _previewRefreshDebounce.Tick += OnPreviewRefreshDebounceTick;
+        }
+        _previewRefreshDebounce.Stop();
+        _previewRefreshDebounce.Start();
+    }
+
+    private void OnPreviewRefreshDebounceTick(object? sender, object e)
+    {
+        _previewRefreshDebounce?.Stop();
+
+        // Gesture gate — mirrors the precedent in SyncPlaybackToPlayhead above:
+        // an in-flight scrub or keyframe drag means the user is still moving, so
+        // don't spend a graph walk on a position they are about to leave.
+        // IsPlaying joins them because playback is a continuous position stream,
+        // not a settled one. A gesture that holds the pointer still for >150 ms
+        // would otherwise let the tick slip through mid-drag, so instead of
+        // dropping the request we re-arm: the refresh then lands ~150 ms after
+        // the gesture actually settles (pointer release / stop), which is the
+        // V11 contract.
+        if (_isScrubbing || _draggingKeyframe is not null || _playback?.IsPlaying == true)
+        {
+            _previewRefreshDebounce?.Start();
+            return;
+        }
+
+        // The canvas owns its own gesture state (node-drag / pan / lasso /
+        // group-drag are four independent flags in there). It returns false when
+        // it declines for that reason — re-arm so the refresh isn't simply lost.
+        if (!GraphCanvas.RefreshPreviewsAtTime(_vm?.PlayheadMs ?? 0))
+            _previewRefreshDebounce?.Start();
+    }
+
     // ─── status bar ──────────────────────────────────────────────
+
+    /// <summary>Optional host sink for transient status messages. MainView sets
+    /// this (T11-9) so the editor's feedback surfaces in Hub's single canonical
+    /// status strip — this view's own bottom strip is collapsed to avoid a double
+    /// strip. Null when hosted without a status host.</summary>
+    public Action<string>? ExternalStatusSink { get; set; }
 
     /// <summary>Surface a transient status message in the bottom strip and
     /// auto-clear it to "Ready" after ~5s. Public so other surfaces can feed
@@ -2735,6 +3659,10 @@ public sealed partial class WidgetEditorView : UserControl
         if (string.IsNullOrEmpty(message)) return;
         void Apply()
         {
+            // T11-9 — surface in the host's canonical strip first (this view's own
+            // strip is collapsed). Runs on the UI thread (Apply is marshalled).
+            ExternalStatusSink?.Invoke(message);
+
             if (StatusLabel is null) return;
             StatusLabel.Text = message;
             StatusLabel.Foreground = (Brush)Application.Current.Resources["CoalBodyTextBrush"];
@@ -2754,7 +3682,7 @@ public sealed partial class WidgetEditorView : UserControl
         {
             t.Stop();
             if (StatusLabel is null) return;
-            StatusLabel.Text = "Ready";
+            StatusLabel.Text = Localizer.T("visualist.widget.status.ready", "Ready");
             StatusLabel.Foreground = (Brush)Application.Current.Resources["CoalSecondaryTextBrush"];
         };
         return t;
@@ -2804,14 +3732,15 @@ public sealed partial class WidgetEditorView : UserControl
         WidgetTrigger? trigger = _vm?.ActiveTriggerObject;
         if (_vm is null || trigger is null)
         {
-            AudioMixerRoot.Children.Add(MixerHint("No trigger selected."));
+            AudioMixerRoot.Children.Add(MixerHint(
+                Localizer.T("visualist.widget.mixer.no_trigger", "No trigger selected.")));
             return;
         }
 
         // Header.
         AudioMixerRoot.Children.Add(new TextBlock
         {
-            Text       = "AUDIO MIXER",
+            Text       = Localizer.T("visualist.widget.mixer.title", "AUDIO MIXER"),
             Style      = (Style)Application.Current.Resources["EyebrowTextStyle"],
         });
 
@@ -2825,14 +3754,15 @@ public sealed partial class WidgetEditorView : UserControl
 
         if (audioNodes.Count == 0)
         {
-            AudioMixerRoot.Children.Add(MixerHint("No audio sources in this trigger."));
+            AudioMixerRoot.Children.Add(MixerHint(
+                Localizer.T("visualist.widget.mixer.no_audio", "No audio sources in this trigger.")));
             return;
         }
 
         AudioMixerRoot.Children.Add(new Border
         {
             Height = 1, Margin = new Thickness(0, 2, 0, 2),
-            Background = (Brush)Application.Current.Resources["CoalCardBrush"],
+            Background = (Brush)Application.Current.Resources["CoalDividerBrush"],
         });
 
         int i = 1;
@@ -2849,7 +3779,7 @@ public sealed partial class WidgetEditorView : UserControl
     private FrameworkElement BuildMasterRow(WidgetTrigger trigger)
     {
         double cur = Math.Clamp(trigger.Volume, 0, 1);
-        var (row, slider, readout) = BuildFaderRow("Master", cur);
+        var (row, slider, readout) = BuildFaderRow(Localizer.T("visualist.widget.mixer.master", "Master"), cur);
 
         slider.ValueChanged += (_, args) =>
         {
@@ -2989,6 +3919,7 @@ public sealed partial class WidgetEditorView : UserControl
                 }
             }
         }
-        return $"Audio {ordinal}";
+        return string.Format(
+            Localizer.T("visualist.widget.mixer.audio_row_format", "Audio {0}"), ordinal);
     }
 }

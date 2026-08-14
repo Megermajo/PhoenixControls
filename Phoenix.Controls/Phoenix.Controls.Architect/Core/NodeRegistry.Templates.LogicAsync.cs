@@ -11,9 +11,13 @@ namespace Phoenix.Controls.Architect.Core
     // small to warrant a dedicated file.
     //
     // The LOGIC band is purely a series of AddBinaryOp / AddUnaryOp
-    // calls plus one Logic.Select template; the legacy Logic.Gate is
-    // already removed from the palette but its handler still ships, per
-    // the comment in the parent partial.
+    // calls plus one Logic.Select template. The legacy Logic.Gate is fully
+    // retired — template and exporter handler are both gone (restore from
+    // git history if ever needed); a stray legacy node would hard-fail
+    // export at ScriptExporter's no-handler throw (its final Category
+    // "Flow Control" is not pure-data), while the older pre-2026-04-21
+    // Category="Logic" shape would silently inline instead. Details in
+    // the parent partial (NodeRegistry.Templates.cs).
     public static partial class NodeRegistry
     {
         private static void RegisterLogicAndAsyncTemplates()
@@ -51,10 +55,17 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) },
                 new Dictionary<string, string> { { "MS", "1000" } });
 
+            // V13/H1 — "Payload" is APPENDED LAST, deliberately NOT placed between
+            // Done and Timeout to mirror Async.WaitForEvent's (Received, Payload,
+            // Timeout) order. Matching that order would REORDER this node's existing
+            // outputs, and MigrateNodes re-sorts a loaded node's sockets into template
+            // order, so every saved .phxg with a wired Timeout would silently re-seat
+            // that wire onto Payload. Cosmetic symmetry is not worth a wire rewrite on
+            // the streamer's disk (project_socket_rename_prunes_links).
             AddTemplate("Async.WaitForVisual", "Async", Color.MediumOrchid,
                 Localizer.T("architect.node.bubble.async_waitforvisual"),
                 new[] { ("Flow", ColExec), ("LayerID", ColString), ("WidgetID", ColString), ("TriggerName", ColString), ("TimeoutMS", ColNumber) },
-                new[] { ("Done", ColExec), ("Timeout", ColExec) },
+                new[] { ("Done", ColExec), ("Timeout", ColExec), ("Payload", ColString) },
                 new Dictionary<string, string> { { "TimeoutMS", "10000" } });
 
             AddTemplate("Async.WaitForEvent",  "Async", Color.MediumOrchid,

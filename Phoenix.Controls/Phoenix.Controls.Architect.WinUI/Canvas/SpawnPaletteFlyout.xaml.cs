@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Architect.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Windows.UI;
 
@@ -312,7 +313,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             // INPUT socket, walk the template's OUTPUT pins for compat.
             if (_compatibilityFilter is { } src)
             {
-                rows.Add(SpawnRow.Header("COMPATIBLE"));
+                rows.Add(SpawnRow.Header(Localizer.T("architect.canvas.spawn.section.compatible", "COMPATIBLE")));
                 bool sourceWasInput = _compatibilitySourceDirection == SocketType.Input;
                 foreach (var r in _all)
                 {
@@ -324,7 +325,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             }
 
             // Pinned "My Blueprint" header — visible only when search is empty.
-            rows.Add(SpawnRow.Header("MY BLUEPRINT"));
+            rows.Add(SpawnRow.Header(Localizer.T("architect.canvas.spawn.section.my_blueprint", "MY BLUEPRINT")));
             foreach (var pinned in s_pinnedTitles)
             {
                 if (IsSuppressedByContext(pinned)) continue;
@@ -334,7 +335,7 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
 
             if (_recent.Count > 0)
             {
-                rows.Add(SpawnRow.Header("RECENT"));
+                rows.Add(SpawnRow.Header(Localizer.T("architect.canvas.spawn.section.recent", "RECENT")));
                 foreach (var t in _recent)
                 {
                     if (IsSuppressedByContext(t)) continue;
@@ -349,9 +350,12 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
             // reused instead of regrouped on every open / search-clear.
             rows.AddRange(GetCategoryTreeRows());
 
-            rows.Add(SpawnRow.Header("FRAMES"));
-            rows.Add(SpawnRow.FrameAction("comment",     "Add Comment Frame",      "frames"));
-            rows.Add(SpawnRow.FrameAction("placeholder", "Add Placeholder Frame",  "frames"));
+            rows.Add(SpawnRow.Header(Localizer.T("architect.canvas.spawn.section.frames", "FRAMES")));
+            // "frames" (3rd arg) is the pseudo-CATEGORY tag rendered in the dim
+            // right-hand column beside real NodeRegistry category names — it
+            // stays English with them by the category-naming decision.
+            rows.Add(SpawnRow.FrameAction("comment",     Localizer.T("architect.canvas.spawn.frame.comment",     "Add Comment Frame"),     "frames"));
+            rows.Add(SpawnRow.FrameAction("placeholder", Localizer.T("architect.canvas.spawn.frame.placeholder", "Add Placeholder Frame"), "frames"));
             _rows.ReplaceAll(rows);
             return;
         }
@@ -372,7 +376,8 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         // with no feedback. Append a non-selectable message row (Header kind, so
         // arrow/Enter nav skips it) so the user knows the query matched nothing.
         if (rows.Count == 0)
-            rows.Add(SpawnRow.Header($"No matches for “{query.Trim()}”"));
+            rows.Add(SpawnRow.Header(string.Format(
+                Localizer.T("architect.canvas.spawn.no_matches", "No matches for “{0}”"), query.Trim())));
         _rows.ReplaceAll(rows);
     }
 
@@ -483,18 +488,6 @@ public sealed partial class SpawnPaletteFlyout : Microsoft.UI.Xaml.Controls.Flyo
         }
         return 200 + tokenScore;
     }
-
-    /// <summary>
-    /// True when the registered template for <paramref name="title"/> has at
-    /// least one input socket compatible (per
-    /// <see cref="NodeRegistry.AreCompatible"/>) with <paramref name="sourceType"/>.
-    /// Drives the COMPATIBLE section's row filter.
-    /// Kept as a thin wrapper around the new direction-aware
-    /// <see cref="FirstPinAcceptsType"/> for callers that don't care about
-    /// the wire-source direction.
-    /// </summary>
-    private static bool FirstInputAcceptsType(string title, SocketDataType sourceType)
-        => FirstPinAcceptsType(title, sourceType, sourceWasInput: false);
 
     /// <summary>
     /// Direction-aware compat check. When

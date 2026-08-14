@@ -56,13 +56,22 @@ public sealed class NameTypeDialog : ContentDialog
     {
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "OK";
-        CloseButtonText = "Cancel";
+        PrimaryButtonText = Localizer.T("common.ok", "OK");
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Primary;
 
-        EyebrowText = new TextBlock { FontSize = 10, CharacterSpacing = 80, Text = "DETAILS" };
+        EyebrowText = new TextBlock
+        {
+            FontSize = 10,
+            CharacterSpacing = 80,
+            Text = Localizer.T("architect.dialog.name_type.eyebrow", "DETAILS"),
+        };
 
-        NameBox = new TextBox { PlaceholderText = "Name", FontSize = 13 };
+        NameBox = new TextBox
+        {
+            PlaceholderText = Localizer.T("architect.dialog.name_type.name_placeholder", "Name"),
+            FontSize = 13,
+        };
         NameBox.KeyDown += OnNameBoxKeyDown;
 
         TypeBox = new ComboBox
@@ -71,6 +80,10 @@ public sealed class NameTypeDialog : ContentDialog
             Visibility = Visibility.Collapsed,
             FontSize = 12,
         };
+        // String / Number / Bool are DATA-TYPE identifiers, not chrome: the
+        // selected Content string round-trips through SelectedTypeLabel into
+        // EnteredType and is matched case-insensitively by ValidateDefault /
+        // TryParse. They stay English by decision (type names are out of scope).
         TypeBox.Items.Add(new ComboBoxItem { Content = "String" });
         TypeBox.Items.Add(new ComboBoxItem { Content = "Number" });
         TypeBox.Items.Add(new ComboBoxItem { Content = "Bool" });
@@ -79,7 +92,8 @@ public sealed class NameTypeDialog : ContentDialog
 
         DefaultBox = new TextBox
         {
-            PlaceholderText = "Default value (optional)",
+            PlaceholderText = Localizer.T("architect.dialog.name_type.default_placeholder",
+                "Default value (optional)"),
             Visibility = Visibility.Collapsed,
             FontSize = 12,
         };
@@ -233,12 +247,16 @@ public sealed class NameTypeDialog : ContentDialog
         var name = (NameBox.Text ?? string.Empty).Trim();
         if (!NameRx.IsMatch(name))
         {
-            error = "Name must start with a letter or underscore and contain only letters, digits, underscore or dot.";
+            error = Localizer.T("architect.dialog.name_type.err_invalid_name",
+                "Name must start with a letter or underscore and contain only letters, digits, underscore or dot.");
             return false;
         }
         if (_existingNames.Contains(name))
         {
-            error = $"'{name}' already exists — pick a unique name.";
+            error = string.Format(
+                Localizer.T("architect.dialog.name_type.err_duplicate_format",
+                    "'{0}' already exists — pick a unique name."),
+                name);
             return false;
         }
         if (DefaultBox.Visibility == Visibility.Visible)
@@ -258,12 +276,18 @@ public sealed class NameTypeDialog : ContentDialog
                 // Number parses through Double (preserves precision so 0.5
                 // doesn't truncate). Allow ints by accepting the same surface.
                 if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
-                    return $"Default '{raw}' is not a valid Number.";
+                    return string.Format(
+                        Localizer.T("architect.dialog.name_type.err_default_number_format",
+                            "Default '{0}' is not a valid Number."),
+                        raw);
                 return string.Empty;
             case "bool":
                 if (!raw.Equals("true",  StringComparison.OrdinalIgnoreCase) &&
                     !raw.Equals("false", StringComparison.OrdinalIgnoreCase))
-                    return $"Default '{raw}' must be 'true' or 'false'.";
+                    return string.Format(
+                        Localizer.T("architect.dialog.name_type.err_default_bool_format",
+                            "Default '{0}' must be 'true' or 'false'."),
+                        raw);
                 return string.Empty;
             default:
                 return string.Empty;
@@ -298,7 +322,7 @@ public sealed class NameTypeDialog : ContentDialog
         error = string.Empty;
         if (string.IsNullOrWhiteSpace(input))
         {
-            error = "Empty input.";
+            error = Localizer.T("architect.dialog.name_type.err_empty_input", "Empty input.");
             return false;
         }
 
@@ -324,7 +348,8 @@ public sealed class NameTypeDialog : ContentDialog
 
         if (!NameRx.IsMatch(name))
         {
-            error = "Name must start with a letter or underscore and contain only letters, digits, underscore or dot.";
+            error = Localizer.T("architect.dialog.name_type.err_invalid_name",
+                "Name must start with a letter or underscore and contain only letters, digits, underscore or dot.");
             return false;
         }
         // Normalise type to one of the dialog's three options.

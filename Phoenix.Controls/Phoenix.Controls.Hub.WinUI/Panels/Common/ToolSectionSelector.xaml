@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.ToolSectionSelector"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.Common">
+    <!--
+        Segmented section selector — the house replacement for the two Pivots
+        (Automod, Loyalty) the rebuild removes, and the section switch for the
+        pages whose detail column is too tall to scroll usefully.
+
+        It is NOT a Pivot: there is no PivotHeaderItem, no header template and no
+        implicit style for either. Each chip is a plain Button drawn with the
+        strip-button recipe (Height 30, Padding 14,0, CoalCard over CoalDivider at
+        Radius1Corner); the selected chip takes the DEFAULT-badge tint pair
+        (#14E5A24E fill over #73E5A24E border) with an ember label.
+
+        The host owns the section BODIES and their Visibility. This control emits
+        an index and nothing more, so a page can map one index onto whatever
+        layout it needs.
+    -->
+    <!--
+        ★ 2026-08-14 — the chip strip became a TEXT NAV.
+
+        Only the item template changed. Sections / SelectedIndex, the
+        RowDataContext.Supply attached property and the ToUpperInvariant casing
+        tier are all untouched, because they are contract: the host owns the
+        section bodies and their Visibility, and this control still emits an
+        index and nothing else.
+
+        ★ The chip ground is what made this row read as a THIRD control tier
+        stacked under the action strip and the banner. As a text nav with an
+        ember underline it reads as what it is — the page's tabs — and the row
+        drops from ~44 px of chrome to 40 px that carries navigation alone.
+
+        ★ RowDataContext.Supply stays and is load-bearing: WinUI's ItemsRepeater
+        sets a realized row's DataContext ONLY when the template contains no
+        x:Bind. This template uses x:Bind, so without Supply every row would
+        realize with a null DataContext and every chip handler would silently
+        do nothing — the exact defect that shipped in 1.1.7 at 4559/4559 green.
+    -->
+    <ScrollViewer HorizontalScrollMode="Auto"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollMode="Disabled"
+                  VerticalScrollBarVisibility="Disabled">
+        <ItemsRepeater x:Name="Chips"
+                       local:RowDataContext.Supply="True">
+            <ItemsRepeater.Layout>
+                <StackLayout Orientation="Horizontal" Spacing="22" />
+            </ItemsRepeater.Layout>
+            <ItemsRepeater.ItemTemplate>
+                <DataTemplate x:DataType="local:ToolSectionChipVm">
+                    <!-- Transparent ground, no border, no radius: the selected
+                         state is carried by the 2 px ember bottom edge and the
+                         paper foreground alone. Height 40 fills the nav row so
+                         the underline sits on the row's own hairline. -->
+                    <Button Height="40"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="0"
+                            Click="OnChipClick"
+                            AutomationProperties.Name="{x:Bind Label}">
+                        <Border BorderBrush="{x:Bind NavUnderlineBrush, Mode=OneWay}"
+                                BorderThickness="0,0,0,2"
+                                VerticalAlignment="Stretch">
+                            <TextBlock Text="{x:Bind Label}"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       CharacterSpacing="120"
+                                       Foreground="{x:Bind ChipForeground, Mode=OneWay}"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                    </Button>
+                </DataTemplate>
+            </ItemsRepeater.ItemTemplate>
+        </ItemsRepeater>
+    </ScrollViewer>
+</UserControl>

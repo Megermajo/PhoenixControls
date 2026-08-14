@@ -54,6 +54,42 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         internal const string MarkerFileName = "phx-selfheal.done";
 
+        /// <summary>
+        /// First path segments under a data root that the RELEASE payload owns
+        /// (<c>data\overlay\*</c>, <c>data\streamerbot\*</c>). Keep in sync with
+        /// <c>UserStateMerge.ReleaseOwnedSubtrees</c> in Phoenix.Controls.Updater
+        /// (BCL-only project, no shared reference) — duplicated by hand for the
+        /// same reason <see cref="MarkerFileName"/> is.
+        /// <para>Inside these subtrees the shipped file wins every conflict by
+        /// design: <c>UserStateMerge.Merge</c> keeps the freshly extracted copy
+        /// (counted as <c>ReleaseKept</c>) so a stale backup of e.g.
+        /// <c>overlay\compositor.js</c> can never mask the version the new Hub
+        /// build expects. A backup therefore ALWAYS differs from live here after
+        /// any release that touched the overlay runtime — that difference is
+        /// expected, not unrestored user data, and must not withhold the heal
+        /// marker. <c>UpdateRunner.BackupHoldsUnrestoredUserData</c> applies the
+        /// identical rule on the prune side.</para>
+        /// </summary>
+        private static readonly string[] ReleaseOwnedSubtrees = { "overlay", "streamerbot" };
+
+        /// <summary>
+        /// True when the first segment of <paramref name="relativePath"/>
+        /// (relative to a data root) names a release-owned subtree. Mirror of
+        /// <c>UserStateMerge.IsReleaseOwned</c>. A top-level file (e.g.
+        /// <c>config.json</c>) is user state, never release-owned.
+        /// </summary>
+        internal static bool IsReleaseOwned(string relativePath)
+        {
+            int cut = relativePath.IndexOfAny(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar });
+            if (cut <= 0) return false;
+            string first = relativePath.Substring(0, cut);
+            foreach (string owned in ReleaseOwnedSubtrees)
+            {
+                if (string.Equals(first, owned, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
         internal sealed class SelfHealReport
         {
             public int BackupsSeen;
@@ -71,6 +107,9 @@ namespace Phoenix.Controls.Hub.Core
             /// distinct user version (e.g. a customized shipped seed that a
             /// wipe replaced with the stock seed). Any of these keeps the backup
             /// UNMARKED so it is never pruned while it is the only copy.
+            /// Release-owned paths (<c>overlay\</c>, <c>streamerbot\</c>) are
+            /// excluded — there the shipped copy wins by design, so a difference
+            /// is expected rather than lost user work.
             /// </summary>
             public int ConflictsDiffering;
             /// <summary>
@@ -247,6 +286,16 @@ namespace Phoenix.Controls.Hub.Core
                             if (File.Exists(dest))
                             {
                                 report.ConflictsSkipped++; // fill-only — never overwrite
+                                // Inside a release-owned subtree (overlay /
+                                // streamerbot) the shipped file winning is the
+                                // designed outcome of UserStateMerge, so the
+                                // backup's older copy differing is EXPECTED and
+                                // is not unrestored user data. Counting it would
+                                // withhold the marker forever and raise the
+                                // "possible data loss" CriticalError after every
+                                // release that touched the overlay runtime.
+                                // Same rule as UpdateRunner.BackupHoldsUnrestoredUserData.
+                                if (IsReleaseOwned(rel)) continue;
                                 // A byte-identical live copy is a benign skip
                                 // (the file genuinely IS present live). A
                                 // DIFFERING live copy means the backup holds a

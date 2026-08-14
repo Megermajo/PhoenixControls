@@ -16,7 +16,8 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 /// <summary>
 /// WidgetCanvasPreviewer — WinUI re-architecture of the pre-T15 WinForms capture
 /// engine (<c>Phoenix.Controls.Visualist/Controls/WidgetCanvasPreviewer.cs</c>).
-/// A single hidden WebView2 loads <c>http://127.0.0.1:18080/layer/&lt;id&gt;?capture=1</c>
+/// A single hidden WebView2 loads
+/// <c>http://127.0.0.1:18080/layer/&lt;id&gt;?capture=1&amp;client=editor</c>
 /// from a running Hub HUDServer and periodically captures the rendered overlay
 /// as a PNG. <see cref="Canvas.LayerCanvasView"/> crops each widget's
 /// <c>Rect</c> region from the captured frame so the design-time canvas matches
@@ -213,6 +214,40 @@ public sealed class WidgetCanvasPreviewer : IDisposable
     public Task CaptureNowAsync() => CaptureAsync();
 
     /// <summary>
+    /// Capture right after a drag / resize / nudge commit has posted a
+    /// WIDGET_UPDATE. The posted message is applied by compositor.js on its next
+    /// JS turn and painted on the following animation frame, so an immediate
+    /// capture would grab the PRE-update frame (and the FNV idle-skip would then
+    /// drop the real one). We schedule two staggered UI-thread captures (~40ms +
+    /// ~120ms) so the re-rendered frame is reflected within a couple of frames
+    /// instead of waiting up to the 250ms timer interval — cutting the felt "let
+    /// go, content snaps a beat later" lag. Each capture is coalesced by
+    /// <c>_captureInFlight</c>. ( replaces the staggered heuristic with a
+    /// compositor render-ack.)
+    /// </summary>
+    public void CaptureAfterCommit()
+    {
+        if (_disposed || !_coreInitialized) return;
+        var dq = _webView?.DispatcherQueue;
+        if (dq is null) { _ = CaptureNowAsync(); return; }
+        ScheduleOneShotCapture(dq, 40);
+        ScheduleOneShotCapture(dq, 120);
+    }
+
+    private void ScheduleOneShotCapture(Microsoft.UI.Dispatching.DispatcherQueue dq, int delayMs)
+    {
+        try
+        {
+            var timer = dq.CreateTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(delayMs);
+            timer.IsRepeating = false;
+            timer.Tick += (s, _) => { s.Stop(); if (!_disposed) _ = CaptureAsync(); };
+            timer.Start();
+        }
+        catch (Exception ex) { GlobalLogger.Error("WidgetCanvasPreviewer", "ScheduleOneShotCapture", ex); }
+    }
+
+    /// <summary>
     /// Re-navigate the hidden capture WebView2 when its last navigation did NOT
     /// produce a healthy page — a network failure or an HTTP error (a transient
     /// 404 served while Hub was still registering a freshly-saved layer). Hub's
@@ -256,6 +291,43 @@ public sealed class WidgetCanvasPreviewer : IDisposable
         catch (Exception ex)
         {
             GlobalLogger.Error("WidgetCanvasPreviewer", "PostWidgetUpdate failed", ex);
+        }
+    }
+
+    /// <summary>
+    /// Inbound web message from the capture compositor. The only one we act on is
+    /// RENDER_ACK — compositor.js posts it (after a double-rAF present) once it has
+    /// re-rendered a <see cref="PostWidgetUpdate"/> we sent, so a capture fired here
+    /// grabs the freshly-painted frame deterministically instead of relying solely on
+    /// the staggered <see cref="CaptureAfterCommit"/> timers (which stay as the
+    /// backstop). Every other message the overlay emits over chrome.webview (FPS
+    /// heartbeat, VISUAL_COMPLETE, …) is ignored. <see cref="CaptureAsync"/> is
+    /// coalesced by <c>_captureInFlight</c> and the FNV idle-skip drops a duplicate
+    /// frame, so an ack that races a staggered capture is harmless.
+    /// </summary>
+    private void OnCoreWebMessageReceived(
+        Microsoft.Web.WebView2.Core.CoreWebView2 sender,
+        Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs args)
+    {
+        if (_disposed) return;
+        try
+        {
+            string json = args.WebMessageAsJson;
+            // Cheap prefilter so the 1 Hz FPS heartbeat + other posts skip the parse.
+            if (string.IsNullOrEmpty(json) || json.IndexOf("RENDER_ACK", StringComparison.Ordinal) < 0)
+                return;
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("type", out var t)
+                && t.ValueKind == System.Text.Json.JsonValueKind.String
+                && t.GetString() == "RENDER_ACK")
+            {
+                _ = CaptureAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("WidgetCanvasPreviewer", "OnCoreWebMessageReceived", ex);
         }
     }
 
@@ -409,12 +481,30 @@ public sealed class WidgetCanvasPreviewer : IDisposable
         if (_timer.IsEnabled) _timer.Stop();
     }
 
+    /// <summary>
+    /// URL for the hidden thumbnail-capture host.
+    ///
+    /// <para>V6 — <c>&amp;client=editor</c> joins <c>?capture=1</c>. <c>capture=1</c> already
+    /// marked the PAGE as design-time to compositor.js, but this host also opens a
+    /// <c>/hud/&lt;id&gt;</c> WebSocket, and on the wire it was byte-identical to an OBS
+    /// Browser Source. That made the layer-canvas thumbnail host count as live presence for
+    /// the whole layer — the worst of the four preview surfaces to get this wrong, because
+    /// it comes up automatically with the layer canvas rather than on an explicit "preview"
+    /// gesture. compositor.js forwards this param onto the socket URL, where Hub uses it to
+    /// exclude the socket from presence and to refuse its VISUAL_COMPLETE / FPS frames.</para>
+    ///
+    /// <para>Kept as an explicit param rather than relying on <c>capture=1</c> so all three
+    /// navigating editor surfaces declare the same marker. The Inspector's Copy-OBS-URL
+    /// affordance deliberately stays a bare production URL — see the note on
+    /// <c>WidgetSinglePreviewPanel.BuildUrl</c>.</para>
+    ///
+    /// <para>No <c>?bg=</c> here — the canvas paints its own backdrop and blits widget
+    /// pixels onto it. Letting compositor.js paint a backdrop too would obscure the canvas
+    /// backdrop the user actually wants to see (same reasoning as the WinForms baseline's
+    /// capture URL).</para>
+    /// </summary>
     private Uri BuildUrl(string layerId)
-        // No ?bg= here — the canvas paints its own backdrop and blits widget
-        // pixels onto it. Letting compositor.js paint a backdrop too would
-        // obscure the canvas backdrop the user actually wants to see (same
-        // reasoning as the WinForms baseline's capture URL).
-        => new($"http://127.0.0.1:18080/layer/{Uri.EscapeDataString(layerId)}?capture=1");
+        => new($"http://127.0.0.1:18080/layer/{Uri.EscapeDataString(layerId)}?capture=1&client=editor");
 
     private void ResizeHostWindow()
     {
@@ -510,6 +600,7 @@ public sealed class WidgetCanvasPreviewer : IDisposable
             {
                 try { _webView.CoreWebView2.Settings.AreDevToolsEnabled = false; } catch { /* older builds */ }
                 _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
+                _webView.CoreWebView2.WebMessageReceived  += OnCoreWebMessageReceived;
                 _coreInitialized = true;
             }
             else

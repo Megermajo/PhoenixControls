@@ -44,6 +44,14 @@ namespace Phoenix.Controls.Shared.Core
 {
     public partial class ScriptEngine
     {
+        // Hoisted to avoid re-allocating the operator/separator arrays on every
+        // condition evaluation. Element ORDER is load-bearing:
+        //  - ComparisonOps: the earliest-index search picks the first-listed
+        //    operator on ties, so "!=" must precede "=", ">=" before ">", etc.
+        //  - BoolSeparators: " and " before " or " mirrors precedence.
+        private static readonly string[] ComparisonOps = { "!=", ">=", "<=", "==", ">", "<" };
+        private static readonly string[] BoolSeparators = { " and ", " or " };
+
         /// <summary>
         /// Rewrite an `if ...:` / `elif ...:` line (or a while_loop-synthesized
         /// equivalent) so that registered-command call shapes authored in the
@@ -88,7 +96,7 @@ namespace Phoenix.Controls.Shared.Core
         // result and never re-orders the work.
         private async Task<string> PreExecuteConditionExprAsync(string expr, Dictionary<string, string> vars, ConditionCallContext ctx)
         {
-            foreach (var sep in new[] { " and ", " or " })
+            foreach (var sep in BoolSeparators)
             {
                 if (IndexOfOutsideQuotes(expr, sep) < 0) continue;
                 bool isAnd = sep == " and ";
@@ -131,7 +139,7 @@ namespace Phoenix.Controls.Shared.Core
             // Earliest-operator + quote-aware search mirrors EvalSingle.
             string? bestOp  = null;
             int     bestIdx = int.MaxValue;
-            foreach (var op in new[] { "!=", ">=", "<=", "==", ">", "<" })
+            foreach (var op in ComparisonOps)
             {
                 int idx = IndexOfOutsideQuotes(t, op);
                 if (idx >= 0 && idx < bestIdx) { bestIdx = idx; bestOp = op; }

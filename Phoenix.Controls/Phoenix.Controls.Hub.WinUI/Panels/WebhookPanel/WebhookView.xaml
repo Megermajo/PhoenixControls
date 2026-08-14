@@ -18,12 +18,15 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.WebhookPanel"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
     VerticalContentAlignment="Stretch"
     AutomationProperties.Name="Recent Webhooks panel"
-    AutomationProperties.HelpText="Live tail of the last 100 webhook fires accepted by HUDServer (/webhook/&lt;name&gt;). Streams via HUDServer.OnWebhookFired; newest entries on top.">
+    AutomationProperties.HelpText="Live tail of the last 100 webhook fires accepted by HUDServer (/webhook/&lt;name&gt;). Streams via HUDServer.OnWebhookFired; newest entries on top."
+    loc:Localize.AutomationKey="panel.webhook.aria.name"
+    loc:Localize.HelpTextKey="panel.webhook.aria.help">
 
     <UserControl.Resources>
         <!-- Dense per-row template — strip the default Fluent ListViewItem padding
@@ -65,6 +68,7 @@
                                  Padding="6,1"
                                  VerticalAlignment="Center"
                                  PlaceholderText="endpoint / IP…"
+                                 loc:Localize.PlaceholderKey="panel.webhook.search.placeholder"
                                  TextChanged="OnSearchTextChanged" />
                         <Button x:Name="PopOutButton"
                                 Background="Transparent"
@@ -80,7 +84,8 @@
                                 <TextBlock Text="pop-out"
                                            FontFamily="{StaticResource SansFont}"
                                            FontSize="11"
-                                           VerticalAlignment="Center" />
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.common.button.popout" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
@@ -100,7 +105,8 @@
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                       ScrollViewer.VerticalScrollBarVisibility="Visible"
                       AutomationProperties.LiveSetting="Polite"
-                      AutomationProperties.Name="Webhook activity entries">
+                      AutomationProperties.Name="Webhook activity entries"
+                      loc:Localize.AutomationKey="panel.webhook.list.a11y">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:WebhookRowVm">
                         <Border Padding="14,2,14,2"

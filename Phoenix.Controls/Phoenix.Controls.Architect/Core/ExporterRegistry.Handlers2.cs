@@ -354,6 +354,18 @@ namespace Phoenix.Controls.Architect.Core
         }
     }
 
+    // V13/H1 — the node now declares an appended "Payload" OUTPUT (String), fed at
+    // runtime by VISUAL_COMPLETE's payload field via global._wait_payload. Nothing is
+    // emitted for it here and nothing needs to be: an unwired data output produces no
+    // text at all, which is what keeps the goldens byte-identical. A WIRED Payload
+    // resolves through ScriptExporter.ResolveOutputFromNode, whose arms are all
+    // title-gated — so it needs the one-line sibling of the Async.WaitForEvent arm
+    // (ScriptExporter.cs:1651-1652). That file is outside this sprint's write fence;
+    // until the arm lands a wired Payload falls through to the generic dead-literal
+    // fallback ("Async.WaitForVisual.Payload"). Do NOT try to route it through
+    // ctx.NodeResultVars instead: every {nodeId}_{SocketName} read-back in that method
+    // (Chat.WaitForNext, Twitch.GetViewers, Process.Start …) is itself title-gated, so a
+    // cached entry here would have no reader.
     internal sealed class WaitForVisualHandler : IExporterHandler
     {
         public string NodeTitle => "Async.WaitForVisual";
@@ -376,7 +388,9 @@ namespace Phoenix.Controls.Architect.Core
                                 && s.Name != "WidgetID"
                                 && s.Name != "TriggerName"
                                 && s.Name != "TimeoutMS")
-                    .Select(s => $"{s.Name}={ctx.StripQuotes(ctx.Resolve(node, s.Name, "\"\""))}"));
+                    // KvArgValue, not StripQuotes — a literal comma in an EventData pin
+                    // otherwise ends the argument at the comma (see VisualTriggerHandler).
+                    .Select(s => $"{s.Name}={ScriptExporter.KvArgValue(ctx.Resolve(node, s.Name, "\"\""))}"));
             string trailing = string.IsNullOrEmpty(extraArgs) ? "" : $", {extraArgs}";
 
             ctx.Emit($"{prefix}wait_for_visual({layerId}, {widgetId}, {triggerName}, {timeout}{trailing})");
@@ -486,7 +500,17 @@ namespace Phoenix.Controls.Architect.Core
             // the 3 â†’ 8 template raise actually emits all wired branches. Order
             // by the trailing integer so Branch1..Branch10 stay numerically
             // sorted (mirrors SequenceHandler's leading-integer ordering, just
-            // applied to the suffix). Unwired branches are no-op via FollowNamed.
+            // applied to the suffix). Unwired branches emit nothing at all.
+            //
+            // Each wired branch gets an explicit `branch:` header and its whole node
+            // chain is emitted one level UNDER it. Without that header the chains were
+            // emitted FLAT at a single indent — every linear handler follows its own
+            // continuation at the SAME indent — and the engine, which has no other
+            // delimiter to go by, treated every statement as a separate branch. A
+            // two-node branch (Flow.Delay → Chat.Send) therefore ran as two concurrent
+            // tasks with isolated `vars`: the delay gated nothing and the second node
+            // could not see what the first produced. One header = one branch, so the
+            // authored chain now runs in order inside a single task.
             ctx.Emit($"{prefix}parallel_begin");
             var branches = node.Sockets
                 .Where(s => s.Type == SocketType.Output
@@ -497,7 +521,11 @@ namespace Phoenix.Controls.Architect.Core
                     return int.TryParse(suffix, out int v) ? v : int.MaxValue;
                 });
             foreach (var b in branches)
-                ctx.FollowNamed(node, b.Name, indent + 1);
+            {
+                if (ctx.GetNamedTarget(node, b.Name) == null) continue;
+                ctx.Emit($"{prefix}    branch:");
+                ctx.FollowNamed(node, b.Name, indent + 2);
+            }
             ctx.Emit($"{prefix}parallel_end");
         }
     }
@@ -509,6 +537,103 @@ namespace Phoenix.Controls.Architect.Core
         {
             ctx.Emit($"{prefix}join_wait");
             ctx.FollowNamed(node, "Flow", indent);
+        }
+    }
+
+    // ── Queue band — the OPTIONAL-Name emission rule ──────────────────────────
+    //
+    // Every node in this band takes an optional trailing Name that selects a NAMED
+    // queue (rows in the open "Queues" table) instead of the legacy unnamed
+    // pipe-string in global._event_queue. All four handlers below share one rule:
+    //
+    //   ★ EMIT THE TRAILING ARG ONLY WHEN IT IS SET.
+    //
+    // That is the entire reason Queue.Push and Queue.Clear stopped being
+    // SimpleEmitDescriptors when the band was generalised. SimpleEmitHandler.Emit
+    // writes every descriptor arg positionally and unconditionally — it has no
+    // omit-at-default branch — so appending Name to their descriptors would have
+    // rewritten `queue.push(a, b)` into `queue.push(a, b, "")` in EVERY graph that
+    // ever used the node, including graphs whose author never saw the new pin, and
+    // churned every affected golden along with them. With the rule above, an
+    // untouched graph re-exports byte-identically and the goldens never move.
+    //
+    // The check is IsQueueNameSet, one helper, so no arm can decide "set" differently
+    // from its siblings.
+
+    // Queue.Push — appends "EventID:Payload" to the addressed queue. The two leading
+    // args keep the retired descriptor's exact fallbacks ("event" / "{}") and go
+    // through ctx.Resolve (NOT Materialize) for the same reason: byte-identical
+    // emission for every pre-generalisation graph.
+    internal sealed class QueuePushHandler : IExporterHandler
+    {
+        public string NodeTitle => "Queue.Push";
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            string eventId = ctx.Resolve(node, "EventID", "\"event\"");
+            string payload = ctx.Resolve(node, "Payload", "\"{}\"");
+            string name     = ctx.Materialize(node, "Name", "\"\"");
+            string priority = ctx.Materialize(node, "Priority", "\"\"");
+
+            bool hasName = QueueHandlerHelp.IsSet(name);
+            bool hasPriority = QueueHandlerHelp.IsSet(priority);
+
+            string call;
+            if (hasPriority)
+            {
+                // Priority is meaningless on the legacy queue (a pipe-string has no
+                // per-entry weight), so a graph that weights an UNNAMED push is asking
+                // for something that will silently not happen. Emit it faithfully —
+                // the .phx must render the graph the author drew — and warn, which is
+                // how every other "this pin will not do what you think" case surfaces.
+                if (!hasName)
+                    ctx.AddRuntimeWarning(
+                        "Queue.Push sets Priority but leaves Name empty — priority only orders a NAMED queue, " +
+                        "so the unnamed queue will append this entry at the back regardless.", node.Id);
+                call = $"queue.push({eventId}, {payload}, {name}, {priority})";
+            }
+            else if (hasName)
+            {
+                call = $"queue.push({eventId}, {payload}, {name})";
+            }
+            else
+            {
+                call = $"queue.push({eventId}, {payload})";
+            }
+
+            ctx.Emit($"{prefix}{call}");
+            ctx.FollowNamed(node, "Done", indent);
+        }
+    }
+
+    // Queue.Clear — empties the addressed queue.
+    internal sealed class QueueClearHandler : IExporterHandler
+    {
+        public string NodeTitle => "Queue.Clear";
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            string name = ctx.Materialize(node, "Name", "\"\"");
+            ctx.Emit(QueueHandlerHelp.IsSet(name)
+                ? $"{prefix}queue.clear({name})"
+                : $"{prefix}queue.clear()");
+            ctx.FollowNamed(node, "Done", indent);
+        }
+    }
+
+    // Queue.Remove — drops the front-most entry matching Entry. Void (Flow → Done)
+    // like Queue.Clear: an entry that was not queued is a no-op, and a graph that
+    // needs to know first reads Queue.Position, which is the node that exists to
+    // answer that question.
+    internal sealed class QueueRemoveHandler : IExporterHandler
+    {
+        public string NodeTitle => "Queue.Remove";
+        public void Emit(Node node, int indent, string prefix, ExporterContext ctx)
+        {
+            string entry = ctx.Materialize(node, "Entry", "\"\"");
+            string name  = ctx.Materialize(node, "Name", "\"\"");
+            ctx.Emit(QueueHandlerHelp.IsSet(name)
+                ? $"{prefix}queue.remove({entry}, {name})"
+                : $"{prefix}queue.remove({entry})");
+            ctx.FollowNamed(node, "Done", indent);
         }
     }
 
@@ -524,18 +649,35 @@ namespace Phoenix.Controls.Architect.Core
             string id6 = node.Id[..6];
             string eventidVar = $"global._queue_pop_eventid_{id6}";
             string payloadVar = $"global._queue_pop_payload_{id6}";
-            ctx.Emit($"{prefix}queue.pop(\"{eventidVar}\", \"{payloadVar}\")");
+            string name = ctx.Materialize(node, "Name", "\"\"");
+            ctx.Emit(QueueHandlerHelp.IsSet(name)
+                ? $"{prefix}queue.pop(\"{eventidVar}\", \"{payloadVar}\", {name})"
+                : $"{prefix}queue.pop(\"{eventidVar}\", \"{payloadVar}\")");
             // Always emit the queue_empty guard so an empty queue never
             // accidentally fires the Done branch. Done runs only when the
             // queue actually had something; Empty (when wired) runs otherwise.
+            // The flag is one shared global for BOTH stores — the runtime sets it on
+            // every pop path — so this line is identical whether or not Name is filled.
             ctx.EmitConditional(node,
                 "{global.queue_empty} != \"true\"",
                 "Done", "Empty", prefix, indent);
         }
     }
 
-    // Queue.Length removed — pure-data; resolved inline via ComputeInlineValue
-    // ("queue.length()") and the dedicated hoist branch in ResolveOutputFromNode.
+    // Queue.Length / Queue.Position / Queue.List have no handler — they are pure-data
+    // value nodes, resolved inline via ComputeInlineValue ("queue.length()",
+    // "queue.position(e, n)", "queue.list(n)") and the dedicated hoist branch in
+    // ResolveOutputFromNode. Their optional Name follows the same omit-when-unset rule,
+    // spelled out at each case in ComputeInlineValue.
+
+    internal static class QueueHandlerHelp
+    {
+        /// <summary>Whether a resolved socket expression carries a real value, i.e. the
+        /// author filled the pill in or wired something into it. Same emptiness test the
+        /// Chat.Send / Giveaway handlers use for their optional overrides.</summary>
+        internal static bool IsSet(string v)
+            => !(string.IsNullOrWhiteSpace(v) || v == "\"\"");
+    }
 
     // Array.Push captures the engine's returned list into a per-node global so
     // the List output socket can carry the post-push list to downstream nodes.
@@ -806,12 +948,43 @@ namespace Phoenix.Controls.Architect.Core
             // Args1=a, Args2=b, Args3=c on delivery so widget-side consumers can read
             // positional values via {Args1} text-substitution and Result.If's When attr.
             // Skip when unwired/empty so existing graphs don't trip golden diffs.
-            string argsValue = ctx.StripQuotes(ctx.Resolve(node, "Args", "\"\""));
+            // KvArgValue (not StripQuotes) so an inline list that actually CONTAINS the
+            // commas — `a,b,c` — stays one argument through SplitArgs. Emitted bare it
+            // was split into three args and only `Args1` ever reached the widget.
+            string argsValue = ScriptExporter.KvArgValue(ctx.Resolve(node, "Args", "\"\""));
             string argsKvp   = string.IsNullOrEmpty(argsValue) ? "" : $", Args={argsValue}";
 
             // Dynamic input sockets (anything beyond the fixed Flow + addressing pins +
             // Args) become trailing key=value args so the Hub-side visual.trigger_queued
             // handler can fold them into the EventData dictionary.
+            //
+            // ★ An UNCONFIGURED variable pin — no incoming wire AND no inline value —
+            // contributes NOTHING. It must not emit a bare `Name=`, because
+            // CommandBinder's KvPairs split turns that into a PRESENT-but-empty
+            // eventData key, and two things downstream read presence rather than value:
+            //
+            //   • ScriptManager.ExpandArgsList expands the Args collection positionally
+            //     under `if (!eventData.ContainsKey(key))`, so an empty-but-present
+            //     Args1 pre-empts it and the author silently loses the first N values of
+            //     the comma list they wired into the Args pin.
+            //   • compositor.js's _reportMissingArg fires on
+            //     `!hasOwnProperty(ed, key)`, so a present-but-empty key SILENCES the
+            //     one diagnostic that tells an author they never supplied the arg.
+            //
+            // This matters more since V13: the Visualist snippet paste SEEDS one
+            // variable pin per eventData key the widget graph reads, so a pasted node
+            // arrives carrying pins the author has not filled in yet. Making them
+            // visible is the feature; making them present at run time is not.
+            //
+            // "Configured" is deliberately checked on the MODEL rather than on the
+            // resolved text: an author who typed something is taken at their word (even
+            // a literal empty-string pill), while a pin nobody has touched is omitted.
+            var wiredInputSocketIds = new HashSet<string>(StringComparer.Ordinal);
+            if (ctx.Graph.Links is not null)
+                foreach (var link in ctx.Graph.Links)
+                    if (link is not null && link.ToNodeId == node.Id)
+                        wiredInputSocketIds.Add(link.ToSocketId);
+
             var varSockets = node.Sockets
                 .Where(s => s.Type == SocketType.Input
                             && !s.IsPlaceholder
@@ -819,10 +992,17 @@ namespace Phoenix.Controls.Architect.Core
                             && s.Name != "LayerID"
                             && s.Name != "WidgetID"
                             && s.Name != "TriggerName"
-                            && s.Name != "Args")
+                            && s.Name != "Args"
+                            && (wiredInputSocketIds.Contains(s.Id)
+                                || (node.Attributes != null
+                                    && node.Attributes.TryGetValue(s.Name, out var inline)
+                                    && !string.IsNullOrWhiteSpace(inline))))
                 .ToList();
+            // KvArgValue keeps the quotes on a value that needs them (a literal comma
+            // in a `Text` pin used to truncate the argument at the comma, and the
+            // remainder — having no `=` — was silently dropped by the binder).
             string args = string.Join(", ", varSockets.Select(s =>
-                $"{s.Name}={ctx.StripQuotes(ctx.Resolve(node, s.Name, "\"\""))}"));
+                $"{s.Name}={ScriptExporter.KvArgValue(ctx.Resolve(node, s.Name, "\"\""))}"));
             string argsStr = args.Length > 0 ? $", {args}" : "";
             ctx.Emit($"{prefix}visual.trigger_queued({layerId}, {widgetId}, {triggerName}{argsKvp}{argsStr})");
             ctx.FollowNamed(node, "Done", indent);
@@ -844,13 +1024,46 @@ namespace Phoenix.Controls.Architect.Core
             var realCases = allOuts.Where(s => s.Name != "Default").ToList();
             var defaultS  = allOuts.FirstOrDefault(s => s.Name == "Default");
 
+            // Resolve the state ADDRESS once, ahead of the arms.
+            //
+            // `name` is whatever ctx.Resolve produced, which for a WIRED Name input is
+            // an upstream expression, not an identifier — a Value.String resolves to
+            // the quoted `"phase"` and a Var.Get to `{var.x}`. Pasting either into
+            // `{state.<name>}` produced a token SubstituteVars can never expand
+            // (`{state."phase"}` falls outside VarRefRegex's character class;
+            // `{state.{var.x}}` only ever half-expands because substitution is single-
+            // pass), so EVERY case arm compared against that raw text and only the
+            // Default arm could ever run. Same normalization as State.Get: a compile-
+            // time literal becomes the static token; anything dynamic is read through
+            // a hoisted state.get(...) probe (the command publishes its value on
+            // result.state_value — it returns nothing, so it cannot be inlined).
+            bool anyArmWired = realCases.Any(cs => ctx.GetTargetNode(node.Id, cs.Id) != null)
+                            || (defaultS != null && ctx.GetTargetNode(node.Id, defaultS.Id) != null);
+            string stateRef = $"{{state.{name}}}";
+            if (anyArmWired)
+            {
+                if (ScriptExporter.TryStaticStateName(name, out string staticName))
+                {
+                    stateRef = $"{{state.{staticName}}}";
+                }
+                else
+                {
+                    string probeVar = $"global._stateget_{ctx.IdPrefix(node, 6)}";
+                    ctx.Emit($"{prefix}state.get({name})");
+                    ctx.Emit($"{prefix}{probeVar} = {{result.state_value}}");
+                    stateRef = $"{{{probeVar}}}";
+                }
+            }
+
             bool any = false;
             foreach (var cs in realCases)
             {
                 var target = ctx.GetTargetNode(node.Id, cs.Id);
                 if (target == null) continue;
-                string caseVal = node.GetAttr(cs.Name, cs.Name);
-                ctx.Emit($"{prefix}{(any ? "elif" : "if")} {{state.{name}}} == \"{caseVal}\":");
+                // EscapeStringLiteral on the case value, matching SwitchHandler — an
+                // unescaped quote in a case value broke the emitted line's parse.
+                string caseVal = ctx.EscapeStringLiteral(node.GetAttr(cs.Name, cs.Name));
+                ctx.Emit($"{prefix}{(any ? "elif" : "if")} {stateRef} == \"{caseVal}\":");
                 ctx.ProcessNode(target, indent + 1);
                 any = true;
             }
@@ -974,7 +1187,9 @@ namespace Phoenix.Controls.Architect.Core
                 }
                 else
                 {
-                    argParts.Add($"{s.Name}={ctx.StripQuotes(val)}");
+                    // KvArgValue, not StripQuotes — a comma inside an event parameter
+                    // otherwise truncated it at the comma before the handler saw it.
+                    argParts.Add($"{s.Name}={ScriptExporter.KvArgValue(val)}");
                 }
             }
             string args = string.Join(", ", argParts);
@@ -1251,7 +1466,9 @@ namespace Phoenix.Controls.Architect.Core
                         }
                         else
                         {
-                            argParts.Add($"{key}={ctx.StripQuotes(val)}");
+                            // KvArgValue, not StripQuotes — a comma inside a start param
+                            // otherwise truncated it before the process template saw it.
+                            argParts.Add($"{key}={ScriptExporter.KvArgValue(val)}");
                         }
                     }
                 }

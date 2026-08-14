@@ -41,17 +41,32 @@ namespace Phoenix.Controls.Visualist.Core
             public Dictionary<string, string> KernelAttributes { get; set; } = new();
         }
 
+        /// <summary>
+        /// Result of a whole-graph design-time evaluation.
+        ///
+        /// V14 removed a third member, <c>CompleteConnected</c>: it was written by the
+        /// <c>Visual.Complete</c> sink walk and read by nothing, in production or in a
+        /// test. Do NOT read that as "the Complete walk is dead" — the walk stays, and
+        /// its product is <see cref="VisitedNodeIds"/> (see the walk itself for why).
+        /// <see cref="DisplayConnected"/> is the near-name that looks identical in shape
+        /// and is heavily asserted across the widget test suites — it stays.
+        /// </summary>
         public sealed class EvalResult
         {
             public ImageMetadata? Display { get; set; }
             public bool           DisplayConnected { get; set; }
-            public bool           CompleteConnected { get; set; }
             public List<string>   VisitedNodeIds { get; } = new();
         }
 
         /// <summary>
-        /// Body-preview snapshot kind. Drives how WidgetGraphCanvas.PaintBodyPreview
-        /// renders the strip — bitmap, swatch, empty hint, or error tint.
+        /// Body-preview snapshot kind. Drives how the canvas renders the per-node
+        /// preview strip — bitmap, swatch, empty hint, or error tint. The live
+        /// consumer chain is
+        /// <c>WidgetGraphCanvas.RefreshPreviews()/RefreshPreviewsAtTime()</c> →
+        /// <c>WidgetGraphNodeView.SetPreview</c> → <c>ThumbnailHost.SetSnapshot</c>
+        /// (V11 comment fix: the <c>WidgetGraphCanvas.PaintBodyPreview</c> this line
+        /// used to name has never existed — there is no canvas-side paint method for
+        /// the strip, the snapshot is pushed into a child control).
         /// </summary>
         public enum PreviewKind
         {
@@ -115,8 +130,25 @@ namespace Phoenix.Controls.Visualist.Core
             private readonly Dictionary<string, Node> _nodeById;
             private readonly Dictionary<(string, string), Link> _linkByTarget;
 
-            public EvalContext(Graph graph)
+            // V11 — playhead context. The timeline + time the caller wants this
+            // evaluation sampled at. Carried on the context (rather than passed
+            // through every walker) precisely because the context is ALREADY
+            // threaded into all ~40 recursive call sites: adding a parameter to
+            // each would be a large diff for zero behavioural gain. Defaults to
+            // (null, 0) so every pre-V11 caller keeps its exact t=0 behaviour.
+            public readonly WidgetTimeline? Timeline;
+            public readonly double          TimeMs;
+
+            // Lazy ParameterPath → keyframe-track index, built once per
+            // evaluation from Timeline.SortedKeyframes (which is itself cached +
+            // self-invalidating on the timeline). Built lazily because the vast
+            // majority of evaluations never sample a keyframe at all.
+            private Dictionary<string, List<Keyframe>>? _keyframesByPath;
+
+            public EvalContext(Graph graph, WidgetTimeline? timeline = null, double timeMs = 0)
             {
+                Timeline = timeline;
+                TimeMs   = timeMs;
                 _nodeById = new Dictionary<string, Node>(graph.Nodes.Count, StringComparer.Ordinal);
                 foreach (var n in graph.Nodes)
                     if (n.Id is not null && !_nodeById.ContainsKey(n.Id)) _nodeById[n.Id] = n;
@@ -136,6 +168,51 @@ namespace Phoenix.Controls.Visualist.Core
             public Link? FindLink(string? toNodeId, string? toSocketId) =>
                 toNodeId is not null && toSocketId is not null &&
                 _linkByTarget.TryGetValue((toNodeId, toSocketId), out var l) ? l : null;
+
+            /// <summary>
+            /// Sample one animated parameter track at <see cref="TimeMs"/>.
+            /// Returns false — leaving <paramref name="value"/> at 0 — when the
+            /// context carries no timeline or that path has no keyframes, which
+            /// is the caller's signal to fall back to the node's static literal.
+            ///
+            /// Deliberately NOT <c>KeyframeInterpolation.SampleScalar(timeline,
+            /// timeMs)</c>: that overload feeds the WHOLE timeline into the
+            /// sampler, and a timeline holds every parameter's track interleaved,
+            /// so it only produces a correct answer for a single-track timeline.
+            /// Per-parameter sampling has to split by ParameterPath first — which
+            /// is exactly what compositor.js does
+            /// (<c>keyframes.filter(k =&gt; k.parameterPath === path)</c>) — and then
+            /// hand the single track to the list overload. The split is fed from
+            /// <c>SortedKeyframes</c>, so each track comes out already ordered and
+            /// already NaN/Infinity-filtered.
+            /// </summary>
+            public bool TrySampleParameter(string path, out double value)
+            {
+                value = 0;
+                if (Timeline is null || string.IsNullOrEmpty(path)) return false;
+
+                if (_keyframesByPath is null)
+                {
+                    _keyframesByPath = new Dictionary<string, List<Keyframe>>(StringComparer.Ordinal);
+                    foreach (var kf in Timeline.SortedKeyframes)
+                    {
+                        if (kf is null || string.IsNullOrEmpty(kf.ParameterPath)) continue;
+                        if (!_keyframesByPath.TryGetValue(kf.ParameterPath, out var track))
+                        {
+                            track = new List<Keyframe>();
+                            _keyframesByPath[kf.ParameterPath] = track;
+                        }
+                        track.Add(kf);
+                    }
+                }
+
+                if (!_keyframesByPath.TryGetValue(path, out var kfs) || kfs.Count == 0) return false;
+                // SampleScalar clamps to the first/last keyframe outside the
+                // track's range, so a playhead past either end is a hold, never
+                // an exception.
+                value = KeyframeInterpolation.SampleScalar(kfs, TimeMs);
+                return true;
+            }
         }
 
         // Thread-static holder for eventData + once-per-fire dedup. The evaluator is
@@ -196,16 +273,37 @@ namespace Phoenix.Controls.Visualist.Core
         /// (no cross-call caching at this layer — the canvas owns staleness via
         /// its OnGraphMutated hook). Walks are bounded to 100 hops to mirror the
         /// MaxExecutionDepth philosophy of the script engine.
+        ///
+        /// V11 — playhead-following previews. <paramref name="timeline"/> +
+        /// <paramref name="timeMs"/> are the trigger's animation track and the
+        /// playhead position to resolve the snapshot at; both are optional and
+        /// default to "no timeline, t = 0", which is byte-for-byte the pre-V11
+        /// behaviour for every existing caller.
+        ///
+        /// ★ THE HONEST SCOPE LIMIT — this is a SOURCE resolver, not a renderer.
+        /// The snapshot only answers "what source should the strip show", so the
+        /// only attributes it reads are <c>Path</c>, <c>Url</c> and the colour
+        /// literal (<c>Value</c>/<c>Color</c>). Of those three, a colour is the
+        /// only thing anyone realistically keyframes — a file path and a URL are
+        /// not animatable values. So passing a timeline in makes animated COLOUR
+        /// swatches follow the playhead and changes nothing else: an
+        /// Image.Load / Image.LoadUrl / upstream-image preview is identical at
+        /// every time, by design and not by omission. Making the preview show
+        /// animated Transform / ColorAdjust OUTPUT would mean rendering pixels
+        /// design-time (a compositor port, not a plumbing change) and is
+        /// explicitly out of V11's scope. Do not "fix" the image previews here.
         /// </summary>
-        public static IReadOnlyDictionary<string, PreviewSnapshot> EvaluatePreviews(Graph graph)
+        public static IReadOnlyDictionary<string, PreviewSnapshot> EvaluatePreviews(
+            Graph graph, WidgetTimeline? timeline = null, double timeMs = 0)
         {
             var snapshots = new Dictionary<string, PreviewSnapshot>(StringComparer.Ordinal);
             if (graph is null) return snapshots;
 
             // One index build for the whole pass — the upstream walk below runs for
             // every preview node on every graph mutation, so a per-node index build
-            // would be O(N·(N+M)) on the UI thread.
-            var ctx = new EvalContext(graph);
+            // would be O(N·(N+M)) on the UI thread. The playhead context rides the
+            // same object (see EvalContext.Timeline / TimeMs).
+            var ctx = new EvalContext(graph, timeline, timeMs);
             foreach (var node in graph.Nodes)
             {
                 var src = NodeTemplates.GetPreviewSource(node.Title);
@@ -221,9 +319,24 @@ namespace Phoenix.Controls.Visualist.Core
             {
                 case PreviewSource.OwnPath:
                 {
-                    string path = StripQuotes(node.Attributes.GetValueOrDefault("Path", string.Empty));
+                    // V7 — Path may be WIRED now, so the body strip resolves the same way
+                    // the evaluator does: upstream string first, own attribute second.
+                    // Without this, every node in a compiled Alert Box graph (whose paths
+                    // are all wired) would show "(no path set)" in its body — telling the
+                    // author something that is not true and making a correct graph look
+                    // broken. The two hints below are deliberately different so the
+                    // author can tell "you have not set a path" from "the wire is there
+                    // but resolves to nothing at design time", which is the NORMAL state
+                    // for a path driven off live event data — and from the third case, a
+                    // wired non-relative path the overlay will refuse to fetch.
+                    string path = ResolvePathAttrOrWire(ctx, node, out bool pathHasWire, out bool pathRejected);
                     if (string.IsNullOrEmpty(path))
-                        return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = src, Hint = "(no path set)" };
+                        return new PreviewSnapshot
+                        {
+                            Kind     = PreviewKind.Unloaded,
+                            Declared = src,
+                            Hint     = EmptyPathHint(pathHasWire, pathRejected),
+                        };
                     return new PreviewSnapshot { Kind = PreviewKind.Image, Source = path, Declared = src };
                 }
 
@@ -236,14 +349,7 @@ namespace Phoenix.Controls.Visualist.Core
                 }
 
                 case PreviewSource.OwnColor:
-                {
-                    string hex = StripQuotes(
-                        node.Attributes.GetValueOrDefault("Value",
-                            node.Attributes.GetValueOrDefault("Color", string.Empty)));
-                    if (string.IsNullOrEmpty(hex))
-                        return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = src, Hint = "(no color set)" };
-                    return new PreviewSnapshot { Kind = PreviewKind.Color, ColorHex = hex, Declared = src };
-                }
+                    return ResolveOwnColorSnapshot(ctx, node);
 
                 case PreviewSource.UpstreamImage:
                     return ResolveUpstreamImageSnapshot(ctx, node);
@@ -251,6 +357,181 @@ namespace Phoenix.Controls.Visualist.Core
 
             return new PreviewSnapshot { Declared = src };
         }
+
+        /// <summary>
+        /// V7 — resolve a preview node's <c>Path</c> the way the evaluator resolves it:
+        /// a wired String input wins, the (quote-stripped) attribute is the fallback, and a
+        /// WIRED value must be relative (<see cref="ResolveMediaPathInput"/> holds that rule;
+        /// the preview goes through it so the node body cannot advertise a file the overlay
+        /// will refuse to fetch).
+        ///
+        /// <paramref name="hasWire"/> and <paramref name="rejected"/> let the caller tell the
+        /// three empty results apart: nothing typed, wired but unresolvable at design time
+        /// (the normal state for a live-data path), and wired to a non-relative string.
+        ///
+        /// ★ <paramref name="hasWire"/> is LINK EXISTENCE, deliberately NOT the resolver's
+        /// provenance flag. The two differ for a dangling wire — one whose upstream resolves
+        /// to null, so the resolver falls back to the attribute and correctly reports an
+        /// ATTRIBUTE value — and for the author-facing hint, link existence is the useful
+        /// answer: "you wired something and it is giving me nothing" rather than "no path
+        /// set". The guard inside <see cref="ResolveMediaPathInput"/> needs the opposite
+        /// (value provenance), which is why these are two separate questions and not one.
+        ///
+        /// The walk state is minted here rather than threaded in because the preview pass
+        /// is not part of the image walk — it enters per node from
+        /// <see cref="EvaluatePreviews"/>, so there is no outer <c>visiting</c> set to
+        /// share.
+        ///
+        /// KNOWN LIMIT, stated plainly rather than justified away: the
+        /// <see cref="LayerResolution"/> passed here is ZERO, so a Path derived from the
+        /// layer size previews at zero — <c>Math.Resolution → Convert.NumberToString →
+        /// String.Concat → Path</c> shows "bg-0" where the overlay will fetch "bg-1920".
+        /// (An earlier version of this comment claimed nothing reachable from a Path reads a
+        /// layer size. That was wrong: Math.Resolution is in the SCALAR walker too, and
+        /// Convert.NumberToString crosses from the string walker into it.) Threading the real
+        /// resolution means giving <see cref="EvaluatePreviews"/> a resolution parameter and
+        /// feeding it from the canvas — a caller outside this file — so it is deliberately not
+        /// done here; the resolution-derived path is a rare authoring shape and the render
+        /// itself is unaffected.
+        /// </summary>
+        private static string ResolvePathAttrOrWire(
+            EvalContext ctx, Node node, out bool hasWire, out bool rejected)
+        {
+            hasWire = false;
+            foreach (var s in node.Sockets)
+            {
+                if (s.Type != SocketType.Input || s.Name != "Path") continue;
+                if (ctx.FindLink(node.Id, s.Id) is not null) hasWire = true;
+                break;
+            }
+
+            return ResolveMediaPathInput(
+                ctx, node, new LayerResolution(),
+                new HashSet<string>(StringComparer.Ordinal), new List<string>(),
+                out _, out rejected);
+        }
+
+        /// <summary>Hint text for an empty resolved preview path — see
+        /// <see cref="ResolvePathAttrOrWire"/> for the three cases.</summary>
+        private static string EmptyPathHint(bool hasWire, bool rejected)
+            => rejected ? "(wired path must be relative)"
+             : hasWire  ? "(path is wired)"
+                        : "(no path set)";
+
+        /// <summary>
+        /// Resolve the colour-swatch preview for a single node at a playhead
+        /// position, independent of a graph walk.
+        ///
+        /// Public because it is the narrow per-node resolver: it answers for ONE
+        /// node without a graph walk, which is what the Inspector swatch and the
+        /// playhead-debounce path need. The graph-walk route into the same branch
+        /// is live as well — <c>Color.Constant</c> declares
+        /// <see cref="PreviewSource.OwnColor"/> (V11) and <c>Image.Solid</c>
+        /// followed it, so <see cref="EvaluatePreviews"/> dispatches here through
+        /// the walk too. Both entries share <c>ResolveOwnColorSnapshot</c>, so
+        /// they cannot disagree.
+        /// </summary>
+        public static PreviewSnapshot ResolveColorSwatchPreview(
+            Node node, WidgetTimeline? timeline = null, double timeMs = 0)
+        {
+            if (node is null) return PreviewSnapshot.None;
+            // Empty graph: the colour resolver reads only the node's own
+            // attributes + the timeline, never a link hop, so it needs no index.
+            return ResolveOwnColorSnapshot(new EvalContext(new Graph(), timeline, timeMs), node);
+        }
+
+        // V11 — colour-swatch preview, sampled at the playhead.
+        //
+        // This is the ONE preview source a timeline can move (see the scope-limit
+        // block on EvaluatePreviews): a colour literal decomposes into four 0–255
+        // channel tracks at "<nodeId>.<colorKey>.R/.G/.B/.A" — the exact paths
+        // AnimatedPinRegistry seeds and compositor.js's attrAnimatedColor samples —
+        // so an author who keyframed a colour sees the node-body swatch travel with
+        // the playhead instead of sitting frozen on the static literal.
+        //
+        // Mirrors attrAnimatedColor's contract arm for arm, so the design-time
+        // swatch and the browser's rendered colour can't disagree:
+        //   • no keyframes on ANY channel → return the static literal UNCHANGED
+        //     (a non-hex CSS value therefore passes through untouched).
+        //   • any channel keyframed       → sample the keyed channels, take the
+        //     un-keyed ones from the static literal, recombine as #rrggbbaa
+        //     (alpha LAST — the byte order ThumbnailHost.TryParseHex and
+        //     AnimatedPinRegistry.TryParseHexColorChannels both expect).
+        //   • static literal unparseable  → opaque white per channel, matching the
+        //     JS fallback, instead of collapsing to a transparent-black swatch.
+        private static PreviewSnapshot ResolveOwnColorSnapshot(EvalContext ctx, Node node)
+        {
+            const PreviewSource src = PreviewSource.OwnColor;
+            var attrs = node.Attributes;
+
+            // Colour-bearing attribute key: "Value" (Color.Constant) first, then
+            // "Color". Which key won matters beyond reading the literal — it is
+            // half of the parameter path the keyframes were seeded under, so it
+            // can't be flattened into a single read-either lookup. Preserves the
+            // pre-V11 precedence exactly, including "Value present but empty ⇒
+            // Unloaded" (it does NOT fall through to "Color").
+            string colorKey = attrs is not null && attrs.ContainsKey("Value") ? "Value" : "Color";
+            string raw      = attrs is null ? string.Empty : attrs.GetValueOrDefault(colorKey, string.Empty);
+            string hex      = StripQuotes(raw);
+
+            // Static channel seeds. ReadComponentLiteral is the same helper the
+            // animate gesture uses when it seeds a colour keyframe, so the preview
+            // and the seeded keyframe agree on the channel values by construction.
+            // When the literal isn't a parseable colour that helper returns 0 for
+            // every channel (its numeric fallback) — detect that up front and use
+            // opaque white instead, which is what the browser does.
+            bool parseable = AnimatedPinRegistry.TryParseHexColorChannels(hex, out _, out _, out _, out _);
+            var  channels  = AnimatedPinRegistry.GetColorChannelKeys(colorKey);
+
+            bool anyAnimated = false;
+            var  values      = new double[4];
+            for (int i = 0; i < values.Length; i++)
+            {
+                string path = AnimatedPinRegistry.MakeParameterPath(node, channels[i]);
+                if (ctx.TrySampleParameter(path, out double sampled))
+                {
+                    values[i]   = sampled;
+                    anyAnimated = true;
+                }
+                else
+                {
+                    values[i] = parseable
+                        ? AnimatedPinRegistry.ReadComponentLiteral(node, channels[i])
+                        : 255.0;
+                }
+            }
+
+            if (anyAnimated)
+            {
+                return new PreviewSnapshot
+                {
+                    Kind     = PreviewKind.Color,
+                    ColorHex = "#" + HexByte(values[0]) + HexByte(values[1])
+                                   + HexByte(values[2]) + HexByte(values[3]),
+                    Declared = src,
+                };
+            }
+
+            // No animation on this colour → pre-V11 behaviour, verbatim.
+            if (string.IsNullOrEmpty(hex))
+                return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = src, Hint = "(no color set)" };
+            return new PreviewSnapshot { Kind = PreviewKind.Color, ColorHex = hex, Declared = src };
+        }
+
+        // 0–255 channel → two lowercase hex digits. Clamp + away-from-zero
+        // rounding matches compositor.js's clampByte/hex2 pair so the C# swatch
+        // and the browser's recombined colour land on the same byte.
+        private static string HexByte(double channel)
+        {
+            if (double.IsNaN(channel)) channel = 0;
+            int b = (int)Math.Round(Math.Clamp(channel, 0, 255), MidpointRounding.AwayFromZero);
+            return b.ToString("x2", CultureInfo.InvariantCulture);
+        }
+
+        // Preferred image-input socket names, in priority order, for the
+        // upstream-image hop below. Hoisted to a static field so the hop loop
+        // doesn't re-allocate the array on every iteration.
+        private static readonly string[] _preferredImageInputNames = { "In", "Image", "A" };
 
         // BFS-style walk from `node`'s canonical "In" socket to the nearest
         // resolvable Image source — Image.Load (file path) and Image.LoadUrl
@@ -283,9 +564,17 @@ namespace Phoenix.Controls.Visualist.Core
 
                 if (string.Equals(n.Title, "Image.Load", StringComparison.OrdinalIgnoreCase))
                 {
-                    string p = StripQuotes(n.Attributes.GetValueOrDefault("Path", string.Empty));
+                    // V7 — same wired-Path resolution as the OwnPath branch, so a Viewer
+                    // dropped downstream of a dynamic Image.Load previews what the loader
+                    // will actually fetch instead of an empty attribute.
+                    string p = ResolvePathAttrOrWire(ctx, n, out bool upHasWire, out bool upRejected);
                     if (string.IsNullOrEmpty(p))
-                        return new PreviewSnapshot { Kind = PreviewKind.Unloaded, Declared = PreviewSource.UpstreamImage, Hint = "(no path set)" };
+                        return new PreviewSnapshot
+                        {
+                            Kind     = PreviewKind.Unloaded,
+                            Declared = PreviewSource.UpstreamImage,
+                            Hint     = EmptyPathHint(upHasWire, upRejected),
+                        };
                     return new PreviewSnapshot { Kind = PreviewKind.Image, Source = p, Declared = PreviewSource.UpstreamImage };
                 }
 
@@ -307,9 +596,8 @@ namespace Phoenix.Controls.Visualist.Core
                 // chain terminates in a non-Image source we can't decode at
                 // design time (Video.Load, mask shape generator, Color.Constant,
                 // etc.).
-                string[] preferredNames = { "In", "Image", "A" };
                 Socket? upSock = null;
-                foreach (var name in preferredNames)
+                foreach (var name in _preferredImageInputNames)
                 {
                     upSock = n.Sockets.FirstOrDefault(s =>
                         s.Type == SocketType.Input &&
@@ -357,6 +645,16 @@ namespace Phoenix.Controls.Visualist.Core
             // evalAnyInputOf(Complete) probe. Result isn't surfaced as ImageMetadata
             // (Complete is just a flow signal), but the visited-node bookkeeping must
             // include it so parity tests don't drift between sides.
+            //
+            // ★ V14 — this walk's ONLY product is now VisitedNodeIds. It used to also set
+            // an EvalResult.CompleteConnected flag; that flag had no reader anywhere and
+            // was deleted, the walk was not. Two things depend on the walk surviving:
+            // WidgetNodeCoverageTests exempts Visual.Complete from needing a dispatch arm
+            // precisely BECAUSE this sink lookup walks it, and the walk is what keeps the
+            // C# mirror from drifting from compositor.js. Deleting it would silently drop
+            // every node upstream of Complete out of VisitedNodeIds — a coverage hole that
+            // reads as a passing test. If a caller ever needs "is Complete wired?", derive
+            // it from the walk rather than resurrecting a write-only flag.
             var completeSink = graph.Nodes.FirstOrDefault(n =>
                 string.Equals(n.Title, "Visual.Complete", System.StringComparison.OrdinalIgnoreCase));
             if (completeSink is not null)
@@ -365,7 +663,6 @@ namespace Phoenix.Controls.Visualist.Core
                 {
                     var link = ctx.FindLink(completeSink.Id, inSock.Id);
                     if (link is null) continue;
-                    result.CompleteConnected = true;
                     if (inSock.DataType == SocketDataType.Image)
                     {
                         EvalImageMemoized(ctx, link.FromNodeId, link.FromSocketId, layerResolution, widgetRect, visiting, result.VisitedNodeIds, memo);
@@ -414,7 +711,12 @@ namespace Phoenix.Controls.Visualist.Core
 
             ImageMetadata? r = node.Title switch
             {
-                "Image.Load"        => EvalImageLoad(node, widgetRect),
+                // V7 — Image.Load takes ctx + the walk state because its Path is now a
+                // wirable String input, so resolving it can hop upstream through the
+                // string walker. Image.LoadUrl keeps its attribute-only Url (V7 scoped
+                // the dynamic source to the three LOCAL-FILE loaders; a dynamic remote
+                // URL is a different security conversation).
+                "Image.Load"        => EvalImageLoad(ctx, node, layerRes, widgetRect, visiting, visited),
                 "Image.LoadUrl"     => EvalImageLoadUrl(node, widgetRect),
                 "Image.Scale"       => EvalImageScale(ctx, node, layerRes, widgetRect, visiting, visited),
                 "Image.Transform"   => EvalImageTransform(ctx, node, layerRes, widgetRect, visiting, visited),
@@ -444,6 +746,11 @@ namespace Phoenix.Controls.Visualist.Core
                 "Mask.Polygon"        => EvalMaskShapeStub(layerRes, "Mask.Polygon"),
                 "Mask.Bezier"         => EvalMaskShapeStub(layerRes, "Mask.Bezier"),
                 "Mask.Star"           => EvalMaskShapeStub(layerRes, "Mask.Star"),
+                // V10 — Image.Solid. NOT a Mask.* stub: the masks emit at the LAYER
+                // resolution from attribute-only geometry, while this one is a
+                // WIDGET-FRAME-space generator whose four geometry pins are wirable, so
+                // its extent is computed rather than stamped. See EvalImageSolid.
+                "Image.Solid"         => EvalImageSolid(ctx, node, layerRes, widgetRect, visiting, visited),
                 // Viewer passes the upstream image through unchanged.
                 "Viewer"            => EvalImagePassthrough(ctx, node, "In",    layerRes, widgetRect, visiting, visited),
                 // Result.If — barrier between an Image source and Display. Reads
@@ -504,9 +811,12 @@ namespace Phoenix.Controls.Visualist.Core
                 // Video.Load — outputs a video stream. Design-time stub returns
                 // widget-rect dims with the Source attribute so authoring sees
                 // the path even though decode happens browser-side.
+                // V7 — Path resolves through the wired-socket-wins resolver plus the
+                // wired-must-be-relative guard, same as Image.Load. Kept as an inline switch
+                // arm (it was never a method) so the diff stays where the behaviour is.
                 "Video.Load"          => new ImageMetadata
                 {
-                    Source = StripQuotes(node.Attributes.GetValueOrDefault("Path", "")),
+                    Source = ResolveMediaPathInput(ctx, node, layerRes, visiting, visited, out _, out _),
                     Width  = widgetRect.Width,
                     Height = widgetRect.Height,
                     Kernel = "Video.Load",
@@ -530,6 +840,42 @@ namespace Phoenix.Controls.Visualist.Core
                     HasError     = true,
                     ErrorMessage = $"Audio.Play is a sink, not an image source (node {node.Id}) — connect Audio.Load → Audio.Play directly without an Image path.",
                     Kernel       = "Audio.Play",
+                },
+
+                // WebOverlay.Custom — DOM-overlay sink (Path B). It has only String
+                // inputs and NO output, so the image walker can never legitimately land
+                // on it (nothing wires FROM it). This case exists purely so a mis-wire
+                // surfaces a clear message instead of the generic "unsupported node"
+                // fallthrough. The real runtime is compositor.js (evalWebOverlay); the
+                // design-time C# mirror renders nothing (no browser), matching how the
+                // Audio.Play side-effect sink is not visited by EvaluateCore. The title is
+                // spelled as a string literal (not WebOverlaySinkNode.Title) so
+                // WidgetNodeCoverageTests' source scan counts it as covered — same as the
+                // sibling "Audio.Play" / "Video.Load" arms.
+                "WebOverlay.Custom" => new ImageMetadata
+                {
+                    HasError     = true,
+                    ErrorMessage = $"WebOverlay.Custom is a DOM-overlay sink, not an image source (node {node.Id}) — it renders its own HTML/CSS over the canvas and has no Image output to wire downstream.",
+                    Kernel       = "WebOverlay.Custom",
+                },
+
+                // V15 — Player.Embed, the second DOM-overlay sink. Same shape and the same
+                // reasoning as WebOverlay.Custom above: one String input, no output, so the
+                // image walker can only land here on a mis-wire, and the message says so
+                // rather than falling through to the generic "unsupported node".
+                //
+                // Stronger than the sibling case, though: this one mounts a CROSS-ORIGIN
+                // iframe. A browser cannot read a cross-origin frame's pixels back at all,
+                // so "give it an Image output later" is not deferred work — it is
+                // impossible, and the error text says so instead of implying a gap.
+                // The title is a quoted string literal (not PlayerEmbedSinkNode.Title) so
+                // WidgetNodeCoverageTests' source scan counts it as covered — a const
+                // pattern is invisible to that regex.
+                "Player.Embed" => new ImageMetadata
+                {
+                    HasError     = true,
+                    ErrorMessage = $"Player.Embed is a DOM-overlay sink, not an image source (node {node.Id}) — it mounts a cross-origin iframe over the whole widget rect, whose pixels a browser cannot read back, so it has no Image output to wire downstream.",
+                    Kernel       = "Player.Embed",
                 },
 
                 // Particles.Emit and WebSource are
@@ -571,9 +917,20 @@ namespace Phoenix.Controls.Visualist.Core
         /// method intentionally returns widget-rect dims and the divergence is a known
         /// design-time vs. runtime gap (see also <see cref="EvalImageLoadUrl"/>).
         /// </summary>
-        private static ImageMetadata EvalImageLoad(Node node, WidgetRect widgetRect)
+        /// <remarks>
+        /// V7 — Path is resolved through <see cref="ResolveMediaPathInput"/>: a wired
+        /// String input wins, the (quote-stripped) attribute is the fallback, and a WIRED
+        /// value must be a relative path. That is the contract compositor.js's
+        /// <c>_evalMediaPathSocket</c> implements on the browser side, and the two have to
+        /// agree or the design-time mirror would report a different file than OBS renders.
+        /// An UNWIRED node resolves exactly as it did before V7, byte for byte — which is
+        /// what keeps every saved <c>.phxlayer</c> unchanged.
+        /// </remarks>
+        private static ImageMetadata EvalImageLoad(
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            HashSet<string> visiting, List<string> visited)
         {
-            string path = StripQuotes(node.Attributes.GetValueOrDefault("Path", ""));
+            string path = ResolveMediaPathInput(ctx, node, layerRes, visiting, visited, out _, out _);
             return new ImageMetadata
             {
                 Source = path,
@@ -616,6 +973,87 @@ namespace Phoenix.Controls.Visualist.Core
                 Height = layerRes.Height,
                 Kernel = kernel,
             };
+        }
+
+        /// <summary>
+        /// V10 — <c>Image.Solid</c>: the design-time mirror of compositor.js
+        /// <c>evalImageSolid</c>. A colour-filled rectangle expressed as 0..1 fractions of the
+        /// WIDGET FRAME, with all four geometry pins wirable.
+        ///
+        /// <para><b>Why this is not a Mask.* stub.</b> The mask generators emit at the LAYER
+        /// resolution from attribute-only geometry, so a constant stamp is a faithful mirror of
+        /// them. This node's extent is COMPUTED from its geometry, and the extent is the part a
+        /// downstream consumer reasons about (<c>Image.Blend</c> / <c>Image.Combine</c> compose
+        /// into the union extent and centre-align), so stamping a constant would make the
+        /// design-time walk disagree with the browser for exactly the graphs this node exists
+        /// for.</para>
+        ///
+        /// <para><b>The render contract, mirrored.</b> Compose in content-extent space centred
+        /// on the widget centre; crop ONLY at <c>Display</c>. So the extent is the frame's
+        /// half-size about the frame centre, GROWN to contain an overhanging rectangle and never
+        /// shrunk below the frame:
+        /// <c>half = max(0.5, |p0 - 0.5|, |p1 - 0.5|)</c> per axis, extent <c>= 2 * half *
+        /// frame</c>, capped at 8x. A rectangle inside 0..1 — every normal bar — therefore
+        /// reports exactly the widget rect, which is what keeps this consistent with the
+        /// <c>Text.Render</c> / <c>Image.Load</c> stubs beside it.</para>
+        ///
+        /// <para><b>Known mirror divergence, stated rather than hidden:</b> the geometry
+        /// attributes are read as static literals here, while the browser reads them through
+        /// <c>attrAnimated</c>. The two therefore agree exactly for an un-keyframed node (the
+        /// overwhelming majority, and every channel-driven bar — a live Scalar is wired, not
+        /// keyframed) and can differ on the EXTENT of a keyframed overhang. That is the standing
+        /// behaviour of every kernel in this walker, not something new here: the walker is a
+        /// metadata mirror, and the only keyframe sampling it does is the colour-swatch preview.
+        /// Do not "fix" it locally — it would put this one kernel on a different clock from its
+        /// neighbours.</para>
+        /// </summary>
+        private static ImageMetadata EvalImageSolid(
+            EvalContext ctx, Node node, LayerResolution layerRes, WidgetRect widgetRect,
+            HashSet<string> visiting, List<string> visited)
+        {
+            double fw = widgetRect.Width  > 0 ? widgetRect.Width  : layerRes.Width;
+            double fh = widgetRect.Height > 0 ? widgetRect.Height : layerRes.Height;
+            if (fw <= 0) fw = 1;
+            if (fh <= 0) fh = 1;
+
+            double x = ResolveScalarOrAttr(ctx, node, "X",      "X",      0, layerRes, visiting, visited);
+            double y = ResolveScalarOrAttr(ctx, node, "Y",      "Y",      0, layerRes, visiting, visited);
+            double w = ResolveScalarOrAttr(ctx, node, "Width",  "Width",  1, layerRes, visiting, visited);
+            double h = ResolveScalarOrAttr(ctx, node, "Height", "Height", 1, layerRes, visiting, visited);
+
+            // NaN / infinity guard, mirroring the browser's `fin` helper. A non-finite geometry
+            // value would otherwise propagate into the extent and out through Width / Height as
+            // a nonsense int cast.
+            if (!double.IsFinite(x)) x = 0;
+            if (!double.IsFinite(y)) y = 0;
+            if (!double.IsFinite(w)) w = 1;
+            if (!double.IsFinite(h)) h = 1;
+
+            // Ordered span so a negative Width/Height describes the same rectangle rather than
+            // an inverted extent (same rule as the browser).
+            double x0 = System.Math.Min(x, x + w), x1 = System.Math.Max(x, x + w);
+            double y0 = System.Math.Min(y, y + h), y1 = System.Math.Max(y, y + h);
+
+            double halfX = System.Math.Max(0.5, System.Math.Max(System.Math.Abs(x0 - 0.5), System.Math.Abs(x1 - 0.5)));
+            double halfY = System.Math.Max(0.5, System.Math.Max(System.Math.Abs(y0 - 0.5), System.Math.Abs(y1 - 0.5)));
+
+            int cw = System.Math.Max(1, (int)System.Math.Round(System.Math.Min(8, 2 * halfX) * fw));
+            int ch = System.Math.Max(1, (int)System.Math.Round(System.Math.Min(8, 2 * halfY) * fh));
+
+            var meta = new ImageMetadata
+            {
+                Width  = cw,
+                Height = ch,
+                Kernel = "Image.Solid",
+            };
+            // The resolved fill colour is reported as a kernel attribute rather than as a
+            // Source: there is no file behind it, and Source is what tests read as "which asset
+            // will OBS fetch". The node-body swatch reads the same literal through
+            // PreviewSource.OwnColor — the SECOND template to declare it, after Color.Constant
+            // opted in with V11, so the branch was already live through the graph walk and this
+            // node joins it rather than opening it.
+            meta.KernelAttributes["Color"] = StripQuotes(node.Attributes.GetValueOrDefault("Color", "\"#ffffff\""));
+            return meta;
         }
 
         private static ImageMetadata? EvalImageScale(
@@ -678,7 +1116,8 @@ namespace Phoenix.Controls.Visualist.Core
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
-            var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
+            Socket? sock = null;
+            foreach (var s in node.Sockets) { if (s.Type == SocketType.Input && s.Name == socketName) { sock = s; break; } }
             if (sock is null) return null;
             var link = ctx.FindLink(node.Id, sock.Id);
             if (link is null) return null;
@@ -894,6 +1333,44 @@ namespace Phoenix.Controls.Visualist.Core
                         return s.Length;
                     }
 
+                    // ── Overlay Live Channel readers (design time = no channel) ──
+                    // Var.Live's Number pin plus every Scalar pin V4 appended to the
+                    // tool readers: the timer trio's Progress / Seconds, the counter's
+                    // Value, and the loyalty pair's Rank / Balance. All of them are fed
+                    // by a channel patch in the browser, and there is no channel behind
+                    // the design-time canvas, so they resolve at the origin — 0 — the
+                    // same t=0 convention the Time.* nodes above use.
+                    //
+                    // 0 and not null: null means "this chain did not resolve" and would
+                    // surface as a broken/errored preview for a perfectly valid graph.
+                    // 0 and not PreviewText either: that attribute is a formatted string
+                    // (a clock face, a five-line board) and parsing it back into a number
+                    // would be inventing data on a numeric pin — the precise habit this
+                    // rework exists to remove. An author authoring a progress bar
+                    // therefore sees it empty on the canvas and full only on the live
+                    // overlay; that is the honest trade, and no per-pin design-time mock
+                    // attribute is invented to paper over it.
+                    case "Var.Live":
+                    case "Timer.Remaining":
+                    case "Countdown.Remaining":
+                    case "Stopwatch.Elapsed":
+                    case "Counter.Value":
+                    case "Loyalty.Leaderboard":
+                    case "Loyalty.Balance":
+                    // V10 — the two family readers join the same group, for the same reason
+                    // and with the same refusal to invent a number:
+                    //   Goal.Progress → Progress / Current / Target. An author authoring a
+                    //     goal bar therefore sees it EMPTY on the canvas and full only on the
+                    //     live overlay. That is the honest trade; parsing the formatted
+                    //     PreviewText line back into a fraction would be exactly the
+                    //     invented-data habit this rework removed.
+                    //   List.Live     → Number / Count. Count 0 is also what the browser
+                    //     reports for an unpublished list, so this one is not even a
+                    //     concession — it is the same answer.
+                    case "Goal.Progress":
+                    case "List.Live":
+                        return 0;
+
                     // Vector*.Split nodes expose per-component scalar outputs (X/Y[/Z[/W]]).
                     // When walked from a downstream scalar consumer, look up which named output
                     // socket the link is using, evaluate the upstream Vector input, then return
@@ -1015,7 +1492,8 @@ namespace Phoenix.Controls.Visualist.Core
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
-            var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
+            Socket? sock = null;
+            foreach (var s in node.Sockets) { if (s.Type == SocketType.Input && s.Name == socketName) { sock = s; break; } }
             if (sock is null) return null;
             var link = ctx.FindLink(node.Id, sock.Id);
             if (link is null) return null;
@@ -1297,6 +1775,319 @@ namespace Phoenix.Controls.Visualist.Core
                     case "Message.Read":
                         return StripQuotes(src.Attributes.GetValueOrDefault("MockValue", ""));
 
+                    // ── V7 — Visual.Arg: one named trigger-payload field, as a String ──
+                    //
+                    // Mirrors the browser reader arm for arm. The evaluator DOES have
+                    // event data when a caller supplies it (the Result.If mirror reads
+                    // the same thread-static), so a test can drive the real lookup; the
+                    // canvas has none, and then the PreviewText attribute is the
+                    // design-time placeholder.
+                    //
+                    // ★ The browser routes that placeholder through its liveMock helper,
+                    // which returns '' unless the page is a design-time surface — so in
+                    // production an unsupplied field renders NOTHING. There is no such
+                    // gate here because this walker IS a design-time surface: it never
+                    // runs in OBS. Do not "align" the two by making the browser show the
+                    // placeholder; that is the fake-data-on-stream bug this rework
+                    // removed. The distinction from Message.Read above (whose MockValue
+                    // does reach air) is the whole reason this node exists.
+                    case "Visual.Arg":
+                    {
+                        // ★ The Key default is "Args1", matching compositor.js's
+                        // attr(node, 'Key', 'Args1') — and it has to, because the two
+                        // defaults are reached by DIFFERENT populations of layer. Hub serves
+                        // .phxlayer files raw and never runs LayerGraphMigrator, so a node
+                        // saved without a Key attribute reaches the BROWSER un-migrated and
+                        // looks up Args1 there; defaulting to empty here made the same node
+                        // preview a placeholder in the editor and render a real value on
+                        // stream. Divergent defaults in a mirror are the one class of bug
+                        // this mirror exists to make impossible.
+                        string argKey = StripQuotes(src.Attributes.GetValueOrDefault("Key", "Args1")).Trim();
+                        var argEd = _currentEventData;
+                        if (argKey.Length > 0 && argEd is not null
+                            && argEd.TryGetValue(argKey, out var argVal) && argVal is not null)
+                            return argVal;
+                        return StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                    }
+
+                    // ── V7 — String.Select: N-way string mapping with a default ──
+                    //
+                    // First Case row that EXACTLY equals the selector wins; nothing
+                    // matched ⇒ Default. Byte-identical to compositor.js
+                    // evalStringSelect, and every one of the three rules below is load-
+                    // bearing rather than defensive:
+                    //
+                    //   • Ordinal, case-SENSITIVE compare (matching the Result.If gate).
+                    //     Case-insensitive was rejected because JS toLowerCase() and
+                    //     .NET OrdinalIgnoreCase disagree on some Unicode input, and the
+                    //     browser and this mirror picking different rows would be a
+                    //     silent, unreproducible authoring bug.
+                    //   • An EMPTY Case is an unconfigured row and is skipped. Otherwise
+                    //     an empty selector — the normal state on an onStartup render,
+                    //     where no event data exists at all — would match the first
+                    //     blank row and emit its Value, so a freshly dropped node would
+                    //     appear to have chosen row 1.
+                    //   • Default is a real row, not a fallback-of-last-resort: the
+                    //     Alerts tool labels an unmapped family generically, so a value
+                    //     nobody mapped genuinely arrives.
+                    //
+                    // The selector reads through ResolveStringOrAttr, so wiring a
+                    // Visual.Arg into When wins over the inline attribute and an unwired
+                    // node still previews from its own box.
+                    case "String.Select":
+                    {
+                        string selector = ResolveStringOrAttr(
+                            ctx, src, "When", "When", "", layerRes, visiting, visited);
+                        for (int row = 1; row <= NodeTemplates.StringSelectRows; row++)
+                        {
+                            string caseText = StripQuotes(
+                                src.Attributes.GetValueOrDefault("Case" + row.ToString(CultureInfo.InvariantCulture), ""));
+                            if (caseText.Length == 0) continue;
+                            if (!string.Equals(caseText, selector, StringComparison.Ordinal)) continue;
+                            return StripQuotes(
+                                src.Attributes.GetValueOrDefault("Value" + row.ToString(CultureInfo.InvariantCulture), ""));
+                        }
+                        return StripQuotes(src.Attributes.GetValueOrDefault("Default", ""));
+                    }
+
+                    // ── Timer.Remaining — live countdown readout (spec §6) ──
+                    // At design time there is no live TimerService and no Overlay Live
+                    // Channel behind the canvas, so this mirrors Message.Read's mock
+                    // behaviour: each status pin previews what a HEALTHY timer would
+                    // report and every remaining String socket previews the PreviewText
+                    // attribute. The live values arrive browser-side off the channel's
+                    // timer.<root>.* key family (compositor.js evalTimerRemaining) — the
+                    // TIMER_UPDATE broadcast this comment used to name was retired with
+                    // the channel rework and no longer exists. The output socket is
+                    // resolved from fromSocketId exactly like the Visual.OnTrigger case
+                    // below.
+                    case "Timer.Remaining":
+                    // Countdown.Remaining / Stopwatch.Elapsed share Timer.Remaining's
+                    // shape — the same output pins reading the same live key family —
+                    // so they mirror it identically at design time: the State socket
+                    // previews "Running", the Text socket previews PreviewText, and the
+                    // three String pins appended for the channel are handled below.
+                    case "Countdown.Remaining":
+                    case "Stopwatch.Elapsed":
+                    {
+                        var timerSock = fromSocketId is null
+                            ? null
+                            : src.Sockets.FirstOrDefault(s => s.Id == fromSocketId && s.Type == SocketType.Output);
+                        // Every String status pin, and why each previews what it does.
+                        // The governing rule: a preview may only be a value the browser
+                        // reader can actually emit for this pin — a mirror that invents
+                        // a value production never produces is precisely what let the
+                        // last contract break pass unnoticed in the editor.
+                        //   State  — "Running": the RUN state, read browser-side as the
+                        //            VALUE of timer.<root>.state (Running / Paused /
+                        //            Stopped / Ended). A healthy timer previews Running.
+                        //   Live   — "Active": the CHANNEL's verdict on that same key
+                        //            (Active / Stale / Missing). Design time has no
+                        //            channel, so it previews the healthy end of the
+                        //            vocabulary, exactly as State does. This pin is what
+                        //            makes a frozen "Running" detectable on stream, and
+                        //            it exists ONLY on the timer trio: the other tool
+                        //            readers have no run state, so their State pin
+                        //            carries liveness itself.
+                        //   Paused — "false", because a Running timer is not paused.
+                        //   Mode   — the timer mode THIS palette entry exists to read.
+                        //            Each of the three readers is a per-mode entry (see
+                        //            their template comments), so echoing that back is a
+                        //            faithful mirror of the author's intent rather than
+                        //            invented data; the real mode replaces it browser-side.
+                        switch (timerSock?.Name)
+                        {
+                            case "State":  return "Running";
+                            case "Live":   return "Active";
+                            case "Paused": return "false";
+                            case "Mode":   return DesignTimeTimerMode(src.Title);
+                        }
+                        return StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                    }
+
+                    // ── Clock.Now — live digital wall-clock (browser-autonomous) ──
+                    // No live clock at design time (t=0 convention), so preview the
+                    // PreviewText placeholder — the browser evalClockNow renders the
+                    // real machine time each 1 Hz heartbeat.
+                    case "Clock.Now":
+                        return StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+
+                    // ── Loyalty.Leaderboard / Loyalty.Balance — live points readouts ─
+                    // Loyalty-tool Layer 5. Structural twins of Timer.Remaining: there is
+                    // no live LoyaltyService and no Overlay Live Channel at design time,
+                    // so mirror its mock behaviour — each status pin previews a value the
+                    // browser reader can really emit, and every other String socket
+                    // previews the PreviewText attribute. The live values arrive
+                    // browser-side off the channel's loyalty.leaderboard array
+                    // (compositor.js evalLoyaltyLeaderboard / evalLoyaltyBalance); the
+                    // LOYALTY_UPDATE broadcast this comment used to name was retired with
+                    // the channel rework. The output socket is resolved from fromSocketId
+                    // exactly like the Timer.Remaining case above.
+                    case "Loyalty.Leaderboard":
+                    case "Loyalty.Balance":
+                    {
+                        var loyaltySock = fromSocketId is null
+                            ? null
+                            : src.Sockets.FirstOrDefault(s => s.Id == fromSocketId && s.Type == SocketType.Output);
+                        string loyaltyPreview = StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                        if (loyaltySock?.Name == "State")
+                        {
+                            // The leaderboard's State vocabulary is Active / Stale /
+                            // Missing PLUS "Empty" — a board that IS being published but
+                            // holds no rows yet. Empty is not a liveness fact and not a
+                            // legacy wart: widgets branch on it to render a "no scores
+                            // yet" state, so the mirror has to be able to preview it or
+                            // that branch is unreachable on the canvas and the author
+                            // cannot see the state they are authoring.
+                            //
+                            // The mirror's ONLY design-time board is the PreviewText
+                            // mock, so it reports the state that mock implies: rows
+                            // present → Active, PreviewText cleared → Empty. That also
+                            // makes clearing PreviewText the deliberate lever for
+                            // previewing the empty branch. Loyalty.Balance keeps plain
+                            // "Active": a one-row read either resolves or it doesn't, so
+                            // its reader never emits Empty and the mirror must not
+                            // either.
+                            if (src.Title == "Loyalty.Leaderboard")
+                                return loyaltyPreview.Length == 0 ? "Empty" : "Active";
+                            return "Active";
+                        }
+                        // Name is the per-row pin the Index attribute selects on the
+                        // leaderboard. It must NOT fall through to PreviewText: that
+                        // attribute holds a whole formatted five-line BOARD, so a pin
+                        // that has to carry one viewer name would hand its consumer the
+                        // entire mock ranking. Empty is the honest design-time answer,
+                        // and it is also what the browser yields when Index points past
+                        // the end of a live board.
+                        if (loyaltySock?.Name == "Name") return string.Empty;
+                        return loyaltyPreview;
+                    }
+
+                    // ── Counter.Value — live named-counter readout (Counters tool) ─
+                    // Structural twin of Loyalty.Balance: there is no live
+                    // CountersService at design time, so mirror its mock behaviour —
+                    // the "State" socket previews "Active" (the healthy end of its
+                    // Active / Stale / Missing vocabulary; this node has no run state,
+                    // so State IS its liveness verdict and there is no Live pin) and the
+                    // Text socket previews the PreviewText attribute. The live value
+                    // arrives browser-side off the channel key counter.<name>.count
+                    // (compositor.js evalCounterValue) — the COUNTER_UPDATE broadcast
+                    // this comment used to name was retired with the channel rework.
+                    case "Counter.Value":
+                    {
+                        var counterSock = fromSocketId is null
+                            ? null
+                            : src.Sockets.FirstOrDefault(s => s.Id == fromSocketId && s.Type == SocketType.Output);
+                        if (counterSock?.Name == "State") return "Active";
+                        return StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                    }
+
+                    // ── Var.Live — Overlay Live Channel binding node ─────────
+                    // The design-time mirror has NO channel to read (there is no Hub
+                    // socket behind the canvas), so it resolves from the node's own
+                    // attributes only — it must never manufacture a plausible-looking
+                    // value, because the browser reader deliberately renders nothing
+                    // for an unpublished key and the two sides have to agree about
+                    // what "no data" looks like.
+                    //   State — from the Key attribute, the one thing knowable at
+                    //           design time: a blank Key can never resolve (the
+                    //           subscription is derived from this literal text), so it
+                    //           previews Missing, which is exactly what the browser
+                    //           will report. A filled Key previews Active, matching how
+                    //           the sibling readers preview a healthy feed.
+                    //   Text  — PreviewText when the author set one; otherwise an echo
+                    //           of the bound key in {brace} form, so a canvas full of
+                    //           Var.Live nodes shows WHICH binding sits where instead
+                    //           of a row of blank boxes. The braces make it unmistakably
+                    //           not live data, and they match the {token} convention the
+                    //           Format attributes already use. Nothing to echo (no Key,
+                    //           no PreviewText) previews empty.
+                    case "Var.Live":
+                    {
+                        var liveSock = fromSocketId is null
+                            ? null
+                            : src.Sockets.FirstOrDefault(s => s.Id == fromSocketId && s.Type == SocketType.Output);
+                        // Trimmed so a whitespace-only Key reads as unbound and the echo
+                        // below shows no padding. Deliberately NOT lower-cased: key
+                        // normalisation is the publisher/browser half of the contract and
+                        // has to stay single-sourced there — this mirror never subscribes
+                        // to anything, it only decides what the canvas shows.
+                        string liveKey = StripQuotes(src.Attributes.GetValueOrDefault("Key", "")).Trim();
+                        if (liveSock?.Name == "State")
+                            return liveKey.Length == 0 ? "Missing" : "Active";
+                        string livePreview = StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                        if (livePreview.Length > 0) return livePreview;
+                        return liveKey.Length == 0 ? string.Empty : "{" + liveKey + "}";
+                    }
+
+                    // ── V10 — Goal.Progress: the goal.<kind>.* family reader ────
+                    // Design time has no channel behind the canvas, so this resolves from the
+                    // node's own attributes only and must never manufacture a plausible
+                    // value — the browser deliberately renders NOTHING for an unpublished
+                    // goal, and the two sides have to agree about what "no data" looks like.
+                    //   State — from the Kind attribute, the one thing knowable here: a blank
+                    //           Kind can never resolve (the subscription is derived from this
+                    //           literal text, and liveGoalRoot refuses to build a partial
+                    //           root from it), so it previews Missing — exactly what the
+                    //           browser will report. A filled Kind previews Active, matching
+                    //           how every sibling reader previews a healthy feed.
+                    //   Label — EMPTY, never PreviewText. That attribute holds a whole
+                    //           formatted line ("120 / 250"), so a pin whose contract is one
+                    //           short display label would hand its consumer the entire mock.
+                    //           Same call the Loyalty readers' Name pin makes, and empty is
+                    //           also what the browser yields for an unpublished label.
+                    //   Text  — the PreviewText placeholder.
+                    case "Goal.Progress":
+                    {
+                        var goalSock = fromSocketId is null
+                            ? null
+                            : src.Sockets.FirstOrDefault(s => s.Id == fromSocketId && s.Type == SocketType.Output);
+                        if (goalSock?.Name == "State")
+                        {
+                            // Trimmed only. Deliberately NOT lower-cased: key normalisation is
+                            // the publisher/browser half of the contract and stays
+                            // single-sourced there — this mirror never subscribes to anything,
+                            // it only decides what the canvas shows.
+                            string kind = StripQuotes(src.Attributes.GetValueOrDefault("Kind", "")).Trim();
+                            return kind.Length == 0 ? "Missing" : "Active";
+                        }
+                        if (goalSock?.Name == "Label") return string.Empty;
+                        return StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                    }
+
+                    // ── V10 — List.Live: the channel ARRAY reader ───────────────
+                    // Structural twin of Loyalty.Leaderboard, whose State vocabulary it shares
+                    // (Active / Stale / EMPTY — never Missing, because a never-published list
+                    // and a published-empty one are the same thing to a widget, and widgets
+                    // branch on 'Empty' to draw a "nothing yet" card).
+                    //   State — a blank Key can never resolve, so 'Empty'. Otherwise the
+                    //           mirror's ONLY design-time list is the PreviewText mock, so it
+                    //           reports the state that mock implies: rows present → Active,
+                    //           PreviewText cleared → Empty. That also makes clearing
+                    //           PreviewText the deliberate lever for previewing the empty
+                    //           branch — the same lever the leaderboard offers.
+                    //   Row / Value — EMPTY. PreviewText holds already-FORMATTED rows, so
+                    //           slicing one out would hand Row the output of a template it
+                    //           never applied while Value (which needs raw field data the mock
+                    //           does not carry) stayed blank. Three honest blanks beat one
+                    //           inconsistent mock.
+                    //   Text  — the PreviewText placeholder (one mock row per line).
+                    case "List.Live":
+                    {
+                        var listSock = fromSocketId is null
+                            ? null
+                            : src.Sockets.FirstOrDefault(s => s.Id == fromSocketId && s.Type == SocketType.Output);
+                        string listPreview = StripQuotes(src.Attributes.GetValueOrDefault("PreviewText", ""));
+                        if (listSock?.Name == "State")
+                        {
+                            string listKey = StripQuotes(src.Attributes.GetValueOrDefault("Key", "")).Trim();
+                            if (listKey.Length == 0) return "Empty";
+                            return listPreview.Length == 0 ? "Empty" : "Active";
+                        }
+                        if (listSock?.Name == "Row" || listSock?.Name == "Value") return string.Empty;
+                        return listPreview;
+                    }
+
                     // ── Visual.OnTrigger string-output mirror ───────────────
                     // OnTrigger exposes string outputs (EventData / UserName / Message,
                     // etc.). At design time there is no live event, so mirror the
@@ -1319,6 +2110,23 @@ namespace Phoenix.Controls.Visualist.Core
             }
         }
 
+        // Design-time value for the timer readers' appended Mode pin. Each of the
+        // three palette entries exists to read one TimerMode (their template comments
+        // say so explicitly: the Countdown reader reads a TimerMode.Countdown timer,
+        // the Stopwatch reader a TimerMode.Stopwatch one, and the generic reader the
+        // subathon clock it was written for), so echoing that mode back is a mirror of
+        // the author's intent, not fabricated data. At runtime the channel's own mode
+        // field wins — an author who points the generic reader at a Countdown gets
+        // "Countdown" on stream and only the canvas preview says "Subathon".
+        // Spelled with quoted string literals to match the surrounding dispatch style
+        // (and so the coverage scan keeps seeing these titles as covered).
+        private static string DesignTimeTimerMode(string? title) => title switch
+        {
+            "Countdown.Remaining" => "Countdown",
+            "Stopwatch.Elapsed"   => "Stopwatch",
+            _                     => "Subathon",
+        };
+
         // String socket resolver with attribute fallback. Honours the
         // "wired socket wins" contract: walk the String link if present (and it
         // resolves), then fall back to the (quote-stripped) attribute. Mirrors
@@ -1327,18 +2135,98 @@ namespace Phoenix.Controls.Visualist.Core
             EvalContext ctx, Node node, string socketName, string attrKey, string defaultValue,
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
+            => ResolveStringOrAttr(ctx, node, socketName, attrKey, defaultValue,
+                                   layerRes, visiting, visited, out _);
+
+        /// <summary>
+        /// The resolver above, additionally reporting PROVENANCE:
+        /// <paramref name="fromWire"/> is true iff the returned value came from an UPSTREAM
+        /// NODE, and false when it came from the node's own attribute.
+        ///
+        /// It reports where the value came FROM rather than merely whether a link exists — a
+        /// dangling wire that resolved to null falls back to the attribute and is reported as
+        /// an ATTRIBUTE value. <see cref="ResolveMediaPathInput"/> depends on exactly that
+        /// distinction, and so does compositor.js's <c>_evalQuotedStringSocket</c>, whose
+        /// optional <c>provenance</c> sink this <c>out</c> parameter mirrors.
+        /// </summary>
+        private static string ResolveStringOrAttr(
+            EvalContext ctx, Node node, string socketName, string attrKey, string defaultValue,
+            LayerResolution layerRes,
+            HashSet<string> visiting, List<string> visited, out bool fromWire)
         {
-            var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
+            fromWire = false;
+            Socket? sock = null;
+            foreach (var s in node.Sockets) { if (s.Type == SocketType.Input && s.Name == socketName) { sock = s; break; } }
             if (sock is not null)
             {
                 var link = ctx.FindLink(node.Id, sock.Id);
                 if (link is not null)
                 {
                     var resolved = EvalStringNode(ctx, link.FromNodeId, link.FromSocketId, layerRes, visiting, visited);
-                    if (resolved is not null) return resolved;
+                    if (resolved is not null) { fromWire = true; return resolved; }
                 }
             }
             return StripQuotes(node.Attributes.GetValueOrDefault(attrKey, defaultValue));
+        }
+
+        /// <summary>
+        /// True for a media path that would bypass the Hub <c>/media/</c> route: a leading
+        /// '/', an <c>http(s):</c> URL or a <c>data:</c> URI. The exact twin of
+        /// compositor.js's <c>isNonRelativeMediaPath</c> — keep the two in lockstep, because
+        /// the browser uses it to decide what to PROXY and both sides use it to decide what a
+        /// wired path may be (<see cref="ResolveMediaPathInput"/>).
+        /// </summary>
+        private static bool IsNonRelativeMediaPath(string p)
+            => p.StartsWith("/", StringComparison.Ordinal)
+            || p.StartsWith("http:", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("https:", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith("data:", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// THE media-path input resolver for the three local-file loaders (Image.Load /
+        /// Video.Load / Audio.Load) — resolution plus the provenance rule, mirroring
+        /// compositor.js's <c>Evaluator._evalMediaPathSocket</c> byte for byte in behaviour so
+        /// the design-time preview agrees with what OBS will actually fetch.
+        ///
+        /// <para>THE RULE, and it is deliberately NOT a blanket refusal:</para>
+        /// <list type="bullet">
+        /// <item>An ATTRIBUTE value keeps today's behaviour exactly — a leading '/', an
+        /// <c>http(s):</c> URL and a <c>data:</c> URI all still pass straight through, because
+        /// the author who typed them into the Path box IS the streamer.</item>
+        /// <item>A WIRED value must be a RELATIVE path. A wired leading '/', <c>http(s):</c> or
+        /// <c>data:</c> string is rejected and resolves to empty, so the loader bails.</item>
+        /// </list>
+        ///
+        /// <para>Why provenance and not a flat rule: V7 made Path wirable and its headline
+        /// chain wires Visual.Arg — i.e. the trigger payload, i.e. a chat argument — into it.
+        /// Browser-side that is a live exposure (a viewer typing
+        /// <c>!sound https://attacker/x.mp3</c> makes the streamer's OBS fetch an
+        /// attacker-named URL: home IP disclosed, arbitrary media on air, a <c>data:</c> URL
+        /// rendering attacker content inline). This walker never fetches anything, so the
+        /// mirror is not itself a security boundary — it exists so the canvas does not show an
+        /// author a preview of a path the overlay will refuse. Two halves disagreeing about
+        /// which file is used is the failure mode the whole C#/JS mirror exists to prevent.</para>
+        ///
+        /// <paramref name="rejected"/> reports the refusal separately from
+        /// <paramref name="isWired"/> so a caller can tell "wired and unresolvable at design
+        /// time" (the normal state for a live-data path) from "wired to something this loader
+        /// will never accept" — two very different things to tell an author.
+        /// </summary>
+        private static string ResolveMediaPathInput(
+            EvalContext ctx, Node node, LayerResolution layerRes,
+            HashSet<string> visiting, List<string> visited,
+            out bool isWired, out bool rejected)
+        {
+            rejected = false;
+            string path = ResolveStringOrAttr(
+                ctx, node, "Path", "Path", string.Empty, layerRes, visiting, visited, out isWired);
+            if (path.Length == 0) return string.Empty;
+            if (!isWired) return path;                        // author-typed: unchanged.
+            if (!IsNonRelativeMediaPath(path)) return path;
+            // Rejected: empty rather than the attribute fallback. Falling back would preview
+            // the author's leftover clip for attacker input, which is the same problem quieter.
+            rejected = true;
+            return string.Empty;
         }
 
         // Clamp a (possibly fractional / out-of-range) channel value to a
@@ -1563,7 +2451,8 @@ namespace Phoenix.Controls.Visualist.Core
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
-            var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
+            Socket? sock = null;
+            foreach (var s in node.Sockets) { if (s.Type == SocketType.Input && s.Name == socketName) { sock = s; break; } }
             if (sock is not null)
             {
                 var link = ctx.FindLink(node.Id, sock.Id);
@@ -1587,7 +2476,8 @@ namespace Phoenix.Controls.Visualist.Core
             LayerResolution layerRes,
             HashSet<string> visiting, List<string> visited)
         {
-            var sock = node.Sockets.FirstOrDefault(s => s.Name == socketName && s.Type == SocketType.Input);
+            Socket? sock = null;
+            foreach (var s in node.Sockets) { if (s.Type == SocketType.Input && s.Name == socketName) { sock = s; break; } }
             if (sock is not null)
             {
                 var link = ctx.FindLink(node.Id, sock.Id);

@@ -202,6 +202,10 @@ namespace Phoenix.Controls.Hub.Core
                     return null;
                 }
                 DispatchNamedAction("kick.set_title", PhxSbActions.KickSetTitle, new { title });
+                // Write-through into the ambient {title}/stream.title cache.
+                // Connected-gated: a dropped dispatch changed nothing.
+                if (WS.Instance.IsConnected)
+                    StreamInfoTracker.Set(title, null, "kick.set_title");
                 return null;
             });
 
@@ -217,6 +221,11 @@ namespace Phoenix.Controls.Hub.Core
                     return null;
                 }
                 DispatchNamedAction("kick.set_category", PhxSbActions.KickSetCategory, new { category });
+                // Write-through into the ambient {game}/stream.game cache (Kick's
+                // category IS the by-name value, unlike Twitch's gameId).
+                // Connected-gated: a dropped dispatch changed nothing.
+                if (WS.Instance.IsConnected)
+                    StreamInfoTracker.Set(null, category, "kick.set_category");
                 return null;
             });
 

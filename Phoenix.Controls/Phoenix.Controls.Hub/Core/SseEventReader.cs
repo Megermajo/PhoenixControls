@@ -50,6 +50,7 @@ namespace Phoenix.Controls.Hub.Core
 
         private readonly Stream _stream;
         private readonly byte[] _readBuf;
+        private readonly char[] _charBuf;
         private readonly Decoder _decoder;
         private readonly StringBuilder _carry;
 
@@ -57,6 +58,10 @@ namespace Phoenix.Controls.Hub.Core
         {
             _stream = stream;
             _readBuf = new byte[readBufferSize];
+            // +1 headroom: a stateful UTF-8 Decoder can emit up to GetMaxCharCount(n) = n+1
+            // chars for n input bytes (a 3-byte carry-over that completes into a surrogate
+            // pair on a full read), so size the reusable buffer for that worst case.
+            _charBuf = new char[System.Text.Encoding.UTF8.GetMaxCharCount(_readBuf.Length)];
             // Stateful UTF-8 decoder — feeding it a partial codepoint at
             // the tail of one read leaves the bytes buffered internally
             // until the next read completes the sequence.
@@ -101,13 +106,8 @@ namespace Phoenix.Controls.Hub.Core
                 // Decode the freshly-read bytes into characters, appending
                 // to carry. The decoder owns any straddling-codepoint state
                 // between calls — no manual byte buffering needed.
-                int maxChars = _decoder.GetCharCount(_readBuf, 0, n, flush: false);
-                if (maxChars > 0)
-                {
-                    char[] chars = new char[maxChars];
-                    int got = _decoder.GetChars(_readBuf, 0, n, chars, 0, flush: false);
-                    if (got > 0) _carry.Append(chars, 0, got);
-                }
+                int got = _decoder.GetChars(_readBuf, 0, n, _charBuf, 0, flush: false);
+                if (got > 0) _carry.Append(_charBuf, 0, got);
 
                 // Abort rather than buffer forever when the endpoint never
                 // terminates an event — the caller's catch surfaces this as a

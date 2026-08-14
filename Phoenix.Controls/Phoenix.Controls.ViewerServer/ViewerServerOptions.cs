@@ -4,30 +4,17 @@ namespace Phoenix.Controls.ViewerServer;
 
 /// <summary>
 /// Configuration for <see cref="ViewerServer"/>. Defaults match the
-/// design package: loopback bind, port 18090, LAN/cloud both off.
+/// design package: loopback bind, port 18090, LAN off.
 ///
 /// <para><b>Endpoint-reachability design intent</b> (P1-U2 hardening note):
-/// the viewer's HTTP surface is split into two reachability tiers on purpose
-/// and the asymmetry is load-bearing — don't "fix" it by aligning them.</para>
-///
-/// <list type="bullet">
-///   <item>
-///     <b><c>GET /v/api/snapshot</c> — intentionally LAN-reachable.</b>
-///     Paired phones / tablets on the same network are the primary
-///     consumer; they fetch the bootstrap payload from a non-loopback
-///     origin after pairing. Bearer-token auth (issued via the PIN flow)
-///     gates access — LAN reachability alone is not a privilege grant.
-///   </item>
-///   <item>
-///     <b><c>GET /v/api/pin</c> — loopback-only (<c>127.0.0.1</c>).</b>
-///     This surfaces the on-screen pairing PIN to the in-Hub UI, which
-///     itself only runs locally on the streamer's machine. There is no
-///     legitimate cross-network reader for the live PIN; exposing it on
-///     the LAN would hand out the pairing secret to anyone who can reach
-///     the port. The route handler enforces this via an <c>IsLoopback</c>
-///     check on the request endpoint.
-///   </item>
-/// </list>
+/// <c>GET /v/api/snapshot</c> is intentionally LAN-reachable. Paired
+/// phones / tablets on the same network are the primary consumer; they
+/// fetch the bootstrap payload from a non-loopback origin after pairing.
+/// Bearer-token auth (issued via the PIN flow) gates access — LAN
+/// reachability alone is not a privilege grant. The live pairing PIN
+/// itself is never served over HTTP: the former loopback-only
+/// <c>GET /v/api/pin</c> route was removed (no Hub UI ever consumed it,
+/// and an unauthenticated PIN-disclosure endpoint is a liability).</para>
 /// </summary>
 public sealed class ViewerServerOptions
 {
@@ -50,12 +37,6 @@ public sealed class ViewerServerOptions
     /// = <see cref="IPAddress.Any"/>.
     /// </summary>
     public bool LanModeEnabled { get; set; }
-
-    /// <summary>Reserved for future cloud-relay integration.</summary>
-    public bool CloudRelayEnabled { get; set; }
-
-    /// <summary>Reserved for future TLS support; null = http only.</summary>
-    public string? TlsCertPath { get; set; }
 
     /// <summary>
     /// Filesystem root for the static web bundle (HTML/CSS/JS/assets).

@@ -6,6 +6,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Windows.System;
 using WinRT.Interop;
@@ -55,18 +56,21 @@ public sealed partial class VisualistSiblingWindow : Window
     {
         InitializeComponent();
 
-        Title = "Phoenix Controls — Visualist";
+        Title = Localizer.T("visualist.window.sibling.caption", "Phoenix Controls — Visualist");
 
         try
         {
             // MainView takes the host Window via its ctor so picker HWNDs +
-            // dialog parent windows route correctly. layerSource is null
-            // for siblings — they don't have access to Hub.IHubServices.Layers
-            // (that's owned by the embedded MainView in Hub.MainWindow).
-            // Live-presence dots on the rail will be inactive in sibling
-            // windows; a follow-up can plumb a shared
-            // ILayerRegistrySource through the registry.
-            _mainView = new MainView(this, layerSource: null);
+            // dialog parent windows route correctly.
+            //
+            // The layer source comes from VisualistWindowRegistry.AmbientLayerSource —
+            // the follow-up the old comment here promised. It used to be hard-null,
+            // which read as a cosmetic limitation ("presence dots stay dark") but also
+            // silently made HasProductionPresence answer FALSE in every sibling, so a
+            // Test Run with OBS genuinely attached dispatched down BOTH the preview and
+            // the bus path and drove the widget twice. Null is still tolerated — a
+            // standalone host has no Hub — and behaves exactly as before.
+            _mainView = new MainView(this, VisualistWindowRegistry.AmbientLayerSource);
             RootGrid.Children.Add(_mainView);
 
             // Mirror the MainView's IsDirty into the title caption so users
@@ -217,6 +221,9 @@ public sealed partial class VisualistSiblingWindow : Window
             if (Content is not UIElement root) return;
             AddRootAccelerator(root, VirtualKey.Z, VirtualKeyModifiers.Control, OnRootUndoInvoked);
             AddRootAccelerator(root, VirtualKey.Y, VirtualKeyModifiers.Control, OnRootRedoInvoked);
+            // Ctrl+Shift+Z is the other common Redo chord (Adobe / most editors);
+            // register it window-wide so redo works on both muscle-memories.
+            AddRootAccelerator(root, VirtualKey.Z, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, OnRootRedoInvoked);
         }
         catch (Exception ex)
         {
@@ -235,6 +242,7 @@ public sealed partial class VisualistSiblingWindow : Window
 
     private void OnRootUndoInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
+        if (IsTextInputFocused()) return;
         args.Handled = true;
         try { _mainView?.Undo(); }
         catch (Exception ex) { GlobalLogger.Error("VisualistSiblingWindow", "Ctrl+Z", ex); }
@@ -242,9 +250,39 @@ public sealed partial class VisualistSiblingWindow : Window
 
     private void OnRootRedoInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
+        if (IsTextInputFocused()) return;
         args.Handled = true;
         try { _mainView?.Redo(); }
         catch (Exception ex) { GlobalLogger.Error("VisualistSiblingWindow", "Ctrl+Y", ex); }
+    }
+
+    // True when a TextBox / NumberBox owns focus anywhere in this window — the
+    // same guard LayerCanvasView.IsTextInputFocused applies to the canvas key
+    // handler, applied here because a window-root KeyboardAccelerator fires
+    // regardless of which control holds keyboard focus. Without it a Ctrl+Z
+    // while renaming a widget (WidgetNameBox) or editing the layer's target
+    // language (LayerLanguageBox) ran the DOCUMENT undo instead of the text
+    // box's own — and in a sibling these accelerators are the only functional
+    // undo path (the menu accelerators were deliberately stripped to stop
+    // double-firing), so there was nothing else guarding it. We bail BEFORE
+    // touching args.Handled: unlike the Architect menu accelerators there is no
+    // default item-invoke to suppress here, so leaving the chord unhandled is
+    // the least we can do to the focused editor's own undo.
+    private bool IsTextInputFocused()
+    {
+        try
+        {
+            if (Content?.XamlRoot is not { } root) return false;
+            DependencyObject? fe = Microsoft.UI.Xaml.Input.FocusManager
+                .GetFocusedElement(root) as DependencyObject;
+            while (fe is not null)
+            {
+                if (fe is TextBox || fe is NumberBox) return true;
+                fe = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(fe);
+            }
+        }
+        catch { /* XamlRoot not ready — treat as not-focused */ }
+        return false;
     }
 
     // ─── Recent submenu (rebuilt on Activated / ShellStateChanged) ──────────
@@ -259,7 +297,7 @@ public sealed partial class VisualistSiblingWindow : Window
             {
                 MenuFileRecent.Items.Add(new MenuFlyoutItem
                 {
-                    Text = "(no recent layers)",
+                    Text = Localizer.T("visualist.window.sibling.recent.empty", "(no recent layers)"),
                     IsEnabled = false,
                 });
                 return;
@@ -295,7 +333,10 @@ public sealed partial class VisualistSiblingWindow : Window
                 // Prune the stale entry and surface a log line rather than a
                 // modal dialog.
                 Services.RecentFiles.Remove(path);
-                StatusLeft.Text = $"Recent entry missing: {Path.GetFileName(path)}";
+                StatusLeft.Text = string.Format(
+                    Localizer.T("visualist.window.sibling.status.recent_missing_format",
+                        "Recent entry missing: {0}"),
+                    Path.GetFileName(path));
                 GlobalLogger.Log(
                     $"Recent layer no longer exists: {path}",
                     "VisualistSiblingWindow",
@@ -332,7 +373,11 @@ public sealed partial class VisualistSiblingWindow : Window
             var open = VisualistWindowRegistry.Snapshot();
             if (open.Count == 0)
             {
-                MenuWindowSwitch.Items.Add(new MenuFlyoutItem { Text = "(no open windows)", IsEnabled = false });
+                MenuWindowSwitch.Items.Add(new MenuFlyoutItem
+                {
+                    Text = Localizer.T("visualist.window.sibling.switch.empty", "(no open windows)"),
+                    IsEnabled = false,
+                });
                 return;
             }
 
@@ -341,7 +386,9 @@ public sealed partial class VisualistSiblingWindow : Window
                 var captured = win;
                 var item = new MenuFlyoutItem
                 {
-                    Text = string.IsNullOrEmpty(win.Title) ? "(untitled)" : win.Title,
+                    Text = string.IsNullOrEmpty(win.Title)
+                        ? Localizer.T("visualist.window.sibling.switch.untitled", "(untitled)")
+                        : win.Title,
                 };
                 // Mark the active (this) window with a leading dot so the
                 // user can see which sibling they're switching from.
@@ -451,7 +498,8 @@ public sealed partial class VisualistSiblingWindow : Window
     private void UpdateTitleFromShell()
     {
         if (_mainView is null) return;
-        string display = _mainView.CurrentDocumentDisplayName ?? "(unsaved)";
+        string display = _mainView.CurrentDocumentDisplayName
+                         ?? Localizer.T("visualist.main.document.unsaved", "(unsaved)");
         string marker  = _mainView.IsDirty ? "• " : string.Empty;
         Title = $"{marker}{display} — Visualist";
     }
@@ -478,6 +526,23 @@ public sealed partial class VisualistSiblingWindow : Window
             catch { /* best-effort */ }
             try { _mainView.CanExecuteChanged -= OnUndoRedoCanExecuteChanged; }
             catch { /* best-effort */ }
+
+            // ★ Detach from the layer source, or this window never dies.
+            //
+            // Now that siblings receive a REAL ILayerRegistrySource, VisualistViewModel
+            // .Initialize subscribes to LiveLayerChanged, which forwards straight onto
+            // Hub's process-wide LayerRegistry singleton. Nothing else would ever remove
+            // that subscription for a sibling: MainView deliberately does not hook
+            // Unloaded, and ShutdownPillar runs only on Hub's EMBEDDED view. So every
+            // closed sibling would stay reachable from the registry's invocation list for
+            // the life of the Hub process — holding its LayerDocument, document cache,
+            // widget graphs and thumbnails alive, and re-entering a torn-down window's
+            // handler on every OBS browser-source connect. Passing null used to make this
+            // a non-issue by accident (Initialize returned at its null guard); giving
+            // siblings a real source turns that accident into a permanent root.
+            try { _mainView.ViewModel?.DetachLayerSource(); }
+            catch { /* best-effort */ }
+
             _mainView = null;
         }
     }

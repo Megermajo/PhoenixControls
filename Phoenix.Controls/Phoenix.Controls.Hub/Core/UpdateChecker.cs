@@ -28,10 +28,9 @@ namespace Phoenix.Controls.Hub.Core
     ///
     /// The other members (<see cref="UpdateAvailable"/>, <see cref="DirtyTree"/>,
     /// <see cref="NotOnMaster"/>, <see cref="NotAGitRepo"/>,
-    /// <see cref="NotAGitHubRemote"/>) are kept on the union for ABI compat with
-    /// the Settings UI's switch arms and the test suite. They are no longer
-    /// returned by <see cref="UpdateChecker.CheckAsync"/> — those arms are dead
-    /// in practice and will be removed alongside their UI handlers.
+    /// <see cref="NotAGitHubRemote"/>) are never returned by
+    /// <see cref="UpdateChecker.CheckAsync"/>. They are exercised by the test
+    /// suite (UpdateCheckerTests) and reserved for future UI arms.
     /// </summary>
     public abstract record UpdateStatus
     {
@@ -54,7 +53,8 @@ namespace Phoenix.Controls.Hub.Core
 
     /// <summary>
     /// UpdateChecker — Hub-side service that asks "is a newer release available?".
-    /// Owns its own <see cref="HttpClient"/> with a short timeout and a per-call
+    /// Owns its own <see cref="HttpClient"/> with a short, configurable timeout
+    /// (<c>AppConfig.UpdateCheckTimeoutSeconds</c>, default 5 s) and a per-call
     /// linked <see cref="CancellationTokenSource"/>. Every code path is
     /// non-throwing — errors come back as <see cref="UpdateStatus.NetworkError"/>
     /// and are logged via <see cref="GlobalLogger"/>.
@@ -88,7 +88,49 @@ namespace Phoenix.Controls.Hub.Core
         public const string DefaultGitHubRepo = "";
 #endif
 
-        private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(5);
+        /// <summary>
+        /// Fallback HTTP timeout used when <c>AppConfig.UpdateCheckTimeoutSeconds</c>
+        /// cannot be read or holds an unusable value. Matches that setting's own
+        /// default of 5 s.
+        /// </summary>
+        private static readonly TimeSpan DefaultHttpTimeout = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// Largest configured timeout we accept, guarding a hand-edited config:
+        /// <see cref="HttpClient.Timeout"/> rejects anything above
+        /// <c>int.MaxValue</c> milliseconds (~24.8 days), and the Settings UI
+        /// already caps the box at 600 s. Anything larger falls back to
+        /// <see cref="DefaultHttpTimeout"/>.
+        /// </summary>
+        private const int MaxConfiguredTimeoutSeconds = 86_400;
+
+        /// <summary>
+        /// Resolves the configured GitHub-API timeout.
+        /// <c>null</c> means "leave <see cref="HttpClient.Timeout"/> at its own
+        /// default (100 s)", which is what <c>UpdateCheckTimeoutSeconds == 0</c>
+        /// is documented to mean. Any negative / oversized / unreadable value
+        /// falls back to <see cref="DefaultHttpTimeout"/> — a broken config must
+        /// never leave the checker without a timeout it can't honour.
+        /// </summary>
+        private static TimeSpan? ResolveHttpTimeout()
+        {
+            try
+            {
+                int secs = ConfigManager.Current.UpdateCheckTimeoutSeconds;
+                if (secs == 0) return null; // HttpClient default (100 s)
+                if (secs > 0 && secs <= MaxConfiguredTimeoutSeconds) return TimeSpan.FromSeconds(secs);
+                GlobalLogger.Log(
+                    $"UpdateCheckTimeoutSeconds={secs} is out of range (0..{MaxConfiguredTimeoutSeconds}); " +
+                    $"using the {DefaultHttpTimeout.TotalSeconds:0}s default.",
+                    "UpdateChecker", LogLevel.System);
+                return DefaultHttpTimeout;
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("UpdateChecker", "read UpdateCheckTimeoutSeconds", ex);
+                return DefaultHttpTimeout;
+            }
+        }
 
         private readonly HttpClient _http;
         private readonly string _userAgent;
@@ -112,7 +154,15 @@ namespace Phoenix.Controls.Hub.Core
             string version = GitInfoService.GetAssemblyVersion();
             _userAgent = userAgentOverride ?? $"Phoenix.Controls/{version}";
 
-            _http = new HttpClient { Timeout = HttpTimeout };
+            // Honour AppConfig.UpdateCheckTimeoutSeconds — the Settings box was
+            // editable and persisted but never read, so a user on a slow/proxied
+            // link could not lift the hard-coded 5 s ceiling. HttpClient.Timeout
+            // is immutable once a request has started, so it is resolved here;
+            // Settings' Force Download builds a fresh UpdateChecker after saving,
+            // and the session-long checker picks the new value up on next launch.
+            _http = new HttpClient();
+            TimeSpan? timeout = ResolveHttpTimeout();
+            if (timeout.HasValue) _http.Timeout = timeout.Value;
             _http.DefaultRequestHeaders.UserAgent.ParseAdd(_userAgent);
             _http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         }
@@ -233,7 +283,8 @@ namespace Phoenix.Controls.Hub.Core
         /// have local Dev binaries but want to flip to the master release zip.
         /// This method always returns <see cref="UpdateStatus.ReleaseAvailable"/>
         /// when a release exists; the caller (Settings UI's "Force download"
-        /// button) feeds the result straight into <see cref="BeginApply"/>.
+        /// button) feeds the result, together with the resolved install root,
+        /// straight into <see cref="BeginApply"/>.
         /// </summary>
         public async Task<UpdateStatus> ForceDownloadLatestAsync(CancellationToken ct = default)
         {
@@ -595,21 +646,6 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ── Spawning Phoenix.Controls.Updater ──────────────────────────
-
-        /// <summary>
-        /// Legacy overload kept so the Settings UI's <c>UpdateAvailable</c> arm
-        /// (which can no longer be reached at runtime — see CheckCoreAsync)
-        /// still compiles. The legacy git-checkout update flow has been
-        /// removed; this overload now just logs and returns false.
-        /// </summary>
-        public static bool BeginApply(string repoRoot)
-        {
-            GlobalLogger.Log(
-                "BeginApply(repoRoot) was invoked but the legacy git-checkout update flow has been removed. " +
-                "Use BeginApply(ReleaseAvailable, installRoot) — release-zip distribution is the only supported update path.",
-                "UpdateChecker", LogLevel.System);
-            return false;
-        }
 
         /// <summary>
         /// Resolves the suite root — the folder that holds the per-app

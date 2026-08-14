@@ -297,7 +297,7 @@
         h("div", { class: "pr-fam" },
           h("div", { class: "pr-fam-head" }, h("code", { class: "pr-fam-root" }, "stream.*"), h("span", { class: "pr-fam-label" }, "Uptime since stream start")),
           h("div", { class: "pr-toks" }, streamToks.map(function (t) { return h("span", { class: "pr-tok" }, t); })),
-          h("p", { class: "pr-fam-note", html: '<code>{stream.uptime}</code> reads like <em>“1h 23m”</em>. Anchored to Hub start by default.' }))));
+          h("p", { class: "pr-fam-note", html: '<code>{stream.uptime}</code> reads like <em>“1h 23m”</em>. Anchored to the stream’s real start time, refreshed from Twitch about once a minute; falls back to Hub start when that lookup isn’t available.' }))));
   }
   function keyboardReference(groups) {
     return h("div", { class: "pr-keys-grid" }, (groups || []).map(function (g) {

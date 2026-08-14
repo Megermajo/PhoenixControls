@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Windows.UI;
 
@@ -102,11 +103,11 @@ internal static class RoleColorBrush
     // ToolTipService on the glyph. Always returns a non-empty label.
     public static string ResolveLabel(bool isBroadcaster, bool isMod, bool isVip, bool isSubscriber)
     {
-        if (isBroadcaster) return "Broadcaster";
-        if (isMod)         return "Moderator";
-        if (isVip)         return "VIP";
-        if (isSubscriber)  return "Subscriber";
-        return "Viewer";
+        if (isBroadcaster) return Localizer.T("panel.chat.role.broadcaster", "Broadcaster");
+        if (isMod)         return Localizer.T("panel.chat.role.moderator",   "Moderator");
+        if (isVip)         return Localizer.T("panel.chat.role.vip",         "VIP");
+        if (isSubscriber)  return Localizer.T("panel.chat.role.subscriber",  "Subscriber");
+        return Localizer.T("panel.chat.role.viewer", "Viewer");
     }
 
     private static string ResolveKey(bool isBroadcaster, bool isMod, bool isVip, bool isSubscriber)

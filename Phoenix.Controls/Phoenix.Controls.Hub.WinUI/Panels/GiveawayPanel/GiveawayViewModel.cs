@@ -9,6 +9,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Hub.WinUI.Panels.Common;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI.Contracts;
@@ -165,6 +166,10 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
         {
             Entrants.Clear();
             Activity.Clear();
+            // The live column stays on screen when the detail column collapses,
+            // so its header counts and its empty line have to follow the clear —
+            // without this they kept asserting the last selection's totals.
+            RaiseEntrantSummary();
             return;
         }
         // Fetch entrants + activity for the freshly-selected giveaway.
@@ -239,9 +244,9 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     // with a pulsing dot); closed / drawn use the matching status string.
     public string StatusPillText => _selected?.Status switch
     {
-        GiveawayStatus.Open  => "open · accepting entries",
-        GiveawayStatus.Closed => "closed",
-        GiveawayStatus.Drawn => "drawn · winner picked",
+        GiveawayStatus.Open  => Localizer.T("panel.giveaway.state.open", "open · accepting entries"),
+        GiveawayStatus.Closed => Localizer.T("panel.giveaway.state.closed", "closed"),
+        GiveawayStatus.Drawn => Localizer.T("panel.giveaway.state.drawn", "drawn · winner picked"),
         _ => string.Empty,
     };
 
@@ -255,7 +260,9 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     // Pulsing dot only animates while the giveaway is open + accepting.
     public Visibility StatusDotPulseVisibility => IsOpen ? Visibility.Visible : Visibility.Collapsed;
 
-    public string StatusHint => IsOpen ? "entries accepted from chat" : string.Empty;
+    public string StatusHint => IsOpen
+        ? Localizer.T("panel.giveaway.state.open_hint", "entries accepted from chat")
+        : string.Empty;
     public Visibility StatusHintVisibility => IsOpen ? Visibility.Visible : Visibility.Collapsed;
 
     // Stat tiles.
@@ -290,8 +297,10 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     // Assistive tech reads the toggle's CURRENT state + action from the name
     // (the chevron glyph alone is visual-only).
     public string SettingsToggleAutomationName => _settingsExpanded
-        ? "Collapse giveaway settings (currently expanded)"
-        : "Expand giveaway settings (currently collapsed)";
+        ? Localizer.T("panel.giveaway.settings.toggle.a11y_expanded",
+                      "Collapse giveaway settings (currently expanded)")
+        : Localizer.T("panel.giveaway.settings.toggle.a11y_collapsed",
+                      "Expand giveaway settings (currently collapsed)");
 
     public void ToggleSettingsExpanded() => SettingsExpanded = !SettingsExpanded;
 
@@ -583,7 +592,9 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
 
     // Default toggle.
     public bool IsDefault => _selected is not null && _source.DefaultGiveawayId == _selected.Id;
-    public string DefaultToggleLabel => IsDefault ? "Default giveaway" : "Set as default";
+    public string DefaultToggleLabel => IsDefault
+        ? Localizer.T("panel.giveaway.default_toggle.on", "Default giveaway")
+        : Localizer.T("panel.giveaway.default_toggle.off", "Set as default");
 
     // Close-giveaway button enablement — disabled unless the giveaway is open.
     public bool CanClose => IsOpen;
@@ -624,18 +635,28 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     public string EntrantCountText => EntrantCount.ToString();
     public string TotalTicketsText => TotalTickets.ToString();
 
+    /// <summary>
+    /// Drives the live column's single-line empty state. The column is a fixed
+    /// 300 px band that is blank on a fresh install; one mono line pinned to the
+    /// top says so without pretending to be content.
+    /// </summary>
+    public Visibility EntrantsEmptyVisibility
+        => Entrants.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
     private void RaiseEntrantSummary()
     {
         Raise(nameof(EntrantCount));
         Raise(nameof(TotalTickets));
         Raise(nameof(EntrantCountText));
         Raise(nameof(TotalTicketsText));
+        Raise(nameof(EntrantsEmptyVisibility));
     }
 
     // ── Picker button (collapsed-state display in the action strip) ─────
     public bool HasPickerSelection => _selected is not null;
     public Visibility PickerPlaceholderVisibility => _selected is null ? Visibility.Visible : Visibility.Collapsed;
-    public string PickerButtonTitle => _selected?.Title ?? "Pick a giveaway…";
+    public string PickerButtonTitle => _selected?.Title
+        ?? Localizer.T("panel.giveaway.picker.button.placeholder", "Pick a giveaway…");
     public string PickerButtonId => _selected is null ? string.Empty : MetaId;
     public Visibility PickerButtonDefaultVisibility => IsDefault ? Visibility.Visible : Visibility.Collapsed;
 
@@ -782,7 +803,9 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
             Raise(nameof(CanDraw));
             _winnerName = result.Value.WinnerName;
             _winnerTickets = result.Value.WinnerTickets;
-            _winnerOdds = $"{_winnerTickets} tickets · 1 in {odds}";
+            _winnerOdds = string.Format(
+                Localizer.T("panel.giveaway.winner.odds", "{0} tickets · 1 in {1}"),
+                _winnerTickets, odds);
             Raise(nameof(WinnerName));
             Raise(nameof(WinnerGiveawayTitle));
             Raise(nameof(WinnerOddsText));
@@ -818,8 +841,17 @@ public sealed class GiveawayViewModel : ObservableObject, IDisposable
     {
         if (_chat is null) return;
         if (string.IsNullOrEmpty(_winnerName)) return;
-        string title = _selected?.Title ?? "the giveaway";
-        string msg = $"🎉 Congratulations @{_winnerName} — you won {title}! ({_winnerTickets} tickets)";
+        string title = _selected?.Title
+            ?? "the giveaway";
+        // NOT localized, deliberately: this is posted to Twitch chat, not
+        // shown in the UI. Every tool service that writes to chat
+        // (Loyalty / Ranks / SongRequest / Quotes) is English-only, so
+        // routing this one through the Localizer would make Giveaway the
+        // single tool whose chat output follows the streamer's UI language.
+        // Chat language is a stream decision, not a UI preference.
+        string msg = string.Format(
+            "🎉 Congratulations @{0} — you won {1}! ({2} tickets)",
+            _winnerName, title, _winnerTickets);
         try { await _chat.SendAsBotAsync(msg).ConfigureAwait(false); }
         catch (Exception ex) { GlobalLogger.Error("GiveawayViewModel", "AnnounceWinnerAsync failed", ex); }
     }

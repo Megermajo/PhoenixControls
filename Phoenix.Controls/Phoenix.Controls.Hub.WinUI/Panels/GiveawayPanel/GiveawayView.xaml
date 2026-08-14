@@ -5,55 +5,63 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel"
     xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
     VerticalContentAlignment="Stretch"
     AutomationProperties.Name="Giveaway page"
-    AutomationProperties.HelpText="Run a giveaway: create one, pick the active giveaway, watch entrants and tickets roll in, and draw a weighted winner.">
+    AutomationProperties.HelpText="Run a giveaway: create one, pick the active giveaway, watch entrants and tickets roll in, and draw a weighted winner."
+    loc:Localize.AutomationKey="panel.giveaway.page.a11y"
+    loc:Localize.HelpTextKey="panel.giveaway.page.help">
 
     <UserControl.Resources>
-        <!-- Brushes the design uses as inline CSS gradients / fills that don't
-             have a single existing theme token. Everything else binds the
-             existing PhoenixDark keys directly. -->
+        <ResourceDictionary>
+            <!-- The page's chrome recipes now come from the house dictionary
+                 instead of being retyped inline. Three page-local declarations
+                 died with it: GvBrassHeroBrush (identical four stops to
+                 ToolBrassHeroBrush), GvScrimBrush (identical to ToolScrimBrush)
+                 and the GvStatusOpen* pair, which only ever painted the status
+                 pill the header band replaced. -->
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
 
-        <!-- Brass hero CTA fill ("Draw winner") — the brushed-brass gradient
-             from tokens.css .brass, with the same top→bottom stops the JSX
-             primary ToolButton uses. -->
-        <LinearGradientBrush x:Key="GvBrassHeroBrush" StartPoint="0,0" EndPoint="0,1">
-            <GradientStop Offset="0.00" Color="#F0B463" />
-            <GradientStop Offset="0.30" Color="#E5A24E" />
-            <GradientStop Offset="0.70" Color="#C8822B" />
-            <GradientStop Offset="1.00" Color="#A6661A" />
-        </LinearGradientBrush>
-
-        <!-- Draw-winner overlay scrim — coal at ~0.78 alpha with an ember
-             radial glow centred behind the card (approximates the JSX
-             radial-gradient + rgba(11,9,7,0.78) backdrop). -->
-        <SolidColorBrush x:Key="GvScrimBrush" Color="#C70B0907" />
-
-        <!-- Open status-pill background tint (ok green at ~10% alpha) -->
-        <SolidColorBrush x:Key="GvStatusOpenFillBrush" Color="#1A6FA46B" />
-        <SolidColorBrush x:Key="GvStatusOpenBorderBrush" Color="#806FA46B" />
-
-        <!-- Default badge / toggle ember tints (ember at low alpha) -->
-        <SolidColorBrush x:Key="GvEmberTint08Brush" Color="#14E5A24E" />
-        <SolidColorBrush x:Key="GvEmberTint10Brush" Color="#1AE5A24E" />
-        <SolidColorBrush x:Key="GvEmberBorderBrush" Color="#73E5A24E" />
+            <!-- Default-pin badge tint on the picker button. Kept local: it is a
+                 badge fill, not one of the shell's CTA/card/text tiers, and no
+                 ToolShellStyles key carries these two alphas. -->
+            <SolidColorBrush x:Key="GvEmberTint08Brush" Color="#14E5A24E" />
+            <SolidColorBrush x:Key="GvEmberBorderBrush" Color="#73E5A24E" />
+        </ResourceDictionary>
     </UserControl.Resources>
 
     <Grid Background="{StaticResource CoalSurfaceBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- ════════════════════ TOP ACTION STRIP ════════════════════ -->
-        <Border Grid.Row="0"
+        <!-- ════════════════════ HEADER BAND (48 px) ════════════════════
+             Tool name · master switch (= set-default) · one state phrase.
+             It replaces the hand-rolled set-default pill that used to sit in
+             the detail card and the status-pill row beneath it — the same
+             giveaway state was being rendered twice, in two vocabularies, one
+             of them with its own storyboard. The pill's PREDICATES are
+             untouched: the phrase is still VM.StatusPillText gated by
+             VM.IsOpen. -->
+        <hdr:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ════════════════════ VERB STRIP ════════════════════
+             Pinned, not scrolled: with zero giveaways the detail column is
+             collapsed, so CREATE and the picker have to live outside it or the
+             page is unusable on a fresh install. Padding tightened 10 → 4
+             because the band above now carries the page's breathing room. -->
+        <Border Grid.Row="1"
                 Background="{StaticResource CoalSurfaceBrush}"
                 BorderBrush="{StaticResource CoalDividerBrush}"
                 BorderThickness="0,0,0,1"
-                Padding="14,10">
+                Padding="14,4">
             <Grid ColumnSpacing="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />   <!-- Create -->
@@ -66,22 +74,16 @@
                 <!-- [Create new giveaway] -->
                 <Button Grid.Column="0"
                         x:Name="CreateButton"
-                        Height="30"
-                        Padding="14,0"
-                        Background="{StaticResource CoalCardBrush}"
-                        BorderBrush="{StaticResource CoalDividerBrush}"
-                        BorderThickness="1"
-                        CornerRadius="{StaticResource Radius1Corner}"
+                        Style="{StaticResource ToolSecondaryButtonStyle}"
                         Click="OnCreateClick"
-                        AutomationProperties.Name="Create new giveaway">
+                        AutomationProperties.Name="Create new giveaway"
+                        loc:Localize.AutomationKey="panel.giveaway.strip.create.a11y">
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
                                   Foreground="{StaticResource CoalBodyTextBrush}" />
                         <TextBlock Text="CREATE NEW GIVEAWAY"
-                                   FontFamily="{StaticResource SansFont}"
-                                   FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                   Foreground="{StaticResource CoalBodyTextBrush}"
-                                   VerticalAlignment="Center" />
+                                   Style="{StaticResource ToolStripLabelTextStyle}"
+                                   loc:Localize.Key="panel.giveaway.strip.create.label" />
                     </StackPanel>
                 </Button>
 
@@ -96,7 +98,8 @@
                         BorderBrush="{StaticResource CoalDividerBrush}"
                         BorderThickness="1"
                         CornerRadius="{StaticResource Radius1Corner}"
-                        AutomationProperties.Name="Active giveaway picker">
+                        AutomationProperties.Name="Active giveaway picker"
+                        loc:Localize.AutomationKey="panel.giveaway.picker.button.a11y">
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -129,7 +132,8 @@
                                 CornerRadius="{StaticResource Radius1Corner}"
                                 Padding="5,2"
                                 VerticalAlignment="Center"
-                                ToolTipService.ToolTip="Default — public=true nodes target this giveaway">
+                                ToolTipService.ToolTip="Default — public=true nodes target this giveaway"
+                                loc:Localize.TooltipKey="panel.giveaway.picker.default_badge.tip">
                             <StackPanel Orientation="Horizontal" Spacing="3">
                                 <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE718;" FontSize="9"
                                           Foreground="{StaticResource EmberPrimaryBrush}" />
@@ -137,7 +141,8 @@
                                            FontFamily="{StaticResource MonoFont}"
                                            FontSize="9" FontWeight="Bold" CharacterSpacing="120"
                                            Foreground="{StaticResource EmberPrimaryBrush}"
-                                           VerticalAlignment="Center" />
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.giveaway.picker.default_badge.label" />
                             </StackPanel>
                         </Border>
                         <FontIcon Grid.Column="3" FontFamily="Segoe MDL2 Assets" Glyph="&#xE70D;" FontSize="10"
@@ -169,6 +174,7 @@
                                 <TextBox Grid.Row="0"
                                          x:Name="PickerFilterBox"
                                          PlaceholderText="filter by title or id…"
+                                         loc:Localize.PlaceholderKey="panel.giveaway.picker.filter.placeholder"
                                          Background="{StaticResource CoalShellBrush}"
                                          Foreground="{StaticResource CoalPrimaryTextBrush}"
                                          BorderBrush="{StaticResource CoalDividerBrush}"
@@ -183,7 +189,8 @@
                                               MaxHeight="260"
                                               VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollMode="Disabled">
-                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.PickerItems, Mode=OneWay}">
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.PickerItems, Mode=OneWay}"
+                                                   hdr:RowDataContext.Supply="True">
                                         <ItemsRepeater.ItemTemplate>
                                             <DataTemplate x:DataType="local:GiveawayPickerItemVm">
                                                 <Button HorizontalAlignment="Stretch"
@@ -210,7 +217,8 @@
                                                                            FontFamily="{StaticResource MonoFont}"
                                                                            FontSize="9" CharacterSpacing="100"
                                                                            Foreground="{StaticResource EmberPrimaryBrush}"
-                                                                           VerticalAlignment="Center" />
+                                                                           VerticalAlignment="Center"
+                                                                           loc:Localize.Key="panel.giveaway.picker.item.default_badge" />
                                                             </StackPanel>
                                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                                 <TextBlock Text="{x:Bind DisplayId}"
@@ -264,7 +272,8 @@
                                                    FontFamily="{StaticResource SansFont}"
                                                    FontSize="12" FontWeight="SemiBold"
                                                    Foreground="{StaticResource Ember200Brush}"
-                                                   VerticalAlignment="Center" />
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.giveaway.picker.create.label" />
                                     </StackPanel>
                                 </Button>
                             </Grid>
@@ -275,77 +284,74 @@
                 <!-- [Close giveaway] — danger, disabled unless open -->
                 <Button Grid.Column="3"
                         x:Name="CloseButton"
-                        Height="30"
-                        Padding="14,0"
-                        Background="{StaticResource CoalCardBrush}"
-                        BorderBrush="{StaticResource CoalDividerBrush}"
-                        BorderThickness="1"
-                        CornerRadius="{StaticResource Radius1Corner}"
+                        Style="{StaticResource ToolDangerButtonStyle}"
                         IsEnabled="{x:Bind ViewModel.CanClose, Mode=OneWay}"
                         Click="OnCloseGiveawayClick"
-                        AutomationProperties.Name="Close giveaway">
+                        AutomationProperties.Name="Close giveaway"
+                        loc:Localize.AutomationKey="panel.giveaway.strip.close.a11y">
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="11"
                                   Foreground="{StaticResource ErrBrush}" />
                         <TextBlock Text="CLOSE GIVEAWAY"
-                                   FontFamily="{StaticResource SansFont}"
-                                   FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                   Foreground="{StaticResource CoalBodyTextBrush}"
-                                   VerticalAlignment="Center" />
+                                   Style="{StaticResource ToolStripLabelTextStyle}"
+                                   loc:Localize.Key="panel.giveaway.strip.close.label" />
                     </StackPanel>
                 </Button>
 
-                <!-- [Draw winner] — brass PRIMARY hero CTA -->
+                <!-- [Draw winner] — the page's ONE brass CTA. Its Opacity is
+                     gated to 0 from code-behind while either overlay is up
+                     (ApplyBrassGate): both overlays are 0.78-alpha scrims that
+                     cover this row, so brass used to smear through beside the
+                     overlay's own brass CTA — two brass CTAs on screen at once.
+                     Opacity, not Visibility: collapsing the strip's last column
+                     slides CLOSE GIVEAWAY sideways, and that reflow is visible
+                     through the scrim. -->
                 <Button Grid.Column="4"
                         x:Name="DrawButton"
-                        Height="30"
-                        Padding="14,0"
-                        Background="{StaticResource GvBrassHeroBrush}"
-                        BorderBrush="{StaticResource Ember600Brush}"
-                        BorderThickness="1"
-                        CornerRadius="{StaticResource Radius1Corner}"
+                        Style="{StaticResource ToolBrassCtaStyle}"
                         IsEnabled="{x:Bind ViewModel.CanDraw, Mode=OneWay}"
                         Click="OnDrawWinnerClick"
                         ToolTipService.ToolTip="Pick a winner — weighted by ticket count (subscriber bonus factor applies)"
-                        AutomationProperties.Name="Draw winner">
+                        AutomationProperties.Name="Draw winner"
+                        loc:Localize.TooltipKey="panel.giveaway.strip.draw.tip"
+                        loc:Localize.AutomationKey="panel.giveaway.strip.draw.a11y">
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE735;" FontSize="11"
                                   Foreground="{StaticResource CoalShellBrush}" />
                         <TextBlock Text="DRAW WINNER"
-                                   FontFamily="{StaticResource SansFont}"
-                                   FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                   Foreground="{StaticResource CoalShellBrush}"
-                                   VerticalAlignment="Center" />
+                                   Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                   loc:Localize.Key="panel.giveaway.strip.draw.label" />
                     </StackPanel>
                 </Button>
             </Grid>
         </Border>
 
-        <!-- ════════════════════ TWO-COLUMN BODY ════════════════════ -->
-        <Grid Grid.Row="1">
+        <!-- ════════════════════ TWO-COLUMN BODY ════════════════════
+             The live column is a fixed 300 px, not a proportional share: the
+             entrant list is four narrow cells and a weight bar, so a star width
+             only ever bought it whitespace on a wide monitor while stealing it
+             from the settings rows on a narrow one. -->
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="1.4*" />
-                <ColumnDefinition Width="0.9*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="300" />
             </Grid.ColumnDefinitions>
 
             <!-- ───────────── LEFT: GiveawayDetail ───────────── -->
             <ScrollViewer Grid.Column="0"
+                          x:Name="DetailScroll"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollMode="Disabled"
                           Visibility="{x:Bind ViewModel.DetailVisibility, Mode=OneWay}">
                 <StackPanel Spacing="12" Padding="14">
 
-                    <!-- Title + meta + set-default toggle -->
-                    <Grid ColumnSpacing="14">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Spacing="4">
-                            <TextBlock Text="ACTIVE GIVEAWAY"
-                                       FontFamily="{StaticResource SansFont}"
-                                       FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
-                                       Foreground="{StaticResource EmberPrimaryBrush}" />
+                    <!-- Title + meta. The "ACTIVE GIVEAWAY" eyebrow is gone: the
+                         header band names the tool 24 px above it and the picker
+                         button names the selected giveaway on the row between —
+                         it was a third label over a string already rendered
+                         twice. The set-default pill that sat to its right is now
+                         the band's master switch. -->
+                    <StackPanel Spacing="4">
                             <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}"
                                        FontFamily="{StaticResource DisplayFont}"
                                        FontSize="28" CharacterSpacing="20"
@@ -356,87 +362,39 @@
                                  in WinUI 3 (the markup compiler crashes on it). -->
                             <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
                                 <TextBlock Text="id" FontFamily="{StaticResource MonoFont}" FontSize="11"
-                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.giveaway.detail.meta.id.label" />
                                 <TextBlock Text="{x:Bind ViewModel.MetaId, Mode=OneWay}"
                                            FontFamily="{StaticResource MonoFont}" FontSize="11"
                                            Foreground="{StaticResource CoalPrimaryTextBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="·" FontFamily="{StaticResource MonoFont}" FontSize="11" Margin="6,0,2,0"
                                            Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="opened" FontFamily="{StaticResource MonoFont}" FontSize="11"
-                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.giveaway.detail.meta.opened.label" />
                                 <TextBlock Text="{x:Bind ViewModel.MetaOpenedAt, Mode=OneWay}"
                                            FontFamily="{StaticResource MonoFont}" FontSize="11"
                                            Foreground="{StaticResource CoalPrimaryTextBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="·" FontFamily="{StaticResource MonoFont}" FontSize="11" Margin="6,0,2,0"
                                            Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="by" FontFamily="{StaticResource MonoFont}" FontSize="11"
-                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.giveaway.detail.meta.by.label" />
                                 <TextBlock Text="{x:Bind ViewModel.MetaOpenedBy, Mode=OneWay}"
                                            FontFamily="{StaticResource MonoFont}" FontSize="11"
                                            Foreground="{StaticResource CoalPrimaryTextBrush}" VerticalAlignment="Center" />
                             </StackPanel>
-                        </StackPanel>
-
-                        <!-- Set-default toggle -->
-                        <Button Grid.Column="1"
-                                x:Name="DefaultToggleButton"
-                                VerticalAlignment="Top"
-                                Padding="8,5,10,5"
-                                CornerRadius="{StaticResource Radius1Corner}"
-                                Background="Transparent"
-                                BorderThickness="0"
-                                Click="OnToggleDefaultClick"
-                                ToolTipService.ToolTip="When ON, this is the active giveaway across the app.">
-                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                <!-- Toggle pill -->
-                                <Border x:Name="DefaultTogglePill"
-                                        Width="26" Height="14" CornerRadius="8"
-                                        BorderBrush="{StaticResource CoalDividerBrush}"
-                                        BorderThickness="1">
-                                    <Ellipse x:Name="DefaultToggleKnob"
-                                             Width="10" Height="10"
-                                             HorizontalAlignment="Left"
-                                             VerticalAlignment="Center"
-                                             Margin="1,0,0,0" />
-                                </Border>
-                                <TextBlock x:Name="DefaultToggleLabel"
-                                           Text="{x:Bind ViewModel.DefaultToggleLabel, Mode=OneWay}"
-                                           FontFamily="{StaticResource SansFont}"
-                                           FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                           VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                    </Grid>
-
-                    <!-- Status pill -->
-                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <Border Background="{StaticResource GvStatusOpenFillBrush}"
-                                BorderBrush="{StaticResource GvStatusOpenBorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="{StaticResource Radius1Corner}"
-                                Padding="8,3">
-                            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                <Ellipse x:Name="StatusPulseDot"
-                                         Width="6" Height="6"
-                                         VerticalAlignment="Center"
-                                         Visibility="{x:Bind ViewModel.StatusDotPulseVisibility, Mode=OneWay}"
-                                         Fill="{x:Bind ViewModel.StatusPillBrush, Mode=OneWay}" />
-                                <TextBlock Text="{x:Bind ViewModel.StatusPillText, Mode=OneWay}"
-                                           FontFamily="{StaticResource MonoFont}"
-                                           FontSize="10" FontWeight="Bold" CharacterSpacing="160"
-                                           Foreground="{x:Bind ViewModel.StatusPillBrush, Mode=OneWay}"
-                                           VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Border>
-                        <TextBlock Text="{x:Bind ViewModel.StatusHint, Mode=OneWay}"
-                                   Visibility="{x:Bind ViewModel.StatusHintVisibility, Mode=OneWay}"
-                                   FontFamily="{StaticResource MonoFont}"
-                                   FontSize="11"
-                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                   VerticalAlignment="Center" />
                     </StackPanel>
 
-                    <!-- Stat tiles -->
+                    <!-- The status-pill row that stood here (tinted pill + pulsing
+                         dot + "entries accepted from chat" hint) is gone. It was
+                         the third rendering of one boolean; the band's state
+                         phrase carries it, off the same VM.StatusPillText /
+                         VM.IsOpen predicates. -->
+
+                    <!-- Stat tiles. Giveaway is a WATCH surface, so the strip
+                         stays — on the common ToolStatTile now, not the
+                         byte-identical page-local GvStatTile it used to mint. -->
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -444,15 +402,19 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <local:GvStatTile Grid.Column="0" Eyebrow="ENTRANTS"
-                                          Value="{x:Bind ViewModel.EntrantsValue, Mode=OneWay}" />
-                        <local:GvStatTile Grid.Column="1" Eyebrow="TICKETS"
+                        <hdr:ToolStatTile Grid.Column="0" Caption="ENTRANTS"
+                                          Value="{x:Bind ViewModel.EntrantsValue, Mode=OneWay}"
+                                          loc:Localize.Key="panel.giveaway.stats.entrants.caption" />
+                        <hdr:ToolStatTile Grid.Column="1" Caption="TICKETS"
                                           Accent="True"
-                                          Value="{x:Bind ViewModel.TicketsValue, Mode=OneWay}" />
-                        <local:GvStatTile Grid.Column="2" Eyebrow="AVG / USER"
-                                          Value="{x:Bind ViewModel.AvgValue, Mode=OneWay}" />
-                        <local:GvStatTile Grid.Column="3" Eyebrow="LAST ENTRY"
-                                          Value="{x:Bind ViewModel.LastEntryValue, Mode=OneWay}" />
+                                          Value="{x:Bind ViewModel.TicketsValue, Mode=OneWay}"
+                                          loc:Localize.Key="panel.giveaway.stats.tickets.caption" />
+                        <hdr:ToolStatTile Grid.Column="2" Caption="AVG / USER"
+                                          Value="{x:Bind ViewModel.AvgValue, Mode=OneWay}"
+                                          loc:Localize.Key="panel.giveaway.stats.avg.caption" />
+                        <hdr:ToolStatTile Grid.Column="3" Caption="LAST ENTRY"
+                                          Value="{x:Bind ViewModel.LastEntryValue, Mode=OneWay}"
+                                          loc:Localize.Key="panel.giveaway.stats.last_entry.caption" />
                     </Grid>
 
                     <!-- Settings card — collapsible; the header row IS the
@@ -460,11 +422,7 @@
                          entry itself is script-driven (the GiveawayTicket .phx
                          calls giveaway.ticket), so there is no entry command /
                          tickets-per-message / draw-method row any more. -->
-                    <Border Background="{StaticResource CoalShellBrush}"
-                            BorderBrush="{StaticResource CoalCardBrush}"
-                            BorderThickness="1"
-                            CornerRadius="{StaticResource Radius1Corner}"
-                            Padding="14,10">
+                    <Border Style="{StaticResource ToolSectionCardStyle}">
                         <StackPanel Spacing="0">
                             <Button x:Name="SettingsHeaderButton"
                                     HorizontalAlignment="Stretch"
@@ -474,6 +432,7 @@
                                     Padding="0,2"
                                     Click="OnToggleSettingsClick"
                                     ToolTipService.ToolTip="Collapse / expand the settings panel"
+                                    loc:Localize.TooltipKey="panel.giveaway.settings.toggle.tip"
                                     AutomationProperties.Name="{x:Bind ViewModel.SettingsToggleAutomationName, Mode=OneWay}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -481,10 +440,9 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="SETTINGS"
-                                               FontFamily="{StaticResource SansFont}"
-                                               FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
-                                               Foreground="{StaticResource EmberPrimaryBrush}"
-                                               VerticalAlignment="Center" />
+                                               Style="{StaticResource ToolEyebrowTextStyle}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.giveaway.settings.eyebrow" />
                                     <FontIcon Grid.Column="1"
                                               FontFamily="Segoe MDL2 Assets"
                                               Glyph="{x:Bind ViewModel.SettingsChevronGlyph, Mode=OneWay}"
@@ -493,7 +451,8 @@
                                               VerticalAlignment="Center" />
                                 </Grid>
                             </Button>
-                            <StackPanel Spacing="0"
+                            <StackPanel x:Name="SettingsBody"
+                                        Spacing="0"
                                         Visibility="{x:Bind ViewModel.SettingsBodyVisibility, Mode=OneWay}"
                                         Margin="0,6,0,0">
                                 <!-- Subscriber bonus — ticket-weight FACTOR applied to
@@ -511,12 +470,9 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="11" CharacterSpacing="40"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                                   VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="Subscriber bonus" />
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   Text="Subscriber bonus"
+                                                   loc:Localize.Key="panel.giveaway.settings.sub_bonus.label" />
                                         <TextBox Grid.Column="1"
                                                  x:Name="SubBonusBox"
                                                  Width="72"
@@ -532,14 +488,13 @@
                                                  KeyDown="OnSubBonusKeyDown"
                                                  LostFocus="OnSubBonusLostFocus"
                                                  AutomationProperties.Name="Subscriber ticket-weight factor (1 = no bonus)"
+                                                 loc:Localize.AutomationKey="panel.giveaway.settings.sub_bonus.a11y"
                                                  Text="{x:Bind ViewModel.SubBonusDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <TextBlock Grid.Column="2"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="10"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
                                                    VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="× ticket weight for subs at draw · 1 = no bonus" />
+                                                   Text="× ticket weight for subs at draw · 1 = no bonus"
+                                                   loc:Localize.Key="panel.giveaway.settings.sub_bonus.hint" />
                                     </Grid>
                                 </Border>
                                 <!-- Moderator bonus — mirror of the subscriber row.
@@ -556,12 +511,9 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="11" CharacterSpacing="40"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                                   VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="Moderator bonus" />
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   Text="Moderator bonus"
+                                                   loc:Localize.Key="panel.giveaway.settings.mod_bonus.label" />
                                         <TextBox Grid.Column="1"
                                                  x:Name="ModBonusBox"
                                                  Width="72"
@@ -577,14 +529,13 @@
                                                  KeyDown="OnModBonusKeyDown"
                                                  LostFocus="OnModBonusLostFocus"
                                                  AutomationProperties.Name="Moderator ticket-weight factor (1 = no bonus)"
+                                                 loc:Localize.AutomationKey="panel.giveaway.settings.mod_bonus.a11y"
                                                  Text="{x:Bind ViewModel.ModBonusDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <TextBlock Grid.Column="2"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="10"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
                                                    VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="× ticket weight for mods at draw · 1 = no bonus" />
+                                                   Text="× ticket weight for mods at draw · 1 = no bonus"
+                                                   loc:Localize.Key="panel.giveaway.settings.mod_bonus.hint" />
                                     </Grid>
                                 </Border>
                                 <!-- Max tickets per user — 0 = unlimited; saves on
@@ -599,12 +550,9 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="11" CharacterSpacing="40"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                                   VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="Max tickets per user" />
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   Text="Max tickets per user"
+                                                   loc:Localize.Key="panel.giveaway.settings.cap_per_user.label" />
                                         <TextBox Grid.Column="1"
                                                  x:Name="CapPerUserBox"
                                                  Width="72"
@@ -620,13 +568,13 @@
                                                  KeyDown="OnCapPerUserKeyDown"
                                                  LostFocus="OnCapPerUserLostFocus"
                                                  AutomationProperties.Name="Max tickets per user (0 = unlimited)"
+                                                 loc:Localize.AutomationKey="panel.giveaway.settings.cap_per_user.a11y"
                                                  Text="{x:Bind ViewModel.CapPerUserDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <TextBlock Grid.Column="2"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="10"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
                                                    VerticalAlignment="Center"
-                                                   Text="0 = unlimited" />
+                                                   Text="0 = unlimited"
+                                                   loc:Localize.Key="panel.giveaway.settings.cap_per_user.hint" />
                                     </Grid>
                                 </Border>
                                 <!-- Ticket price — channel points per ticket charged by
@@ -643,12 +591,9 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="11" CharacterSpacing="40"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                                   VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="Ticket price" />
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   Text="Ticket price"
+                                                   loc:Localize.Key="panel.giveaway.settings.ticket_price.label" />
                                         <TextBox Grid.Column="1"
                                                  x:Name="TicketPriceBox"
                                                  Width="72"
@@ -665,25 +610,28 @@
                                                  LostFocus="OnTicketPriceLostFocus"
                                                  ToolTipService.ToolTip="Channel points one ticket costs in THIS giveaway. Charged by Giveaway.Ticket entry nodes that have a currency table set and Public on; a Public-off node uses its own Price pill instead. 0 = free entry."
                                                  AutomationProperties.Name="Ticket price in channel points (0 = free)"
+                                                 loc:Localize.TooltipKey="panel.giveaway.settings.ticket_price.tip"
+                                                 loc:Localize.AutomationKey="panel.giveaway.settings.ticket_price.a11y"
                                                  Text="{x:Bind ViewModel.TicketPriceDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         <TextBlock Grid.Column="2"
-                                                   FontFamily="{StaticResource MonoFont}"
-                                                   FontSize="10"
-                                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
                                                    VerticalAlignment="Center"
-                                                   TextWrapping="Wrap"
-                                                   Text="channel points per ticket · 0 = free · charged by entry nodes with a currency table" />
+                                                   Text="channel points per ticket · 0 = free · charged by entry nodes with a currency table"
+                                                   loc:Localize.Key="panel.giveaway.settings.ticket_price.hint" />
                                     </Grid>
                                 </Border>
                             </StackPanel>
                         </StackPanel>
                     </Border>
 
-                    <!-- Activity log -->
-                    <Border Background="{StaticResource CoalShellBrush}"
-                            BorderBrush="{StaticResource CoalCardBrush}"
-                            BorderThickness="1"
-                            CornerRadius="{StaticResource Radius1Corner}"
+                    <!-- Activity log. Kept: this is the giveaway's own audit trail
+                         (who entered, when it closed, who was drawn), not the
+                         shared ToolActivityFeed watch-strip the config pages
+                         drop — Giveaway has no ToolActivityFeed instance.
+                         Padding is overridden to 0 because the card's header row
+                         is full-bleed with its own inset. -->
+                    <Border Style="{StaticResource ToolSectionCardStyle}"
+                            Padding="0"
                             MinHeight="160">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -696,20 +644,20 @@
                                     Padding="12,6">
                                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                     <TextBlock Text="ACTIVITY"
-                                               FontFamily="{StaticResource SansFont}"
-                                               FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
-                                               Foreground="{StaticResource EmberPrimaryBrush}" />
+                                               Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.giveaway.activity.eyebrow" />
                                     <TextBlock Text="this giveaway"
-                                               FontFamily="{StaticResource MonoFont}"
-                                               FontSize="10"
-                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                               VerticalAlignment="Center" />
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.giveaway.activity.scope_hint" />
                                 </StackPanel>
                             </Border>
                             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollMode="Disabled" MaxHeight="240">
                                 <ItemsRepeater ItemsSource="{x:Bind ViewModel.Activity, Mode=OneWay}"
-                                               AutomationProperties.Name="Giveaway activity log">
+                                               hdr:RowDataContext.Supply="True"
+                                               AutomationProperties.Name="Giveaway activity log"
+                                               loc:Localize.AutomationKey="panel.giveaway.activity.list.a11y">
                                     <ItemsRepeater.ItemTemplate>
                                         <DataTemplate x:DataType="local:GiveawayActivityRowVm">
                                             <Grid Padding="12,3" ColumnSpacing="8"
@@ -747,15 +695,13 @@
                         HorizontalAlignment="Center" VerticalAlignment="Center"
                         Spacing="8">
                 <TextBlock Text="No giveaway selected"
-                           FontFamily="{StaticResource DisplayFont}"
-                           FontSize="20"
-                           Foreground="{StaticResource CoalSecondaryTextBrush}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource ToolEmptyTitleTextStyle}"
+                           loc:Localize.Key="panel.giveaway.empty.title" />
                 <TextBlock Text="Create one or pick an existing giveaway from the strip above."
-                           FontFamily="{StaticResource SansFont}"
-                           FontSize="12"
-                           Foreground="{StaticResource CoalSecondaryTextBrush}"
-                           HorizontalAlignment="Center" />
+                           Style="{StaticResource ToolHintTextStyle}"
+                           TextAlignment="Center"
+                           HorizontalAlignment="Center"
+                           loc:Localize.Key="panel.giveaway.empty.body" />
             </StackPanel>
 
             <!-- ───────────── RIGHT: EntrantList ───────────── -->
@@ -772,7 +718,9 @@
                     </Grid.RowDefinitions>
 
                     <!-- Header: LIVE · Entrants + counts -->
-                    <hdr:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Entrants">
+                    <hdr:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Entrants"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.giveaway.entrants.title">
                         <hdr:PanelHeader.RightContent>
                             <!-- Discrete TextBlocks — x:Bind is unsupported on Run.Text. -->
                             <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
@@ -780,24 +728,22 @@
                                            FontFamily="{StaticResource MonoFont}" FontSize="11"
                                            Foreground="{StaticResource CoalBodyTextBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="users" FontFamily="{StaticResource MonoFont}" FontSize="11"
-                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.giveaway.entrants.count.users.unit" />
                                 <TextBlock Text="·" FontFamily="{StaticResource MonoFont}" FontSize="11" Margin="4,0"
                                            Foreground="{StaticResource CoalDividerBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="{x:Bind ViewModel.TotalTicketsText, Mode=OneWay}"
                                            FontFamily="{StaticResource MonoFont}" FontSize="11"
                                            Foreground="{StaticResource Ember200Brush}" VerticalAlignment="Center" />
                                 <TextBlock Text="tickets" FontFamily="{StaticResource MonoFont}" FontSize="11"
-                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.giveaway.entrants.count.tickets.unit" />
                             </StackPanel>
                         </hdr:PanelHeader.RightContent>
                     </hdr:PanelHeader>
 
                     <!-- Column header row -->
-                    <Border Grid.Row="1"
-                            Background="{StaticResource CoalRaisedBrush}"
-                            BorderBrush="{StaticResource CoalDividerBrush}"
-                            BorderThickness="0,0,0,1"
-                            Padding="14,6">
+                    <Border Grid.Row="1" Style="{StaticResource ToolBandBorderStyle}">
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="26" />
@@ -806,26 +752,37 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="#"
-                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
-                                       CharacterSpacing="140"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                       Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.giveaway.entrants.column.rank" />
                             <TextBlock Grid.Column="2" Text="USER"
-                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
-                                       CharacterSpacing="140"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                       Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.giveaway.entrants.column.user" />
                             <TextBlock Grid.Column="3" Text="TICKETS ▾"
-                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
-                                       CharacterSpacing="140"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                       Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.giveaway.entrants.column.tickets" />
                         </Grid>
                     </Border>
+
+                    <!-- Empty state for the live column: ONE mono line, pinned to
+                         the top of the list area. Not centred in the tall void
+                         and not a DisplayFont headline — an absence must not
+                         outrank the entrants it is standing in for. -->
+                    <TextBlock Grid.Row="2"
+                               Text="no entrants yet"
+                               Visibility="{x:Bind ViewModel.EntrantsEmptyVisibility, Mode=OneWay}"
+                               Style="{StaticResource ToolMonoHintTextStyle}"
+                               VerticalAlignment="Top"
+                               Margin="14,10,14,0"
+                               loc:Localize.Key="panel.giveaway.entrants.empty.body" />
 
                     <!-- Entrant rows -->
                     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollMode="Disabled">
                         <ItemsRepeater ItemsSource="{x:Bind ViewModel.Entrants, Mode=OneWay}"
+                                       hdr:RowDataContext.Supply="True"
                                        AutomationProperties.LiveSetting="Polite"
-                                       AutomationProperties.Name="Entrants sorted by tickets">
+                                       AutomationProperties.Name="Entrants sorted by tickets"
+                                       loc:Localize.AutomationKey="panel.giveaway.entrants.list.a11y">
                             <ItemsRepeater.ItemTemplate>
                                 <DataTemplate x:DataType="local:GiveawayEntrantRowVm">
                                     <Grid Padding="0" Background="{x:Bind RowBackground}"
@@ -891,20 +848,22 @@
                     </ScrollViewer>
 
                     <!-- Footer -->
+                    <!-- Footer. Same band recipe, hairline on the TOP edge. The
+                         left caption dropped its trailing "· live": the right
+                         cell already says it, in ember, 260 px away. -->
                     <Border Grid.Row="3"
-                            Background="{StaticResource CoalRaisedBrush}"
-                            BorderBrush="{StaticResource CoalDividerBrush}"
-                            BorderThickness="0,1,0,0"
-                            Padding="14,6">
+                            Style="{StaticResource ToolBandBorderStyle}"
+                            BorderThickness="0,1,0,0">
                         <Grid>
-                            <TextBlock Text="sorted by tickets · live"
-                                       FontFamily="{StaticResource MonoFont}" FontSize="10"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                       HorizontalAlignment="Left" />
+                            <TextBlock Text="sorted by tickets"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       HorizontalAlignment="Left"
+                                       loc:Localize.Key="panel.giveaway.entrants.footer.sort" />
                             <TextBlock Text="live"
                                        FontFamily="{StaticResource MonoFont}" FontSize="10"
                                        Foreground="{StaticResource Ember200Brush}"
-                                       HorizontalAlignment="Right" />
+                                       HorizontalAlignment="Right"
+                                       loc:Localize.Key="panel.giveaway.entrants.footer.live" />
                         </Grid>
                     </Border>
                 </Grid>
@@ -912,11 +871,12 @@
         </Grid>
 
         <!-- ════════════════════ DRAW-WINNER OVERLAY ════════════════════ -->
-        <Grid Grid.Row="0" Grid.RowSpan="2"
+        <Grid Grid.Row="0" Grid.RowSpan="3"
               x:Name="WinnerOverlay"
-              Background="{StaticResource GvScrimBrush}"
+              Background="{StaticResource ToolScrimBrush}"
               Visibility="{x:Bind ViewModel.WinnerOverlayVisibility, Mode=OneWay}">
-            <Border Width="520"
+            <Border x:Name="WinnerCard"
+                    Width="520"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
                     Background="{StaticResource CoalSurfaceBrush}"
                     BorderBrush="{StaticResource EmberShadowBrush}"
@@ -928,23 +888,25 @@
                         <RowDefinition Height="2" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <!-- Brass top edge -->
-                    <Border Grid.Row="0" Background="{StaticResource BrassGradientBrush}"
+                    <!-- Brass top edge. Re-pointed off the chrome-strip token
+                         onto ToolBrassHeroBrush so the whole page paints brass
+                         from exactly ONE definition. -->
+                    <Border Grid.Row="0" Background="{StaticResource ToolBrassHeroBrush}"
                             Margin="-36,-32,-36,0" />
                     <StackPanel Grid.Row="1" Spacing="0" HorizontalAlignment="Center" Margin="0,18,0,0">
                         <TextBlock Text="WINNER DRAWN · WEIGHTED"
-                                   FontFamily="{StaticResource SansFont}"
-                                   FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
-                                   Foreground="{StaticResource EmberPrimaryBrush}"
+                                   Style="{StaticResource ToolEyebrowTextStyle}"
                                    HorizontalAlignment="Center"
-                                   Margin="0,0,0,8" />
+                                   Margin="0,0,0,8"
+                                   loc:Localize.Key="panel.giveaway.winner.eyebrow" />
                         <TextBlock Text="{x:Bind ViewModel.WinnerGiveawayTitle, Mode=OneWay}"
                                    FontFamily="{StaticResource DisplayFont}"
                                    FontSize="18" CharacterSpacing="40"
                                    Foreground="{StaticResource CoalBodyTextBrush}"
                                    HorizontalAlignment="Center" TextAlignment="Center"
                                    Margin="0,0,0,18" />
-                        <TextBlock Text="{x:Bind ViewModel.WinnerName, Mode=OneWay}"
+                        <TextBlock x:Name="WinnerNameText"
+                                   Text="{x:Bind ViewModel.WinnerName, Mode=OneWay}"
                                    FontFamily="{StaticResource DisplayFont}"
                                    FontSize="56" FontWeight="SemiBold" CharacterSpacing="20"
                                    Foreground="{StaticResource CoalPaperBrush}"
@@ -958,50 +920,44 @@
                                    HorizontalAlignment="Center"
                                    Margin="0,0,0,22" />
                         <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                            <Button x:Name="ReDrawButton" Height="30" Padding="14,0"
-                                    Background="{StaticResource CoalCardBrush}"
-                                    BorderBrush="{StaticResource CoalDividerBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="{StaticResource Radius1Corner}"
+                            <Button x:Name="ReDrawButton"
+                                    Style="{StaticResource ToolSecondaryButtonStyle}"
                                     Click="OnReDrawClick">
-                                <TextBlock Text="RE-DRAW" FontFamily="{StaticResource SansFont}"
-                                           FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                           Foreground="{StaticResource CoalBodyTextBrush}" />
+                                <TextBlock Text="RE-DRAW"
+                                           Style="{StaticResource ToolStripLabelTextStyle}"
+                                           loc:Localize.Key="panel.giveaway.winner.redraw.label" />
                             </Button>
-                            <Button x:Name="CopyNameButton" Height="30" Padding="14,0"
-                                    Background="{StaticResource CoalCardBrush}"
-                                    BorderBrush="{StaticResource CoalDividerBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="{StaticResource Radius1Corner}"
+                            <Button x:Name="CopyNameButton"
+                                    Style="{StaticResource ToolSecondaryButtonStyle}"
                                     Click="OnCopyNameClick">
-                                <TextBlock Text="COPY NAME" FontFamily="{StaticResource SansFont}"
-                                           FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                           Foreground="{StaticResource CoalBodyTextBrush}" />
+                                <TextBlock Text="COPY NAME"
+                                           Style="{StaticResource ToolStripLabelTextStyle}"
+                                           loc:Localize.Key="panel.giveaway.winner.copy.label" />
                             </Button>
-                            <Button x:Name="AnnounceButton" Height="30" Padding="14,0"
-                                    Background="{StaticResource GvBrassHeroBrush}"
-                                    BorderBrush="{StaticResource Ember600Brush}"
-                                    BorderThickness="1"
-                                    CornerRadius="{StaticResource Radius1Corner}"
+                            <!-- The modal's own brass CTA. Legal because the page's
+                                 DRAW WINNER is faded out for exactly as long as
+                                 this overlay is up. -->
+                            <Button x:Name="AnnounceButton"
+                                    Style="{StaticResource ToolBrassCtaStyle}"
                                     Click="OnAnnounceClick">
-                                <TextBlock Text="ANNOUNCE IN CHAT" FontFamily="{StaticResource SansFont}"
-                                           FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                           Foreground="{StaticResource CoalShellBrush}" />
+                                <TextBlock Text="ANNOUNCE IN CHAT"
+                                           Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                           loc:Localize.Key="panel.giveaway.winner.announce.label" />
                             </Button>
                         </StackPanel>
                         <TextBlock Text="shown on stream overlay"
-                                   FontFamily="{StaticResource MonoFont}"
-                                   FontSize="10" CharacterSpacing="40"
-                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   CharacterSpacing="40"
                                    HorizontalAlignment="Center"
-                                   Margin="0,14,0,0" />
+                                   Margin="0,14,0,0"
+                                   loc:Localize.Key="panel.giveaway.winner.overlay_hint" />
                         <!-- Dismiss affordance -->
                         <Button x:Name="WinnerCloseButton" Click="OnWinnerCloseClick"
                                 HorizontalAlignment="Center" Margin="0,10,0,0"
                                 Background="Transparent" BorderThickness="0" Padding="6,2">
                             <TextBlock Text="dismiss"
-                                       FontFamily="{StaticResource MonoFont}" FontSize="10"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       loc:Localize.Key="panel.giveaway.winner.dismiss.label" />
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -1009,9 +965,9 @@
         </Grid>
 
         <!-- ════════════════════ CREATE GIVEAWAY OVERLAY ════════════════════ -->
-        <Grid Grid.Row="0" Grid.RowSpan="2"
+        <Grid Grid.Row="0" Grid.RowSpan="3"
               x:Name="CreateOverlay"
-              Background="{StaticResource GvScrimBrush}"
+              Background="{StaticResource ToolScrimBrush}"
               Visibility="Collapsed">
             <Border Width="420"
                     HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -1022,15 +978,16 @@
                     Padding="28,24">
                 <StackPanel Spacing="14">
                     <TextBlock Text="NEW GIVEAWAY"
-                               FontFamily="{StaticResource SansFont}"
-                               FontSize="10" FontWeight="SemiBold" CharacterSpacing="180"
-                               Foreground="{StaticResource EmberPrimaryBrush}" />
+                               Style="{StaticResource ToolEyebrowTextStyle}"
+                               loc:Localize.Key="panel.giveaway.create.eyebrow" />
                     <TextBlock Text="Name the giveaway"
                                FontFamily="{StaticResource DisplayFont}"
                                FontSize="22"
-                               Foreground="{StaticResource CoalPaperBrush}" />
+                               Foreground="{StaticResource CoalPaperBrush}"
+                               loc:Localize.Key="panel.giveaway.create.title" />
                     <TextBox x:Name="CreateTitleBox"
                              PlaceholderText="e.g. Forged Coffee Mug · Nov stream"
+                             loc:Localize.PlaceholderKey="panel.giveaway.create.name.placeholder"
                              Background="{StaticResource CoalShellBrush}"
                              Foreground="{StaticResource CoalPrimaryTextBrush}"
                              BorderBrush="{StaticResource CoalDividerBrush}"
@@ -1040,25 +997,21 @@
                              KeyDown="OnCreateTitleKeyDown"
                              Text="{x:Bind ViewModel.CreateTitleDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                        <Button x:Name="CreateCancelButton" Height="30" Padding="14,0"
-                                Background="{StaticResource CoalCardBrush}"
-                                BorderBrush="{StaticResource CoalDividerBrush}"
-                                BorderThickness="1"
-                                CornerRadius="{StaticResource Radius1Corner}"
+                        <Button x:Name="CreateCancelButton"
+                                Style="{StaticResource ToolSecondaryButtonStyle}"
                                 Click="OnCreateCancelClick">
-                            <TextBlock Text="CANCEL" FontFamily="{StaticResource SansFont}"
-                                       FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                       Foreground="{StaticResource CoalBodyTextBrush}" />
+                            <TextBlock Text="CANCEL"
+                                       Style="{StaticResource ToolStripLabelTextStyle}"
+                                       loc:Localize.Key="panel.giveaway.create.cancel.label" />
                         </Button>
-                        <Button x:Name="CreateConfirmButton" Height="30" Padding="14,0"
-                                Background="{StaticResource GvBrassHeroBrush}"
-                                BorderBrush="{StaticResource Ember600Brush}"
-                                BorderThickness="1"
-                                CornerRadius="{StaticResource Radius1Corner}"
+                        <!-- Same rule as ANNOUNCE: this modal owns the brass while
+                             it is up, and DRAW WINNER behind it is faded out. -->
+                        <Button x:Name="CreateConfirmButton"
+                                Style="{StaticResource ToolBrassCtaStyle}"
                                 Click="OnCreateConfirmClick">
-                            <TextBlock Text="CREATE" FontFamily="{StaticResource SansFont}"
-                                       FontSize="11" FontWeight="Bold" CharacterSpacing="100"
-                                       Foreground="{StaticResource CoalShellBrush}" />
+                            <TextBlock Text="CREATE"
+                                       Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                       loc:Localize.Key="panel.giveaway.create.confirm.label" />
                         </Button>
                     </StackPanel>
                 </StackPanel>

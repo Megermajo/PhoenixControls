@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization"
     xmlns:prim="using:Microsoft.UI.Xaml.Controls.Primitives">
 
     <!-- Sprint E — pillar-local focus-visual implicit Styles. Merged here
@@ -19,7 +20,8 @@
     </UserControl.Resources>
 
     <Grid Background="{StaticResource CoalShellBrush}"
-          AutomationProperties.Name="Architect Shell">
+          AutomationProperties.Name="Architect Shell"
+          loc:Localize.AutomationKey="architect.main.shell.a11y">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -43,13 +45,15 @@
             Grid.Row="0"
             Canvas.ZIndex="100"
             AutomationProperties.Name="Architect Chrome"
+            loc:Localize.AutomationKey="architect.main.chrome.a11y"
             FileName="hello.phxg" />
 
         <controls:TopTabBar
             x:Name="TopTabs"
             Grid.Row="1"
             Canvas.ZIndex="100"
-            AutomationProperties.Name="Pillar Tabs" />
+            AutomationProperties.Name="Pillar Tabs"
+            loc:Localize.AutomationKey="architect.main.pillar_tabs.a11y" />
 
         <!-- Non-blocking failure surface for .phxg load errors. Surfaces the
              corrupt-file diagnostic the user otherwise only saw as a one-line
@@ -71,6 +75,7 @@
                 <InfoBar.ActionButton>
                     <Button x:Name="AutosaveRecoverButton"
                             Content="Recover…"
+                            loc:Localize.Key="architect.main.autosave.recover_button"
                             Visibility="Collapsed"
                             Click="OnAutosaveRecoverClicked" />
                 </InfoBar.ActionButton>
@@ -90,10 +95,13 @@
                      IsClosable="False"
                      Severity="Warning"
                      Title="Live debug — bus disconnected"
-                     Message="Architect can't reach Hub's bus while live-debug is on. Node-pulse traces will resume once the connection is restored.">
+                     Message="Architect can't reach Hub's bus while live-debug is on. Node-pulse traces will resume once the connection is restored."
+                     loc:Localize.Key="architect.main.infobar.live_debug_drop.title"
+                     loc:Localize.Property="Title">
                 <InfoBar.ActionButton>
                     <Button x:Name="LiveDebugRetryButton"
                             Content="Retry"
+                            loc:Localize.Key="architect.main.infobar.live_debug_drop.retry"
                             Click="OnLiveDebugRetryClicked" />
                 </InfoBar.ActionButton>
             </InfoBar>
@@ -108,9 +116,9 @@
                  hover and forwards DragDelta to MainView code-behind,
                  which mutates RailColumn.Width inside the same
                  MinWidth/MaxWidth envelope the column declares. Width is
-                 persisted through ConfigManager. Inspector width is
-                 fixed at the persisted ArchitectInspectorColumnWidth and
-                 toggled visible/rolled-up by the chevron header only.
+                 persisted through ConfigManager. The Inspector is toggled
+                 visible/rolled-up by the chevron header only — and, since
+                 2026-08-14, has no persisted width at all (see below).
 
                   #10 — RailColumn.MinWidth dropped to 32 px so
                  the chevron-collapse toggle can shrink the rail to a
@@ -118,27 +126,52 @@
 
                  arch-ux-polish — the Inspector dock is back. 
                  #10 moved it to a floating window; this restores it as a
-                 slim docked column pinned to the right edge (Majo:
+                 slim panel pinned to the right edge (Majo:
                  "Inspector should be a small panel on the right not
                  being a pop-out window. It should be fixed on the top
-                 right edge"). The column lives at its persisted width
-                 when ArchitectInspectorVisible is true and collapses to
-                 a 32 px chevron strip otherwise. The floating
-                 InspectorWindow stays in the codebase as an opt-in
-                 surface but is no longer the default.
-                 MinWidth=240 / MaxWidth=500 envelopes the slim-panel
-                 invariant (LogicInspector caps at MaxWidth=320 internally). -->
-            <!-- 2026-05-24 — InspectorSplitterCol removed entirely per
-                 Majo's call ("vertical scale bar shall be removed
-                 completely"). The chevron toggle on the inspector card
-                 is the only visibility control now; inspector width is
-                 fixed at the persisted ArchitectInspectorColumnWidth and
-                 is no longer user-resizable via splitter drag. -->
+                 right edge"). The floating InspectorWindow stays in the
+                 codebase as an opt-in surface but is no longer the
+                 default.
+
+                 ★ 2026-08-14 — THE INSPECTOR IS NO LONGER A GRID COLUMN.
+                 It used to be a 4th ColumnDefinition sized from the
+                 persisted ArchitectInspectorColumnWidth, with
+                 CanvasPaneHost spanning columns 2..3 so the canvas
+                 painted underneath it. That hybrid produced three
+                 reported defects at once:
+
+                   * the card grew to ~314 x 627 px (a persisted
+                     ArchitectInspectorHeight of 588.8 fed
+                     InspectorRegion.MaxHeight, and LogicInspector forced
+                     a 280 px floor even when nothing was selected), so
+                     it read as a full side panel rather than a card;
+                   * because the canvas spanned UNDER it, every camera
+                     routine measured a viewport ~314 px wider than the
+                     user can actually see — FitToBounds (Home / F),
+                     CenterViewportOn, the minimap's viewport rect and
+                     EnsureGraphVisibleAfterLoad all aimed graph content
+                     into the band the card covers, so nodes were drawn
+                     and then hidden ("black / lost areas on the right");
+                   * and there was no in-app way to change either number,
+                     because the splitter that wrote them was deleted in
+                     2026-05-24 (bb705f86) while the two config keys
+                     stayed live.
+
+                 The card is now a genuinely FLOATING overlay: a
+                 fixed-width, top-right-aligned child of the canvas
+                 column itself (see InspectorHost below). The canvas owns
+                 the whole column at all times, so no layout reflows when
+                 the card toggles and the minimap cannot slide. The band
+                 the card covers is declared to the canvas as a viewport
+                 inset (LogicCanvasView.ViewportInsetRight) so the camera
+                 math aims at the VISIBLE region instead of the painted
+                 one — that is the half that actually fixes the lost
+                 content, and it is why dropping ColumnSpan alone would
+                 not have been enough. -->
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="RailColumn"      Width="220" MinWidth="32" MaxWidth="360" />
                 <ColumnDefinition x:Name="RailSplitterCol" Width="6" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition x:Name="InspectorColumn" Width="0" MinWidth="0" MaxWidth="500" />
             </Grid.ColumnDefinitions>
 
             <!-- LeftRail rendered last via Canvas.ZIndex so its right edge can
@@ -147,7 +180,8 @@
                  below also clips its content to the column for defence in
                  depth. -->
             <controls:LeftRail x:Name="Rail" Grid.Column="0" Canvas.ZIndex="2"
-                               AutomationProperties.Name="Left Rail" />
+                               AutomationProperties.Name="Left Rail"
+                               loc:Localize.AutomationKey="architect.main.rail.a11y" />
 
             <!-- Rail / canvas column splitter — 6 px strip. SizeWestEast cursor
                  on hover via CursorThumb's ProtectedCursor toggle. -->
@@ -163,29 +197,31 @@
                                   IsTabStop="True"
                                   UseSystemFocusVisuals="True"
                                   AutomationProperties.Name="Rail splitter"
+                                  loc:Localize.AutomationKey="architect.main.rail_splitter.a11y"
                                   DragDelta="OnRailSplitterDragDelta"
                                   KeyDown="OnRailSplitterKeyDown" />
 
-            <!-- Canvas spans columns 2..3 so the right (inspector) column
-                 overlays only the inspector card — when the inspector is
-                 rolled up to chevron-strip width, the canvas shows
-                 through underneath. ZIndex=1 keeps the canvas below the
-                 inspector overlay (Canvas.ZIndex on the right column's
-                 Grid is set higher), but above the LeftRail's edge (rail
-                 uses ZIndex=2 and lives in column 0 only, so no overlap
-                 conflict). 2026-05-24 — ColumnSpan dropped 3→2 after the
-                 InspectorSplitterCol column was removed. The right
-                 border is gone now that the right column floats over
-                 the canvas — its inspector card carries its own surface
-                 fill. -->
+            <!-- The canvas owns the whole of column 2, always. ZIndex=1
+                 keeps it below the floating inspector card (InspectorHost
+                 sits in the same column at ZIndex=3) but above the
+                 LeftRail's edge (rail uses ZIndex=2 and lives in column 0
+                 only, so no overlap conflict).
+
+                 ★ 2026-08-14 — Grid.ColumnSpan="2" removed with the
+                 InspectorColumn it spanned into. Its width is now
+                 invariant under an inspector toggle, which is what makes
+                 the minimap (bottom-right of this host) unable to slide.
+                 The canvas is still occluded by the floating card, but it
+                 is TOLD about that band via ViewportInsetRight rather
+                 than being left to centre content underneath it. -->
             <Border x:Name="CanvasPaneHost"
                     Grid.Column="2"
-                    Grid.ColumnSpan="2"
                     Canvas.ZIndex="1"
                     Background="{StaticResource CoalShellBrush}"
                     BorderBrush="{StaticResource CoalCardBrush}"
                     BorderThickness="1,0,0,0"
                     AutomationProperties.Name="Logic Canvas"
+                    loc:Localize.AutomationKey="architect.main.canvas.a11y"
                     SizeChanged="OnCanvasPaneHostSizeChanged">
                 <ContentControl x:Name="MainPaneRegion"
                                 HorizontalAlignment="Stretch"
@@ -204,31 +240,52 @@
             <!-- 2026-05-24 — Canvas/inspector splitter REMOVED entirely.
                  The 0.11.7 attempt at shortening the divider to the card
                  height did not satisfy Majo's "shall be removed
-                 completely" call on the audit; the chevron toggle now
-                 owns visibility and width stays fixed at the persisted
-                 ArchitectInspectorColumnWidth. No splitter Border, no
-                 CursorThumb, no resize-drag affordance — the canvas
-                 meets the inspector card directly. -->
+                 completely" call on the audit; the chevron toggle owns
+                 visibility. No splitter Border, no CursorThumb, no
+                 resize-drag affordance. ★ 2026-08-14 — the persisted
+                 width it used to write is gone too: the card's width is
+                 a markup constant now, so there is no longer a config
+                 value with no affordance to change it. -->
 
-            <!-- Right column: 0.11.5 canvas-polish r3 — the column now only
-                 takes the vertical space its content (chevron header +
-                 inspector card) actually needs. The roll-up chevron
-                 header is the size-control affordance: click to hide
-                 the inspector body (only the chevron strip remains),
-                 click again to restore. The right column itself floats
-                 over the canvas (which spans cols 2..3) via
-                 Canvas.ZIndex=2; VerticalAlignment="Top" keeps the
-                 column sized to its content so the canvas shows
-                 through below it. -->
-            <Grid Grid.Column="3"
-                  Canvas.ZIndex="2"
+            <!-- ★ The floating inspector card. Lives in the CANVAS column
+                 (2) at a higher ZIndex than CanvasPaneHost, so it hovers
+                 over the canvas without ever taking layout width from it.
+
+                 Width is fixed in markup (320 = the same cap
+                 LogicInspector applies to its own content, so the card
+                 and its body finally agree) and swapped to 32 in
+                 code-behind for the rolled-up tab; ApplyInspectorVisible
+                 owns that. There is no GridLength tween any more and no
+                 persisted width — see MainView.xaml.cs.
+
+                 Background stays {x:Null} DELIBERATELY: a null Panel
+                 background is not hit-testable in WinUI, which is what
+                 lets marquee-drag, wheel-zoom and right-click pass
+                 through the transparent part of this host to the canvas
+                 underneath. "Tidying" it to Transparent would silently
+                 swallow canvas input across the whole card footprint.
+                 The card itself (InspectorCardRoot) is opaque and does
+                 take input, which is correct.
+
+                 Clip is set from OnInspectorHostSizeChanged so the
+                 32 px rolled-up tab cannot bleed its header past its own
+                 fill onto the canvas. -->
+            <Grid x:Name="InspectorHost"
+                  Grid.Column="2"
+                  Canvas.ZIndex="3"
                   Background="{x:Null}"
+                  HorizontalAlignment="Right"
                   VerticalAlignment="Top"
-                  AutomationProperties.Name="Inspector">
+                  Width="320"
+                  Margin="0,12,12,0"
+                  SizeChanged="OnInspectorHostSizeChanged"
+                  AutomationProperties.Name="Inspector"
+                  loc:Localize.AutomationKey="architect.main.inspector.a11y">
                 <Border x:Name="InspectorCardRoot"
                         Background="{StaticResource CoalSurfaceBrush}"
                         BorderBrush="{StaticResource CoalCardBrush}"
-                        BorderThickness="1,0,0,1">
+                        BorderThickness="1"
+                        CornerRadius="6">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -248,7 +305,8 @@
                              Foreground promoted to CoalPaperBrush (primary)
                              for the same reason — secondary-text grey at
                              10 px washed straight into the background. -->
-                        <Border Grid.Row="0"
+                        <Border x:Name="InspectorHeaderBorder"
+                                Grid.Row="0"
                                 Padding="6,5,6,5"
                                 BorderBrush="{StaticResource CoalCardBrush}"
                                 BorderThickness="0,0,0,1">
@@ -257,8 +315,10 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
+                                <TextBlock x:Name="InspectorTitleText"
+                                           Grid.Column="0"
                                            Text="INSPECTOR"
+                                           loc:Localize.Key="architect.main.inspector.title"
                                            VerticalAlignment="Center"
                                            Margin="6,0,0,0"
                                            FontFamily="{StaticResource DisplayFont}"
@@ -278,6 +338,8 @@
                                         FontSize="14"
                                         ToolTipService.ToolTip="Roll up Inspector"
                                         AutomationProperties.Name="Roll up Inspector"
+                                        loc:Localize.TooltipKey="architect.main.inspector.chevron.rollup"
+                                        loc:Localize.AutomationKey="architect.main.inspector.chevron.rollup"
                                         Content="&#xE70D;"
                                         Click="OnInspectorChevronClicked" />
                             </Grid>
@@ -305,7 +367,8 @@
                 Background="{StaticResource CoalRaisedBrush}"
                 BorderBrush="{StaticResource CoalCardBrush}"
                 BorderThickness="0,1,0,0"
-                AutomationProperties.Name="Status Strip">
+                AutomationProperties.Name="Status Strip"
+                loc:Localize.AutomationKey="architect.main.status.a11y">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -344,7 +407,8 @@
                                FontFamily="{StaticResource MonoFont}"
                                FontSize="11"
                                Foreground="{StaticResource CoalPrimaryTextBrush}"
-                               Text="Ready" />
+                               Text="Ready"
+                               loc:Localize.Key="architect.main.status.ready" />
                 </StackPanel>
 
                 <!-- [S9-413/414] Center status zone. Glyph slot + text wrapped
@@ -391,6 +455,7 @@
                                FontSize="11"
                                Foreground="{StaticResource CoalSecondaryTextBrush}"
                                ToolTipService.ToolTip="Canvas zoom (Ctrl+Wheel to zoom · Home to fit)"
+                               loc:Localize.TooltipKey="architect.main.zoom_badge.tip"
                                Text="100%" />
                     <Ellipse x:Name="BusStatusDot"
                              Width="8" Height="8"
@@ -398,7 +463,8 @@
                              Stroke="{StaticResource CoalCardBrush}"
                              StrokeThickness="1"
                              VerticalAlignment="Center"
-                             ToolTipService.ToolTip="Hub bus disconnected" />
+                             ToolTipService.ToolTip="Hub bus disconnected"
+                             loc:Localize.TooltipKey="architect.main.bus.disconnected" />
                     <TextBlock x:Name="StatusRight"
                                VerticalAlignment="Center"
                                FontFamily="{StaticResource MonoFont}"

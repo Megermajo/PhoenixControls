@@ -67,6 +67,24 @@ public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
 
         _onLifecycle = evt =>
         {
+            // ★ Live PROCESS instances are excluded outright, before any state is
+            // taken. They fire lifecycle events under a synthetic
+            // "process::<guid>" ScriptName, but ScriptRegistry keeps them in its
+            // separate `_processInstances` map — `GetAll()` returns `_scripts`
+            // only — so the resolve below could never match one, and the fallback
+            // synthesised a status with `Path: ""`. ScriptViewModel keys its rows
+            // by Path, so EVERY unresolvable instance landed on one shared ""
+            // row whose label flipped between instances as they ran: N live
+            // processes rendered as one row lying about all of them.
+            //
+            // Excluding is honest rather than lossy — a process instance has no
+            // Scripts-panel row today either way; it only corrupted a shared one.
+            // The real home is the Routines panel (TODO RT1), which needs the
+            // enumeration APIs and the `kind` discriminator on ScriptStatus that
+            // RT0 adds. Delete this guard when RT0 lands; until then it also
+            // stops `_live` growing one permanent entry per spawned instance id.
+            if (IsProcessInstanceName(evt.ScriptName)) return;
+
             var live = _live.GetOrAdd(evt.ScriptName, _ => new Live());
             switch (evt.Phase)
             {
@@ -222,6 +240,15 @@ public sealed class ScriptHostMonitor : IScriptHostMonitor, IDisposable
             RunCount:     live?.RunCount ?? 0,
             LastError:    live?.LastError);
     }
+
+    /// <summary>
+    /// True for the synthetic script name a live process instance executes under
+    /// (<c>"process::&lt;instanceId&gt;"</c>, minted in
+    /// <c>ScriptManager.Process.cs</c> / <c>ScriptRegistry.RegisterProcessInstance</c>).
+    /// Ordinal, matching how both of those sites build and split the prefix.
+    /// </summary>
+    internal static bool IsProcessInstanceName(string? scriptName)
+        => scriptName != null && scriptName.StartsWith("process::", StringComparison.Ordinal);
 
     private static string ResolveFileName(string scriptName)
     {

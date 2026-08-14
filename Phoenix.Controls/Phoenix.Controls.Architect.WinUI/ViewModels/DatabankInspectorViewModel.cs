@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using Phoenix.Controls.Architect.WinUI.Databank;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Architect.WinUI.ViewModels;
@@ -20,7 +21,8 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 public sealed class DatabankInspectorViewModel : ObservableObject
 {
     private string _displayTitle = string.Empty;
-    private string _eyebrow      = "Inspector";
+    private string _eyebrow      =
+        Localizer.T("architect.main.databank_inspector.eyebrow", "Inspector");
 
     public DatabankInspectorViewModel()
     {
@@ -79,14 +81,18 @@ public sealed class DatabankInspectorViewModel : ObservableObject
         if (row is null)
         {
             DisplayTitle = string.Empty;
-            Eyebrow      = "Inspector";
+            Eyebrow      = Localizer.T("architect.main.databank_inspector.eyebrow", "Inspector");
             return;
         }
 
         DisplayTitle = string.IsNullOrEmpty(tableName)
-            ? $"row {row.RowIndex + 1}"
-            : $"{tableName} · row {row.RowIndex + 1}";
-        Eyebrow = "Row";
+            ? string.Format(
+                Localizer.T("architect.main.databank_inspector.row_format", "row {0}"),
+                row.RowIndex + 1)
+            : string.Format(
+                Localizer.T("architect.main.databank_inspector.table_row_format", "{0} · row {1}"),
+                tableName, row.RowIndex + 1);
+        Eyebrow = Localizer.T("architect.main.databank_inspector.eyebrow_row", "Row");
 
         // Capture locals for the WriteBackText closures so each field's
         // commit path persists against the correct row + column even after

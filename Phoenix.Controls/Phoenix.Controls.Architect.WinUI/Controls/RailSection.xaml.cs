@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Phoenix.Controls.Shared.Localization;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace Phoenix.Controls.Architect.WinUI.Controls;
@@ -113,8 +114,10 @@ public sealed partial class RailSection : UserControl
         {
             var t = Title;
             EmptyHint.Text = string.IsNullOrEmpty(t)
-                ? "None yet"
-                : $"No {t.ToLowerInvariant()} yet";
+                ? Localizer.T("architect.rail.empty.none", "None yet")
+                : string.Format(
+                    Localizer.T("architect.rail.empty.named", "No {0} yet"),
+                    t.ToLowerInvariant());
         }
         EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
     }

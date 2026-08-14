@@ -116,9 +116,8 @@ namespace Phoenix.Controls.Hub.Core
             // Per-instance schedule timers (cancelled on stop).
             StartScheduleTimers(inst);
 
-            // Observable record + Viewer push (mirrors the legacy spawn bridge).
+            // Observable record for the in-process ProcessManager.
             try { ProcessManager.Instance.CreateProcess(instanceId, name); } catch { }
-            BroadcastState(instanceId, "running");
 
             // on_process_start runs once, detached, with EventType="ProcessStart".
             _ = AsyncErrorBoundary.SafeRunAsync(
@@ -159,7 +158,6 @@ namespace Phoenix.Controls.Hub.Core
                 "ProcessInstance", $"on_process_stop ({inst.Name})");
 
             try { ProcessManager.Instance.TerminateProcess(instanceId); } catch { }
-            BroadcastState(instanceId, "ended");
 
             // Dispose the schedule CTS after a beat so any in-flight loop observes the
             // cancel before the token source is torn down.
@@ -203,12 +201,5 @@ namespace Phoenix.Controls.Hub.Core
                 inst.InstanceId, inst.TemplateContent, inst.ScopedVars, "Schedule", extra);
         }
 
-        private static void BroadcastState(string instanceId, string state)
-        {
-            if (HubHost.RemoteBridge is { } rb)
-                _ = AsyncErrorBoundary.SafeRunAsync(
-                    () => rb.BroadcastProcessStateAsync(instanceId, state),
-                    "ProcessInstance", $"RemoteBridge.BroadcastProcessState ({state})");
-        }
     }
 }

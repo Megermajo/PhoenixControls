@@ -32,10 +32,30 @@ namespace Phoenix.Controls.Architect.Core
             RegisterDataUtilityTemplates();   // NodeRegistry.Templates.DataUtilities.cs
             RegisterRemainingTemplates();     // NodeRegistry.Templates.RemainingBands.cs
             RegisterGiveawayTemplates();      // NodeRegistry.Templates.Giveaway.cs
+            RegisterTimerTemplates();         // NodeRegistry.Templates.Timer.cs
+            RegisterLoyaltyTemplates();       // NodeRegistry.Templates.Loyalty.cs
+            RegisterCountersTemplates();      // NodeRegistry.Templates.Counters.cs
+            RegisterAutomodTemplates();       // NodeRegistry.Templates.Automod.cs
+            RegisterQuotesTemplates();        // NodeRegistry.Templates.Quotes.cs
+            RegisterCustomCommandsTemplates();// NodeRegistry.Templates.CustomCommands.cs
+            RegisterUsersTemplates();         // NodeRegistry.Templates.Users.cs
+            RegisterSongRequestTemplates();   // NodeRegistry.Templates.SongRequest.cs
+            RegisterPollsTemplates();         // NodeRegistry.Templates.Polls.cs
+            RegisterRanksTemplates();         // NodeRegistry.Templates.Ranks.cs
+            RegisterSoundboardTemplates();    // NodeRegistry.Templates.Soundboard.cs
 
-            // Logic.Gate template removed from palette — identical to Logic.Branch.
-            // The handler still lives in ExporterRegistry.GateHandler so legacy
-            // .phxg files containing pre-removal Logic.Gate nodes continue to export.
+            // Logic.Gate is fully retired — template AND exporter handler are
+            // both gone (the template was identical to Logic.Branch; the
+            // GateHandler removal is recorded in ExporterRegistry.Handlers2.cs).
+            // Zero .phxg in the repo contains a Logic.Gate node. Should one ever
+            // arrive from outside: the final-era shape (Category "Flow Control",
+            // shipped 2026-04-21, removed 04-24) HARD-FAILS export at
+            // ScriptExporter's no-handler throw ("Flow Control" is not in
+            // _pureDataCategories, and AllowPlaceholderFallback defaults false —
+            // pinned by ExporterRegistryTests); a node authored in the earlier
+            // Category="Logic" window would instead take the pure-data inline
+            // arm and be SILENTLY dropped from the flow. Restore template +
+            // handler from git history if a use case ever resurfaces.
 
             // (SYSTEM / MATH & RNG / TEXT & STRINGS / COLLECTIONS / VALUES / TYPE CONVERSION
             //  bands carved to NodeRegistry.Templates.DataUtilities.cs.)
@@ -272,6 +292,7 @@ namespace Phoenix.Controls.Architect.Core
             SetIconGlyph("DB.DeleteRow",     DatabankGlyph);
             SetIconGlyph("DB.ClearTable",    DatabankGlyph);
             SetIconGlyph("DB.GetColumn",     DatabankGlyph);
+            SetIconGlyph("DB.Top",           DatabankGlyph);
             SetIconGlyph("DB.FetchRow",      DatabankGlyph);
 
             // HTTP —  is the "Globe" / world glyph (universal "network" cue).
@@ -402,6 +423,7 @@ namespace Phoenix.Controls.Architect.Core
             SetRequiredInputs("DB.DeleteRow",  "TableName");
             SetRequiredInputs("DB.ClearTable", "TableName");
             SetRequiredInputs("DB.GetColumn",  "TableName");
+            SetRequiredInputs("DB.Top",        "TableName");
             SetRequiredInputs("DB.FetchRow",   "TableName");
 
             // File — Path is mandatory for every Read/Write.
@@ -825,6 +847,7 @@ namespace Phoenix.Controls.Architect.Core
             SetSubGroup("DB.RowCount",  "Rows");
 
             SetSubGroup("DB.GetColumn",  "Table");
+            SetSubGroup("DB.Top",        "Table");
             SetSubGroup("DB.ClearTable", "Table");
 
             // ── OBS ─────────────────────────────────────────────────────────────

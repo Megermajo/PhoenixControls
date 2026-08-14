@@ -4,6 +4,7 @@ using Phoenix.Controls.Hub.Core;
 using Phoenix.Controls.Hub.Core.Translation;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
+using Paths = Phoenix.Controls.Shared.Core.Paths;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 using Phoenix.Controls.ViewerServer;
@@ -42,7 +43,7 @@ public static class HubBootstrapper
 
     // Hold strong references so the GC doesn't reclaim
     // a service while its background loop is still expected to fire. The
-    // existing HUDServer / RemoteBridgeServer live forever via HubHost; these
+    // existing HUDServer lives forever via HubHost; these
     // four don't (yet) have a process-wide accessor, so the bootstrapper itself
     // owns them. Torn down at shutdown via ShutdownOptInServicesAsync so the
     // Hub.WinUI process can exit cleanly (pre-fix the LiveCaptionService poll
@@ -51,6 +52,11 @@ public static class HubBootstrapper
     private static ClipboardService?        s_clipboardService;
     private static WebSocketServerService?  s_webSocketServerService;
     private static LiveCaptionService?      s_liveCaptionService;
+    // One-shot latch for the "captions are restricted to N layer(s)" notice.
+    // Interlocked because CaptionChanged fires from the UIA poll loop, and an
+    // int-with-Exchange is the cheapest correct once-only gate; a caption arrives
+    // several times a second, so re-logging would bury the SystemLog.
+    private static int s_captionScopeNoticeLogged;
     // Direct OBS WebSocket v5
     // client. Pinned for the same GC reason as the other opt-in services;
     // the message pump inside Websocket.Client is otherwise reclaimable
@@ -78,6 +84,87 @@ public static class HubBootstrapper
     // BootAsync step 7; torn down in ShutdownOptInServicesAsync.
     private static LogicWatcher? s_logicWatcher;
 
+    // TimerService (subathon countdown) is an always-on core service — a
+    // subathon must keep counting even with no Timer window open — so it is not
+    // AppConfig-gated. Pinned here for the same GC reason as the services above:
+    // its 1 Hz tick loop is a background Task with no other strong root. Brought
+    // up after DB init in BootAsync; ShutdownAsync (checkpoint + stop loop) runs
+    // from ShutdownOptInServicesAsync.
+    private static TimerService? s_timerService;
+
+    // CountersService (named databank-backed counters) is an always-on-capable
+    // core service — it self-gates on Config.Enabled (OFF by default), so bringing
+    // it up unconditionally is safe (fully dormant until enabled). Pinned here for
+    // the same GC reason as TimerService. Brought up after DB init in BootAsync.
+    private static CountersService? s_countersService;
+
+    // SchedulingService (recurring timed chat messages) is an always-on-capable
+    // core service — it self-gates on Config.Enabled (OFF by default) AND on the
+    // live-state, so bringing it up unconditionally is safe (fully dormant until
+    // enabled). Pinned here for the same GC reason as TimerService: its 1 Hz tick
+    // loop is a background Task with no other strong root. Brought up after DB init.
+    private static SchedulingService? s_schedulingService;
+
+    // UserManagementService (welcoming + groups) and AlertsService (event responses)
+    // are always-on-capable, self-gated (OFF by default) and purely event-driven —
+    // no tick loop. Pinned for symmetry with the sibling tool services.
+    private static UserManagementService? s_userManagementService;
+    private static AlertsService? s_alertsService;
+
+    // SongRequestService (YouTube request queue) is an always-on-capable core service —
+    // it self-gates on Config.Enabled (OFF by default). Pinned here for the same GC
+    // reason as TimerService: its overlay heartbeat is a background Task whose only
+    // strong root would otherwise be the singleton itself. Brought up after DB init.
+    private static SongRequestService? s_songRequestService;
+
+    // PollsService (chat poll + points betting) is an always-on-capable core service —
+    // it self-gates on Config.Enabled (OFF by default). Pinned here for the same GC
+    // reason as SongRequestService: its poll.* overlay heartbeat is a background Task
+    // whose only strong root would otherwise be the singleton itself. Brought up after
+    // DB init, and torn down BEFORE LoyaltyService, because its shutdown refunds an
+    // open pot through the points economy.
+    private static PollsService? s_pollsService;
+
+    // RanksService (watch-time / points rank ladder) is an always-on-capable core service
+    // — it self-gates on Config.Enabled (OFF by default). Pinned here for the same GC
+    // reason as PollsService: its rank.* overlay heartbeat is a background Task whose only
+    // strong root would otherwise be the singleton itself. Brought up after DB init, and
+    // AFTER LoyaltyService, because its points metric and its currency noun read that
+    // service's config — and because the watch-minute accrual it wires rides Loyalty's
+    // earn tick.
+    private static RanksService? s_ranksService;
+
+    // SoundboardService (chat-triggered clip playback) is an always-on-capable core
+    // service — it self-gates on Config.Enabled (OFF by default). Unlike its Polls /
+    // Ranks / SongRequest neighbours it owns NO background Task and NO overlay heartbeat
+    // (it publishes no live-channel key: a soundboard has no ambient state to report —
+    // it is a momentary fire, and a key that could only ever say "the last clip played"
+    // would be exactly the finished-poll-painted-forever failure). It is pinned here for
+    // symmetry with the sibling tool services rather than for a GC reason.
+    private static SoundboardService? s_soundboardService;
+
+    // AutomodService (spam filter) is an always-on-capable core service — it
+    // self-gates on Config.Enabled (OFF by default), so bringing it up
+    // unconditionally is safe (fully dormant until enabled). No tick loop and no
+    // overlay seam — moderation is quiet. Pinned here for the same GC reason as
+    // TimerService. Brought up after DB init in BootAsync.
+    private static AutomodService? s_automodService;
+
+    // QuotesService (databank-backed quote store) is an always-on-capable core
+    // service — it self-gates on Config.Enabled (OFF by default), so bringing it up
+    // unconditionally is safe (fully dormant until enabled). Stateless over the DB,
+    // no tick loop and no overlay seam. Pinned here for the same GC reason as
+    // TimerService. Brought up after DB init in BootAsync.
+    private static QuotesService? s_quotesService;
+
+    // CustomCommandsService (text/variable-only custom chat commands) is an
+    // always-on-capable core service — it self-gates on Config.Enabled (OFF by
+    // default), so bringing it up unconditionally is safe (fully dormant until
+    // enabled). Stateless (config only; no data table), no tick loop and no overlay
+    // seam. Pinned here for the same GC reason as TimerService. Brought up after DB
+    // init in BootAsync.
+    private static CustomCommandsService? s_customCommandsService;
+
     // V2 ViewerServer wiring. The server (HTTP+WS on :18090
     // serving the WebViewer bundle + a read-only snapshot of Hub state)
     // and its Hub-side read-model adapter both live for the process
@@ -91,6 +178,18 @@ public static class HubBootstrapper
     // listener.Close() to abort GetContextAsync mid-flight.
     private static CancellationTokenSource?   s_optInCts;
 
+    // Hub-wide shutdown CTS. Distinct from s_optInCts above, which only governs
+    // the opt-in services' own background loops (ViewerServer's accept loop, the
+    // OBS connect retry): this one is the *script* shutdown signal.
+    // ScriptManager.BeginExecutionTracked links every per-script execution CTS to
+    // the token installed via ScriptManager.SetGlobalShutdownToken, so cancelling
+    // this source propagates into every in-flight script run — including ones that
+    // start after CancelAllScripts has already walked the active-CTS map, since
+    // those link to an already-cancelled token and come up cancelled.
+    // Created + installed at the top of BootAsync (before anything can start a
+    // script); cancelled first and disposed last in ShutdownOptInServicesAsync.
+    private static CancellationTokenSource?   s_shutdownCts;
+
     public static async Task<HubServices> BootAsync(
         IUiDispatcher dispatcher,
         IPillarNavigator navigator,
@@ -99,6 +198,23 @@ public static class HubBootstrapper
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(navigator);
+
+        // ── Step 0 prep — install the Hub-wide script shutdown token ─────
+        // ScriptManager has always linked every per-script execution CTS to a
+        // static shutdown token, but nothing in production ever installed one, so
+        // the token stayed CancellationToken.None (the documented "never fires"
+        // sentinel) for the whole process lifetime and the link was inert. Create
+        // the source and hand its token over before ANY boot step runs: the bus
+        // starts accepting at step 4 and Bus.RouteIncomingMessage dispatches
+        // straight into ScriptManager.ExecuteOnBusScriptsAsync, so a script can be
+        // running well before the step-6 ScriptManager bring-up. Installing here
+        // means no execution can ever be created against the inert None token.
+        //
+        // SetGlobalShutdownToken overwrites rather than accumulates, so a second
+        // BootAsync in one process simply retires the previous token — in-flight
+        // executions already linked to it keep the CTS they were built with.
+        s_shutdownCts = new CancellationTokenSource();
+        ScriptManager.SetGlobalShutdownToken(s_shutdownCts.Token);
 
         // ── Step 0 — update-backup self-heal ─────────────────────────────
         // If a previous update wiped user data (the pre-2026-07-14 Updater
@@ -118,12 +234,14 @@ public static class HubBootstrapper
         // no-backup wipe the heals cannot rescue. Never throws / blocks.
         WipeSentinel.Run();
 
-        // Snapshot AppConfig once at boot. The legacy
-        // RemoteBridgeServer at step 4 is gated on cfg.RemoteEnabled and the
-        // ViewerServer at the end of the method uses the same source-of-truth;
-        // pulling the read into a local keeps the gate site obvious and
-        // matches ConfigManager.Current's intent (it's a snapshot, not a live
-        // observer — Settings changes don't retro-modify a running boot).
+        // Snapshot AppConfig once at boot. The ViewerServer (and other opt-in
+        // services) read from this same source-of-truth; pulling the read into
+        // a local keeps the gate sites obvious and matches ConfigManager.Current's
+        // intent (it's a snapshot, not a live observer — Settings changes don't
+        // retro-modify a running boot).
+        // (Dev's copy of this comment still cited the legacy RemoteBridgeServer
+        // gate at step 4; that subsystem was removed on this line, so the 1.1
+        // wording is the accurate one.)
         var cfg = ConfigManager.Current;
 
         // ── Step 1 — open the SQLite databank ────────────────────────────
@@ -162,6 +280,25 @@ public static class HubBootstrapper
         var hudServer = new HUDServer(WS.Instance.HUDPort);
         HubHost.HUD = hudServer;
         LayerRuntime.Instance.Dispatcher = hudServer.SendToLayerAsync;
+
+        // Overlay Live Channel — same dispatcher, same "wire it before anything
+        // can publish" rule as LayerRuntime above. The store is the single
+        // Hub→overlay data path: tools and scripts publish keys into it from any
+        // thread and its 1 Hz pump coalesces the dirty set into one LIVE_PATCH per
+        // layer. Assigning the dispatcher here (rather than at step 4 with
+        // HUDServer.StartAsync) means the very first publish — TimerService's
+        // startup tick, a LIVE_HELLO answered the instant OBS reconnects — already
+        // has somewhere to land. StartPump is idempotent (loop-gated internally),
+        // so it is safe next to the assignment even though no layer can have
+        // subscribed yet: an empty dirty set makes every tick a no-op until the
+        // first LIVE_HELLO arrives.
+        OverlayLiveStore.Instance.Dispatcher = hudServer.SendToLayerAsync;
+        // The addressed seam, used for exactly one frame: the LIVE_SNAPSHOT that answers
+        // a LIVE_HELLO. A HELLO is per-socket and a snapshot means "repaint everything",
+        // so fanning it at the layer made one browser's connect repaint every other
+        // browser already on that layer — N sources ⇒ N² render passes per save.
+        OverlayLiveStore.Instance.SocketDispatcher = hudServer.SendToSocketAsync;
+        OverlayLiveStore.Instance.StartPump();
 
         // Auto-sync to OBS: when LayerWatcher (re)registers a .phxlayer, the
         // connected /hud/<id> browsers must refresh WITHOUT a manual OBS
@@ -260,41 +397,6 @@ public static class HubBootstrapper
             () => hudServer.StartAsync(),
             "HubBootstrapper", "HUDServer.StartAsync");
 
-        // RemoteBridgeServer (legacy Viewer-pairing wire) is now
-        // gated on AppConfig.RemoteEnabled. Pre-fix the bridge constructed
-        // and bound port 18083 on every Hub boot regardless of the toggle —
-        // identical to the gating bug v2 ViewerServer documented at the
-        // bottom of this method, just on the older surface. ScriptManager
-        // broadcasts process-lifecycle to paired Viewers via the
-        // null-conditional HubHost.RemoteBridge?.BroadcastProcessStateAsync,
-        // so the off-branch (HubHost.RemoteBridge stays null) just no-ops
-        // those broadcasts cleanly without bricking other Hub services.
-        if (cfg.RemoteEnabled)
-        {
-            try
-            {
-                var remoteBridge = new RemoteBridgeServer();
-                HubHost.RemoteBridge = remoteBridge;
-                _ = AsyncErrorBoundary.SafeRunAsync(
-                    () => remoteBridge.StartAsync(),
-                    "HubBootstrapper", "RemoteBridgeServer.StartAsync");
-                GlobalLogger.Log(
-                    "RemoteBridgeServer starting (AppConfig.RemoteEnabled=true).",
-                    "HubBootstrapper", LogLevel.System);
-            }
-            catch (Exception ex)
-            {
-                GlobalLogger.Error("HubBootstrapper", "RemoteBridgeServer startup failed", ex);
-                HubHost.RemoteBridge = null;
-            }
-        }
-        else
-        {
-            GlobalLogger.Log(
-                "RemoteBridgeServer disabled — AppConfig.RemoteEnabled=false. " +
-                "Viewer-pairing broadcasts will no-op.",
-                "HubBootstrapper", LogLevel.System);
-        }
         ct.ThrowIfCancellationRequested();
 
         // ── Step 5 — Streamer.bot client connect ─────────────────────────
@@ -416,7 +518,408 @@ public static class HubBootstrapper
             GlobalLogger.Error("HubBootstrapper", "SchedulerService.Start failed", ex);
         }
 
-        GlobalLogger.Log("Hub services online. Bus / HUD / Streamer.bot / Scripts / Scheduler wired.",
+        // ── One-shot Pre-Build opt-in migration (1.1 test-build cleanup) ─
+        // Every Pre-Build tool is opt-in by design: fresh installs persist no
+        // config, and all master toggles default OFF. But the SQLite DB in
+        // Roaming AppData survives in-place upgrades, so earlier 1.1 test
+        // sessions can leave tool blobs Enabled=true and timers checkpointed
+        // Running — which then reload as "active" after this patch installs.
+        // Runs BEFORE any tool service loads its blob so each InitializeAsync
+        // reads the corrected value; guarded by an AppConfig flag (mirrors the
+        // SeenWelcomeDialog / ArchitectInspectorDockedMigrated one-shot idiom)
+        // so ONLY this patch's first boot forces anything — later patches
+        // never override the streamer's choices again.
+        if (!ConfigManager.Current.PreBuildToolsForcedOffMigrated)
+        {
+            try
+            {
+                var (disabled, paused) = await PreBuildOptInMigration.RunAsync(DB.Instance).ConfigureAwait(false);
+
+                // Flag saved only after a clean pass — a DB-level failure above
+                // throws past this, so the migration retries on the next boot
+                // instead of half-migrating silently. Accepted residual: if the
+                // config.json WRITE itself fails silently, the flag stays false
+                // on disk and the migration re-runs (re-forcing tools OFF) next
+                // boot — annoying but fail-closed, which is the right direction
+                // for an opt-in guarantee.
+                ConfigManager.Current.PreBuildToolsForcedOffMigrated = true;
+                await ConfigManager.SaveAsync(Paths.AppConfigJson).ConfigureAwait(false);
+
+                if (disabled > 0 || paused > 0)
+                {
+                    GlobalLogger.Log(
+                        $"Pre-Build opt-in migration: forced {disabled} tool(s) OFF, paused {paused} running timer(s). " +
+                        "One-time cleanup — re-enable tools in their pages when wanted.",
+                        "HubBootstrapper", LogLevel.System);
+                }
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("HubBootstrapper", "Pre-Build opt-in migration failed (will retry next boot)", ex);
+            }
+        }
+
+        // ── One-shot tip-defaults migration (donation ingestion) ─────────
+        // Separate flag and separate class from the opt-in migration above: that
+        // one flips a tool's top-level master Enabled key, these settings are
+        // nested (Loyalty Earn.TipEnabled) and inside typed per-timer blobs.
+        // Must run BEFORE LoyaltyService/TimerService initialize below so each
+        // reads the corrected config. Same failure contract: the flag is set only
+        // after a clean pass, so a DB fault retries next boot rather than leaving
+        // tips armed.
+        if (!ConfigManager.Current.TipDefaultsForcedOffMigrated)
+        {
+            try
+            {
+                var (loyaltyChanged, timersChanged) = await TipDefaultsMigration.RunAsync(DB.Instance).ConfigureAwait(false);
+
+                ConfigManager.Current.TipDefaultsForcedOffMigrated = true;
+                await ConfigManager.SaveAsync(Paths.AppConfigJson).ConfigureAwait(false);
+
+                if (loyaltyChanged || timersChanged > 0)
+                {
+                    GlobalLogger.Log(
+                        $"Tip-defaults migration: Loyalty tip earn {(loyaltyChanged ? "forced OFF" : "already off")}, " +
+                        $"{timersChanged} timer(s) had their tip rate zeroed. Donations now pay out only once you set it up.",
+                        "HubBootstrapper", LogLevel.System);
+                }
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("HubBootstrapper", "Tip-defaults migration failed (will retry next boot)", ex);
+            }
+        }
+
+        // ── ViewerPresenceService (who is watching) — always-on data source ─
+        // NOT a tool and NOT opt-in. There is no master toggle, no pre-build page
+        // owns it, and nothing user-visible fires from it: it samples Streamer.bot's
+        // chatter list on a cadence and turns that into the three things the rest of
+        // the suite reads — one shared active-viewer snapshot (instead of every
+        // consumer opening its own GetActiveViewers round-trip and getting a
+        // different answer), the platform-role cache a role question about an
+        // arbitrary login falls back to, and passive watch-time minutes.
+        //
+        // That last one is why it carries no config gate here: watch time has to
+        // record with every pre-build tool switched off, which is exactly the install
+        // where the old accrual — a passenger on Loyalty's earn tick, additionally
+        // gated behind the Ranks tool being enabled — recorded nothing at all. The
+        // streamer-facing switches (WatchTimeTrackingEnabled / WatchTimeOnlyWhenLive /
+        // ViewerPresencePollSeconds) are read live inside the loop, so gating the
+        // bring-up would only mean a Settings change needed a restart.
+        //
+        // There is no InitializeAsync to await — Start() spins the loop, and the loop
+        // does its own CREATE-TABLE-IF-NOT-EXISTS and mirror load on the way in. It
+        // sits here, after step 5 (the Streamer.bot connect the sweep rides) and step 6
+        // (the ScriptManager ctor; the FetchProvider / BotAccountsProvider /
+        // RoleFallbackProvider seams are wired on the ScriptManager side, because the
+        // pillar rule keeps every Streamer.bot round-trip there and this service holds
+        // no socket of its own). A still-null seam only costs a wasted sample — the
+        // loop tolerates it, returning an empty list and accruing nothing — but there
+        // is no reason to spend one.
+        //
+        // Ordered BEFORE RanksService below. The ladder no longer owns watch-time
+        // accrual — this service does, and it announces each write through its
+        // WatchTimeCredited event. Starting the publisher first is what lets Ranks
+        // attach during its own InitializeAsync rather than race the first credit.
+        try
+        {
+            ViewerPresenceService.Instance.Start();
+            GlobalLogger.Log("ViewerPresenceService online — viewer presence + watch time recording (always-on data source, no toggle).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "ViewerPresenceService startup failed", ex);
+        }
+
+        // ── TimerService (subathon countdown) — always-on ────────────────
+        // Load persisted timers and start the 1 Hz tick. No overlay seam to wire
+        // any more: the tick publishes timer.<slug>.* / timer.__default.* straight
+        // into the Overlay Live Channel (already dispatcher-wired at step 3), which
+        // routes per subscribed key instead of blind-broadcasting a TIMER_UPDATE to
+        // every browser. The RaiseScriptEvent / BusEmit seams are wired on the
+        // ScriptManager side (ScriptManager.Timer.cs). StreamOnline/Offline routing to
+        // SetStreamLive happens in ExecuteGenericEventAsync. No AppConfig gate —
+        // a subathon must run even with no Timer window open.
+        try
+        {
+            await TimerService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_timerService = TimerService.Instance;
+            TimerService.Instance.StartTicking();
+            GlobalLogger.Log("TimerService online — subathon countdown active (always-on).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "TimerService startup failed", ex);
+            s_timerService = null;
+        }
+
+        // ── LoyaltyService (viewer points economy) — always-on-capable ───
+        // Load persisted config + ensure the wallet tables, then start the watch-time
+        // earn tick. No overlay seam to wire: every balance change publishes
+        // loyalty.leaderboard / loyalty.currency into the Overlay Live Channel (still
+        // gated on the tool's own Config.Overlay.Enabled switch). The service SELF-GATES
+        // on Config.Enabled (OFF by default), so starting it unconditionally is safe — it
+        // stays fully dormant (no earn, no commands, no games) until enabled. The
+        // RaiseScriptEvent / BusEmit / ActiveViewers / BotAccounts / FireVisualTrigger
+        // seams are wired on the ScriptManager side (ScriptManager.Loyalty.cs).
+        try
+        {
+            await LoyaltyService.Instance.InitializeAsync().ConfigureAwait(false);
+            LoyaltyService.Instance.StartEarning();
+            GlobalLogger.Log("LoyaltyService online — points economy ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "LoyaltyService startup failed", ex);
+        }
+
+        // ── CountersService (named counters) — always-on-capable ─────────
+        // Load persisted config + ensure the OPEN counts table. No overlay seam to
+        // wire: every count change publishes counter.<name>.count into the Overlay
+        // Live Channel. The service SELF-GATES on Config.Enabled (OFF by default), so
+        // starting it unconditionally is safe — it stays fully dormant (no chat
+        // commands, no overlay push) until enabled. The RaiseScriptEvent seam is
+        // wired on the ScriptManager side (ScriptManager.Counters.cs).
+        try
+        {
+            await CountersService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_countersService = CountersService.Instance;
+            GlobalLogger.Log("CountersService online — named counters ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "CountersService startup failed", ex);
+            s_countersService = null;
+        }
+
+        // ── SchedulingService (recurring timed chat messages) — always-on ─
+        // Load persisted config, then start the 1 Hz tick loop. The service
+        // SELF-GATES on Config.Enabled (OFF by default) AND the OnlyWhenLive /
+        // live-state, so starting it unconditionally is safe — it posts nothing
+        // until enabled. No overlay seam (chat-only). The ChatSend seam (token
+        // resolution + SendTwitchChatCore) is wired on the ScriptManager side
+        // (ScriptManager.Scheduling.cs).
+        try
+        {
+            await SchedulingService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_schedulingService = SchedulingService.Instance;
+            SchedulingService.Instance.StartTicking();
+            GlobalLogger.Log("SchedulingService online — recurring messages ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "SchedulingService startup failed", ex);
+            s_schedulingService = null;
+        }
+
+        // ── UserManagementService (welcoming + groups + queue) — always-on-capable ─
+        // Load persisted config + the welcomed-this-stream set. Its ONLY tick is the
+        // viewer queue's 5 s overlay heartbeat, started by InitializeAsync and
+        // self-gated inside: an Overlay Live Channel key must be republished on a
+        // declared cadence to report Stale honestly once nobody is maintaining it.
+        // Everything else is event-driven (the observe-only greeting tap, the handling
+        // queue provider, the role overlay). The service SELF-GATES on Config.Enabled
+        // (OFF by default) so starting it unconditionally is safe — dormant means no
+        // greeting, no queue commands, no overlay publish and a passthrough role
+        // overlay. Seams wired on the ScriptManager side (ScriptManager.UserManagement.cs).
+        try
+        {
+            await UserManagementService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_userManagementService = UserManagementService.Instance;
+            GlobalLogger.Log("UserManagementService online — welcoming + groups + viewer queue ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "UserManagementService startup failed", ex);
+            s_userManagementService = null;
+        }
+
+        // ── AlertsService (event responses) — always-on-capable ──────────
+        // Load persisted config. NO tick loop (purely event-driven via the
+        // ExecuteGenericEventAsync tap). SELF-GATES on Config.Enabled (OFF by
+        // default). Seams wired on the ScriptManager side (ScriptManager.Alerts.cs).
+        try
+        {
+            await AlertsService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_alertsService = AlertsService.Instance;
+            GlobalLogger.Log("AlertsService online — event responses ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "AlertsService startup failed", ex);
+            s_alertsService = null;
+        }
+
+        // ── SongRequestService (YouTube request queue) — always-on-capable ─
+        // Load persisted config. InitializeAsync also starts the overlay heartbeat, which
+        // is self-gated inside: an Overlay Live Channel key must be republished on its
+        // declared cadence to report Stale honestly once nobody is maintaining it, and
+        // starting the pump unconditionally is what lets enabling the tool mid-stream
+        // start painting within one interval instead of after a restart. The request queue
+        // itself is session state and is deliberately never restored. The service
+        // SELF-GATES on Config.Enabled (OFF by default) so starting it unconditionally is
+        // safe — dormant means no chat commands, no queue and no overlay publish. Seams
+        // (script events, the YouTube resolve, the Loyalty charge/refund) are wired on the
+        // ScriptManager side (ScriptManager.SongRequest.cs).
+        try
+        {
+            await SongRequestService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_songRequestService = SongRequestService.Instance;
+            GlobalLogger.Log("SongRequestService online — request queue ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "SongRequestService startup failed", ex);
+            s_songRequestService = null;
+        }
+
+        // ── PollsService (chat poll + points betting) — always-on-capable ──
+        // Load persisted config. InitializeAsync also starts the overlay heartbeat, which
+        // is self-gated inside: a poll.* key must be republished on its declared cadence to
+        // report Stale honestly, and the pump is also what RETRACTS the keys once a closed
+        // poll's result has finished lingering — so it has to run even while the tool is
+        // dormant. The live poll itself is session state and is deliberately never
+        // restored (a wall-clock countdown cannot resume across a restart). The service
+        // SELF-GATES on Config.Enabled (OFF by default). Seams (script events, the Loyalty
+        // charge / refund / payout trio, the announcement, the native mirror) are wired on
+        // the ScriptManager side (ScriptManager.Polls.cs), which ran back at step 6 — so an
+        // open pot is already refundable by the time this returns.
+        //
+        // Ordered AFTER LoyaltyService above: the stakes ride that economy, and its config
+        // must be loaded before this tool can charge or refund anything.
+        try
+        {
+            await PollsService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_pollsService = PollsService.Instance;
+            GlobalLogger.Log("PollsService online — chat polls ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "PollsService startup failed", ex);
+            s_pollsService = null;
+        }
+
+        // ── RanksService (watch-time / points rank ladder) — always-on-capable ──
+        // Load persisted config and CREATE the two OPEN data tables ("WatchTime" and
+        // "Ranks"), which is why this has to run even while the tool is dormant: a streamer
+        // who enables the ladder mid-stream must not have to restart the Hub before minutes
+        // can be recorded. InitializeAsync also starts the overlay heartbeat, self-gated
+        // inside for the same reason as Polls' — a rank.* key must be republished on its
+        // declared cadence to report Stale honestly, and the pump is what RETRACTS the keys
+        // when the tool is switched off. The service SELF-GATES on Config.Enabled (OFF by
+        // default). Its five seams (script event, announcement, currency noun, balance
+        // table, and the watch-minute accrual pair wired onto LOYALTY) are set on the
+        // ScriptManager side (ScriptManager.Ranks.cs), which ran back at step 6.
+        //
+        // Ordered AFTER LoyaltyService above: the points metric reads that service's
+        // configured balance table and currency noun, and the accrual rides its earn tick.
+        try
+        {
+            await RanksService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_ranksService = RanksService.Instance;
+            GlobalLogger.Log("RanksService online — rank ladder ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "RanksService startup failed", ex);
+            s_ranksService = null;
+        }
+
+        // ── SoundboardService (chat-triggered clip playback) — always-on-capable ──
+        // Load the persisted config and nothing else: there is no data table to create
+        // and no heartbeat to start, because the tool's "data" is the clip FILES in
+        // data/media. The service SELF-GATES on Config.Enabled (OFF by default), so
+        // starting it unconditionally is safe — it stays fully dormant (no chat parsing,
+        // no overlay fires) until enabled. Its single seam (the shared visual fan-out) is
+        // wired on the ScriptManager side (ScriptManager.Soundboard.cs), which ran back at
+        // step 6.
+        //
+        // Ordering note: this runs AFTER PreBuildOptInMigration like every sibling, which
+        // is what lets InitializeAsync read the corrected Enabled value rather than a
+        // stale true carried across an in-place upgrade.
+        try
+        {
+            await SoundboardService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_soundboardService = SoundboardService.Instance;
+            GlobalLogger.Log("SoundboardService online — clip playback ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "SoundboardService startup failed", ex);
+            s_soundboardService = null;
+        }
+
+        // ── AutomodService (spam filter) — always-on-capable ─────────────
+        // Load persisted config, ensure the OPEN strikes table + compile the
+        // blocklist regexes. NO tick loop and NO overlay seam (moderation is quiet).
+        // The service SELF-GATES on Config.Enabled (OFF by default), so starting it
+        // unconditionally is safe — it stays fully dormant (no scanning, no chat
+        // commands) until enabled. The RaiseScriptEvent / BotAccountsProvider seams
+        // are wired on the ScriptManager side (ScriptManager.Automod.cs).
+        try
+        {
+            await AutomodService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_automodService = AutomodService.Instance;
+            GlobalLogger.Log("AutomodService online — spam filter ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "AutomodService startup failed", ex);
+            s_automodService = null;
+        }
+
+        // ── QuotesService (quote store) — always-on-capable ──────────────
+        // Load persisted config + ensure the OPEN "Quotes" table. Stateless over the
+        // DB — no tick loop, no overlay seam. The service SELF-GATES on Config.Enabled
+        // (OFF by default), so starting it unconditionally is safe — it stays fully
+        // dormant (no chat commands, no Quote.OnAdded event) until enabled. The
+        // RaiseScriptEvent seam is wired on the ScriptManager side (ScriptManager.Quotes.cs).
+        try
+        {
+            await QuotesService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_quotesService = QuotesService.Instance;
+            GlobalLogger.Log("QuotesService online — quote store ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "QuotesService startup failed", ex);
+            s_quotesService = null;
+        }
+
+        // ── CustomCommandsService (custom chat commands) — always-on-capable ──
+        // Load persisted config. Stateless — no data table (the {count}/{count.next}
+        // tokens consume the Counters tool), no tick loop, no overlay seam. The service
+        // SELF-GATES on Config.Enabled (OFF by default), so starting it unconditionally
+        // is safe — it stays fully dormant (no chat commands, no Command.OnCustom event)
+        // until enabled. The RaiseScriptEvent / counter / channel seams are wired on the
+        // ScriptManager side (ScriptManager.CustomCommands.cs).
+        try
+        {
+            await CustomCommandsService.Instance.InitializeAsync().ConfigureAwait(false);
+            s_customCommandsService = CustomCommandsService.Instance;
+            GlobalLogger.Log("CustomCommandsService online — custom chat commands ready (always-on, dormant until enabled).",
+                "HubBootstrapper", LogLevel.System);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("HubBootstrapper", "CustomCommandsService startup failed", ex);
+            s_customCommandsService = null;
+        }
+
+        GlobalLogger.Log("Hub services online. Bus / HUD / Streamer.bot / Scripts / Scheduler / Timer / Loyalty / Counters / Automod / Quotes / CustomCommands wired.",
             "HubBootstrapper", LogLevel.System);
 
         // ── Step 8 — opt-in event-trigger services ───────────────────────
@@ -568,17 +1071,16 @@ public static class HubBootstrapper
                 {
                     s_liveCaptionService = new LiveCaptionService(cfg.LiveCaptionsAutoLaunch);
 
-                    // Broadcast pipeline. Pre-fix
-                    // captions were captured into the service's private buffer
-                    // and the CaptionChanged event had no production subscriber
-                    // (only test fixtures listened), so Caption.LiveCaption
-                    // nodes + compositor.js's captionState waited on a
-                    // CAPTION_UPDATE that was never emitted. Wire the chain
-                    // here: capture → translate (passthrough by default) →
-                    // gate on AppConfig.LiveCaptionsBroadcastToOverlays → push
-                    // a CAPTION_UPDATE envelope to every active layer that
-                    // either appears in LiveCaptionsAllowedLayers or — when
-                    // that allowlist is empty — every layer (legacy fan-out).
+                    // Capture pipeline: capture → translate (passthrough by
+                    // default) → gate on AppConfig.LiveCaptionsBroadcastToOverlays
+                    // → publish into the Overlay Live Channel. Pre-fix captions
+                    // were captured into the service's private buffer with no
+                    // production subscriber at all; then the wired CAPTION_UPDATE
+                    // envelope carried text/source/lang/ts while the browser read
+                    // original/translated/sourceLanguage/targetLanguage — ZERO key
+                    // overlap, so every caption frame delivered empty strings. The
+                    // channel keys below ARE the reader's contract, which is what
+                    // finally closes that gap.
                     s_liveCaptionService.CaptionChanged += async (text) =>
                     {
                         try
@@ -587,7 +1089,7 @@ public static class HubBootstrapper
                             // TranslateAsync is safe to call even with the
                             // passthrough translator (returns input unchanged);
                             // explicit try block so a translator fault doesn't
-                            // poison the broadcast — overlays still get the
+                            // poison the publish — overlays still get the
                             // raw caption on translation failure.
                             try
                             {
@@ -605,46 +1107,57 @@ public static class HubBootstrapper
 
                             if (!cfg.LiveCaptionsBroadcastToOverlays) return;
 
-                            var hud = HubHost.HUD;
-                            if (hud is null) return;
-
+                            // LiveCaptionsAllowedLayers keeps its meaning: a
+                            // non-empty list restricts captions to those layer ids
+                            // and nothing else. Per-key routing does NOT subsume
+                            // that — a shared/restream layer that binds a caption
+                            // socket would subscribe caption.* and start painting
+                            // speech exactly where the streamer forbade it. So the
+                            // list is threaded to the store as a publish SCOPE, which
+                            // gates the dirty set, the periodic resync sweep and the
+                            // LIVE_SNAPSHOT alike. Empty list => null => every
+                            // subscribing layer, the historical "legacy fan-out"
+                            // meaning, byte for byte.
                             var allow = cfg.LiveCaptionsAllowedLayers ?? new System.Collections.Generic.List<string>();
-                            var payload = new
-                            {
-                                type   = "CAPTION_UPDATE",
-                                text   = translated,
-                                source = "live_caption",
-                                lang   = cfg.CaptionTargetLanguage ?? "",
-                                ts     = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                            };
+                            System.Collections.Generic.IReadOnlyCollection<string>? captionScope =
+                                allow.Count > 0 ? allow : null;
 
-                            if (allow.Count == 0)
+                            // One-shot notice so a blank caption overlay is
+                            // self-diagnosing: the allowlist is the first thing to
+                            // suspect, and it is invisible from the graph side.
+                            if (captionScope is not null
+                                && System.Threading.Interlocked.Exchange(ref s_captionScopeNoticeLogged, 1) == 0)
                             {
-                                await hud.BroadcastToAllLayersAsync(payload).ConfigureAwait(false);
+                                GlobalLogger.Log(
+                                    $"LiveCaption: captions are restricted to the {allow.Count} layer(s) in "
+                                    + $"LiveCaptionsAllowedLayers ({string.Join(", ", allow)}). Any other layer whose widgets read "
+                                    + "caption.* will stay blank by design — clear the setting to allow every layer.",
+                                    "HubBootstrapper", LogLevel.System);
                             }
-                            else
-                            {
-                                foreach (var layerId in allow)
-                                {
-                                    try
-                                    {
-                                        await hud.SendToLayerAsync(layerId, payload).ConfigureAwait(false);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        GlobalLogger.Error(
-                                            "LiveCaption",
-                                            $"SendToLayerAsync('{layerId}') failed for CAPTION_UPDATE",
-                                            ex);
-                                    }
-                                }
-                            }
+
+                            // Only the two keys that HAVE a reader. compositor.js's
+                            // CAPTION_SOCKETS is exactly { Original, Translated };
+                            // captionState.sourceLanguage / targetLanguage are
+                            // written and never read, so publishing
+                            // caption.source_language / caption.target_language
+                            // would ship dead keys. No expected interval: speech is
+                            // event-driven, and a caption that hasn't changed for a
+                            // minute is still the current caption, not a stale one.
+                            var live = OverlayLiveStore.Instance;
+                            live.PublishString("caption.original", text, "tool:LiveCaption",
+                                allowedLayers: captionScope);
+                            // Mirrors the browser's own `translated || original`
+                            // fallback: a translator that returns empty must not
+                            // blank the caption.
+                            live.PublishString("caption.translated",
+                                string.IsNullOrEmpty(translated) ? text : translated, "tool:LiveCaption",
+                                allowedLayers: captionScope);
                         }
                         catch (Exception ex)
                         {
                             GlobalLogger.Error(
                                 "LiveCaption",
-                                "broadcast pipeline threw on CaptionChanged",
+                                "caption publish pipeline threw on CaptionChanged",
                                 ex);
                         }
                     };
@@ -821,8 +1334,42 @@ public static class HubBootstrapper
         var layerWatcher = s_layerWatcher;
         var logicWatcher = s_logicWatcher;
         var optInCts     = s_optInCts;
+        var shutdownCts  = s_shutdownCts;
         var obsWs        = s_obsWebSocketClient;
+        var timerSvc     = s_timerService;
+        var schedulingSvc = s_schedulingService;
+        var userMgmtSvc  = s_userManagementService;
+        var songSvc      = s_songRequestService;
+        var pollsSvc     = s_pollsService;
+        var ranksSvc     = s_ranksService;
 
+        // CountersService has no tick loop / open sockets to drain (stateless over
+        // the DB), so there's nothing to await here — just release the GC-pin so a
+        // re-entrant shutdown sees an empty slate. Read-then-null so the field is
+        // observed (not a write-only pin).
+        if (s_countersService != null) s_countersService = null;
+        // AutomodService is likewise stateless over the DB (no tick / sockets to
+        // drain) — just release the GC-pin. Read-then-null so the field is observed.
+        if (s_automodService != null) s_automodService = null;
+        // QuotesService is likewise stateless over the DB (no tick / sockets to drain)
+        // — just release the GC-pin. Read-then-null so the field is observed.
+        if (s_quotesService != null) s_quotesService = null;
+        // CustomCommandsService is likewise stateless (config only; no tick / sockets /
+        // data table) — just release the GC-pin. Read-then-null so the field is observed.
+        if (s_customCommandsService != null) s_customCommandsService = null;
+        // SoundboardService is likewise stateless (config only; no tick / heartbeat /
+        // sockets / data table) — just release the GC-pin. It is NOT in the awaited
+        // teardown block below because it has nothing to drain: its only outbound action
+        // is a fire of the shared visual fan-out, which the LayerRuntime owns and tears
+        // down on its own schedule. Read-then-null so the field is observed.
+        if (s_soundboardService != null) s_soundboardService = null;
+        s_timerService            = null;
+        s_schedulingService       = null;
+        s_userManagementService   = null;
+        s_songRequestService      = null;
+        s_pollsService            = null;
+        s_ranksService            = null;
+        s_alertsService           = null;
         s_hotkeyService           = null;
         s_clipboardService        = null;
         s_webSocketServerService  = null;
@@ -836,7 +1383,28 @@ public static class HubBootstrapper
         s_layerWatcher            = null;
         s_logicWatcher            = null;
         s_optInCts                = null;
+        s_shutdownCts             = null;
         s_obsWebSocketClient      = null;
+
+        // ── Hub-wide script cancel — ahead of every teardown below ───────
+        // Fire the token that ScriptManager linked every per-script execution CTS
+        // to (installed in BootAsync). This runs before ProcessInstanceManager /
+        // SchedulerService / OverlayLiveStore and the per-service drains that
+        // follow, and that ordering is the point: an in-flight script gets its
+        // cancel while the services its commands call are still alive, so it
+        // unwinds on an OperationCanceledException instead of faulting against a
+        // half-torn-down dependency.
+        //
+        // Defence in depth, NOT a replacement for ScriptManager's own teardown:
+        // MainWindow's shutdown coordinator runs ScriptManager.DisposeAsync
+        // (→ StopAsync → CancelAllScripts) as a sibling step in the same parallel
+        // batch and that path is untouched. What the linked token adds is coverage
+        // for executions that begin after CancelAllScripts has already walked the
+        // active-CTS map — those link to an already-cancelled token in
+        // BeginExecutionTracked and so are born cancelled, where the map walk
+        // could only ever cancel what it could see at that instant.
+        try { shutdownCts?.Cancel(); }
+        catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "Hub shutdown CTS cancel failed", ex); }
 
         // Stop every live process instance first so their per-instance schedule
         // timers cancel before the shared scheduler is drained.
@@ -847,6 +1415,125 @@ public static class HubBootstrapper
         // OnRefresh-driven Reload can't queue tasks against a dying CTS.
         try { SchedulerService.Instance.Stop(); }
         catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "SchedulerService.Stop failed", ex); }
+
+        // Overlay Live Channel: drain the 1 Hz patch pump BEFORE the publishers
+        // below (Timer / Scheduling / Loyalty). Two reasons for that ordering:
+        //
+        //   • The store is the downstream end of the publish chain. Publishing
+        //     always writes the store, so a publisher's final shutdown tick is
+        //     harmless once the pump is gone — the value just sits there and the
+        //     process exits. Draining the store LAST would invert that: each
+        //     publisher teardown would re-dirty a still-running pump, which would
+        //     then build and fan out a patch frame nobody can receive.
+        //   • MainWindow disposes the HUDServer synchronously in its Step 2, before
+        //     the coordinator task that calls this method even starts. By the time
+        //     we get here the store's dispatcher already points at a closed
+        //     listener with no open sockets, so every additional tick is pure waste.
+        //
+        // ShutdownAsync cancels the loop CTS and awaits the drain, so it cannot
+        // outlive this call and race the process exit.
+        try { await OverlayLiveStore.Instance.ShutdownAsync().ConfigureAwait(false); }
+        catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "OverlayLiveStore.ShutdownAsync failed", ex); }
+
+        // TimerService: stop the 1 Hz tick loop and checkpoint every timer to the
+        // DB so a subathon resumes from its last remaining value on next boot.
+        if (timerSvc is not null)
+        {
+            try { await timerSvc.ShutdownAsync().ConfigureAwait(false); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "TimerService.ShutdownAsync failed", ex); }
+        }
+
+        // SchedulingService: cancel the 1 Hz tick loop and drain it. Config is already
+        // persisted on every edit (UpdateConfigAsync), so there is nothing to flush.
+        if (schedulingSvc is not null)
+        {
+            try { await schedulingSvc.ShutdownAsync().ConfigureAwait(false); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "SchedulingService.ShutdownAsync failed", ex); }
+        }
+
+        // UserManagementService: cancel the viewer queue's overlay heartbeat and drain
+        // it. Config is persisted on every edit and the queue lives in the databank, so
+        // there is nothing to flush — this only stops the pump from re-dirtying the
+        // Overlay Live Channel that was drained a few lines above.
+        if (userMgmtSvc is not null)
+        {
+            try { await userMgmtSvc.ShutdownAsync().ConfigureAwait(false); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "UserManagementService.ShutdownAsync failed", ex); }
+        }
+
+        // SongRequestService: REFUND every still-waiting request's PointsPaid, then cancel
+        // the songrequest.* overlay heartbeat and drain it. The queue is session state that
+        // is never restored, but that is exactly why it is NOT free to drop: a price is
+        // debited the moment a request lands, so ShutdownAsync gives every queued viewer's
+        // charge back before the pump stops (even with the tool toggled off — switching it
+        // off does not empty the queue). Config is persisted on every edit, so the refund
+        // is the only flush.
+        //
+        // ★ Ordered BEFORE LoyaltyService below, and that is load-bearing rather than
+        // tidy — same contract as PollsService: the refunds run through the points economy
+        // (the RefundPoints delegate), so tearing Loyalty down first would leave the
+        // debited charges with nothing able to give them back.
+        if (songSvc is not null)
+        {
+            try { await songSvc.ShutdownAsync().ConfigureAwait(false); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "SongRequestService.ShutdownAsync failed", ex); }
+        }
+
+        // PollsService: CANCEL any open poll — refunding every stake — then cancel the
+        // poll.* overlay heartbeat and drain it.
+        //
+        // ★ Ordered BEFORE LoyaltyService below, and that is load-bearing rather than
+        // tidy: the refund runs through the points economy, so tearing Loyalty down first
+        // would leave debited stakes with nothing able to give them back. The poll itself
+        // is session state that is never restored, so a cancel is the only honest ending —
+        // closing would settle a vote that never finished.
+        if (pollsSvc is not null)
+        {
+            try { await pollsSvc.ShutdownAsync().ConfigureAwait(false); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "PollsService.ShutdownAsync failed", ex); }
+        }
+
+        // ViewerPresenceService: cancel the sampling loop, drain it, and flush the
+        // whole minutes the carried sub-minute remainders had already earned. The
+        // flush is the reason this is an awaited step rather than a fire-and-forget
+        // stop: the open "WatchTime" table stores whole MINUTES, so a viewer present
+        // for 90 s across two samples is holding 30 s of real, watched time in memory
+        // when the Hub closes. Dropping it on every shutdown would quietly shave time
+        // off exactly the viewers who stay to the end of a stream.
+        //
+        // ★ Ordered BEFORE RanksService below, and that is load-bearing rather than
+        // tidy: the final flush raises WatchTimeCredited, and the ladder evaluates a
+        // promotion off that event. Tearing Ranks down first would drop the last
+        // credit's evaluation on the floor — the minutes would be in the table with
+        // nobody to notice the rank they just earned.
+        try { await ViewerPresenceService.Instance.ShutdownAsync().ConfigureAwait(false); }
+        catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "ViewerPresenceService.ShutdownAsync failed", ex); }
+
+        // RanksService: cancel the rank.* overlay heartbeat and drain it. Config is
+        // persisted on every edit and both data tables live in the databank, so there is
+        // nothing to flush — this only stops the pump from re-dirtying the Overlay Live
+        // Channel that was drained a few lines above.
+        //
+        // Ordered BEFORE LoyaltyService below because the ladder's points metric reads that
+        // service's config: a heartbeat that outlived it would publish a board resolved
+        // against a torn-down economy.
+        if (ranksSvc is not null)
+        {
+            try { await ranksSvc.ShutdownAsync().ConfigureAwait(false); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "RanksService.ShutdownAsync failed", ex); }
+        }
+
+        // CountersService: cancel the 15 s databank sweep (the db.*-write watcher added
+        // with the 2026-08 tool-node cut) and drain it. Counts live in the open table and
+        // config is persisted on every edit — nothing to flush, same story as Ranks.
+        try { await CountersService.Instance.ShutdownAsync().ConfigureAwait(false); }
+        catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "CountersService.ShutdownAsync failed", ex); }
+
+        // LoyaltyService: cancel the earn tick, resolve any open raffle (so entrants
+        // who paid a fee are paid out), and flush the config to the databank. Static
+        // singleton like TimerService.Instance — no captured static field needed.
+        try { await LoyaltyService.Instance.ShutdownAsync().ConfigureAwait(false); }
+        catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "LoyaltyService.ShutdownAsync failed", ex); }
 
         try { optInCts?.Cancel(); }
         catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "opt-in CTS cancel failed", ex); }
@@ -932,7 +1619,22 @@ public static class HubBootstrapper
         try { (DiscordService.Instance as IDisposable)?.Dispose(); }
         catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "DiscordService shutdown failed", ex); }
 
-        GlobalLogger.Log("Opt-in services torn down (Hotkey/Clipboard/WebSocket/LiveCaption/ViewerServer/OBS) + DiscordService.",
+        // Hub-wide shutdown CTS goes LAST — every teardown above has had its chance
+        // to observe the cancel by now. Cancel-then-dispose is the safe order for a
+        // token other code still holds: BeginExecutionTracked's
+        // CreateLinkedTokenSource sees an already-cancelled token and completes the
+        // registration inline, so a script that starts during this drain still gets
+        // a cancelled CTS rather than touching the disposed source. A second
+        // shutdown pass finds s_shutdownCts already nulled at the top of this
+        // method, so `shutdownCts` is null here and neither the cancel nor this
+        // dispose can run twice on the same instance.
+        if (shutdownCts is not null)
+        {
+            try { shutdownCts.Dispose(); }
+            catch (Exception ex) { GlobalLogger.Error("HubBootstrapper", "Hub shutdown CTS dispose failed", ex); }
+        }
+
+        GlobalLogger.Log("Opt-in services torn down (Hotkey/Clipboard/WebSocket/LiveCaption/ViewerServer/OBS) + OverlayLiveStore + Timer + DiscordService.",
             "HubBootstrapper", LogLevel.System);
     }
 
@@ -1003,4 +1705,5 @@ public static class HubBootstrapper
         Directory.CreateDirectory(fallback);
         return fallback;
     }
+
 }

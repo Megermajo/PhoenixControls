@@ -51,14 +51,23 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     private Phoenix.Controls.Visualist.WinUI.MainView? _visualistView;
     private PillarKind _activePillar = PillarKind.Hub;
 
-    // 4th-tab (Giveaway) pop-out window — single instance. The Giveaway tab
-    // opens the page in its own independent window rather than swapping the
-    // MainPaneRegion surface; a second click focuses the existing window
-    // instead of spawning a duplicate. The matching view is held so its
-    // Dispose runs when the window closes (unsubscribing the VM from the
-    // GiveawaySource events).
+    // 4th-tab (Pre-Builds) launch model. Giveaway keeps a single-instance pop-out
+    // window ALONGSIDE its inline page (Majo, 1.1.8: "inline + a pop-out button"):
+    // the rail row's ⧉ opens it, a second press focuses the window that is already
+    // up. The view is held so its Dispose runs when the window closes
+    // (unsubscribing the VM from its source / service events).
     private Window? _giveawayWindow;
     private Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayView? _giveawayView;
+
+    // All fourteen pre-build tools live in PreBuildsHostView — a rail of tools
+    // beside the selected tool's page, shaped like SettingsDialog. It is a
+    // kept-alive swap-surface, peer to the pillar views: shown in MainPaneRegion
+    // when the Pre-Builds tab is clicked and hidden (not destroyed) when a pillar
+    // tab is, so built pages and their VM state survive the round trip.
+    // _toolSurfaceActive tracks whether it currently rides on top of the pillar
+    // workspace. (Replaced ToolTabHost's dropdown + closable-tab-strip model.)
+    private readonly PreBuildsHostView _preBuildsHost = new();
+    private bool _toolSurfaceActive;
 
     // Design_Orders §4.7 — under Windows high-contrast themes the custom
     // coal/ember chrome would render unreadable against the HC palette.
@@ -188,7 +197,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         ApplyHighContrastFallback();
 
         ChromeBar.PillarTabClicked        += OnPillarTabClicked;
-        ChromeBar.GiveawayTabClicked      += OnGiveawayTabClicked;
+        ChromeBar.PreBuildsTabClicked     += OnPreBuildsTabClicked;
         ChromeBar.MenuItemInvoked         += OnMenuItemInvoked;
         ChromeBar.MinimizeClicked         += OnMinimizeClicked;
         ChromeBar.MaximizeRestoreClicked  += OnMaximizeRestoreClicked;
@@ -213,6 +222,12 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // lazily on first activation so their VMs / canvas state aren't
         // built until the user actually clicks the tab.
         MainPaneRegion.Content = _hubWorkspace;
+
+        // Hand the Pre-Builds rail its page factory once. Pages are built on first
+        // selection and kept alive; the rail asks the ⧉ owner (this window) to open
+        // Giveaway's pop-out window.
+        _preBuildsHost.Configure(CreateToolPage);
+        _preBuildsHost.PopOutRequested += OnToolPopOutRequested;
 
         // Dispose the Hub workspace's panel VMs at app shutdown so they
         // unsubscribe from HubServices source events before the source
@@ -301,19 +316,56 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // can't block the close path.
         try { _visualistView?.ShutdownPillar(); }
         catch (Exception ex) { GlobalLogger.Error("MainWindow", "Visualist ShutdownPillar", ex); }
+        // Architect's pillar teardown is the exact mirror of Visualist's, and for
+        // the same reason: it used to run off MainView's Unloaded, so the FIRST
+        // pillar-tab blur killed autosave, the chrome menus and (via
+        // ArchitectViewModel.Dispose dropping GraphMutatedAny) dirty-tracking for
+        // the rest of the session. It now runs exactly once, here, at real app
+        // close — BEFORE ArchitectBusClient.Stop() so the pillar's two connection
+        // handlers are off the singleton's invocation list before it tears down.
+        try { _architectView?.ShutdownPillar(); }
+        catch (Exception ex) { GlobalLogger.Error("MainWindow", "Architect ShutdownPillar", ex); }
         try { Phoenix.Controls.Architect.Core.ArchitectBusClient.Instance.Stop(); }
         catch (Exception ex) { GlobalLogger.Error("MainWindow", "Architect bus stop", ex); }
 
         ChromeBar.PillarTabClicked       -= OnPillarTabClicked;
-        ChromeBar.GiveawayTabClicked     -= OnGiveawayTabClicked;
+        ChromeBar.PreBuildsTabClicked    -= OnPreBuildsTabClicked;
         ChromeBar.MenuItemInvoked        -= OnMenuItemInvoked;
         ChromeBar.MinimizeClicked        -= OnMinimizeClicked;
         ChromeBar.MaximizeRestoreClicked -= OnMaximizeRestoreClicked;
         ChromeBar.CloseClicked           -= OnCloseClicked;
         ChromeBar.FileCloseRequested     -= OnChromeFileCloseRequested;
 
+        // Dispose every tool page the Pre-Builds rail has built. This is the
+        // STRUCTURAL fix for the old shutdown data-loss bug: pre-T11-1
+        // OnMainWindowClosed only closed 5 of the 7 tool windows — Automod and
+        // Custom Commands were never closed, so their VMs' final debounced-config
+        // flush never ran at exit. Routing every tool through one host means
+        // DisposeAllTools disposes each built page here, and the flush always runs
+        // regardless of which tools were visited.
+        //
+        // Running the flush was only half the guarantee, though: each VM starts
+        // its flush as a fire-and-forget SQLite write, and Step 4 below ends in
+        // Environment.Exit(0). DisposeAllTools returns a Task covering those
+        // writes so the coordinator can await them as a tracked step — without
+        // it, a contended write that outlived the five service tear-downs was
+        // killed mid-flight and the streamer's last edit was lost.
+        //
+        // ★ This runs BEFORE the Giveaway window is closed below, and the order is
+        // load-bearing: that window's Closed handler calls back into
+        // SetPoppedOut(false), which on a live host rebuilds the inline Giveaway
+        // page. DisposeAllTools latches the host closed on entry, so the callback
+        // is a no-op instead of constructing a fresh VM against services that are
+        // three lines from tear-down. Giveaway registers no config flush of its
+        // own (it has no tool-config surface), so nothing is lost by draining
+        // first.
+        _preBuildsHost.PopOutRequested -= OnToolPopOutRequested;
+        Task toolConfigFlush = Task.CompletedTask;
+        try { toolConfigFlush = _preBuildsHost.DisposeAllTools(); }
+        catch (Exception ex) { GlobalLogger.Error("MainWindow", "PreBuildsHostView.DisposeAllTools", ex); }
+
         // Close the Giveaway pop-out window (if open) so its VM unsubscribes
-        // from the GiveawaySource events before the backends tear down.
+        // from its source / service events before the backends tear down.
         if (_giveawayWindow is not null)
         {
             try { _giveawayWindow.Close(); } catch { /* shutdown best-effort */ }
@@ -404,13 +456,37 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 return sw.ElapsedMilliseconds;
             }
 
+            // Synchronous sibling of RunStepAsync for the final log-sink
+            // flush steps below. Deliberately NOT under the aggregate ct
+            // cap: these run after the cap decision has already been made,
+            // must run even when the cap fired (that is precisely when the
+            // flushed tail matters most), and both bodies are internally
+            // bounded (DiagnosticFileLog.Stop joins its writer for at most
+            // 2 s; GlobalLogger.Stop is non-blocking).
+            void RunFlushStep(string name, Action body)
+            {
+                try { body(); }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("MainWindow.Shutdown", $"step '{name}' failed", ex);
+                }
+            }
+
             // Run all the slow tear-downs in parallel. The Bus +
-            // RemoteBridge + WS + ScriptManager + opt-in services
+            // WS + ScriptManager + opt-in services
             // are independent — no ordering constraint matters
             // post-HUD-dispose (which already released port 18080).
             // HubServices.DisposeAsync includes ConnectionStatus.Timer
             // and every panel source subscription.
-            var tasks = new List<Task<long>>(7);
+            var tasks = new List<Task<long>>(8);
+
+            // The tool-config flushes started by the synchronous
+            // DisposeAllTools above. Already-completed when nothing was dirty,
+            // so the happy path costs nothing; when a write IS in flight it
+            // now gets the same 4 s cap and the same per-step logging as the
+            // service tear-downs instead of racing Environment.Exit.
+            tasks.Add(RunStepAsync("Pre-Builds final config flush",
+                () => toolConfigFlush));
 
             if (services is not null)
             {
@@ -426,13 +502,6 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
             tasks.Add(RunStepAsync("WS.StopAsync",
                 () => WS.Instance.StopAsync()));
-
-            if (HubHost.RemoteBridge is { } remoteBridge)
-            {
-                HubHost.RemoteBridge = null;
-                tasks.Add(RunStepAsync("RemoteBridge.StopAsync",
-                    () => remoteBridge.StopAsync()));
-            }
 
             tasks.Add(RunStepAsync("Bus.StopAsync",
                 () => Bus.Instance.StopAsync()));
@@ -459,12 +528,42 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 $"Shutdown coordinator complete (elapsed {swTotal.ElapsedMilliseconds}ms). " +
                 "Hard-terminating the process (TerminateProcess) so native DLL teardown can't wedge a zombie.",
                 "MainWindow.Shutdown", LogLevel.System);
+
+            // Step 5 — flush the log sinks. These are the LAST tracked
+            // steps and must stay after every line this coordinator itself
+            // logs (including the cap CriticalErrors above and the
+            // completion line just logged): GlobalLogger.Stop() completes
+            // the log channel, so any Log() call issued after it is
+            // silently dropped. Order within the pair matters too:
+            // DiagnosticFileLog.Stop() first — it unsubscribes
+            // GlobalLogger.OnLogEntry and joins its writer thread (bounded
+            // 2 s) so the rolling-file tail reaches disk before the process
+            // dies; GlobalLogger.Stop() second — it cancels the writer CTS
+            // and completes the channel so the SQLite pump wakes and drains
+            // the remaining entries. Neither call can deadlock this thread:
+            // the file log's join is time-capped and its writer does pure
+            // file I/O; GlobalLogger.Stop returns without waiting (the
+            // drain itself finishes on the pump's thread-pool task and
+            // races the process exit below — best-effort by design).
+            //
+            // The Dev merge replaced this block's trailing Environment.Exit(0)
+            // with HubProcessExit.TerminateSelf in the finally below. These two
+            // flush steps still run FIRST and are still worth keeping: they are
+            // the tracked, individually-logged versions, and TerminateSelf only
+            // drains DiagnosticFileLog — it never calls GlobalLogger.Stop, so
+            // dropping them would lose the SQLite log tail. The duplicate
+            // DiagnosticFileLog.Stop is a no-op on the second call.
+            RunFlushStep("DiagnosticFileLog.Stop", DiagnosticFileLog.Stop);
+            RunFlushStep("GlobalLogger.Stop", GlobalLogger.Stop);
             }
             finally
             {
                 // The exit MUST happen even if the coordinator body faulted in
                 // a way the per-step catches didn't cover — under
                 // OnExplicitShutdown nothing else ends this process.
+                // TerminateSelf supersedes the old Environment.Exit(0) here: it
+                // hard-terminates so native DLL teardown can't wedge a zombie,
+                // and keeps Environment.Exit as its own double-fault fallback.
                 Services.HubProcessExit.TerminateSelf("coordinated shutdown");
             }
         });
@@ -582,6 +681,31 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 return;
             }
 
+            // Sibling windows first. The embedded pillar views are only half
+            // the unsaved-work surface: Architect sibling windows (Window → New
+            // Architect Window, one per .phxg) and Visualist sibling windows
+            // (Window → New Visualist Window) hold their own documents, and
+            // Window.Closed here ends in HubProcessExit.TerminateSelf — a
+            // TerminateProcess hard exit that never runs their Closed handlers,
+            // so their own dirty prompts never get a chance to fire. Scanning
+            // only { _architectView, _visualistView } therefore let a dirty
+            // sibling be destroyed with no warning at all (a Visualist sibling
+            // has no autosave, so everything since the last manual save was
+            // gone; an Architect sibling autosaves, but the recovery snapshot is
+            // not the user's file and the loss is still silent).
+            //
+            // We do NOT prompt on their behalf — each sibling already owns a
+            // correct save / discard / cancel flow on its own AppWindow.Closing.
+            // We ask it to close, which runs that flow, and cancel the Hub close.
+            // The gate is deliberately left Idle so the user's next X (after the
+            // sibling prompts are answered) proceeds normally.
+            if (Interlocked.CompareExchange(ref _promptState, PromptIdle, PromptIdle) == PromptIdle
+                && RequestDirtySiblingWindowsClose())
+            {
+                args.Cancel = true;
+                return;
+            }
+
             var hosts = new IPillarShellHost?[] { _architectView, _visualistView };
             bool anyDirty = false;
             foreach (var h in hosts)
@@ -643,6 +767,92 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             Interlocked.Exchange(ref _promptState, PromptIdle);
             GlobalLogger.Error("MainWindow", "OnAppWindowClosing", ex);
         }
+    }
+
+    /// <summary>
+    /// Bring every open Architect or Visualist sibling window that has unsaved
+    /// edits to the front and ask it to close, so its own save / discard / cancel
+    /// prompt runs. Returns true when at least one dirty sibling was found — the
+    /// caller then cancels the Hub close, because letting it through hands the
+    /// process to the shutdown coordinator's TerminateProcess exit, which skips
+    /// every sibling's Closed handler and destroys the unsaved work silently.
+    ///
+    /// Both pillars are walked. The two sibling types share no base beyond
+    /// <c>Window</c>, but their close contracts are identical: a public
+    /// <c>IsDirty</c>, and an <c>OnAppWindowClosing</c> that cancels the close,
+    /// prompts, and re-issues Close behind a confirmed-close handshake
+    /// (ArchitectSiblingWindow / VisualistSiblingWindow). So the same
+    /// dirty → bring-to-front → Close sequence drives both.
+    ///
+    /// Deliberately fire-and-return rather than await-each-sibling: a sibling's
+    /// prompt lives on its own async-void AppWindow.Closing and exposes no
+    /// completion signal, so awaiting it would need a timeout (which would race
+    /// the user) or could wedge the Hub gate permanently when the user picks
+    /// Cancel. Cancelling this close and re-checking on the next X is
+    /// deterministic and cannot wedge.
+    /// </summary>
+    private static bool RequestDirtySiblingWindowsClose()
+    {
+        bool anyDirty = false;
+
+        // Show it, then request the close. If the sibling's prompt is already
+        // up, its own in-flight guard turns this into a no-op cancel.
+        static void AskToClose(Window w)
+        {
+            try { WindowFront.Show(w); } catch { /* best-effort */ }
+            try { w.Close(); } catch { /* best-effort */ }
+        }
+
+        // Per-pillar try/catch rather than one wrapping both: a fault in one
+        // registry must not discard the dirty windows the other already
+        // reported. A shared catch that returned false would let the Hub close
+        // proceed straight into TerminateProcess over work we had just found.
+        try
+        {
+            foreach (var w in Phoenix.Controls.Visualist.WinUI.Hosting.VisualistWindowRegistry.Snapshot())
+            {
+                if (w is null) continue;
+                bool dirty;
+                // A window whose native side is already gone can throw here;
+                // a corpse in the registry must not block the Hub close.
+                try { dirty = w.IsDirty; } catch { continue; }
+                if (!dirty) continue;
+                anyDirty = true;
+                AskToClose(w);
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("MainWindow",
+                "RequestDirtySiblingWindowsClose (Visualist)", ex);
+        }
+
+        try
+        {
+            foreach (var w in Phoenix.Controls.Architect.WinUI.Services.ArchitectWindowRegistry.Snapshot())
+            {
+                if (w is null) continue;
+                bool dirty;
+                try { dirty = w.IsDirty; } catch { continue; }
+                if (!dirty) continue;
+                anyDirty = true;
+                AskToClose(w);
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("MainWindow",
+                "RequestDirtySiblingWindowsClose (Architect)", ex);
+        }
+
+        if (anyDirty)
+        {
+            GlobalLogger.Log(
+                "Hub close held: one or more Architect or Visualist sibling windows have unsaved changes. " +
+                "Each was brought to the front with its own save prompt; close Hub again once they are answered.",
+                "MainWindow", LogLevel.System);
+        }
+        return anyDirty;
     }
 
     private void ConfigureAppWindow()
@@ -768,6 +978,15 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     {
         _services = services;
         _hubWorkspace.SetPanels(services, factory);
+
+        // Publish the layer-presence source for SIBLING Visualist windows, which are
+        // spawned from contexts that hold no reference to Hub (the Window menu,
+        // drag-drop, a recent-files entry). Done here rather than beside the embedded
+        // MainView's construction so it is set before ANY window can exist: a sibling
+        // built without it sees no Active rail row, concludes OBS is absent, and
+        // double-dispatches Test Run down both the preview and the bus path.
+        Phoenix.Controls.Visualist.WinUI.Hosting.VisualistWindowRegistry.AmbientLayerSource
+            = services?.Layers;
     }
 
     /// <summary>
@@ -817,8 +1036,36 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // the same instance so VM state (open file, undo stack) survives a
         // round-trip away from the tab.
 
+        // If the Pre-Builds rail is riding on top of the pillar workspace, a
+        // pillar-tab click hides it — its built tool pages + VMs stay alive — and
+        // re-shows the pillar surface. Clicking the pillar that is ALREADY
+        // _activePillar just reveals it again with no dirty prompt (we're
+        // navigating TO the pillar, not away from it), and that path skips
+        // SetPillar entirely, so the chrome strip has to be restored by hand or it
+        // is left with no raised tab. Clicking a DIFFERENT pillar falls through to
+        // the normal swap below, which prompts the outgoing pillar if it's dirty
+        // and whose SetPillar clears the Pre-Builds tab itself.
+        if (_toolSurfaceActive)
+        {
+            if (kind == _activePillar)
+            {
+                _toolSurfaceActive = false;
+                ChromeBar.ClearPreBuildsSelection();
+                ShowActivePillarSurface();
+                return true;
+            }
+            // else: fall through — the flag is cleared only AFTER the dirty
+            // prompt below lets the swap proceed. Clearing it here desynced a
+            // CANCELLED swap: the rail stayed on screen while the flag said a
+            // pillar surface was showing, so clicking that pillar's own tab hit
+            // the no-op branch below and went dead until Pre-Builds was
+            // re-clicked.
+        }
         // No-op when the user clicks the already-active tab — no prompt, no swap.
-        if (kind == _activePillar) return true;
+        else if (kind == _activePillar)
+        {
+            return true;
+        }
 
         // CHANGELOG promises a save-before-close prompt on pillar swap as well
         // as Hub exit. Mirror OnAppWindowClosing's pattern: if the OUTGOING
@@ -847,6 +1094,10 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             }
             if (!proceed) return false;
         }
+
+        // The swap is definitely happening — only now may the rail hand over.
+        // (Already false on every non-tool path; the assignment is idempotent.)
+        _toolSurfaceActive = false;
 
         switch (kind)
         {
@@ -929,7 +1180,8 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             ChromeBar.SetCloseFileButtonVisible(false);
             return;
         }
-        string name = host.CurrentDocumentDisplayName ?? "(unsaved)";
+        string name = host.CurrentDocumentDisplayName
+                      ?? Localizer.T("hub.mainwindow.filename.unsaved", "(unsaved)");
         if (host.IsDirty) name = "• " + name;
         ChromeBar.FileName = name;
 
@@ -978,15 +1230,124 @@ public sealed partial class MainWindow : Window, IPillarNavigator
     private void OnEmbeddedPillarSwitch(object? sender, PillarKind kind)
         => OnPillarTabClicked(sender, kind);
 
-    // ── 4th tab: Giveaway pop-out window ─────────────────────────────────
+    // ── 4th tab: Pre-Builds ───────────────────────────────────────────────
     //
-    // The Giveaway tab is NOT a PillarKind surface — clicking it opens the
-    // Giveaway page in an independent window (single-instance) rather than
-    // swapping MainPaneRegion. A second click focuses the already-open window
-    // instead of spawning a duplicate. The active pillar / menu strip / tab
-    // selection are left untouched so the underlying Hub / Architect /
-    // Visualist surface stays exactly as it was.
-    private void OnGiveawayTabClicked(object? sender, EventArgs e)
+    // The Pre-Builds tab is NOT a PillarKind surface, but since 1.1.8 it swaps one
+    // like the pillar tabs do: clicking it foregrounds _preBuildsHost — a rail of
+    // all fourteen tools beside the selected tool's page, shaped like the Settings
+    // dialog (Majo: "a separate tab instead of a dropdown ... lined up left similar
+    // to the Settings layout").
+    //
+    // The host is kept alive: showing it leaves _activePillar and the menu strip
+    // untouched, so the underlying Hub / Architect / Visualist state stays exactly
+    // as it was and a pillar-tab click reveals it again. Only the strip's raised
+    // state moves, so the chrome always shows exactly one active tab.
+    //
+    // Giveaway additionally keeps its pop-out window, reached from the ⧉ on its
+    // rail row; while that window is up the rail shows the popped-out notice in
+    // place of a second live copy.
+    private void OnPreBuildsTabClicked(object? sender, EventArgs e)
+    {
+        // Clicking the tab you are already on is a no-op, like the pillar tabs —
+        // without this it would replay the page's entrance animation on every
+        // press.
+        if (_toolSurfaceActive && ReferenceEquals(MainPaneRegion.Content, _preBuildsHost)) return;
+
+        _toolSurfaceActive = true;
+        MainPaneRegion.Content = _preBuildsHost;
+        ChromeBar.SetPreBuildsActive(true);
+
+        // Re-selects the tool the user was last on, or the first rail row on the
+        // session's first visit.
+        _preBuildsHost.SelectDefault();
+    }
+
+    private void OnToolPopOutRequested(object? sender, PreBuildKind kind)
+    {
+        // Giveaway is the only tool with a window today; anything else reaching
+        // here would be a rail row advertising an affordance nothing serves.
+        if (kind != PreBuildKind.Giveaway)
+        {
+            GlobalLogger.Log($"Pop-out requested for '{kind}', which has no window — ignoring.",
+                "MainWindow", LogLevel.Debug);
+            return;
+        }
+        OpenGiveawayWindow();
+    }
+
+    // Builds a tool's page the first time the rail selects it. Every tool reaches
+    // its always-on service singleton directly (TimerService.Instance,
+    // LoyaltyService.Instance, …) for reads AND writes and subscribes to its
+    // events, so the only ctor dependency is the UI DispatcherQueue for marshalling
+    // those events back. Giveaway is the exception — its VM takes the Hub services,
+    // so its page is unavailable until SetPanels has run, and the rail says so
+    // rather than rendering an empty column.
+    private UserControl? CreateToolPage(PreBuildKind kind)
+    {
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
+        if (kind == PreBuildKind.Giveaway)
+        {
+            if (_services is null)
+            {
+                GlobalLogger.Log("Giveaway page requested before HubServices were wired — ignoring.",
+                    "MainWindow", LogLevel.Debug);
+                return null;
+            }
+            return new Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayView(
+                new Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayViewModel(
+                    _services.Giveaway, dispatcher, _services.Chat));
+        }
+
+        Func<UserControl>? factory = kind switch
+        {
+            PreBuildKind.Timer => () => new Phoenix.Controls.Hub.WinUI.Panels.TimerPanel.TimerView(
+                new Phoenix.Controls.Hub.WinUI.Panels.TimerPanel.TimerViewModel(dispatcher)),
+            PreBuildKind.Loyalty => () => new Phoenix.Controls.Hub.WinUI.Panels.LoyaltyPanel.LoyaltyView(
+                new Phoenix.Controls.Hub.WinUI.Panels.LoyaltyPanel.LoyaltyViewModel(dispatcher)),
+            PreBuildKind.Counters => () => new Phoenix.Controls.Hub.WinUI.Panels.CountersPanel.CountersView(
+                new Phoenix.Controls.Hub.WinUI.Panels.CountersPanel.CountersViewModel(dispatcher)),
+            PreBuildKind.Automod => () => new Phoenix.Controls.Hub.WinUI.Panels.AutomodPanel.AutomodView(
+                new Phoenix.Controls.Hub.WinUI.Panels.AutomodPanel.AutomodViewModel(dispatcher)),
+            PreBuildKind.Quotes => () => new Phoenix.Controls.Hub.WinUI.Panels.QuotesPanel.QuotesView(
+                new Phoenix.Controls.Hub.WinUI.Panels.QuotesPanel.QuotesViewModel(dispatcher)),
+            PreBuildKind.CustomCommands => () => new Phoenix.Controls.Hub.WinUI.Panels.CustomCommandsPanel.CustomCommandsView(
+                new Phoenix.Controls.Hub.WinUI.Panels.CustomCommandsPanel.CustomCommandsViewModel(dispatcher)),
+            PreBuildKind.Scheduling => () => new Phoenix.Controls.Hub.WinUI.Panels.SchedulingPanel.SchedulingView(
+                new Phoenix.Controls.Hub.WinUI.Panels.SchedulingPanel.SchedulingViewModel(dispatcher)),
+            PreBuildKind.UserManagement => () => new Phoenix.Controls.Hub.WinUI.Panels.UserManagementPanel.UserManagementView(
+                new Phoenix.Controls.Hub.WinUI.Panels.UserManagementPanel.UserManagementViewModel(dispatcher)),
+            PreBuildKind.Alerts => () => new Phoenix.Controls.Hub.WinUI.Panels.AlertsPanel.AlertsView(
+                new Phoenix.Controls.Hub.WinUI.Panels.AlertsPanel.AlertsViewModel(dispatcher)),
+            PreBuildKind.SongRequest => () => new Phoenix.Controls.Hub.WinUI.Panels.SongRequestPanel.SongRequestView(
+                new Phoenix.Controls.Hub.WinUI.Panels.SongRequestPanel.SongRequestViewModel(dispatcher)),
+            PreBuildKind.Polls => () => new Phoenix.Controls.Hub.WinUI.Panels.PollsPanel.PollsView(
+                new Phoenix.Controls.Hub.WinUI.Panels.PollsPanel.PollsViewModel(dispatcher)),
+            PreBuildKind.Ranks => () => new Phoenix.Controls.Hub.WinUI.Panels.RanksPanel.RanksView(
+                new Phoenix.Controls.Hub.WinUI.Panels.RanksPanel.RanksViewModel(dispatcher)),
+            PreBuildKind.Soundboard => () => new Phoenix.Controls.Hub.WinUI.Panels.SoundboardPanel.SoundboardView(
+                new Phoenix.Controls.Hub.WinUI.Panels.SoundboardPanel.SoundboardViewModel(dispatcher)),
+            _ => null,
+        };
+        return factory?.Invoke();
+    }
+
+    // Re-show the pillar surface that was behind the Pre-Builds rail, without
+    // re-running the full pillar swap (no lazy construction, no dirty prompt,
+    // no chrome change) — the pillar was already active before the rail rode
+    // on top, so its view is constructed and the chrome already reflects it.
+    private void ShowActivePillarSurface()
+    {
+        UIElement surface = _activePillar switch
+        {
+            PillarKind.Architect => (UIElement?)_architectView ?? _hubWorkspace,
+            PillarKind.Visualist => (UIElement?)_visualistView ?? _hubWorkspace,
+            _                    => _hubWorkspace,
+        };
+        MainPaneRegion.Content = surface;
+    }
+
+    private void OpenGiveawayWindow()
     {
         // Single-instance: focus the existing window if one is already open.
         if (_giveawayWindow is not null)
@@ -998,11 +1359,16 @@ public sealed partial class MainWindow : Window, IPillarNavigator
 
         if (_services is null)
         {
-            GlobalLogger.Log("Giveaway tab clicked before HubServices wired — ignoring.",
+            GlobalLogger.Log("Giveaway pre-build picked before HubServices wired — ignoring.",
                 "MainWindow", LogLevel.Debug);
             return;
         }
 
+        // Hoisted so the catch can unwind whatever stage the failure left behind —
+        // the fields are only assigned midway, and a view constructed before the
+        // throw would otherwise stay subscribed with nothing referencing it.
+        Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayView? view = null;
+        Microsoft.UI.Xaml.Window? window = null;
         try
         {
             // Capture the UI-thread dispatcher so the VM marshals source-event
@@ -1011,15 +1377,20 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             var vm = new Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayViewModel(
                 _services.Giveaway, dispatcher, _services.Chat);
-            var view = new Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayView(vm);
-            var window = PopOutWindowFactory.Create(view, "popout.title.giveaway", "Giveaway");
+            view = new Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel.GiveawayView(vm);
+            window = PopOutWindowFactory.Create(view, "popout.title.giveaway", "Giveaway");
 
             _giveawayWindow = window;
             _giveawayView = view;
 
+            // The rail collapses its inline Giveaway page while the window owns the
+            // tool — the same rule HubWorkspaceView applies to the four workspace
+            // panels, so the streamer never faces two live copies of one surface.
+            _preBuildsHost.SetPoppedOut(PreBuildKind.Giveaway, true);
+
             // Closing the window disposes the view (→ VM → source-event
-            // unsubscribe) and clears the single-instance fields so a later
-            // tab click re-opens cleanly.
+            // unsubscribe), clears the single-instance fields so a later pick
+            // re-opens cleanly, and hands the tool back to the rail.
             window.Closed += (_, _) =>
             {
                 if (ReferenceEquals(_giveawayWindow, window))
@@ -1029,6 +1400,8 @@ public sealed partial class MainWindow : Window, IPillarNavigator
                 }
                 try { view.Dispose(); }
                 catch (Exception ex) { GlobalLogger.Error("MainWindow", "Giveaway window dispose failed", ex); }
+                try { _preBuildsHost.SetPoppedOut(PreBuildKind.Giveaway, false); }
+                catch (Exception ex) { GlobalLogger.Error("MainWindow", "Giveaway rail restore failed", ex); }
             };
 
             WindowFront.Show(window);
@@ -1036,8 +1409,23 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         catch (Exception ex)
         {
             GlobalLogger.Error("MainWindow", "OpenGiveawayWindow failed", ex);
+            // Unwind whatever stage the failure left behind, not just the fields:
+            // SetPoppedOut(true) DISPOSED the inline page, so leaving the rail
+            // popped-out would strand it on a "popped out" notice with no window
+            // behind it, and a constructed view's VM would stay subscribed to the
+            // giveaway events for the life of the process. Each step guards itself —
+            // the rail restore must run even if the window teardown throws — and
+            // both Dispose and SetPoppedOut are idempotent, so a failure BEFORE a
+            // given stage makes its unwind a no-op (including the Closed handler
+            // re-running the same cleanup when the Close() below triggers it).
             _giveawayWindow = null;
             _giveawayView = null;
+            try { window?.Close(); }
+            catch (Exception closeEx) { GlobalLogger.Error("MainWindow", "Giveaway window unwind close failed", closeEx); }
+            try { view?.Dispose(); }
+            catch (Exception dispEx) { GlobalLogger.Error("MainWindow", "Giveaway view unwind dispose failed", dispEx); }
+            try { _preBuildsHost.SetPoppedOut(PreBuildKind.Giveaway, false); }
+            catch (Exception railEx) { GlobalLogger.Error("MainWindow", "Giveaway rail unwind failed", railEx); }
         }
     }
 
@@ -1222,6 +1610,22 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         }
     }
 
+    // Every View-menu item acts on the Hub workspace, so each one foregrounds it
+    // first. If the Pre-Builds rail was riding on top, that state has to be
+    // released as well — otherwise _toolSurfaceActive keeps claiming the rail is
+    // showing (which would make the next pillar-tab click take the no-swap path)
+    // and the strip would keep the Pre-Builds tab raised over the Hub workspace.
+    private void EnsureHubWorkspaceVisible()
+    {
+        if (_toolSurfaceActive)
+        {
+            _toolSurfaceActive = false;
+            ChromeBar.ClearPreBuildsSelection();
+        }
+        if (!ReferenceEquals(MainPaneRegion.Content, _hubWorkspace))
+            MainPaneRegion.Content = _hubWorkspace;
+    }
+
     private void HandleViewMenu(string item)
     {
         // EventLog has no fixed
@@ -1231,8 +1635,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // workspace doesn't embed.
         if (string.Equals(item, "eventLog", StringComparison.Ordinal))
         {
-            if (!ReferenceEquals(MainPaneRegion.Content, _hubWorkspace))
-                MainPaneRegion.Content = _hubWorkspace;
+            EnsureHubWorkspaceVisible();
             _hubWorkspace.OpenEventLogPopOut();
             return;
         }
@@ -1243,8 +1646,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // VM subscribes to HUDServer.OnWebhookFired.
         if (string.Equals(item, "webhook", StringComparison.Ordinal))
         {
-            if (!ReferenceEquals(MainPaneRegion.Content, _hubWorkspace))
-                MainPaneRegion.Content = _hubWorkspace;
+            EnsureHubWorkspaceVisible();
             _hubWorkspace.OpenWebhookPopOut();
             return;
         }
@@ -1253,8 +1655,7 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         // to HubWorkspaceView so the matching panel region toggles. Click on
         // a View item while Architect/Visualist is active foregrounds the
         // Hub tab first (otherwise the toggle would be invisible).
-        if (!ReferenceEquals(MainPaneRegion.Content, _hubWorkspace))
-            MainPaneRegion.Content = _hubWorkspace;
+        EnsureHubWorkspaceVisible();
 
         ContentControl? region = item switch
         {
@@ -1337,30 +1738,33 @@ public sealed partial class MainWindow : Window, IPillarNavigator
             case "readme":
                 // In-app HTML README — bundled offline page in the DocViewer.
                 DocViewerWindow.OpenOrFocus(new DocViewRequest(
-                    "readme.html", Title: "Phoenix Controls — README"));
+                    "readme.html",
+                    Title: Localizer.T("hub.mainwindow.docviewer.readme.title",
+                                       "Phoenix Controls — README")));
                 break;
             case "changelog":
                 // In-app HTML Changelog — bundled offline page in the DocViewer.
                 DocViewerWindow.OpenOrFocus(new DocViewRequest(
-                    "changelog.html", Title: "Phoenix Controls — Changelog"));
+                    "changelog.html",
+                    Title: Localizer.T("hub.mainwindow.docviewer.changelog.title",
+                                       "Phoenix Controls — Changelog")));
                 break;
         }
     }
 
-    private async System.Threading.Tasks.Task ShowSettingsAsync()
+    private System.Threading.Tasks.Task ShowSettingsAsync()
     {
-        try
-        {
-            var dialog = new SettingsDialog
-            {
-                XamlRoot = Content.XamlRoot,
-            };
-            await dialog.ShowAsync();
-        }
-        catch (Exception ex)
-        {
-            GlobalLogger.Error("MainWindow", "ShowSettingsAsync", ex);
-        }
+        // Settings is a custom-chromed window (coal/ember PopOutChrome) hosting
+        // the SettingsDialog UserControl, not a ContentDialog — which cost it
+        // the ContentDialog's built-in single-instance exclusivity. Building
+        // the window inline here meant Tools → Settings twice (or once while a
+        // status-strip dot was opening one) left TWO live windows, each holding
+        // its own snapshot of ConfigManager.Current; whichever saved last
+        // reverted the other's edits. SettingsDialog.OpenOrFocus is the shared
+        // singleton gate for both entry points — same shape as
+        // DocumentationWindow.OpenOrFocus above, error handling included.
+        SettingsDialog.OpenOrFocus();
+        return System.Threading.Tasks.Task.CompletedTask;
     }
 
     private static void OpenFolder(string path)
@@ -1639,3 +2043,14 @@ public sealed partial class MainWindow : Window, IPillarNavigator
         return new Microsoft.UI.Xaml.Media.FontFamily(family);
     }
 }
+
+/// <summary>
+/// The pre-built tools surfaced under the chrome's Pre-Builds tab. Every member
+/// is a row on the Pre-Builds rail whose page <see cref="MainWindow"/> builds on
+/// first selection (→ <c>CreateToolPage</c>); Giveaway additionally keeps a
+/// single-instance pop-out window (→ <c>OpenGiveawayWindow</c>), reached from the
+/// ⧉ on its rail row. Deliberately OFF <c>PillarKind</c> — those ordinals are
+/// load-bearing and name only the three surface-swap pillars; a pre-build never
+/// becomes one of the three active workspace pillars.
+/// </summary>
+public enum PreBuildKind { Giveaway, Timer, Loyalty, Counters, Automod, Quotes, CustomCommands, Scheduling, UserManagement, Alerts, SongRequest, Polls, Ranks, Soundboard }

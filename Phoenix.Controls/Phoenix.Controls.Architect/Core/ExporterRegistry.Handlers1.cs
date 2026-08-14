@@ -35,6 +35,10 @@ namespace Phoenix.Controls.Architect.Core
             RegisterDatabankSimple(registry);
             RegisterImperative(registry);
             RegisterGiveaway(registry);
+            RegisterTimer(registry);
+            RegisterSongRequest(registry);
+            RegisterPolls(registry);
+            RegisterRanks(registry);          // ExporterRegistry.Ranks.cs
         }
 
         // ── OBS proxy nodes ────────────────────────────────────────────────
@@ -528,19 +532,16 @@ namespace Phoenix.Controls.Architect.Core
             // a per-node global, exposed to downstream nodes via the List output.
             r.Register(new ArrayPushHandler());
 
-            r.RegisterSimple(new SimpleEmitDescriptor(
-                "Queue.Push", "queue.push",
-                new[]
-                {
-                    new SocketArg("EventID", "\"event\""),
-                    new SocketArg("Payload", "\"{}\""),
-                },
-                FollowNamedOutput: "Done"));
-
-            r.RegisterSimple(new SimpleEmitDescriptor(
-                "Queue.Clear", "queue.clear",
-                System.Array.Empty<SocketArg>(),
-                FollowNamedOutput: "Done"));
+            // Queue.Push / Queue.Clear / Queue.Remove are HANDLERS, not descriptors, and
+            // that is load-bearing rather than stylistic: each carries an optional
+            // trailing Name (selecting a NAMED queue over the legacy unnamed pipe-string)
+            // and SimpleEmitHandler.Emit writes every descriptor arg positionally with no
+            // omit-at-default. As descriptors they would have rewritten queue.push(a, b)
+            // into queue.push(a, b, "") in every shipped graph and churned every affected
+            // golden. See the band header in ExporterRegistry.Handlers2.cs.
+            r.Register(new QueuePushHandler());
+            r.Register(new QueueClearHandler());
+            r.Register(new QueueRemoveHandler());
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "State.Set", "state.set",
@@ -860,59 +861,22 @@ namespace Phoenix.Controls.Architect.Core
                 },
                 FollowNamedOutput: "Flow"));
 
-            // Chat-overlay broadcast pair. Mirrors sweep-19's
-            // ScriptManager.RegisterCommand("chat.overlay.push") /
-            // RegisterCommand("chat.overlay.clear") signatures so the .phxg-
-            // authored emit matches the runtime command exactly. Color
-            // fallback "" lets ScriptManager apply its own default ("#7fff7f").
+            // Overlay.Publish — the author-facing write into the Overlay Live Channel.
+            // Fixed two-arg shape, so a plain SimpleEmitDescriptor covers it; the
+            // matching template lives in NodeRegistry.Templates.RemainingBands.cs's
+            // VISUALS band and the handler in ScriptManager.Overlay.cs.
+            //
+            // Its sibling Overlay.Get is deliberately NOT a descriptor: it emits no
+            // flow line at all. "Visuals" is not one of ScriptExporter's pure-data
+            // categories (this band's other nodes must keep emitting flow), so the
+            // value node is routed by TITLE instead — see the inline-title list in
+            // ScriptExporter.ResolveOutputFromNode plus its ComputeInlineValue arm.
             r.RegisterSimple(new SimpleEmitDescriptor(
-                "Chat.Overlay.Push", "chat.overlay.push",
+                "Overlay.Publish", "overlay.publish",
                 new[]
                 {
-                    new SocketArg("WidgetID", "\"\""),
-                    new SocketArg("Username", "\"\""),
-                    new SocketArg("Message",  "\"\""),
-                    new SocketArg("Color",    "\"\""),
-                },
-                FollowNamedOutput: "Done"));
-
-            r.RegisterSimple(new SimpleEmitDescriptor(
-                "Chat.Overlay.Clear", "chat.overlay.clear",
-                new[] { new SocketArg("WidgetID", "\"\"") },
-                FollowNamedOutput: "Done"));
-
-            // Low-level HUD mutation emits. Mirror the ScriptManager.Visual.cs
-            // RegisterCommand("visual.set_text" / "visual.set_visible" /
-            // "visual.set_property") signatures so the .phxg-authored emit matches
-            // the runtime command (and CommandManifest.cs arg order) exactly. The
-            // matching templates live in NodeRegistry.Templates.RemainingBands.cs.
-            // Visible defaults to "true" — the bool's literal fallback when the
-            // socket is left unwired, matching the template's inline pill.
-            r.RegisterSimple(new SimpleEmitDescriptor(
-                "Visual.SetText", "visual.set_text",
-                new[]
-                {
-                    new SocketArg("Id",    "\"\""),
+                    new SocketArg("Key",   "\"\""),
                     new SocketArg("Value", "\"\""),
-                },
-                FollowNamedOutput: "Done"));
-
-            r.RegisterSimple(new SimpleEmitDescriptor(
-                "Visual.SetVisible", "visual.set_visible",
-                new[]
-                {
-                    new SocketArg("Widget",  "\"\""),
-                    new SocketArg("Visible", "\"true\""),
-                },
-                FollowNamedOutput: "Done"));
-
-            r.RegisterSimple(new SimpleEmitDescriptor(
-                "Visual.SetProperty", "visual.set_property",
-                new[]
-                {
-                    new SocketArg("Widget", "\"\""),
-                    new SocketArg("Key",    "\"\""),
-                    new SocketArg("Value",  "\"\""),
                 },
                 FollowNamedOutput: "Done"));
         }
@@ -945,6 +909,15 @@ namespace Phoenix.Controls.Architect.Core
 
             r.RegisterSimple(new SimpleEmitDescriptor(
                 "Twitch.GetFollowAge", "twitch.get_follow_age", userArg,
+                FollowNamedOutput: "Flow"));
+
+            // User.GetGroups (category "Users") — the User-Management group lookup.
+            // Same shape as Twitch.GetUser: one emitted line, results come back as
+            // bare result vars (group.moderator/vip/subscriber/regular + one
+            // group.<sanitized> per custom-group socket — see the "Users" arm in
+            // ScriptExporter.ResolveOutputFromNode).
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "User.GetGroups", "usermgmt.get_groups", userArg,
                 FollowNamedOutput: "Flow"));
         }
 
@@ -1115,6 +1088,229 @@ namespace Phoenix.Controls.Architect.Core
                     new SocketArg("Level",   "LogicExecution"),
                 },
                 FollowNamedOutput: "Flow"));
+        }
+
+        // ── Timer (subathon countdown — void control nodes) ────────────────
+        // One SimpleEmitDescriptor per void node, flow continuing through the
+        // "Done" output. Mirrors the State.Set / Queue.Push descriptor shape.
+        // SocketArg order == CommandManifest arg order (the locked three-way
+        // contract). An empty Name resolves to the default timer at runtime
+        // (TimerService.ResolveSlug) — same "empty selector = default" convention
+        // Giveaway uses. Duration/Amount/Multiplier/Scope are STRING duration
+        // args parsed by the Hub's ParseDurationToMs, so their fallbacks are
+        // quoted literals. The Timer.Get* value nodes are inline pure-data and
+        // are handled in ScriptExporter.ComputeInlineValue instead — no
+        // descriptor here (and "Timer" is intentionally NOT a _pureDataCategory,
+        // so these void nodes still emit flow).
+        private static void RegisterTimer(ExporterRegistry r)
+        {
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Start", "timer.start",
+                new[]
+                {
+                    new SocketArg("Name",     "\"\""),
+                    new SocketArg("Duration", "\"\""),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Stop", "timer.stop",
+                new[] { new SocketArg("Name", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Pause", "timer.pause",
+                new[] { new SocketArg("Name", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Resume", "timer.resume",
+                new[] { new SocketArg("Name", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Toggle", "timer.toggle",
+                new[] { new SocketArg("Name", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Reset", "timer.reset",
+                new[] { new SocketArg("Name", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.Add", "timer.add",
+                new[]
+                {
+                    new SocketArg("Name",   "\"\""),
+                    new SocketArg("Amount", "\"5m\""),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.SetTime", "timer.set_time",
+                new[]
+                {
+                    new SocketArg("Name",   "\"\""),
+                    new SocketArg("Amount", "\"1h\""),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Timer.SetHappyHour", "timer.set_happy_hour",
+                new[]
+                {
+                    new SocketArg("Name",       "\"\""),
+                    new SocketArg("Multiplier", "\"2\""),
+                    new SocketArg("Duration",   "\"10m\""),
+                    new SocketArg("Scope",      "\"all\""),
+                },
+                FollowNamedOutput: "Done"));
+        }
+
+        // ── Counters / Quotes — RETIRED (2026-08 tool-node cut) ────────────
+        // The Counter.* and Quote.* void control nodes were removed from the
+        // palette: both bands wrap OPEN tables, so graphs use the generic DB.*
+        // band instead. Their descriptors went with them; loaded graphs shed the
+        // titles via GraphSerializer.DropRetiredToolNodes and old .phx lines land
+        // on ScriptManager.RetiredCommands shims. The surviving Counter.OnChanged
+        // / Quote.OnAdded roots are Events nodes (generic on_event fallback) and
+        // never had descriptors here.
+
+        // ── Song Request (YouTube request queue — void control nodes) ──────
+        // One SimpleEmitDescriptor per void node, flow continuing through the "Done"
+        // output. SocketArg order == CommandManifest arg order (the locked three-way
+        // contract). The four value nodes — Song.Current / Song.UpNext /
+        // Song.QueueLength / Song.QueuePosition — are inline pure-data and are handled in
+        // ScriptExporter instead (no descriptor here); "Song Requests" is intentionally
+        // NOT a _pureDataCategory, so these void nodes still emit flow. Song.QueueLength
+        // and Song.QueuePosition resolve via ComputeInlineValue; Song.Current and
+        // Song.UpNext are multi-output so they hoist one read through their own arms in
+        // ResolveOutputFromNode. The three Song.On* roots are Events, also no descriptor.
+        //
+        // Song.Request's empty-User fallback is "" rather than a name: the Hub handler
+        // resolves an empty User to the triggering chatter, which is the same convention
+        // points.* and the Twitch action nodes use.
+        private static void RegisterSongRequest(ExporterRegistry r)
+        {
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Request", "song.request",
+                new[]
+                {
+                    new SocketArg("Query", "\"\""),
+                    new SocketArg("User",  "\"\""),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Skip", "song.skip",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Pause", "song.pause",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Resume", "song.resume",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Remove", "song.remove",
+                new[] { new SocketArg("Position", "0") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.RemoveLast", "song.remove_last",
+                new[] { new SocketArg("User", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Clear", "song.clear",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.SetVolume", "song.set_volume",
+                new[] { new SocketArg("Volume", "50") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.VoteSkip", "song.vote_skip",
+                new[] { new SocketArg("User", "\"\"") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Approve", "song.approve",
+                new[] { new SocketArg("Position", "0") },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Song.Deny", "song.deny",
+                new[] { new SocketArg("Position", "0") },
+                FollowNamedOutput: "Done"));
+        }
+
+        // ── Polls & Betting (chat poll + points side-bet — void control nodes) ──
+        // One SimpleEmitDescriptor per void node, flow continuing through the "Done"
+        // output. SocketArg order == CommandManifest arg order (the locked three-way
+        // contract). The two value nodes — Poll.Status and Poll.GetVotes — are inline
+        // pure-data and are handled in ScriptExporter instead (no descriptor here); "Polls"
+        // is intentionally NOT a _pureDataCategory, so these void nodes still emit flow.
+        // Poll.GetVotes resolves via ComputeInlineValue; Poll.Status is multi-output so it
+        // hoists one read through its own arm in ResolveOutputFromNode. The three Poll.On*
+        // roots are Events, also no descriptor.
+        //
+        // Poll.Vote / Poll.Bet emit their empty User rather than omitting it: the Hub
+        // handler reads an empty one as "the triggering chatter", which is the same
+        // convention points.* / song.* and the Twitch action nodes use. Poll.Open's five
+        // args are all emitted positionally because SimpleEmitHandler has no
+        // omit-at-default branch — the trailing "0"/"false" fallbacks are the identity
+        // values, so an unwired node behaves exactly as if they were absent.
+        private static void RegisterPolls(ExporterRegistry r)
+        {
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Poll.Open", "poll.open",
+                new[]
+                {
+                    new SocketArg("Title",           "\"\""),
+                    new SocketArg("Options",         "\"\""),
+                    new SocketArg("DurationSeconds", "0"),
+                    new SocketArg("Betting",         "false"),
+                    new SocketArg("Mirror",          "false"),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Poll.Close", "poll.close",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Poll.Cancel", "poll.cancel",
+                System.Array.Empty<SocketArg>(),
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Poll.Vote", "poll.vote",
+                new[]
+                {
+                    new SocketArg("Option", "\"\""),
+                    new SocketArg("User",   "\"\""),
+                },
+                FollowNamedOutput: "Done"));
+
+            r.RegisterSimple(new SimpleEmitDescriptor(
+                "Poll.Bet", "poll.bet",
+                new[]
+                {
+                    new SocketArg("Option", "\"\""),
+                    new SocketArg("Amount", "0"),
+                    new SocketArg("User",   "\"\""),
+                },
+                FollowNamedOutput: "Done"));
         }
     }
 

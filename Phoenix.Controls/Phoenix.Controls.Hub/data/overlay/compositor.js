@@ -104,13 +104,13 @@
             totalPx += c.width * c.height;
         }
 
-        // Telemetry hook — debug overlay surfaces this so a streamer
-        // chasing memory creep can spot whether the pool is filling.
-        function stats() {
-            return { totalKept, totalPx, buckets: buckets.size };
-        }
-
-        return { acquire, release, stats };
+        // V14 — the pool exposes acquire/release ONLY. It used to also expose a
+        // stats() telemetry hook whose comment claimed "the debug overlay surfaces
+        // this"; there is no debug overlay and stats() had no caller in this file or
+        // anywhere else, so it was deleted rather than left as a promise. If pool
+        // telemetry is ever wanted, totalKept / totalPx / buckets.size are still
+        // right here — re-add a reader and a real surface in the same change.
+        return { acquire, release };
     })();
 
     const params = new URLSearchParams(window.location.search);
@@ -127,6 +127,191 @@
     // the widget's pixels at full size instead of a layer-scaled letterbox. OBS
     // browser sources never set this param, so production rendering is unaffected.
     const widgetFilterId = params.get('widget') || null;
+
+    // ── Design-time vs production, and why one boolean decides it ────────────
+    //
+    // THE rule this whole file now turns on: a node's `PreviewText` mock may render ONLY at
+    // design time. In production a live key with nothing paintable renders NOTHING.
+    //
+    // "Nothing paintable" is a narrow test on purpose — the key was never published, or its
+    // value is JSON null (liveRenderableValue). A STALE key is paintable: it has a last known
+    // value, and blanking it would turn a one-second producer hiccup into a visible flicker.
+    // Freshness travels on the State / Live pins instead. See liveRenderableValue.
+    //
+    // Before the Overlay Live Channel, every tool reader fell back to PreviewText whenever
+    // its Hub state was still empty — and the shipped Loyalty.Leaderboard default is
+    // "1. viewer_one — 12,400 / 2. viewer_two — 9,830 / …". OBS's own recommendation is
+    // "Shut down source when not visible", so the overlay reboots on EVERY scene return and
+    // starts with empty state: those FAKE VIEWER NAMES painted on a live stream, several
+    // times an hour, indistinguishable from real data to everyone watching. Blank is honest.
+    //
+    // The three design-time surfaces, in the order they were verified:
+    //   • ?widget=<id>   — WidgetSinglePreviewPanel's per-widget preview / popout.
+    //   • ?capture=1     — WidgetCanvasPreviewer's hidden thumbnail-capture WebView2.
+    //   • ?client=editor — the whole-LAYER design surface.
+    //     Visualist's LayerPreviewPanel appends it today (both the docked full-layer preview
+    //     and the layer popout window, which hosts the same control) — it is the whole-layer
+    //     surface, i.e. the one where layout work happens, and without the param every
+    //     channel-reading widget rendered empty there because a bare /layer/<id> is
+    //     byte-identical to what OBS loads.
+    //
+    //     REMAINING V6 ITEM: there is still no way to open a layer in a REAL browser as a
+    //     design-time surface. The Inspector's Copy-OBS-URL is the only other producer of a
+    //     /layer/<id> URL and it stays BARE — on purpose and permanently: that string is
+    //     pasted into an OBS Browser Source, where ?client=editor would re-enable the
+    //     PreviewText mocks on a live stream (fake viewer names on the leaderboard, in front
+    //     of an audience). V6 therefore has to add a SEPARATE "open design preview in browser"
+    //     affordance rather than teach Copy-OBS-URL a flag.
+    //
+    //     DO NOT delete this arm because a grep makes it look thinly used: it is the only
+    //     design-time signal a surface that is not ?widget= and not ?capture= can send, and
+    //     removing it would silently downgrade the layer preview back to blanks.
+    const IS_DESIGN_TIME = widgetFilterId !== null
+                        || params.get('client') === 'editor'
+                        || params.has('capture');
+
+    // ── Where PreviewText MOCKS may render ───────────────────────────────────
+    //
+    // Deliberately NARROWER than IS_DESIGN_TIME, and the difference is the whole
+    // point. IS_DESIGN_TIME counts a bare `?widget=<id>` as design-time, but V6
+    // established (see CLIENT_KIND below) that this exact URL is a SUPPORTED
+    // PRODUCTION surface — "a streamer putting one widget in its own OBS Browser
+    // Source at /layer/<id>?widget=alertbox, which is the obvious way to do that."
+    // Hub classifies that socket Production; the page was still rendering mocks on
+    // it, so the shipped Loyalty.Leaderboard default ("1. viewer_one — 12,400 …")
+    // painted fake viewer names in front of an audience on every scene return
+    // until the first live board arrived — precisely the fake-data-on-stream defect
+    // V4 exists to remove, surviving on the one URL V6 insisted must keep working.
+    //
+    // A mock is therefore allowed only where the client ANNOUNCED itself as an
+    // authoring surface: `?client=editor` (all three Visualist surfaces append it
+    // unconditionally, so every genuine preview still mocks) or `?capture` (the
+    // thumbnail rasteriser, which never faces an audience). Everything else —
+    // including a bare `?widget=` — is treated as live and renders blank instead
+    // of wrong, matching the "a blank beats a confident lie" rule the readers use.
+    const MOCK_DATA_ALLOWED = params.get('client') === 'editor' || params.has('capture');
+
+    // ── V6 bolt-on (landed here because compositor.js stays single-owner) ─────
+    //
+    // WHICH KIND of client this page is, announced to Hub on the SOCKET url. Hub's
+    // /hud/<layerId> upgrade carried no discriminator, so every connection looked identical
+    // — a live OBS Browser Source, the per-widget preview pane, the hidden thumbnail-capture
+    // WebView2 and the whole-layer design surface all registered the same way. A page query
+    // param does NOT carry over: connectSocket builds its own URL from
+    // window.location.host + the layer id, so the marker has to be appended there
+    // explicitly. That missing append is the reason Hub's classifier (already landed:
+    // HUDServer.ClassifyClientKind) has been reading every socket as Production.
+    //
+    // ★ TWO VALUES ONLY, and the vocabulary is NOT free to invent — it has to be one
+    // ClassifyClientKind already recognises, because that half is committed:
+    //   'editor' → LayerClientKind.Editor      (its `client == "editor"` arm)
+    //   'obs'    → LayerClientKind.Production  (its deliberate fail-toward-production arm,
+    //              the same arm that keeps an OLD CACHED compositor.js sending no param at
+    //              all classified as production — a stale browser source must never become
+    //              invisible to presence)
+    // The trap avoided here: a finer 'widget' / 'capture' vocabulary reads as Production,
+    // because ClassifyClientKind's widget/capture arms test for those KEYS in the query, not
+    // for a client VALUE. A per-widget preview would then have kept acking VISUAL_COMPLETE
+    // against a script's wait_for_visual — exactly the bug V6 exists to fix. Hub's enum is
+    // two-valued anyway, so there is nothing a finer split could feed.
+    //
+    // ★ Read from the EXPLICIT declaration only — deliberately NOT derived from
+    // IS_DESIGN_TIME, even though sharing one predicate looks tidier.
+    //
+    // IS_DESIGN_TIME is also true for `?widget=` and `?capture`, and those mean something much
+    // weaker: "a design-time surface may render PreviewText here". Feeding them to the WIRE
+    // marker conflates that with "this socket is not a real viewer" — which post-V6 strips the
+    // socket from layer presence entirely, so every script visual fast-succeeds and the source
+    // renders NOTHING.
+    //
+    // The concrete casualty: a streamer putting one widget in its own OBS Browser Source at
+    // /layer/<id>?widget=alertbox, which is the obvious way to do that. Derived, it announced
+    // 'editor', got stripped from presence, and sat dark for a whole stream while showing green
+    // in OBS. That URL worked before V6. A mock rendering on a preview is cosmetic; a live
+    // source that never renders is not.
+    //
+    // Narrowing costs nothing: all three Visualist surfaces append client=editor
+    // unconditionally, so every genuine preview still classifies. The page-side triad keeps its
+    // three markers for the PreviewText question, where a false positive is harmless. Everything
+    // else — including an OLD CACHED compositor.js that sends no param at all — must fail toward
+    // 'obs', because a stale browser source must never become invisible to presence.
+    const CLIENT_KIND = params.get('client') === 'editor' ? 'editor' : 'obs';
+
+    // ── V13 A3 — the per-layer /hud connect token ────────────────────────────
+    //
+    // V13 opens the first UPWARD paths on the /hud socket that Hub does more than acknowledge:
+    // VISUAL_COMPLETE now carries an author-authored `payload` that lands in a script's
+    // `global._wait_payload`, and DEBUG_WIDGET_NODE reaches the Visualist editor. That socket
+    // has no origin check and never had a credential, so those paths need an authorship
+    // signal. Hub mints a per-layer token, embeds it in the HTML it serves for /layer/<id>,
+    // and classifies each socket Trusted / Untrusted from what comes back — it does NOT refuse
+    // the connection.
+    //
+    // ★ THE NAME IS `phx-hud-token`, and it is FIXED by the contract on both sides. V13's first
+    // attempt read `phx-layer-token` here while Hub stamped `phx-hud-token`: the token was
+    // permanently empty, every socket classified Untrusted, and both new capabilities were dead
+    // with no error anywhere. The guard is
+    // V13PayloadAndTokenTests.A1_ConnectTokenMetaName_IsTheSameLiteralOnBothSidesOfTheWire,
+    // which re-reads THIS selector out of this file's source text and compares it to the literal
+    // Hub stamps — so renaming one side alone fails the suite.
+    //
+    // ★ THE TOKEN IS STABLE ACROSS HUB RESTARTS (§8.3 as amended). Nothing here ever re-fetches
+    // the page HTML — socket.onclose reconnects the SOCKET only, and LAYER_RELOADED prefers
+    // softReloadLayer(), which re-fetches /api/layer/<id>. So a per-start token would leave every
+    // OBS source that was open across a restart presenting a dead value for the rest of that
+    // page's life, and every auto-update is a restart. Hub therefore persists it per layer. The
+    // token proves "Hub served this page", not "this session is fresh".
+    //
+    // ★ IT HAS TO BE A META TAG, and that is forced by our own CSP rather than being a style
+    // preference. The /layer/<id> response ships `script-src 'self' 'unsafe-eval'` with NO
+    // 'unsafe-inline', so an injected <script> assigning a global would be blocked by the
+    // browser and the token would silently never arrive — a whole overlay quietly demoted to
+    // Untrusted with no error anywhere. A <meta> is inert content and passes untouched.
+    //
+    // ★ ABSENT IS LEGAL AND MUST STAY LEGAL. An OBS Browser Source can be running an
+    // index.html / compositor.js pair cached from before this shipped, so there is no token in
+    // its DOM at all. Then we connect ANYWAY, with no token parameter. A hard failure here
+    // would black out a live overlay mid-stream on upgrade, with the only clue in a log nobody
+    // is reading; an overlay that renders everything and declines two new privileged frames is
+    // strictly better than one that disappears. For the same reason there is deliberately NO
+    // retry, no re-read and no reconnect on a missing or rejected token — Hub logs once per
+    // layer and the streamer fixes it with a browser-source cache refresh whenever they get to
+    // it — or Hub asks this page for the ONE self-heal reload below. Read once at page scope: the
+    // token cannot change without Hub re-serving the page.
+    const CONNECT_TOKEN = (() => {
+        try {
+            const el = document.querySelector('meta[name="phx-hud-token"]');
+            const t  = el && el.getAttribute('content');
+            return t ? String(t) : '';
+        } catch { return ''; }   // no document / hostile DOM — behave exactly as tokenless
+    })();
+
+    // ── V13 §8.3 belt-and-braces — the ONE self-heal hard reload ──────────────
+    //
+    // The grace path above is deliberate, but it is a DEGRADATION with no exit: nothing in this
+    // file re-fetches the page HTML, so an Untrusted page stays Untrusted for its whole life —
+    // its Visual.Complete payload silently empty for the rest of the stream. Hub may therefore
+    // send HUD_RELOAD to a page that failed to prove provenance, which reloads /layer/<id> and
+    // picks the token up.
+    //
+    // ★ ONCE PER PAGE, AND THE LATCH HAS TO LIVE HERE. A reload starts a brand-new page, so a
+    // Hub-side "one per socket" latch dies with the socket the reload closes — the fresh page's
+    // socket would be told again, reload again, forever. §8.3 is explicit that a reload storm on
+    // a live overlay is worse than the degradation it is trying to fix. sessionStorage survives a
+    // reload and is scoped to this browser-source session, which is exactly "once per page
+    // lifetime". If storage is unavailable or blocked we do NOT reload at all: we cannot prove
+    // once-only, and an unprovable once is a loop.
+    const _SELF_HEAL_KEY = 'phx.hud.selfHealReloaded';
+    function _selfHealHardReload(reason) {
+        try {
+            const ss = window.sessionStorage;
+            if (!ss) return;                            // cannot prove once-only ⇒ never reload
+            if (ss.getItem(_SELF_HEAL_KEY)) return;     // already spent this page's one attempt
+            ss.setItem(_SELF_HEAL_KEY, '1');            // written BEFORE the reload, or it is moot
+        } catch { return; }                             // storage blocked ⇒ never reload
+        try { console.info('[compositor] self-heal reload:', reason || 'untrusted'); } catch { }
+        try { window.location.reload(); } catch { }
+    }
 
     // Track C — single-widget preview "active trigger". The embedded in-widget
     // preview (WidgetSinglePreviewPanel) sends SET_ACTIVE_TRIGGER whenever the
@@ -174,6 +359,29 @@
     let logicalW = canvas.width;
     let logicalH = canvas.height;
 
+    // Cached on-screen canvas rect. getBoundingClientRect() forces a synchronous
+    // style/layout recalculation, and _alignDomOverlayContainer measures once per
+    // DOM-track sink (WebOverlay.Custom / Player.Embed) per rendered frame — so a
+    // widget that ALSO carries an
+    // animated source (Video.Load / animated .gif) runs that through the rAF
+    // animator: frame N writes host.style.*, frame N+1 measures, 60x a second.
+    // Textbook layout thrash on a live OBS source. The canvas only ever moves when
+    // the viewport changes (#stage is a 100vw/100vh flex-centered absolute box) or
+    // when applyResolution rewrites canvas.style.width/height, so we measure once
+    // and invalidate at exactly those two points. #dom-overlay and #manipulator are
+    // absolutely positioned, so mounting overlay hosts can't shift the canvas.
+    let _canvasRectCache = null;
+    function invalidateCanvasRect() { _canvasRectCache = null; }
+    function canvasScreenRect() {
+        if (!_canvasRectCache) {
+            const r = canvas.getBoundingClientRect();
+            // Snapshot into a plain object: the live DOMRect is a per-call allocation
+            // and we want a stable object we can keep reading without re-measuring.
+            _canvasRectCache = { left: r.left, top: r.top, width: r.width, height: r.height };
+        }
+        return _canvasRectCache;
+    }
+
     let layer = null;        // Layer (Phoenix.Controls.Shared.Models.Layer)
     // Bounded LRU. Map keeps insertion-order; we promote on get and evict the
     // oldest entry when we exceed IMAGE_CACHE_MAX. Without this, multi-hour
@@ -183,16 +391,640 @@
     let imageCache = new Map(); // path|url → HTMLImageElement
     let socket = null;
 
-    // Live captions (manifesto §4.10 CC integration). Hub's LiveCaptionService pushes
-    // CAPTION_UPDATE; the Caption.LiveCaption node reads from this state object.
-    const captionState = { original: '', translated: '', sourceLanguage: '', targetLanguage: '' };
+    // Overlay Live Channel — the ONE channel every live value rides on. It REPLACED the four
+    // bespoke per-tool state objects that used to live here (captionState / timerState /
+    // loyaltyState / counterState, each fed by its own CAPTION_UPDATE / TIMER_UPDATE /
+    // LOYALTY_UPDATE / COUNTER_UPDATE broadcast): Hub retired those producers, so the objects
+    // had no writer left and every reader now resolves keys out of this one Map.
+    // Hub's OverlayLiveStore answers our LIVE_HELLO with a LIVE_SNAPSHOT and then pushes
+    // coalesced LIVE_PATCH deltas; both land here.
+    //   entries   — key → { v, s }: v = last published value (any JSON value; null is a legal
+    //               value), s = Hub's liveness verdict for that key, 'active' or 'stale'.
+    //               A missing key IS "missing" — that state never ships as an entry.
+    //   seq       — the store's monotonic sequence for the newest frame we applied.
+    //   helloSent — latches once we have announced a subscription, so sendLiveHello can
+    //               tell "first announcement" from "re-announce with an unchanged key set".
+    // Written ONLY by the LIVE_SNAPSHOT / LIVE_PATCH arms in onMessage and sendLiveHello.
+    const liveState = { entries: new Map(), seq: 0, helloSent: false };
+
+    /// Adapts one wire entry ({ k, v, s }) to the { v, s } shape liveState.entries stores.
+    ///
+    /// The liveness verdict is Hub's to make and cannot be recomputed here: the obvious
+    /// browser-side design (ship LastWriteUtc + the expected interval, let our own clock
+    /// decide) breaks against the store's coalescing, because a producer republishing an
+    /// identical value refreshes LastWriteUtc WITHOUT shipping a frame — our copy would age
+    /// and we would declare a perfectly healthy key stale.
+    ///
+    /// A frame that carries no `s` predates the liveness field: treat it as live. A missing
+    /// verdict is not a stale verdict, and painting a working key as stale is the worse error.
+    function _liveEntryOf(e) {
+        return { v: e.v, s: e.s || 'active' };
+    }
+
+    /// The sequence number to judge an inbound live frame by. Hub stamps every frame with ONE
+    /// globally monotonic counter at build time, so a LIVE_PATCH whose seq is BELOW the one we
+    /// last applied is a reorder or a duplicate: applying it would overwrite newer values with
+    /// older ones, so the patch arm drops it.
+    ///
+    /// ONLY the patch arm. A LIVE_SNAPSHOT is authoritative full state, not an increment, so it
+    /// always applies and RESETS liveState.seq — the counter is process-static on the Hub side, so
+    /// a Hub restart legitimately hands us a LOWER seq than we already hold, and guarding
+    /// snapshots would leave the overlay permanently dark. The snapshot arm documents the full
+    /// scenario.
+    ///
+    /// An EQUAL seq is NOT a duplicate and must not be dropped. The pump's periodic full resync
+    /// re-ships the same values under the same seq when nothing has changed, and that resync is
+    /// the only repair path for a frame the per-socket send channel silently evicted — dropping
+    /// equal-seq frames would disable it.
+    ///
+    /// A frame carrying no usable seq is malformed rather than late, so it is still applied: we
+    /// hand back the seq we already hold, which both passes the strictly-lower test and keeps
+    /// such a frame from dragging liveState.seq backwards.
+    function _liveFrameSeq(msg) {
+        const n = Number(msg.seq);
+        return Number.isFinite(n) ? n : liveState.seq;
+    }
+
+    // ── Overlay Live Channel — reading a key ─────────────────────────────────
+    //
+    // Every node reader goes through the four accessors below, so no two of them can
+    // disagree about what "no data" means. Reserved tool roots are named once here rather
+    // than re-spelled per reader: a typo in one of these strings is a permanently blank
+    // widget with no error anywhere, which is precisely the failure mode the three-root
+    // timer namespace exists to avoid.
+    const LIVE_KEY_LOYALTY_BOARD      = 'loyalty.leaderboard';
+    const LIVE_KEY_LOYALTY_CURRENCY   = 'loyalty.currency';
+    const LIVE_KEY_CAPTION_ORIGINAL   = 'caption.original';
+    const LIVE_KEY_CAPTION_TRANSLATED = 'caption.translated';
+
+    // Shared empty board so a missing/null/malformed leaderboard allocates nothing per read.
+    // (A STALE board is NOT one of those — it keeps its last rows; see liveRenderableValue.)
+    const _NO_LEADERBOARD_ROWS = Object.freeze([]);
+
+    /// The stored { v, s } for a key, or undefined when nothing has ever been published under
+    /// it. Absence IS the Missing state — Hub never ships a "missing" entry.
+    function liveEntry(key) {
+        return (typeof key === 'string' && key) ? liveState.entries.get(key) : undefined;
+    }
+
+    // ── The two questions, answered by two DIFFERENT helpers ─────────────────
+    //
+    // "Is this data fresh?" and "is there a value I can paint?" are separate questions, and
+    // one helper answering both is a bug rather than a convenience: a freshness verdict then
+    // silently blanks a widget. liveStateOf answers freshness; liveRenderableValue answers
+    // paintability; neither consults the other. Every reader below picks the one it needs.
+
+    /// FRESHNESS — a key's liveness in the vocabulary the State / Live sockets expose:
+    /// 'Active' / 'Stale' / 'Missing'. Hub owns the verdict (see _liveEntryOf for why it cannot
+    /// be recomputed here), so this is a spelling change and nothing more.
+    ///
+    /// This is the ONLY route by which staleness reaches a canvas: it surfaces as the VALUE of a
+    /// status pin the author can branch on, never as a suppressed render. A null-valued Active
+    /// key still reports Active, because the key genuinely is being published — the emptiness of
+    /// its value is liveRenderableValue's business, not this function's.
+    function liveStateOf(key) {
+        const e = liveEntry(key);
+        if (!e) return 'Missing';
+        return e.s === 'stale' ? 'Stale' : 'Active';
+    }
+
+    /// PAINTABILITY — the value of a key we are allowed to render, or undefined when there is
+    /// none. Exactly TWO things collapse to undefined:
+    ///   • the key was never published (Missing). Nothing has ever existed under it to paint,
+    ///     and this is the case that killed the fake mock: production renders nothing (see
+    ///     liveMock). That behaviour must not change.
+    ///   • the value is JSON null. null is a legal published value, but it carries no
+    ///     renderable content, and it is also what OverlayLiveStore degrades a NaN/±Infinity
+    ///     publish to — so treating it as "no value" keeps a producer bug from rendering as
+    ///     a confident 0.
+    ///
+    /// STALE IS DELIBERATELY PAINTABLE, and that is the entire reason this is split from
+    /// liveStateOf. Hub's verdict is a ~3 s window (OverlayLiveStore.PumpIntervalMs 1000 ×
+    /// StaleIntervalMultiplier 3) around producers that tick at 1 Hz and write through the ONE
+    /// shared SQLite connection, so a WAL checkpoint or a GC pause is enough to overrun it on a
+    /// perfectly healthy timer. Worse, the stale transition itself DIRTIES the key
+    /// (RecomputeStaleTransitionsUnlocked runs before the pump takes its snapshot), so the
+    /// verdict change is PUSHED as a patch and repaints immediately: folding staleness in here
+    /// made a running subathon countdown visibly vanish and come back, where before the channel
+    /// a missed producer beat caused no re-render at all. Serving the last known value is
+    /// strictly better — the readout is a second or two old instead of absent — and a widget
+    /// that wants to KNOW reads the verdict off its State / Live pin and can hide itself
+    /// deliberately.
+    function liveRenderableValue(key) {
+        const e = liveEntry(key);
+        if (!e || e.v === null) return undefined;
+        return e.v;
+    }
+
+    /// A live value as display text. A JSON string yields its content, a number/bool its
+    /// literal text, anything structured its compact JSON. Mirrors how overlay.get renders a
+    /// value back into the script world, so the same key reads the same either side.
+    function liveTextOf(v) {
+        if (v === undefined || v === null) return '';
+        if (typeof v === 'string')  return v;
+        if (typeof v === 'number')  return Number.isFinite(v) ? String(v) : '';
+        if (typeof v === 'boolean') return v ? 'true' : 'false';
+        try { return JSON.stringify(v); } catch { return ''; }
+    }
+
+    /// A live value as a number — 0 on any failure, NEVER NaN.
+    ///
+    /// The coercion lives at the reader because that is where the author expressed intent by
+    /// picking a pin type: overlay.publish stores every author value as a JSON string and
+    /// deliberately does not sniff whether the text looks numeric, so "007" survives as
+    /// "007". Tool keys keep their real JSON types, which makes this exact for them and
+    /// best-effort for author strings. Number() rather than parseFloat() because the store's
+    /// C# half parses with InvariantCulture and rejects trailing garbage — parseFloat would
+    /// read "12abc" as 12 while Hub reads it as a failure.
+    function liveNumberOf(v) {
+        if (typeof v === 'number')  return Number.isFinite(v) ? v : 0;
+        if (typeof v === 'boolean') return v ? 1 : 0;
+        if (typeof v === 'string') {
+            const s = v.trim();
+            if (!s) return 0;
+            const n = Number(s);
+            return Number.isFinite(n) ? n : 0;
+        }
+        return 0;
+    }
+
+    /// The design-time-only PreviewText mock — '' in production, ALWAYS.
+    ///
+    /// This one function is the end of the fake-fallback bug. Every reader that used to do
+    /// `if (noLiveData) return PreviewText` now calls this instead, so the mock reaches a
+    /// canvas only on a surface MOCK_DATA_ALLOWED recognises. See that constant for why the
+    /// gate is narrower than IS_DESIGN_TIME (a bare `?widget=` is a live OBS source, not a
+    /// preview) and for the full account of why a mock on a live stream is worse than a blank.
+    function liveMock(node) {
+        if (!MOCK_DATA_ALLOWED) return '';
+        const preview = stripQuotes(attr(node, 'PreviewText', ''));
+        return (typeof preview === 'string' && preview) ? preview : '';
+    }
+
+    /// The `timer.<root>.` key prefix a Timer.Remaining / Countdown.Remaining /
+    /// Stopwatch.Elapsed node reads. THE single normalisation point: liveKeysForNode
+    /// subscribes `<this> + '*'` and evalTimerRemaining reads `<this> + '<field>'`, so the key
+    /// we ask Hub for can never drift from the key we look up.
+    ///
+    /// An empty TimerName means "the default timer", which we cannot name: the slug is
+    /// machine-generated (`t-<yyyy-MM-dd>-<letter>`) and we derive our subscription from
+    /// literal attribute text BEFORE any frame arrives, so learning the default slug would
+    /// require a frame we could only get by already being subscribed. Hub resolves that by
+    /// mirroring the default timer's fields under the fixed `timer.__default.*` root, and by
+    /// publishing every timer's fields a third time under its lower-cased DISPLAY NAME — which
+    /// is what TimerName means everywhere else in the product. So one lower-cased lookup hits
+    /// the slug root when the author typed a slug and the name root when they typed a name.
+    ///
+    /// trim().toLowerCase() must match TimerService's Trim().ToLowerInvariant() exactly. Two
+    /// halves normalising differently is a blank widget with a running timer and a valid graph.
+    function liveTimerRoot(node) {
+        const raw = stripQuotes(attr(node, 'TimerName', ''));
+        const name = (typeof raw === 'string' ? raw : '').trim().toLowerCase();
+        return name ? `timer.${name}.` : 'timer.__default.';
+    }
+
+    /// The `counter.<name>.count` key a Counter.Value node reads, or '' when it names no
+    /// counter. Lower-cased and deliberately NOT trimmed — CountersService.KeyName does
+    /// exactly this, having dropped its Trim() precisely so both halves run one rule: a
+    /// counter named " Deaths" must not publish counter.deaths.count while the widget
+    /// subscribes "counter. deaths.count".
+    function liveCounterKey(node) {
+        const raw = stripQuotes(attr(node, 'Name', ''));
+        const name = (typeof raw === 'string') ? raw : '';
+        return name ? `counter.${name.toLowerCase()}.count` : '';
+    }
+
+    /// The literal key a Var.Live node binds. Trimmed ONLY because OverlayLiveStore.Norm
+    /// trims on both the publish and the LIVE_HELLO path, so an untrimmed lookup would miss
+    /// the entry Hub trimmed on our behalf. No case folding: keys are Ordinal on the Hub side
+    /// and overlay.publish never folds, so `Boss_HP` and `boss_hp` are two different keys.
+    ///
+    /// "Literal" is the documented limit here: a computed key (`score_{user.name}`) is
+    /// writable and readable by script, but unbindable, because the browser derives its
+    /// subscription from attribute TEXT at graph-scan time.
+    function liveVarKey(node) {
+        const raw = stripQuotes(attr(node, 'Key', ''));
+        return (typeof raw === 'string' ? raw : '').trim();
+    }
+
+    // ── V10 — the goal.* family, the channel's second RESERVED root ───────────
+    //
+    // ★ THE PRODUCER HAS LANDED. This is the browser READER half; Hub's GoalChannelProducer
+    // publishes the follower / sub / bits / charity roots from Twitch's three channel-goal events
+    // and its three charity-CAMPAIGN events. goal.tip.* is still unproduced — it belongs to C1's
+    // donation ingestion, a SECOND publisher into this SAME family, which is what "one goal
+    // model" means. Every publisher writes FOUR fields under one root:
+    //
+    //     goal.<kind>.current    number
+    //     goal.<kind>.target     number
+    //     goal.<kind>.progress   number, 0..1 clamped; 0 when target <= 0
+    //     goal.<kind>.label      string
+    //
+    // <kind> is follower | sub | bits | tip | charity, or an author's custom_<slug>.
+    //
+    // The prefix and the field list are MIRRORS of NodeTemplates.GoalKeyPrefix /
+    // NodeTemplates.GoalFields, and WidgetFamilyV10Tests pins both pairs. That test is not
+    // ceremony: the publisher and this reader spelling one field differently produces a
+    // permanently blank widget with a running producer, a valid graph and no error on either
+    // side — the same failure mode the timer family's three-root namespace exists to avoid,
+    // and it is undiagnosable from the overlay because a key nobody published is simply absent.
+    const GOAL_KEY_PREFIX = 'goal.';
+    const GOAL_FIELDS     = ['current', 'target', 'progress', 'label'];
+
+    // The RESERVED kind vocabulary, mirrored from NodeTemplates.GoalKinds (WidgetFamilyV10Tests
+    // pins the pair). It exists for exactly one purpose: liveGoalRoot case-folds a kind ONLY
+    // when it is one of these. Everything else is an author slug and is used verbatim.
+    const GOAL_RESERVED_KINDS = ['follower', 'sub', 'bits', 'tip', 'charity'];
+
+    /// The `goal.<kind>.` root a Goal.Progress node reads, or '' when it names no kind.
+    ///
+    /// THE single normalisation point for this family, exactly as liveTimerRoot is for the
+    /// timer family: liveKeysForNode subscribes `<this> + '*'` and evalGoalProgress reads
+    /// `<this> + '<field>'`, so the key we ask Hub for can never drift from the key we look up.
+    ///
+    /// ★ CASE-FOLDING IS SCOPED TO THE RESERVED VOCABULARY, and the scope is the whole point.
+    /// The Kind box is typed by hand, so "Follower" must not subscribe goal.Follower.* against a
+    /// goal.follower.* publish — the five reserved kinds are therefore folded. But an author's
+    /// custom_<slug> is a key THEY chose and publish literally: OverlayLiveStore matches Ordinal
+    /// and its Norm() only trims, so folding the whole kind made custom_BossHP subscribe
+    /// goal.custom_bosshp. while every publish landed on goal.custom_BossHP. — and the
+    /// publisher-side subscription gate then dropped every write. Same rule liveVarKey states:
+    /// trim, never fold, because the store never folds either.
+    ///
+    /// Not sanitised beyond that, for the same reason: the channel enforces no charset, so
+    /// rewriting an unusual kind would silently read a different key than the author typed.
+    ///
+    /// The EMPTY result is load-bearing, not a defensive nicety: without it a blank Kind would
+    /// build the roots 'current' / 'target' / 'progress' / 'label', which are legal author keys
+    /// somebody may well have published with overlay.publish. An unconfigured node would then
+    /// bind a stranger's data.
+    function liveGoalRoot(node) {
+        const raw = stripQuotes(attr(node, 'Kind', ''));
+        const typed = (typeof raw === 'string' ? raw : '').trim();
+        if (!typed) return '';
+        const folded = typed.toLowerCase();
+        const kind = GOAL_RESERVED_KINDS.indexOf(folded) >= 0 ? folded : typed;
+        return `${GOAL_KEY_PREFIX}${kind}.`;
+    }
+
+    /// Liveness for a whole goal ROOT rather than for one nominated key — because a publisher
+    /// is allowed to fill part of the family. The common custom_<slug> case publishes current
+    /// and target only and lets the reader derive progress, so judging presence on a single
+    /// field would report Missing for a goal that is visibly working on screen.
+    ///
+    ///   • any field of the root is Stale   → 'Stale'. Stale WINS. The fields are published
+    ///     together, so a split verdict means the producer stopped mid-family — precisely the
+    ///     condition this pin exists to report — and the readout genuinely is a beat old.
+    ///   • any field present                → 'Active'
+    ///   • nothing published under the root → 'Missing'
+    ///
+    /// Vocabulary note for authors: 'Stale' is only reachable if the goal publisher declares an
+    /// ExpectedInterval. Hub's ComputeState cannot return Stale for a key that declared none,
+    /// and goal updates are event-driven, so in practice this answers Active or Missing.
+    function liveGoalState(root) {
+        if (!root) return 'Missing';
+        let seen = false;
+        for (const field of GOAL_FIELDS) {
+            const s = liveStateOf(root + field);
+            if (s === 'Stale') return 'Stale';
+            if (s === 'Active') seen = true;
+        }
+        return seen ? 'Active' : 'Missing';
+    }
+
+    /// A goal's 0..1 progress. A PUBLISHED progress always wins; the current/target derivation
+    /// is a FALLBACK and never an override, so this reader and Hub's own publisher-side clamp
+    /// cannot disagree about a goal that published all four fields.
+    ///
+    /// Every exit is a finite number inside [0,1]:
+    ///   • target <= 0, or either side unpublished → 0. A zero target is the honest zero
+    ///     (0 out of 0 is not "complete"), and 0 is what Hub's own clamp emits for it.
+    ///   • the clamp is applied HERE as well as at the publisher because an author can publish
+    ///     goal.<kind>.progress by hand with overlay.publish, and a stray 5 must not make a bar
+    ///     500% wide.
+    ///   • NaN can never escape. A NaN on a Scalar pin does not render as a blank — it
+    ///     propagates through every downstream transform (a NaN width, a NaN translate, a NaN
+    ///     lerp) and silently deletes unrelated parts of the widget, so it is stopped at source.
+    ///     liveNumberOf already refuses NaN; the clamp is the second gate for the division.
+    function goalProgressOf(publishedV, currentV, targetV) {
+        if (publishedV !== undefined) return clampProgress01(liveNumberOf(publishedV));
+        if (currentV === undefined || targetV === undefined) return 0;
+        const target = liveNumberOf(targetV);
+        if (!(target > 0)) return 0;
+        return clampProgress01(liveNumberOf(currentV) / target);
+    }
+
+    /// 0..1 clamp that also swallows NaN / ±Infinity — see goalProgressOf for why a NaN
+    /// reaching a Scalar socket is worse than a wrong number.
+    function clampProgress01(n) {
+        if (!Number.isFinite(n)) return 0;
+        return n < 0 ? 0 : (n > 1 ? 1 : n);
+    }
+
+    // ── V10 — the channel ARRAY reader's key + row helpers ────────────────────
+
+    /// The literal channel key a List.Live node binds. Same rule as liveVarKey: trimmed
+    /// because OverlayLiveStore.Norm trims on both the publish and the LIVE_HELLO path, and
+    /// NOT case-folded because keys are Ordinal on the Hub side. "Literal" is the documented
+    /// limit — the subscription is derived from this attribute's TEXT at graph-scan time, so a
+    /// computed key is publishable but never bindable.
+    function liveListKey(node) {
+        const raw = stripQuotes(attr(node, 'Key', ''));
+        return (typeof raw === 'string' ? raw : '').trim();
+    }
+
+    // Shared empty result so a Missing / null / non-array list allocates nothing per read.
+    // Separate from _NO_LEADERBOARD_ROWS purely so neither name lies about its owner; both are
+    // frozen empties and the duplication costs one object for the life of the page.
+    const _NO_LIST_ROWS = Object.freeze([]);
+
+    // One-slot memo for the JSON-string arm below. JSON.parse is a pure function of its input,
+    // so caching on the exact source string can never serve a wrong answer; two keys alternating
+    // just parse every time, which is what happened before the memo existed. It matters because
+    // liveListRows is called per PIN per render frame — a rotator reading Row/Value/Number off a
+    // 50-row published list would otherwise re-parse it ~180 times a second.
+    const _listStringMemo = { src: null, rows: _NO_LIST_ROWS };
+
+    // Keys already reported as not holding a list, so the diagnostic fires ONCE per key instead of
+    // at frame rate. Shared by all THREE not-a-list outcomes (see reportListNotArray below and
+    // liveListRows' catch), not only by the JSON.parse failure it was originally added for.
+    //
+    // ★ THE LATCH IS NOW LOAD-BEARING FOR HUB, not just for the console. The report goes out as a
+    // TRIGGER_DIAGNOSTIC frame (sendEvalDiagnostic) because a console.warn inside an OBS Browser
+    // Source reaches nobody, and an un-latched frame from a per-pin-per-frame reader would be a
+    // write to Hub's socket and a System Log line ~180 times a second. So the gate is not tidiness:
+    // it is what makes routing the diagnostic to Hub safe at all.
+    //
+    // Dedupe is on the KEY, deliberately NOT on the source string. Two reasons, and the second is
+    // the sharp one:
+    //   • _listStringMemo is a ONE-slot memo shared by every key, so on a layer with two List.Live
+    //     nodes — one of them holding a malformed string — the memo thrashes on every read and the
+    //     parse re-runs per frame.
+    //   • a producer republishing malformed rows every tick emits a DISTINCT string each time (a
+    //     changing count, a timestamp), so a source-string latch would let a fresh string through
+    //     on every publish — i.e. it would not bound anything. Key-scoped bounds it absolutely:
+    //     one report per binding, whatever the publisher does.
+    // Key-scoped is also the idiom Hub uses for exactly this shape (NoteProbeMissOnce per probe,
+    // ReportHelloDeadline per layer): the first sighting is the whole diagnostic, and the author
+    // does not need it repeated. The cost is that a SECOND, different typo on the same key is not
+    // re-reported within one page — accepted, because the first report already names the binding to
+    // go and look at.
+    //
+    // Bounded by construction: keys come from List.Live Key attributes in the loaded graph, so the
+    // live set is a handful. The cap only guards a design-time session where the author retypes the
+    // Key box while a soft reload re-scans the graph — past it the author already has 32 warnings.
+    const _listParseWarned    = new Set();
+    const _LIST_WARN_KEY_CAP  = 32;
+
+    /// The once-per-key report for a List.Live key holding something that is not a list, for the
+    /// two outcomes that CANNOT throw and therefore cannot ride the JSON.parse catch.
+    ///
+    /// ★ WHY THIS EXISTS. Only a THROWN parse error used to be reported. A published string that
+    /// parses cleanly into an OBJECT — `{"ann":5}` where `[{"name":"ann"}]` was meant, which is the
+    /// most natural publishing mistake of the lot — took the `Array.isArray(parsed)` false branch:
+    /// no throw, no latch, no Hub frame, frozen empty returned. A stored value that is neither
+    /// string nor array (a tool publishing a JSON number or object through the JsonNode overload)
+    /// fell out of the tail `return _NO_LIST_ROWS` just as quietly. Both produce the IDENTICAL blank
+    /// widget the "reported, not swallowed" rounds were filed to remove — State Active, Count 0,
+    /// nothing rendered, nothing anywhere to read — so "reported" now means every not-a-list
+    /// outcome rather than only the one that happens to raise.
+    ///
+    /// AND THE REASON CODE MUST NOT LIE ABOUT WHICH HAPPENED. One code for all three sent an author
+    /// hunting a syntax error in text that parsed perfectly, so each caller passes its own code and
+    /// its own `got=` detail: `list_not_json_array` (not JSON at all — the catch), this function's
+    /// `list_json_not_array` (valid JSON, wrong shape) and `list_value_not_array` (never a string).
+    ///
+    /// The three properties the caller depends on are all preserved here. DEDUPE: on the KEY (see
+    /// _listParseWarned for why not on the value), because a reader runs per pin per render frame
+    /// and the non-string arm has no memo to short-circuit it — an un-gated frame would be a write
+    /// to Hub's socket and a System Log line at frame rate. NO-THROW: sendEvalDiagnostic is
+    /// no-throw by construction and the console line is wrapped, so nothing escapes into a render
+    /// read. FROZEN EMPTY: this returns nothing at all — every caller still returns _NO_LIST_ROWS.
+    ///
+    /// The catch below keeps its own inline copy of this shape rather than calling here, because its
+    /// message carries the parse-error text and the existing regression pins read the latch and the
+    /// send out of the catch block itself.
+    function reportListNotArray(key, widgetId, reason, detail, saw) {
+        if (_listParseWarned.has(key) || _listParseWarned.size >= _LIST_WARN_KEY_CAP) return;
+        _listParseWarned.add(key);
+        sendEvalDiagnostic(reason, `key='${key}' expected=JSON-array ${detail}`, widgetId);
+        try {
+            console.warn(
+                `[Visualist] List.Live: key '${key}' holds ${saw}, not a JSON array — rendering ` +
+                `no rows. Publish a JSON array, e.g. ["a","b"] or ` +
+                `[{"name":"ann","amount":5}].`);
+        } catch (_) { /* console disabled */ }
+    }
+
+    /// The rows under a List.Live key, or [] when the key was never published, is null, or
+    /// holds anything that is not a JSON array. A STALE list keeps its last rows — the
+    /// staleness is reported on the State pin instead (see liveRenderableValue), so a list that
+    /// stopped updating shows slightly old rows rather than emptying itself mid-stream.
+    ///
+    /// TWO ACCEPTED SHAPES, and the second one is what makes this node reachable from a script
+    /// at all. A tool publishing through OverlayLiveStore's JsonNode overload stores a real JSON
+    /// array (loyalty.leaderboard is the only one today). But the ONLY publish surface a .phx
+    /// script can reach is overlay.publish → PublishString, which is string-only BY DESIGN — it
+    /// never sniffs whether the text looks numeric or structured. So a streamer following this
+    /// node's own tooltip and publishing rows from a script stored a STRING, an Array.isArray-only
+    /// reader answered "not a list", and the result was a permanently blank widget with a running
+    /// publisher, a valid graph and no error anywhere.
+    ///
+    /// The coercion therefore lives HERE, at the reader, which is where this file already puts it
+    /// (see liveNumberOf's own rationale: the author declared their intent by picking a pin type,
+    /// and dropping a List.Live node IS that declaration). Guarded three ways so it can only ever
+    /// widen what is accepted: the parse is inside try/catch, the result is used only when
+    /// Array.isArray passes, and a bare OBJECT is deliberately NOT promoted to a one-row list —
+    /// that would be guessing at the author's shape rather than reading their declaration.
+    ///
+    /// ★ EVERY NOT-A-LIST OUTCOME IS REPORTED TO HUB, once per key — not only the parse throw. The
+    /// parse stays non-throwing — a render read must never fault — but a catch that says nothing
+    /// reproduces the very defect this arm removed: an unquoted key, a trailing comma or a
+    /// single-quoted string is otherwise indistinguishable from "the key was never published"
+    /// (State Empty, Count 0, nothing rendered, no error on either side). A near miss is in fact the
+    /// likelier authoring mistake than a plain sentence, because the author who reached this arm was
+    /// already trying to publish rows.
+    ///
+    /// The two SILENT siblings of that throw are the point of reportListNotArray: a string that
+    /// parses into an object rather than an array raises nothing, and a stored value that is neither
+    /// string nor array reaches no parse at all. Both used to exit with the frozen empty and no
+    /// evidence anywhere. The one case that stays deliberately silent is `undefined`, because
+    /// liveRenderableValue collapses "never published" (Missing — the normal state before a
+    /// producer's first tick) and a legally published JSON null into it, and neither is a mistake.
+    ///
+    /// ★ AND A console.warn ALONE IS NOT "REPORTED". The production surface is an OBS Browser
+    /// Source with no DevTools attached, and the widget-editor WebView2 preview has no reachable
+    /// console at all, so a warn-only catch is silence with extra steps — the same blank widget,
+    /// the same absent error. The report therefore rides sendEvalDiagnostic, which lands in Hub's
+    /// System Log (reason `list_not_json_array` here, `list_json_not_array` / `list_value_not_array`
+    /// from the two non-throwing arms), and the console.warn stays as the second surface for whoever
+    /// DOES have DevTools open. Both name the key, so the author is pointed at the one binding to fix
+    /// rather than at "a list somewhere".
+    ///
+    /// `widgetId` is threaded in purely so the Hub line can name the widget; it is optional and
+    /// only ever decorates the diagnostic.
+    function liveListRows(key, widgetId) {
+        if (!key) return _NO_LIST_ROWS;
+        const v = liveRenderableValue(key);
+        if (Array.isArray(v)) return v;
+        if (typeof v === 'string') {
+            if (v === _listStringMemo.src) return _listStringMemo.rows;
+            let rows = _NO_LIST_ROWS;
+            // Set ONLY when the parse SUCCEEDED and produced something that is not an array; the
+            // kind is carried rather than the value so the report can name what arrived.
+            let parsedAs = '';
+            try {
+                const parsed = JSON.parse(v);
+                if (Array.isArray(parsed)) rows = parsed;
+                else parsedAs = (parsed === null ? 'null' : typeof parsed);
+            } catch (e) {
+                // Not JSON at all — the frozen empty is the honest answer and nothing throws out
+                // of a render read. But SAY SO, once, and say it somewhere the streamer can
+                // actually see. Reported BEFORE the memo store below, because that store is what
+                // makes the repeat reads cheap and this the only pass that sees the failure.
+                //
+                // BOTH SURFACES sit INSIDE the latch — the Hub frame as much as the console line.
+                // liveListRows runs per pin per render frame, so an un-gated frame would hammer
+                // Hub's socket and its System Log at frame rate.
+                if (!_listParseWarned.has(key) && _listParseWarned.size < _LIST_WARN_KEY_CAP) {
+                    _listParseWarned.add(key);
+                    const why = (e && e.message) ? e.message : String(e);
+                    sendEvalDiagnostic(
+                        'list_not_json_array',
+                        `key='${key}' expected=JSON-array parse='${why}'`,
+                        widgetId);
+                    // Wrapped: this line sits inside a catch, so an unavailable console would
+                    // otherwise throw straight out of a render read and take the pin with it.
+                    try {
+                        console.warn(
+                            `[Visualist] List.Live: key '${key}' holds a string that is not a JSON ` +
+                            `array — rendering no rows. Publish a JSON array, e.g. ` +
+                            `["a","b"] or [{"name":"ann","amount":5}]. ` +
+                            `Parse error: ${why}`);
+                    } catch (_) { /* console disabled */ }
+                }
+            }
+            // VALID JSON, WRONG SHAPE — an object where an array was meant. Nothing threw, so this
+            // arm reached neither the catch above nor any other surface, and the author saw the same
+            // blank widget a syntax error used to give them. Raised OUTSIDE the catch on purpose:
+            // inside it, anything the report ever threw would be handled by the very catch that had
+            // just finished, and the author would be told about a parse error that never happened.
+            if (parsedAs) {
+                reportListNotArray(key, widgetId, 'list_json_not_array',
+                                   `parsed=${parsedAs}`, `valid JSON holding a ${parsedAs}`);
+            }
+            _listStringMemo.src  = v;
+            _listStringMemo.rows = rows;
+            return rows;
+        }
+        // NEITHER an array NOR a string — a tool that published a JSON number / bool / object under
+        // a key a List.Live node binds. There is no memo on this arm, so the latch inside the report
+        // is the only thing standing between a per-pin-per-frame reader and Hub's socket.
+        //
+        // `undefined` stays SILENT and that is deliberate, not an oversight: liveRenderableValue
+        // collapses BOTH a never-published key (Missing — every overlay's state until its producer's
+        // first tick) and a legally published JSON null into undefined, so reporting it would turn
+        // every idle overlay into a System Log flood and bury the reports that mean something.
+        if (v !== undefined) {
+            reportListNotArray(key, widgetId, 'list_value_not_array',
+                               `stored=${typeof v}`, `a JSON ${typeof v}`);
+        }
+        return _NO_LIST_ROWS;
+    }
+
+    /// One field of a list row, addressed by NAME, case-insensitively.
+    ///
+    /// A BARE row (string / number / bool — an array of relative paths for an emote wall, an
+    /// array of names for a queue) has no fields, so it IS its own value and the Field
+    /// attribute is ignored. That is what lets one node read both row shapes without the
+    /// author declaring which kind of array they published.
+    ///
+    /// Returns undefined for "no such field", which the callers turn into '' / 0 — never the
+    /// literal token text, because a leaked "{name}" on a live overlay reads as a broken
+    /// widget rather than as missing data.
+    function liveListField(row, field) {
+        if (row === null || row === undefined) return undefined;
+        if (typeof row !== 'object') return row;
+        const want = (typeof field === 'string' ? field : '').trim().toLowerCase();
+        if (!want) return undefined;
+        for (const k of Object.keys(row)) {
+            if (k.toLowerCase() === want) return row[k];
+        }
+        return undefined;
+    }
+
+    /// The leaderboard rows, or [] when the key is Missing (never published), null, or carries
+    /// anything but an array. Hub publishes loyalty.leaderboard as a real JSON ARRAY of
+    /// { rank, name, balance } rather than a pre-joined string, which is what lets a widget
+    /// address one rank directly.
+    ///
+    /// A STALE board keeps its last rows — see liveRenderableValue. The staleness itself is
+    /// reported by the State pin, so a board that stopped updating shows slightly old standings
+    /// instead of emptying itself mid-stream.
+    function liveLeaderboardRows() {
+        const v = liveRenderableValue(LIVE_KEY_LOYALTY_BOARD);
+        return Array.isArray(v) ? v : _NO_LEADERBOARD_ROWS;
+    }
+
+    /// One leaderboard row by viewer name, case-insensitive — how Loyalty.Balance resolves a
+    /// user. Per-user balance keys are deliberately not published (one key per viewer who ever
+    /// earned a point is unbounded), and the board already carries every name an overlay can
+    /// show. A linear scan replaces the old per-frame `byName` index: the board is
+    /// LeaderboardSize rows (10 by default) and now arrives per patch rather than per frame, so
+    /// rebuilding an index would cost more than the scans it saves.
+    function liveLeaderboardRow(user) {
+        const needle = (typeof user === 'string' ? user : '').toLowerCase();
+        if (!needle) return null;
+        for (const row of liveLeaderboardRows()) {
+            if (row && typeof row.name === 'string' && row.name.toLowerCase() === needle) return row;
+        }
+        return null;
+    }
+
+    /// The 0-based array position a Loyalty.Leaderboard's Rank/Name/Balance sockets address,
+    /// from its 1-BASED `Index` attribute.
+    ///
+    /// 1-based deliberately, and it is the one place this file makes a semantic choice the C#
+    /// template has to agree with: the board's rows carry a 1-based `rank`, and the same node
+    /// exposes a Rank output, so an Index that reads as a rank ("Index 3 → Rank 3") is the only
+    /// spelling in which those two can't contradict each other.
+    ///
+    /// A missing, non-numeric or sub-1 Index means first place — the same forgiving default the
+    /// Size attribute takes. Out-of-range is NOT clamped; the caller renders '' / 0, because
+    /// showing rank 1 where the author asked for rank 12 is a wrong answer dressed as a right one.
+    function liveLeaderboardIndex(node) {
+        const n = parseInt(stripQuotes(attr(node, 'Index', '1')), 10);
+        return (Number.isFinite(n) && n >= 1) ? n - 1 : 0;
+    }
 
     // L49 — Caption.LiveCaption emits two output sockets. The names live in C# (NodeTemplates)
     // and were previously hardcoded as inline string literals here, so any rename on the C# side
     // would silently fall through to the wrong branch. Lift them to a single source of truth.
     // BugFixSweep3_Visualist_JS_Tests asserts this constant is present.
     const CAPTION_SOCKETS = { ORIGINAL: 'Original', TRANSLATED: 'Translated' };
+
+    // V7 — String.Select row capacity: the number of Case<i>/Value<i> attribute pairs the
+    // template ships, in addition to the mandatory Default row. Must equal
+    // NodeTemplates.StringSelectRows on the C# side or the browser would stop reading rows
+    // the editor still lets an author fill in; DynamicMediaSourceV7Tests pins the pair.
+    // TWELVE is derived, not picked: the Alerts tool labels ten families today plus a
+    // generic fallback, so the eight-way fan-out every other node in the suite uses would
+    // not fit the one graph this node exists to build.
+    const STRING_SELECT_ROWS = 12;
     const _warnedUnknownCaptionSockets = new Set();
+
+    // …and the spelling the TEMPLATE actually ships. NodeTemplates.cs declares
+    // Caption.LiveCaption's outputs as { Text, Translated } — the untranslated stream's socket
+    // is named "Text", not "Original". So every caption widget in existence reached its
+    // original text through the unknown-socket branch below and logged the "unrecognized socket
+    // name" warning once per page. Renaming the socket is not an option (a socket rename prunes
+    // the links in every existing .phxlayer), so the accepted spellings live here.
+    //
+    // Kept OUT of CAPTION_SOCKETS on purpose: the caption key contract test derives the
+    // published key set from that object's string literals, so it must stay exactly the two
+    // entries that map to caption.original / caption.translated. Adding 'Text' there would
+    // claim a caption.text key nobody publishes.
+    const CAPTION_ORIGINAL_SOCKETS = new Set(['Text', CAPTION_SOCKETS.ORIGINAL]);
 
     // M64 — FontFace load tracking. We pay the `document.fonts.load` await once per
     // (family, size) pair so the first Text.Render measures with the actual face metrics
@@ -234,10 +1066,25 @@
         eventData:     {},
         eventDataJson: '{}',
         timestamp:     0,
-        // Sweep 21 — design-time timeline cursor in milliseconds. Set by SCRUB /
-        // PLAY messages from the Visualist WebView2 bridge; defaults to 0 for
-        // production renders (RUN_TRIGGER, CAPTION_UPDATE) so animated parameters
-        // sample at their start values.
+        // The timeline cursor in milliseconds. Every keyframe track (attrAnimated /
+        // attrAnimatedColor) and every Time.Elapsed / Time.Oscillator / Time.Sawtooth node
+        // samples against this, so it is what decides whether authored animation moves.
+        //
+        // TWO owners, and which one owns it FOR A GIVEN WIDGET is decided by
+        // _productionClockOwnsWidgetTime():
+        //   • design time — SCRUB pins it and PLAY advances it, from the Visualist WebView2
+        //     bridge. Page-wide on the embedded per-widget preview (?widget=) and for the
+        //     duration of a PLAY session; PER WIDGET on the whole-layer design preview
+        //     (?client=editor), where the author scrubs ONE widget and the rest of the layer
+        //     must keep running the production clock.
+        //   • production (V5) — the global animator loop writes `now - activationStart` for the
+        //     widget it is about to render, immediately before that render.
+        //
+        // It used to stay 0 forever on every production path, which meant every authored
+        // keyframe and every Time.* node sampled at t=0 on stream: the author scrubbed, watched
+        // it animate in the editor, saved, and got ONE static frame in OBS. Set to 0 at each
+        // activation (handleRunTrigger, its idle revert, SET_ACTIVE_TRIGGER) so a trigger always
+        // starts at the beginning of its timeline.
         timeMs:        0,
     };
 
@@ -262,8 +1109,181 @@
     // animator / play / scrub RE-renders (which deliberately do NOT bump it). A
     // one-shot plays exactly once per generation; same-generation re-renders skip the
     // replay. See ensureAudioElementAndPlay / evalAudioPlay / _audioPlayedGen.
-    let _audioActivationGen = 1;
-    function bumpAudioActivation() { _audioActivationGen++; }
+    //
+    // V7 widened what the generation owns: since Audio.Load's Path became wirable, the
+    // resolved SOURCE is latched by the same generation. A path that resolves differently
+    // between two renders of one activation is therefore ignored until the next genuine
+    // activation — deliberately, because "src changed" arriving on the animator path would
+    // replay the clip at frame rate.
+    //
+    // ★ PER WIDGET, not page-wide, and the map is the fix for a real multi-widget defect.
+    //
+    // A single page-wide counter made every widget's audio share one generation while the
+    // animator slots that RE-render them are per widget. Two keyframed alert widgets, A and
+    // B: firing B inside A's 2 s hold bumped the shared counter, so A's very next animator
+    // frame saw `_audioPlayedGen.get(nodeA) !== gen`, read that as a fresh activation, and
+    // REPLAYED A's one-shot — the "Loop = false audio loops" class, reached through a
+    // neighbour instead of through a render tick. (Worse after V7: A's replay re-resolves its
+    // wired Path against triggerContext, which B's activation had just overwritten, so A
+    // replayed with B's CLIP.) Scoped per widget, B's activation is invisible to A's slot,
+    // exactly as the per-widget activation CLOCK below is already scoped.
+    //
+    // Same shape as _widgetActivationStart: widgetId → counter, absent = 1 (never activated).
+    // Absent-is-1 matters — _audioPlayedGen starts empty, so a first render of a never-bumped
+    // widget still reads "new activation" and its onStartup audio fires once.
+    const _audioActivationGen = new Map();   // widgetId → generation
+    function bumpAudioActivation(widgetId) {
+        if (!widgetId) return;
+        _audioActivationGen.set(widgetId, audioActivationGen(widgetId) + 1);
+    }
+    function audioActivationGen(widgetId) {
+        const g = _audioActivationGen.get(widgetId);
+        return g === undefined ? 1 : g;
+    }
+
+    function _nowMs() {
+        return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+
+    // V5 — the per-widget ACTIVATION CLOCK, i.e. the thing that makes authored animation play
+    // in OBS at all. A production render's triggerContext.timeMs is `now - activationStart` for
+    // THAT widget, so every keyframe track and every Time.Elapsed / Time.Oscillator /
+    // Time.Sawtooth node samples against the moment that widget last became something new —
+    // not against a shared page clock, which would put two widgets triggered a minute apart at
+    // wildly different points in their own timelines.
+    //
+    // Three of the four stamp sites are the ones that bump _audioActivationGen above —
+    // handleRunTrigger, its idle revert, and handleSetActiveTrigger — because those are the
+    // "genuine activation" moments. Every other render (an animator frame, a live patch, the
+    // clock beat, a WIDGET_UPDATE drag) is a RE-render of the current activation and must not
+    // restart the clock, or an alert would replay its intro on every repaint.
+    //
+    // The FOURTH site is renderWithTransition's post-dip render, and it is a RE-stamp of an
+    // activation that has already happened rather than a new one: handleRunTrigger stamps, then
+    // the dip-to-blank fade eats transitionMs (up to 1000 ms) of wall clock before the widget's
+    // first live frame exists. Stamping again when the dip ENDS is what makes the track start
+    // when the content actually appears; without it a sub-second intro was entirely consumed by
+    // the fade. It deliberately does NOT bump the audio generation (see ★ below) — the audio for
+    // this activation already fired on the pre-dip render.
+    //
+    // ★ The pairing is one-way ON PURPOSE: the clock stamp rides the activation sites, but the
+    // clock NEVER bumps the audio generation. A tick that bumped it would re-fire every
+    // one-shot Audio.Play sixty times a second — the 2026-06-23 "Loop = false audio loops"
+    // bug, at frame rate. bumpAudioActivation(widgetId) still has exactly three callers, all
+    // message-driven; nothing on the animator/clock route, and not the post-dip re-stamp,
+    // can reach one. Both maps are keyed by WIDGET for the same reason: one widget's
+    // activation must be invisible to another's re-render.
+    const _widgetActivationStart = new Map(); // widgetId → _nowMs() at last activation
+    function _stampWidgetActivation(widgetId) {
+        if (!widgetId) return;
+        _widgetActivationStart.set(widgetId, _nowMs());
+        // A new activation restarts the clock, so a keyframe track that had played out (and let
+        // the animator loop stop for this widget) must play again. Clearing the mark here rather
+        // than at the three call sites keeps "activation" a single concept with a single effect.
+        const slot = _widgetAnimators.get(widgetId);
+        if (slot) slot.settledAtExtent = false;
+    }
+
+    /// Milliseconds since this widget's activation. The first read lazily stamps, so a widget
+    /// that has only ever painted its onStartup idle state (no RUN_TRIGGER ever named it) still
+    /// animates from t=0 instead of from page load — which for a 2 s keyframe track authored on
+    /// onStartup is the difference between "plays" and "sits frozen on its last keyframe".
+    function _widgetTimeMs(widgetId) {
+        let start = _widgetActivationStart.get(widgetId);
+        if (start === undefined) { start = _nowMs(); _widgetActivationStart.set(widgetId, start); }
+        const t = _nowMs() - start;
+        return t > 0 ? t : 0;
+    }
+
+    /// True when the PRODUCTION clock owns triggerContext.timeMs PAGE-WIDE.
+    ///
+    /// The two design-time transports own it instead: SCRUB pins a cursor and PLAY advances its
+    /// own from performance.now(), and a production write landing between their frames would
+    /// fight them for the canvas — the exact defect #6 fixed for GIF playback.
+    ///
+    /// Page-wide is the right scope for exactly two conditions:
+    ///   • `?widget=` — the embedded per-widget preview renders ONE widget, and its whole reason
+    ///     to exist is the editor's transport, so nothing on that page runs a production clock.
+    ///   • a live PLAY session — the play tick writes timeMs on every frame for the widget it is
+    ///     playing, so no other write can be trusted to survive between its frames either.
+    ///
+    /// ?client=editor — the whole-LAYER design preview — is deliberately NOT one of them: that is
+    /// the surface the author lays a layer out on, and suppressing the clock there would hide the
+    /// very animation this sprint exists to make play. But that page DOES scrub (see
+    /// _designTimeClockOwners), so ownership on it is per widget, not per page.
+    function _productionClockOwnsTime() {
+        return widgetFilterId == null && _playState === null;
+    }
+
+    /// Widget ids whose triggerContext.timeMs is owned by a design-time transport — the
+    /// per-WIDGET half of the ownership rule above, and the fix for a real defect on the
+    /// whole-layer design preview.
+    ///
+    /// LayerPreviewPanel loads `/layer/<id>?client=editor`, so widgetFilterId is null there and
+    /// _productionClockOwnsTime() is true — yet that panel has PostScrub / PostPlay and
+    /// WidgetEditorView calls them (WidgetEditorView.xaml.cs: PostScrub on every playhead move,
+    /// PostPlay on transport play). The result was that the author dragged the playhead, the
+    /// scrubbed frame survived about one frame, and the animator loop overwrote timeMs with the
+    /// production clock and repainted — the playhead simply did not work on the layer preview.
+    ///
+    /// Widening the page-wide gate to IS_DESIGN_TIME would have "fixed" it by stopping the layer
+    /// preview from ever showing production animation, which is the opposite of what V5 is for.
+    /// A per-widget latch keeps both: the scrubbed widget obeys the playhead, every other widget
+    /// on the layer keeps animating.
+    ///
+    /// Set by handleScrub / handlePlay.
+    ///
+    /// ★ Stopping the transport does NOT clear it — stop HOLDS the frame it stopped on, which is
+    /// what the author's gesture asked for and what handleStopPlay's animator-slot drop was
+    /// already doing. Releasing it there (and clearing the whole set in the STOP_PLAY arm) was
+    /// what snapped a just-played widget to its end pose.
+    ///
+    /// The pin is released by the signals that mean the playhead no longer describes what is on
+    /// screen: RELEASE_TIME_CURSOR (the transport's STOP button — the explicit "done scrubbing"
+    /// gesture, and the ONLY one of these reachable on the whole-layer preview), a RUN_TRIGGER
+    /// for that widget (a production fire supersedes the editor's cursor — the widget is showing
+    /// new content), a SET_ACTIVE_TRIGGER tab switch (which re-pins to 0 rather than deleting, so
+    /// the new trigger's start frame holds), and softReloadLayer (a save is the author's start
+    /// over).
+    ///
+    /// ★ A MAP, widgetId → pinned timeMs, and carrying the value is the whole point. Recording
+    /// only WHO owns the cursor left every production write site with nothing to write, so each
+    /// one degraded to "skip the write" — and triggerContext.timeMs is a single page global that
+    /// the animator loop rewrites for OTHER widgets between those renders. A non-scrub render of a
+    /// design-time-owned widget (a LIVE_PATCH, a WIDGET_UPDATE drag, a resolution-change
+    /// renderAll) therefore painted it at a FOREIGN widget's clock — the exact hazard the
+    /// surrounding comments exist to prevent. With the cursor stored, every such render paints the
+    /// value the editor actually pinned. Read it through _applyWidgetTimeCursor, never directly.
+    const _designTimeClockOwners = new Map();
+
+    /// True when the production activation clock owns triggerContext.timeMs for THIS widget.
+    /// Every production timeMs write goes through this (renderAll, patchWidgetUpdate, the
+    /// consumer pass, the animator loop, renderWithTransition's post-dip render).
+    function _productionClockOwnsWidgetTime(widgetId) {
+        return _productionClockOwnsTime() && !_designTimeClockOwners.has(widgetId);
+    }
+
+    /// Establishes triggerContext.timeMs for a render of `widgetId` on a PRODUCTION path (i.e.
+    /// anything that is not the SCRUB / PLAY / SET_ACTIVE_TRIGGER transport itself). The single
+    /// place the two-owner rule is applied, so the five such sites cannot drift:
+    ///
+    ///   • production owns this widget's cursor  ⇒ its own activation clock,
+    ///   • a design-time transport owns it       ⇒ the value that transport PINNED,
+    ///   • neither has a value to offer          ⇒ leave the singleton alone.
+    ///
+    /// The third case is not a gap. It is the `?widget=` preview before its first SCRUB and the
+    /// non-played widgets during a PLAY session: _productionClockOwnsTime() is false page-wide
+    /// there, and the transport writes timeMs directly for the widget it drives. Writing anything
+    /// of our own for a widget nobody has pinned would be a guess; leaving it is the pre-V5
+    /// behaviour and provably no worse.
+    function _applyWidgetTimeCursor(widgetId) {
+        if (_productionClockOwnsWidgetTime(widgetId)) {
+            triggerContext.timeMs = _widgetTimeMs(widgetId);
+            return;
+        }
+        const pinned = _designTimeClockOwners.get(widgetId);
+        if (pinned !== undefined) triggerContext.timeMs = pinned;
+    }
 
     // Device-pixel scale of the main canvas backing store (= dpr from
     // applyResolution). The dip-to-blank transition snapshots a widget region from
@@ -307,12 +1327,35 @@
 
     // M46 / L48 — per-trigger metadata cached on first visit. Avoids re-scanning the
     // graph on every render and gives us a single place to enforce graph-shape rules.
-    //   • consumesCaption — true when any node title starts with "Caption.". Drives
-    //     M46's targeted re-render on CAPTION_UPDATE so widgets that don't read captions
-    //     don't get re-rendered every time a caption frame arrives.
     //   • displayNode    — the resolved Display sink (with L48 dedupe + warn applied).
+    //   • consumesClock  — true when the graph carries a Clock.Now node. The LAST surviving
+    //     consumption flag: M46's four data flags (caption / timer / loyalty / counter) were
+    //     title-prefix approximations of "does this widget read live data", and the Overlay
+    //     Live Channel answers that question exactly instead — per KEY, via _widgetLiveKeys,
+    //     so a patch touching timer.main.* re-renders only the widgets bound to timer.main.*
+    //     rather than every widget carrying any timer node. Clock.Now is the one reader with
+    //     no Hub producer at all (it reads the OBS machine's own Date.now()), so it is NOT a
+    //     channel consumer and keeps its own flag and its own 1 Hz heartbeat — which V5 folded
+    //     into the single global animator tick (it is no longer a setInterval of its own).
+    //   • consumesTime   — true when rendering this trigger at an ADVANCING timeMs produces a
+    //     different picture: the trigger has keyframes, or the graph carries a Time.* node that
+    //     reads the clock. This is the flag that opts the widget into the animator loop; see
+    //     TIME_CONSUMING_TITLES below for why the set has three entries and not four.
+    //   • timeExtentMs   — how long that stays true. null = forever (a Time.* node); otherwise
+    //     the last keyframe's time, past which every sample repeats and the loop can stop.
     // Keyed by `${widgetId}|${triggerName}`. Cleared on layer load.
     const _triggerMeta = new Map();
+
+    // The graph nodes whose VALUE depends on triggerContext.timeMs. Membership here is what
+    // promotes a widget into the animator loop (via consumesTime → requestWidgetAnimator), so
+    // an omission means "authored animation silently renders as a static frame in OBS".
+    //
+    // ★ Time.Easing is deliberately ABSENT. evalTimeEasing reads only its own `T` socket and
+    // never touches timeMs — it is a curve, not a clock. When its T is driven by one of the
+    // three below, THAT node's presence has already set the flag, so adding Easing here would
+    // only promote graphs whose easing input is a static constant: a widget re-rendered at
+    // frame rate to produce a byte-identical picture forever. Do not "fix" this omission.
+    const TIME_CONSUMING_TITLES = new Set(['Time.Elapsed', 'Time.Oscillator', 'Time.Sawtooth']);
     function _triggerMetaKey(widgetId, triggerName) { return `${widgetId}|${triggerName}`; }
     function getTriggerMeta(widget, trigger) {
         const key = _triggerMetaKey(widget.id, trigger.name);
@@ -334,29 +1377,310 @@
         }
         const displayNode = displays[0] || null;
 
-        // M46 — caption consumption flag. Title-prefix match catches every Caption.* node
-        // that the widget's evaluator chain might pull from (today only Caption.LiveCaption,
-        // but new Caption.* nodes added later auto-opt-in without touching this code).
-        const consumesCaption = nodes.some(n => typeof n.Title === 'string' && n.Title.startsWith('Caption.'));
+        // Clock consumption flag — Clock.Now is browser-autonomous (it reads the OBS machine's
+        // own wall clock, and no Hub producer exists for it), so it cannot ride the Overlay
+        // Live Channel's key-narrowed re-render pass: it has no key. A dedicated 1 Hz
+        // heartbeat re-renders any widget carrying one, which is why this is the one
+        // consumption flag the channel did not subsume.
+        const consumesClock = nodes.some(n => n.Title === 'Clock.Now');
 
-        meta = { displayNode, consumesCaption };
+        // Time consumption flag — the widget-animator opt-in for authored animation.
+        //
+        // Two independent sources, either of which makes an advancing timeMs visible:
+        //   • the trigger's timeline carries at least one keyframe (attrAnimated /
+        //     attrAnimatedColor sample it at triggerContext.timeMs), or
+        //   • the graph carries a node that reads the clock directly (TIME_CONSUMING_TITLES).
+        // `keyframes` is the serialized WidgetTimeline field name — the same one attrAnimated
+        // reads, so the two halves cannot disagree about what "has keyframes" means.
+        const timelineKeyframes = (trigger.timeline && trigger.timeline.keyframes) || null;
+        const hasTimeNode  = nodes.some(n => TIME_CONSUMING_TITLES.has(n.Title));
+        const hasKeyframes = Array.isArray(timelineKeyframes) && timelineKeyframes.length > 0;
+        const consumesTime = hasKeyframes || hasTimeNode;
+
+        // How long an advancing timeMs can still CHANGE this trigger's picture.
+        //   null  ⇒ unbounded: a Time.* node samples the clock for as long as the page lives.
+        //   >= 0  ⇒ the last keyframe's time. keyframeSampleScalar clamps to the final keyframe
+        //           for anything at or past it, so every sample beyond this is byte-identical.
+        //
+        // This is what lets the animator loop STOP. Without it, a widget carrying a 2 s intro
+        // track would keep re-evaluating its whole graph at display refresh rate for the rest of
+        // the stream to redraw the same pixels — a real cost on a streaming PC with a dozen
+        // browser sources, and a brand-new one, because before V5 such a widget was demoted
+        // after its first paint (which is exactly the bug: it never animated at all).
+        //
+        // Read from `time`, the serialized Keyframe field, and finite-guarded: a malformed
+        // .phxlayer can carry NaN, and `k.time || 0` (what keyframeSampleScalar uses) treats
+        // NaN as 0, so ignoring non-finite times here agrees with how they actually sample.
+        let timeExtentMs = 0;
+        if (hasTimeNode) {
+            timeExtentMs = null;
+        } else if (hasKeyframes) {
+            for (const k of timelineKeyframes) {
+                const t = Number(k && k.time);
+                if (Number.isFinite(t) && t > timeExtentMs) timeExtentMs = t;
+            }
+        }
+
+        // Sink-category scans memoized here too (graph is immutable until reload) so
+        // renderWidgetTrigger doesn't re-filter/-find the full node list every frame.
+        const audioSinks = nodes.filter(n => n.Title === 'Audio.Play');
+        const overlaySinks = nodes.filter(n => n.Title === 'WebOverlay.Custom');
+        // V15 — the second DOM-track sink. Memoized in the same object for the same reason:
+        // the graph is immutable until reload, and renderWidgetTrigger must not re-filter
+        // the node list on every animator frame.
+        const playerSinks = nodes.filter(n => n.Title === 'Player.Embed');
+        const completeSink = nodes.find(n => n.Title === 'Visual.Complete') || null;
+
+        meta = {
+            displayNode, consumesClock, consumesTime, timeExtentMs,
+            audioSinks, overlaySinks, playerSinks, completeSink,
+        };
         _triggerMeta.set(key, meta);
         return meta;
     }
 
-    /// Returns true when ANY of the widget's triggers references a Caption.* node.
-    /// Used by the CAPTION_UPDATE handler to filter the renderAll() pass to only the
-    /// widgets that actually depend on caption state (M46).
-    function widgetConsumesCaption(widget) {
+    /// Returns true when ANY of the widget's triggers references a Clock.Now node — the
+    /// selector the 1 Hz clock heartbeat narrows its re-render pass with.
+    ///
+    /// The four siblings this used to sit beside (widgetConsumesCaption / Timer / Loyalty /
+    /// Counter) are gone: each existed to answer "does this widget read live data of family X"
+    /// for one bespoke push frame, and _widgetLiveKeys now answers the sharper question "which
+    /// live KEYS does this widget read" for all families at once. Clock.Now has no key because
+    /// it has no Hub producer, so it keeps a selector of its own.
+    function widgetConsumesClock(widget) {
         if (!widget || !widget.triggers) return false;
         for (const trig of widget.triggers) {
-            if (getTriggerMeta(widget, trig).consumesCaption) return true;
+            // Skip a null/nameless ELEMENT, not just a null list — see widgetConsumesTime for
+            // why `triggers: [null]` genuinely reaches the browser.
+            if (!trig || !trig.name) continue;
+            if (getTriggerMeta(widget, trig).consumesClock) return true;
         }
         return false;
     }
 
-    // H62 — per-widget render mutex. Without this, a CAPTION_UPDATE-driven
-    // renderAll could overlap an in-flight RUN_TRIGGER render of the same widget,
+    /// Returns true when ANY of the widget's triggers is time-consuming (keyframes or a Time.*
+    /// node). Deliberately shaped as a widget-level rollup like widgetConsumesClock — a widget
+    /// is either in the animator loop or it is not, and the loop renders whichever trigger the
+    /// slot was promoted with rather than re-deciding per trigger every frame.
+    ///
+    /// NOT the steady-state promotion path: promotion/demotion goes through
+    /// requestWidgetTimeAnimator() from renderWidgetTrigger so a widget that STOPS being
+    /// keyframed is demoted by the same latch that promoted it.
+    ///
+    /// This rollup answers the whole-layer question — "does this layer need the loop at all,
+    /// BEFORE anything has rendered" — and it has exactly one caller: _refreshAnimatorDemand,
+    /// which SEEDS a slot for every time-consuming widget the moment `layer` is known. Without
+    /// that seed the loop's start depended on renderAll's promotions having already landed, and
+    /// renderAll is not awaited at bootstrap: on a layer that also carries a Clock.Now widget the
+    /// loop had already armed its 1 Hz clock TIMEOUT, so the first animated frame waited up to a
+    /// full second behind it (and a track shorter than that delay rendered exactly one frame, at
+    /// its final keyframe pose). Seeding + the timeout preemption in _ensureAnimatorLoop are the
+    /// two halves of that fix.
+    ///
+    /// ★ The element guard is the load-bearing part of that seed, not paranoia. `triggers: [null]`
+    /// in a hand-edited / corrupted .phxlayer deserialises to a real HOLE, and
+    /// LayerSerializer.Deserialize HEALS AROUND such an element (`if (trigger is null) continue;`)
+    /// rather than removing it — so /api/layer/<id> genuinely serves one to the browser. Since
+    /// _refreshAnimatorDemand walks EVERY widget's trigger list unconditionally (it seeds), a
+    /// `trig.name` throw in here is not one dark widget: it aborts the demand refresh, and at
+    /// bootstrap that used to abort the whole `.then` chain, so one malformed element took the
+    /// layer's WebSocket with it (see the bootstrap's connect-before-seed ordering). Same skip
+    /// LayerRuntime.FindTrigger uses on the Hub side, for the same input.
+    function widgetConsumesTime(widget) {
+        if (!widget || !widget.triggers) return false;
+        for (const trig of widget.triggers) {
+            if (!trig || !trig.name) continue;
+            if (getTriggerMeta(widget, trig).consumesTime) return true;
+        }
+        return false;
+    }
+
+    // ── Overlay Live Channel — subscription derivation ───────────────────────
+    //
+    // Client mirror of OverlayLiveStore.MaxSubscriptionKeys / MaxSubscriptionPrefixes. Hub
+    // truncates an over-cap subscription and logs once per layer; capping on this side too
+    // keeps both halves telling the same story instead of the browser believing it is
+    // subscribed to keys Hub silently dropped.
+    const LIVE_MAX_KEYS     = 512;
+    const LIVE_MAX_PREFIXES = 64;
+
+    // Shared empty result so the buildLiveSubscription walk allocates nothing for the
+    // (overwhelmingly common) node that reads no live keys at all.
+    const _NO_LIVE_KEYS = Object.freeze([]);
+
+    // Fixed key sets, frozen and shared so the per-node walk allocates nothing for the readers
+    // whose keys don't depend on an attribute.
+    //
+    // Loyalty.Leaderboard takes the currency label as well as the board, because its Format
+    // template carries a {currency} token. Loyalty.Balance takes the board ONLY, exactly as the
+    // reader matrix specifies: it derives one viewer's balance out of the board, and a
+    // {currency} token in ITS format is substituted empty rather than read from a key this
+    // widget never subscribed — a value whose freshness we could not vouch for is worse than a
+    // blank.
+    const _LIVE_KEYS_LOYALTY_BOARD   = Object.freeze([LIVE_KEY_LOYALTY_BOARD, LIVE_KEY_LOYALTY_CURRENCY]);
+    const _LIVE_KEYS_LOYALTY_BALANCE = Object.freeze([LIVE_KEY_LOYALTY_BOARD]);
+    // caption.source_language / caption.target_language are deliberately absent: no socket
+    // reads them, and Hub withholds a key with no reader rather than publishing dead weight.
+    const _LIVE_KEYS_CAPTION         = Object.freeze([LIVE_KEY_CAPTION_ORIGINAL, LIVE_KEY_CAPTION_TRANSLATED]);
+    // V15 — the songrequest.* family as ONE prefix. The root must stay byte-identical to
+    // the one SongRequestService.PublishOverlay writes under and to
+    // PlayerEmbedSinkNode.SongRequestKeyPrefix; three spellings of one root is a blank
+    // player with a running queue and no error on either side.
+    const _LIVE_KEYS_SONGREQUEST     = Object.freeze(['songrequest.*']);
+
+    // widgetId → string[] of live keys/prefixes that widget's graphs read. Rebuilt as a
+    // byproduct of buildLiveSubscription, whose only callers are the two moments the graph
+    // set can have changed (socket open, end of softReloadLayer) — so unlike _triggerMeta it
+    // needs no invalidation hook of its own. Holds an entry for EVERY key-reading widget on
+    // the layer, visible or not; the render pass narrows to the visible one. Two readers:
+    // renderLiveConsumers uses `size === 0` as the inert-layer gate, and the pass uses each
+    // widget's list to decide whether it cares about the keys a given patch carried.
+    const _widgetLiveKeys = new Map();
+
+    /// Returns the Overlay Live Channel keys — literal `a.b.c` keys, or `a.b.*` prefixes —
+    /// that ONE graph node reads. The union over the layer's graphs is what LIVE_HELLO
+    /// subscribes to, so a node absent from this dispatcher never receives live data.
+    ///
+    /// Dispatch is on node.Title, matching how getTriggerMeta and the Evaluator identify
+    /// nodes. A node title absent from this switch never receives live data — so every arm
+    /// here is paired with a reader in the Evaluator below, and the key each arm returns is
+    /// derived by the SAME helper the reader looks up with (liveTimerRoot / liveCounterKey /
+    /// liveVarKey, or one of the frozen fixed sets). That pairing is the whole point: a
+    /// subscription and a lookup that normalise differently produce a permanently blank widget
+    /// with a running producer, a valid graph and no error on either side.
+    ///
+    /// A reader whose key depends on an attribute the author left empty returns nothing rather
+    /// than a partial key — an unnamed Counter.Value is a graph the author has not finished,
+    /// not a subscription to `counter..count`.
+    function liveKeysForNode(node) {
+        const title = (node && typeof node.Title === 'string') ? node.Title : '';
+        if (!title) return _NO_LIVE_KEYS;
+        switch (title) {
+            // The author-facing binding node: ONE literal key, whoever published it. A tool
+            // key and an overlay.publish key are indistinguishable here by design.
+            case 'Var.Live': {
+                const key = liveVarKey(node);
+                return key ? [key] : _NO_LIVE_KEYS;
+            }
+
+            // The three timer readers share one root and one 13-field family, so they
+            // subscribe the whole family as ONE prefix rather than 13 exact keys — which also
+            // means adding a field Hub-side needs no client change. See liveTimerRoot for why
+            // an empty TimerName resolves to the fixed `timer.__default.*` mirror.
+            case 'Timer.Remaining':
+            case 'Countdown.Remaining':
+            case 'Stopwatch.Elapsed':
+                return [liveTimerRoot(node) + '*'];
+
+            case 'Counter.Value': {
+                const key = liveCounterKey(node);
+                return key ? [key] : _NO_LIVE_KEYS;
+            }
+
+            case 'Loyalty.Leaderboard': return _LIVE_KEYS_LOYALTY_BOARD;
+            case 'Loyalty.Balance':     return _LIVE_KEYS_LOYALTY_BALANCE;
+            case 'Caption.LiveCaption': return _LIVE_KEYS_CAPTION;
+
+            // V10 — the goal family. FOUR fields under one root, subscribed as ONE prefix for
+            // the same reason the timer trio does it: a field added Hub-side then needs no
+            // client change, and the reader cannot ask for a key the subscription omitted.
+            // An empty Kind returns nothing rather than a partial root — see liveGoalRoot for
+            // why a bare 'current' / 'target' subscription would bind a stranger's key.
+            case 'Goal.Progress': {
+                const root = liveGoalRoot(node);
+                return root ? [root + '*'] : _NO_LIVE_KEYS;
+            }
+
+            // V10 — the array reader. One literal key, like Var.Live; an unnamed node is a
+            // graph the author has not finished, not a subscription to ''.
+            case 'List.Live': {
+                const key = liveListKey(node);
+                return key ? [key] : _NO_LIVE_KEYS;
+            }
+
+            // V15 — the iframe player, queue-fed half. ONE prefix over the whole
+            // songrequest.* family, for the same reason the timer trio and Goal.Progress
+            // take one: it reads five of the eleven keys today (state / video_id /
+            // play_token / volume, and the id is what everything else hangs off), and a
+            // field added Hub-side then needs no client change.
+            //
+            // The CLIP source subscribes nothing — its value arrives on the Clip input over
+            // the trigger channel, not off the live channel — and returning the prefix
+            // anyway would make every shoutout widget on the layer widen the layer-wide
+            // hello for data it never reads.
+            case 'Player.Embed': {
+                const src = stripQuotes(String(attr(node, 'Source', 'songrequest') || 'songrequest'))
+                    .trim().toLowerCase();
+                return src === 'clip' ? _NO_LIVE_KEYS : _LIVE_KEYS_SONGREQUEST;
+            }
+
+            default: return _NO_LIVE_KEYS;
+        }
+    }
+
+    /// Walks every widget/trigger graph and returns the deduped, sorted union of the live
+    /// keys this layer reads — the payload of LIVE_HELLO. Refreshes _widgetLiveKeys on the
+    /// way through, since it is the same walk.
+    function buildLiveSubscription() {
+        _widgetLiveKeys.clear();
+        if (!layer || !Array.isArray(layer.widgets)) return [];
+
+        const exact    = new Set();
+        const prefixes = new Set();
+        for (const widget of layer.widgets) {
+            // The announced set is deliberately LAYER-WIDE — it must NOT be narrowed by
+            // isWidgetVisible / widgetFilterId. Hub keys subscriptions per LAYER, and
+            // Visualist's `?widget=` preview page connects to the SAME /hud/<layer> socket as
+            // the live OBS source. A narrowed hello therefore makes HandleHelloAsync replace
+            // the whole layer's subscription with one widget's keys, silently freezing every
+            // other widget on the live overlay with no recovery short of an OBS cache refresh.
+            // Every socket on a layer shows the same .phxlayer, so the union of all sockets'
+            // needs IS the layer's key set and per-layer storage is correct by construction.
+            // A preview socket then receives a few patches it does not repaint — strictly
+            // cheaper than freezing the live overlay. Per-widget narrowing belongs in
+            // _widgetLiveKeys below, i.e. at render time, the only place it changes anything.
+            const own = new Set();
+            for (const trig of (widget.triggers || [])) {
+                if (!trig) continue;   // `triggers: [null]` — see widgetConsumesTime
+                const nodes = (trig.graph && trig.graph.Nodes) || [];
+                for (const node of nodes) {
+                    for (const key of liveKeysForNode(node)) {
+                        if (typeof key !== 'string' || !key) continue;
+                        own.add(key);
+                        (key.endsWith('.*') ? prefixes : exact).add(key);
+                    }
+                }
+            }
+            // _widgetLiveKeys deliberately keeps a widget's full key list even when the cap
+            // below drops some of them from the announced set: a key Hub never sends simply
+            // never matches a patch, whereas pruning here would risk skipping a widget that
+            // DOES read a key that survived.
+            if (own.size > 0) _widgetLiveKeys.set(widget.id, Array.from(own));
+        }
+
+        // Sort each class BEFORE truncating so an over-cap layer keeps a deterministic
+        // subset — a reconnect has to re-announce the same keys, not a fresh sample of
+        // Set-iteration order.
+        const kept = Array.from(prefixes).sort().slice(0, LIVE_MAX_PREFIXES)
+            .concat(Array.from(exact).sort().slice(0, LIVE_MAX_KEYS));
+        return kept.sort();
+    }
+
+    /// True when a subscription entry (exact key or `<root>.*` prefix) covers any key in
+    /// `changedKeys`. Mirrors OverlayLiveStore's match rule exactly — the prefix compare
+    /// drops only the `*`, so "timer.main.*" tests against "timer.main." — so both halves
+    /// agree on what a prefix subscription covers.
+    function _liveEntryMatchesChanged(entry, changedKeys) {
+        if (entry.endsWith('.*')) {
+            const prefix = entry.slice(0, -1);
+            for (const k of changedKeys) if (k.startsWith(prefix)) return true;
+            return false;
+        }
+        return changedKeys.has(entry);
+    }
+
+    // H62 — per-widget render mutex. Without this, a consumer pass (a live-channel patch or
+    // the clock heartbeat) could overlap an in-flight RUN_TRIGGER render of the same widget,
     // causing the canvas to flicker between the two intermediate states.
     const widgetRenderLocks = new Map(); // widgetId → Promise (current render)
     async function withWidgetLock(widgetId, fn) {
@@ -386,7 +1710,24 @@
             layer = data;
             applyResolution();
             renderAll(); // initial paint of every widget's onStartup trigger
+            // ★ ORDER MATTERS: the socket is opened BEFORE the animator is armed.
+            //
+            // Everything below this line is best-effort local work; the WebSocket is the layer's
+            // only link to Hub — it is what registers the layer as ACTIVE (LayerRegistry presence),
+            // what delivers RUN_TRIGGER, and what carries the Overlay Live Channel. It used to be
+            // opened LAST, so any throw while deriving animator demand landed in the `.catch`
+            // below and the socket was never opened at all: the overlay went permanently dark and
+            // Hub's inactive-layer short-circuit silently fast-succeeded every wait_for_visual.
+            // One malformed trigger element was enough (see widgetConsumesTime). Connect first and
+            // that entire class of bootstrap fault costs at most the animation, never the link.
             connectSocket();
+            // Arm the global animator loop for this layer. renderAll's own renders promote any
+            // time-consuming / animated-media widget through requestWidgetAnimator, but a
+            // Clock.Now-only layer has nothing to promote — the loop's other reason to run is
+            // the 1 Hz beat, and this is what tells it that reason exists. Safe to run after
+            // connectSocket(): inbound frames cannot be dispatched until this synchronous block
+            // returns, so no message handler can observe a half-armed animator.
+            _refreshAnimatorDemand();
         })
         .catch(err => {
             setStatus(`error: ${err.message}`);
@@ -427,6 +1768,9 @@
         const scale = Math.min(window.innerWidth / cw, window.innerHeight / ch);
         canvas.style.width  = `${cw * scale}px`;
         canvas.style.height = `${ch * scale}px`;
+        // The canvas just changed size on screen — drop the measured rect so the
+        // next reader re-measures against the new letterbox.
+        invalidateCanvasRect();
     }
     // Named so we can detach on pagehide — without that the closure pins all
     // captured state for as long as the BFCache holds the page, even after
@@ -441,6 +1785,10 @@
     // burst.
     let _resizeDebounceTimer = null;
     function _onWindowResize() {
+        // Invalidate immediately, NOT inside the debounced body: the canvas's
+        // on-screen rect is already wrong the moment the viewport changes, and the
+        // overlay track re-reads it every render during the 100ms settle window.
+        invalidateCanvasRect();
         if (_resizeDebounceTimer !== null) {
             try { clearTimeout(_resizeDebounceTimer); } catch { /* ignore */ }
         }
@@ -452,6 +1800,12 @@
             // viewport. Cheap when no manipulator is active (early-return inside).
             syncManipulatorOverlaySize();
             drawManipulator();
+            // DOM overlays track the letterboxed canvas rect too — reposition every
+            // mounted WebOverlay.Custom host after the canvas rescales.
+            syncWebOverlayLayout();
+            // V15 — and every mounted iframe player, which rides the same track and the
+            // same logical-px + transform-scale placement.
+            syncPlayerEmbedLayout();
         }, 100);
     }
     window.addEventListener('resize', _onWindowResize);
@@ -497,10 +1851,36 @@
         for (const [, a] of _audioPool) _teardownAudioElement(a);
         _audioPool.clear();
         _audioPlayedGen.clear();
-        for (const [, slot] of _widgetAnimators) {
-            try { cancelAnimationFrame(slot.rafId); } catch { }
-        }
+        _audioActivationGen.clear();
+        // The rejected-media-path report latch is page state like everything above: a BFCache
+        // restore that kept it would silently swallow the FIRST report on the restored page.
+        _reportedRejectedMediaPaths.clear();
+        // Same argument for the missing-arg latch, which became page-scoped for the frame-rate
+        // reason recorded on _reportedMissingArgs and therefore acquired the same dispose duty.
+        _reportedMissingArgs.clear();
+        // Same argument, same class of latch — and it matters more now that this one gates a frame
+        // to Hub rather than only a console line: a restored page whose latch survived would report
+        // a malformed List.Live key nowhere at all.
+        //
+        // ★ THE MEMO HAS TO GO WITH IT, or the clear above does not achieve that. _listStringMemo
+        // short-circuits the JSON-string arm BEFORE the parse (`v === _listStringMemo.src` returns
+        // the cached rows), so a restored page whose memo still holds the malformed string never
+        // reaches the report at all, cleared latch or not — and on the single-List.Live-node layer
+        // where this is likeliest, that one string IS the one-slot memo's occupant. Note what the
+        // stale memo can and cannot do: it can NOT serve a wrong value across a dispose (JSON.parse
+        // is pure, so the cached rows remain the right answer for that exact string), it can only
+        // swallow the diagnostic — which is precisely what the line above exists to restore.
+        _listParseWarned.clear();
+        _listStringMemo.src  = null;
+        _listStringMemo.rows = _NO_LIST_ROWS;
+        _stopAnimatorLoop();
         _widgetAnimators.clear();
+        _animatorInFlight.clear();
+        _animatorResumeId = null;
+        _widgetActivationStart.clear();
+        // Design-time cursor ownership dies with the page too: a BFCache restore that kept it
+        // would leave widgets pinned to a playhead the editor no longer has open, i.e. frozen.
+        _designTimeClockOwners.clear();
         imageCache.clear();
     }
     window.addEventListener('pagehide', _disposeGlobals);
@@ -516,6 +1896,23 @@
             return { x: 0, y: 0, width: logicalW, height: logicalH };
         }
         return widget.rect;
+    }
+
+    /// Rect intersection / union helpers for the targeted WIDGET_UPDATE repaint
+    /// (patchWidgetUpdate). Rects are {x,y,width,height} in logical layer pixels.
+    function rectsIntersect(a, b) {
+        if (!a || !b) return false;
+        return a.x < b.x + b.width  && a.x + a.width  > b.x
+            && a.y < b.y + b.height && a.y + a.height > b.y;
+    }
+    function unionRect(a, b) {
+        if (!a) return b;
+        if (!b) return a;
+        const x1 = Math.min(a.x, b.x);
+        const y1 = Math.min(a.y, b.y);
+        const x2 = Math.max(a.x + a.width,  b.x + b.width);
+        const y2 = Math.max(a.y + a.height, b.y + b.height);
+        return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
     }
 
     /// Image-loader auto-fit (Majo). A freshly-loaded source is scaled to FIT
@@ -616,6 +2013,988 @@
         manipulatorOverlay.style.zIndex = '50';
     }
 
+    // ── DOM-overlay track, part 1 of 2 (WebOverlay.Custom sinks) ─────────────
+    //
+    // The track has TWO consumers: this one, and V15's Player.Embed further down, which
+    // reuses every layout helper declared here (ensureDomOverlayContainer /
+    // _alignDomOverlayContainer / _placeOverlayHost) and keeps its own entry map because
+    // its teardown has to stop timers and destroy an iframe, not just detach a <div>.
+    //
+    // Path B: a WebOverlay.Custom node mounts author HTML+CSS as a LIVE DOM element in
+    // #dom-overlay, positioned over the widget rect. The browser composites + animates
+    // it natively over the canvas — nothing is rasterised into the Image pipeline (which
+    // is exactly why real CSS animation works, and why an overlay cannot be Blend/Mask-
+    // composited with canvas image nodes). Each host gets its own Shadow root so the
+    // author's <style> is scoped and can't leak across widgets or into the page.
+    //
+    // The node's String input sockets are injected as named CSS custom properties
+    // (--<socketName>) on the host and refreshed every render; the socket NAMES are the
+    // CSS variable names (renameable in the editor). We rewrite innerHTML / the <style>
+    // ONLY when the source text changes — resetting them would restart CSS animations
+    // every render — while custom-property updates are cheap and never restart anims.
+    //
+    // CSP NOTE (the header itself lives in HUDServer.ServeLayerHtmlAsync — do NOT try to
+    // express policy from here): the shadow <style> is inline style, so this track only
+    // works because the shipped `default-src 'self'` is paired with
+    // `style-src 'self' 'unsafe-inline'`. Dropping 'unsafe-inline' (or moving to a
+    // per-render nonce) breaks every WebOverlay on the page.
+    const _webOverlays = new Map(); // `${widgetId}::${nodeId}` -> { host, shadow, styleEl, contentEl, lastHtml, lastCss, rect }
+
+    // Base shadow CSS: fill the host, stay transparent, and let the author content fill
+    // the widget rect. Author CSS (scoped to the shadow root) is appended after this.
+    const _WEB_OVERLAY_BASE_CSS =
+        ':host{display:block;width:100%;height:100%;overflow:hidden;background:transparent;}' +
+        '.phx-overlay-content{width:100%;height:100%;}';
+
+    function _webOverlayKey(widgetId, nodeId) { return String(widgetId) + '::' + String(nodeId); }
+
+    // Sanitise a socket name into a valid CSS custom-property identifier tail (letters,
+    // digits, - and _; everything else → '-'). Empty / all-invalid → '' so we never emit `--`.
+    function _cssVarName(raw) {
+        const s = String(raw == null ? '' : raw).trim().replace(/[^A-Za-z0-9_-]/g, '-');
+        return s.replace(/^-+/, '') === '' ? '' : s;
+    }
+
+    function ensureDomOverlayContainer() {
+        let el = document.getElementById('dom-overlay');
+        if (!el) {
+            // index.html ships #dom-overlay statically; this lazy path only covers a
+            // stripped/legacy page so the feature degrades instead of throwing.
+            el = document.createElement('div');
+            el.id = 'dom-overlay';
+            const stage = document.getElementById('stage');
+            (stage || document.body).appendChild(el);
+        }
+        return el;
+    }
+
+    // Align #dom-overlay to the on-screen canvas rect. Cheap; called per overlay render
+    // and on window resize so the track tracks the letterboxed canvas. Reads the CACHED
+    // canvas rect (canvasScreenRect) — measuring here would force a layout recalc on
+    // every animated frame; see the cache comment at the top of the file.
+    function _alignDomOverlayContainer(container) {
+        if (!canvas) return 1;
+        const rect = canvasScreenRect();
+        container.style.left   = rect.left   + 'px';
+        container.style.top    = rect.top    + 'px';
+        container.style.width  = rect.width  + 'px';
+        container.style.height = rect.height + 'px';
+        return logicalW > 0 ? (rect.width / logicalW) : 1;
+    }
+
+    // Place a host in the canvas's LOGICAL coordinate space, scaled to the on-screen
+    // canvas. Host is sized to LOGICAL widget px (so author CSS works in authored px)
+    // and CSS-scaled by `scale` from its top-left, positioned at the scaled rect origin.
+    function _placeOverlayHost(host, rr, scale) {
+        host.style.left      = (rr.x * scale) + 'px';
+        host.style.top       = (rr.y * scale) + 'px';
+        host.style.width     = rr.width  + 'px';
+        host.style.height    = rr.height + 'px';
+        host.style.transform = 'scale(' + scale + ')';
+    }
+
+    // Reposition every mounted overlay (window resize / letterbox change).
+    function syncWebOverlayLayout() {
+        if (_webOverlays.size === 0) return;
+        const container = ensureDomOverlayContainer();
+        const scale = _alignDomOverlayContainer(container);
+        for (const [, entry] of _webOverlays) {
+            const rr = entry.rect || { x: 0, y: 0, width: logicalW, height: logicalH };
+            _placeOverlayHost(entry.host, rr, scale);
+        }
+    }
+
+    /// Mount / refresh the DOM overlay for a WebOverlay.Custom sink node. `ev` is the
+    /// active Evaluator (for _evalStringSocket on the slot inputs).
+    async function evalWebOverlay(ev, widget, node) {
+        const container = ensureDomOverlayContainer();
+        const key = _webOverlayKey(widget.id, node.Id);
+        let entry = _webOverlays.get(key);
+        if (!entry) {
+            const host = document.createElement('div');
+            host.className = 'phx-overlay-host';
+            const shadow = host.attachShadow ? host.attachShadow({ mode: 'open' }) : null;
+            const styleEl = document.createElement('style');
+            const contentEl = document.createElement('div');
+            contentEl.className = 'phx-overlay-content';
+            if (shadow) { shadow.appendChild(styleEl); shadow.appendChild(contentEl); }
+            else        { host.appendChild(styleEl);   host.appendChild(contentEl); } // no-shadow fallback
+            container.appendChild(host);
+            entry = { host, shadow, styleEl, contentEl, lastHtml: null, lastCss: null, rect: null };
+            _webOverlays.set(key, entry);
+        }
+
+        // Position (store the logical rect for resize-time re-placement). Copy the
+        // values into the entry's OWN rect object rather than aliasing widget.rect,
+        // and mutate it in place instead of allocating a fresh literal — this runs
+        // once per frame under the rAF widget animator.
+        const rr = widgetRenderRect(widget);
+        const er = entry.rect || (entry.rect = { x: 0, y: 0, width: 0, height: 0 });
+        er.x      = rr.x;
+        er.y      = rr.y;
+        er.width  = rr.width;
+        er.height = rr.height;
+        const scale = _alignDomOverlayContainer(container);
+        _placeOverlayHost(entry.host, er, scale);
+
+        // Author CSS + HTML — rewrite ONLY on change so CSS animations don't restart.
+        const css  = String(attr(node, 'Css',  '') || '');
+        const html = String(attr(node, 'Html', '') || '');
+        if (entry.lastCss  !== css)  { entry.styleEl.textContent = _WEB_OVERLAY_BASE_CSS + '\n' + css; entry.lastCss  = css;  }
+        if (entry.lastHtml !== html) { entry.contentEl.innerHTML  = html;                              entry.lastHtml = html; }
+
+        // Inject each String input socket as a named CSS custom property (--<name>).
+        for (const sock of (node.Sockets || [])) {
+            if (!sock || sock.Type !== 0) continue; // 0 = Input
+            const varName = _cssVarName(sock.Name);
+            if (!varName) continue;
+            let val = '';
+            try { val = await ev._evalStringSocket(node, sock.Name, ''); }
+            catch (e) { console.warn('[Visualist] WebOverlay slot eval failed:', sock.Name, e); }
+            entry.host.style.setProperty('--' + varName, String(val == null ? '' : val));
+        }
+    }
+
+    // Remove overlays owned by `widget` whose node isn't in the current trigger
+    // (trigger switch / node deletion). `activeNodeIds` = overlay nodes that just rendered.
+    function reconcileWidgetOverlays(widget, activeNodeIds) {
+        const prefix = String(widget.id) + '::';
+        for (const [key, entry] of _webOverlays) {
+            if (key.indexOf(prefix) !== 0) continue;
+            const nodeId = key.slice(prefix.length);
+            if (!activeNodeIds.has(nodeId)) _removeOverlayEntry(key, entry);
+        }
+    }
+
+    // Drop overlays for widgets no longer present in the layer at all.
+    function sweepWebOverlays(validWidgetIds) {
+        for (const [key, entry] of _webOverlays) {
+            const wid = key.slice(0, key.indexOf('::'));
+            if (!validWidgetIds.has(wid)) _removeOverlayEntry(key, entry);
+        }
+    }
+
+    function _removeOverlayEntry(key, entry) {
+        try { if (entry && entry.host && entry.host.parentNode) entry.host.parentNode.removeChild(entry.host); }
+        catch { /* ignore */ }
+        _webOverlays.delete(key);
+    }
+
+    // ── V15 — iframe player track (Player.Embed sinks) ────────────────────────
+    //
+    // The SECOND consumer of #dom-overlay, and the only one that mounts a document we
+    // did not write. It reuses that track's whole layout contract verbatim —
+    // ensureDomOverlayContainer / _alignDomOverlayContainer / _placeOverlayHost, the
+    // logical-px host sized and transform-scaled from top-left — and adds nothing to it.
+    //
+    // ★ THE LIMIT, STATED ONCE. A cross-origin iframe is composited by the BROWSER. It
+    // cannot be drawn into the canvas, cannot be faded/masked/transformed by an Image
+    // node, and cannot be interleaved in z-order with canvas widgets: #dom-overlay is one
+    // layer, fixed above every canvas widget (z 10) and below #manipulator (z 50). So a
+    // player owns its whole widget rect, full stop. This is a property of cross-origin
+    // embedding, not a gap — the same wall that made WebSource a URL-fetched IMAGE source
+    // instead of an iframe.
+    //
+    // ★ pointer-events STAYS none, inherited from the track. Not an oversight and not a
+    // thing to "fix" for the player: an OBS overlay is a render surface nobody clicks, and
+    // both feeds run with the native controls off, so there is nothing to click anyway.
+    // Scoping pointer-events:auto onto a player host would put a click target over the
+    // author's canvas in the Visualist preview for zero gain.
+    //
+    // ★ UNPROVEN SUBSTRATE — read this before debugging. Nothing in this codebase has ever
+    // mounted an iframe on this track, and nobody has confirmed that a youtube-nocookie
+    // frame LOADS and AUTOPLAYS inside a real OBS Browser Source. Everything below is
+    // therefore written to fail LOUDLY: every failure paints a legible on-host card AND
+    // pushes one TRIGGER_DIAGNOSTIC, so a dead embed reads as a stated failure in the
+    // streamer's System Log rather than as a black rectangle. If the pre-flight comes back
+    // negative, this block, the CSP frame-src line and the Player preset are the whole of
+    // what gets struck.
+    //
+    // The failure surfaces, and WHICH QUESTION each one answers — this is the list the
+    // pre-flight is read off, so it is worth stating exactly:
+    //
+    //   queue-fed leg (YouTube)
+    //     player_embed_not_loaded  the frame never navigated at all — network / OBS.
+    //     player_embed_blocked     the frame navigated but no player ever answered our
+    //                              handshake: a CSP / X-Frame-Options refusal or an error
+    //                              page. ★ This is the verdict the load EVENT cannot give,
+    //                              because `load` fires for all three of those.
+    //     player_embed_not_playing a real player answered and then did not start after we
+    //                              asked it to — autoplay refused. ONLY reachable after a
+    //                              handshake, so it can no longer be pinned on a hard block.
+    //     player_embed_error       the player itself refused the video (onError).
+    //
+    //   trigger-fed leg (Twitch clip) — no cross-origin protocol exists, so the detectable
+    //   failures are refused BEFORE a frame is mounted rather than waited for:
+    //     player_clip_bad_slug        the wired value is not a clip.
+    //     player_clip_no_parent_host  no `parent=` host, which Twitch requires.
+    //     player_clip_not_loaded      the frame never navigated. Note what this does NOT
+    //                                 cover: Twitch's own refusal page is a 200 that loads
+    //                                 fine and is invisible from out here.
+    const _playerEmbeds = new Map(); // `${widgetId}::${nodeId}` -> entry (shape at _playerHostCreate)
+
+    // The two embed origins, and the ONLY two. They are the literal counterpart of
+    // HUDServer's `frame-src` directive: a URL this builder cannot produce is a URL that
+    // policy would reject anyway, and vice versa. Author input never reaches an origin —
+    // only a video id or a clip slug does, and both are pattern-validated first.
+    const _YT_EMBED_ORIGIN    = 'https://www.youtube-nocookie.com';
+    const _TWITCH_CLIP_ORIGIN = 'https://clips.twitch.tv';
+
+    // Two-stage watchdog, and the ORDER is what makes the pre-flight answerable from a log
+    // line: "no player ever came up in that frame" (blocked outright — CSP, X-Frame-Options,
+    // an error page, or no network) is a different verdict from "a player came up and then
+    // did not start" (autoplay refused, video unavailable), and they need different fixes.
+    // Stage one must therefore fire FIRST and must be settled by the HANDSHAKE, not by the
+    // iframe's load event — see _armPlayerLoadWatchdog for why the load event answers the
+    // wrong question.
+    const _PLAYER_LOAD_TIMEOUT_MS  = 6000;
+    const _PLAYER_READY_TIMEOUT_MS = 12000;   // mirrors PlayerEmbedSinkNode.ReadyTimeoutMs
+
+    // Re-post the YouTube `listening` handshake until the player answers. The frame can be
+    // loaded a beat before its player bundle is ready to receive, so a single post at
+    // onload is genuinely lossy; the interval is cleared by the first reply.
+    const _YT_HANDSHAKE_INTERVAL_MS = 500;
+
+    function _playerKey(widgetId, nodeId) { return String(widgetId) + '::' + String(nodeId); }
+
+    /// The 11-character YouTube id, or '' when the value is not one. Hub already parsed and
+    /// validated the id before publishing it, so this is a shape check against a corrupted
+    /// channel value rather than a parser — the point is that nothing author-controlled can
+    /// ever be pasted into the middle of an embed URL.
+    function _ytVideoId(raw) {
+        const s = String(raw == null ? '' : raw).trim();
+        return /^[A-Za-z0-9_-]{11}$/.test(s) ? s : '';
+    }
+
+    /// A Twitch clip SLUG out of any of the FOUR shapes an author might wire in: a
+    /// clips.twitch.tv/<slug> URL, a clips.twitch.tv/embed?clip=<slug> URL, a
+    /// twitch.tv/<channel>/clip/<slug> URL, or a bare slug.
+    ///
+    /// Deliberately returns the slug and not a URL: the caller rebuilds the URL against the
+    /// one hard-coded origin, so the `twitch.tv/<channel>/clip/` web-page form is REWRITTEN
+    /// to the embed host rather than loaded (that page is not an embed and would render a
+    /// full Twitch site chrome inside the widget, if the CSP even let it through — which it
+    /// would not, twitch.tv is not in frame-src).
+    ///
+    /// Slug charset is the same one Twitch mints and the same one CSP-safe: letters,
+    /// digits, '-' and '_'. Anything else yields '' and the player stays down, which is the
+    /// correct failure for a typo — and, since the caller now paints a card for it, a
+    /// STATED failure rather than a silent one.
+    function _twitchClipSlug(raw) {
+        let s = String(raw == null ? '' : raw).trim();
+        if (!s) return '';
+
+        // ★ The EMBED form goes FIRST, before the query is stripped, and that ordering is the
+        // whole of it. `clips.twitch.tv/embed?clip=<slug>` is what the Twitch share dialog's
+        // Embed tab hands a streamer, and its slug lives in the QUERY. Strip the query first
+        // and the path-tail match below resolves the entire URL to the literal slug "embed",
+        // which mounts a frame for a clip that does not exist — a black rect for a value that
+        // was perfectly correct.
+        const q = s.match(/[?&]clip=([^&#]+)/i);
+        if (q) {
+            let v = q[1];
+            try { v = decodeURIComponent(v); } catch { /* a malformed escape stays as typed */ }
+            return /^[A-Za-z0-9_-]{1,120}$/.test(v) ? v : '';
+        }
+
+        // Strip a query/fragment so `?t=1` on a pasted link doesn't land in the slug.
+        const cut = s.search(/[?#]/);
+        if (cut >= 0) s = s.slice(0, cut);
+        const m = s.match(/(?:^|\/)clip\/([^/]+)$/i)      // twitch.tv/<channel>/clip/<slug>
+               || s.match(/clips\.twitch\.tv\/([^/]+)$/i); // clips.twitch.tv/<slug>
+        if (m) s = m[1];
+        else if (s.indexOf('/') >= 0) return '';           // some other URL — not a clip
+        return /^[A-Za-z0-9_-]{1,120}$/.test(s) ? s : '';
+    }
+
+    /// `autoplay` MIRRORS THE TRANSPORT THE CHANNEL IS ASKING FOR, and it is a parameter
+    /// rather than a constant because of one specific failure: a hard-coded `autoplay=1`
+    /// makes a PAUSED track start playing the moment the frame mounts. That is not a rare
+    /// interleave — every OBS source restart, scene-collection reload and browser-source
+    /// refresh remounts the frame, and the queue-fed leg only tears the frame down for
+    /// `idle`/empty, so a track the streamer deliberately held comes back playing while Hub,
+    /// the panel and the overlay all still say Paused.
+    function _ytEmbedUrl(videoId, autoplay) {
+        // enablejsapi is what opens the postMessage channel this file speaks directly.
+        // The YouTube IFrame API *script* is deliberately NOT loaded: script-src stays
+        // 'self', and the wire protocol below is the same one that script would use.
+        // origin= is required for the player to accept our commands.
+        //
+        // enablejsapi is independent of autoplay, so the handshake still lands on a frame
+        // mounted with autoplay=0 — which is what lets the explicit pauseVideo/setVolume
+        // flush below run for a held track exactly as it does for a playing one.
+        return _YT_EMBED_ORIGIN + '/embed/' + encodeURIComponent(videoId)
+            + '?enablejsapi=1&autoplay=' + (autoplay ? '1' : '0')
+            + '&playsinline=1&controls=0&disablekb=1'
+            + '&rel=0&modestbranding=1&fs=0&iv_load_policy=3'
+            + '&origin=' + encodeURIComponent(window.location.origin);
+    }
+
+    function _twitchClipEmbedUrl(slug) {
+        // `parent` must name the host embedding the frame or Twitch refuses to play. The
+        // overlay is always served from loopback, so this is window.location.hostname —
+        // which is exactly what compositor.js dials its own socket against.
+        return _TWITCH_CLIP_ORIGIN + '/embed?clip=' + encodeURIComponent(slug)
+            + '&parent=' + encodeURIComponent(window.location.hostname)
+            + '&autoplay=true&muted=false';
+    }
+
+    /// TRIGGER_DIAGNOSTIC from the WATCHDOG path — a third builder beside the
+    /// message-driven one (sendTriggerDiagnostic) and the evaluation one
+    /// (sendEvalDiagnostic), and it has to be its own.
+    ///
+    /// Both of those read `triggerContext` for attribution, which is correct inside a
+    /// render and WRONG here: a watchdog fires from a setTimeout seconds later, by which
+    /// point triggerContext describes whatever rendered most recently — very possibly
+    /// another widget. Attributing an embed failure to an unrelated trigger is a lying
+    /// diagnostic, so this one reads the ids the entry captured when it mounted.
+    ///
+    /// No-throw and best-effort, like its siblings: a diagnostic must never be able to
+    /// break the thing it is reporting on.
+    function _sendPlayerDiagnostic(entry, reason, detail) {
+        try {
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+            socket.send(JSON.stringify({
+                type:        'TRIGGER_DIAGNOSTIC',
+                layerId,
+                triggerName: (entry && entry.triggerName) || '',
+                widgetId:    (entry && entry.widgetId) || null,
+                reason:      reason || '',
+                detail:      detail ? String(detail).slice(0, 240) : '',
+            }));
+        } catch (_) { /* best-effort */ }
+    }
+
+    /// MEDIA_ENDED — the ONE upward frame this track originates, and the only widget→Hub
+    /// message in the product that is not a diagnostic or an ack.
+    ///
+    /// `seq` is the songrequest.play_token the widget was given, NOT a page-local counter.
+    /// That is the whole reason two OBS sources on one layer cannot double-advance: both
+    /// read the same token off the same live channel, so both report the SAME
+    /// (videoId, seq) pair and Hub collapses them. A per-page counter would be two
+    /// different values and would skip a track.
+    ///
+    /// CONTROL class, like the VISUAL_COMPLETE ack and unlike the node-trace frame: a
+    /// queue advance is not a frame-rate diagnostic that goes stale in flight. If Hub is
+    /// briefly unreachable the report is worth delivering on reconnect — the token cannot
+    /// have moved while Hub was down, so it still matches; and if Hub RESTARTED, its
+    /// session queue is empty and the report is a harmless no-op.
+    ///
+    /// Not sent from an editor client. Hub refuses it there anyway
+    /// (IsInboundAllowedFromEditorClient), so this gate is the cheap half of a pair rather
+    /// than the security boundary — it keeps a preview pane from spending a rate-limited
+    /// refusal log line on every track.
+    /// sendSocket's boolean is deliberately not consulted, the same way sendLiveHello and
+    /// sendComplete do not consult it: for a CONTROL-class frame `false` does not mean
+    /// "lost", it means "queued for the reconnect flush", which is the designed outcome and
+    /// carries nothing a caller could act on. Branching on it would only tempt a future
+    /// reader into a retry the outbox already performs.
+    function sendMediaEnded(entry) {
+        if (!entry || CLIENT_KIND === 'editor') return;
+        sendSocket({
+            type:     'MEDIA_ENDED',
+            layerId,
+            widgetId: entry.widgetId || '',
+            videoId:  entry.videoId || '',
+            seq:      entry.playToken || 0,
+        }, { control: true });
+    }
+
+    // One page-level listener for every embed. YouTube posts its player events to the
+    // parent window, so there is nothing per-frame to attach to.
+    //
+    // Attached on the first load and detached again once the last entry is gone, rather than
+    // left standing for the life of the page: `message` is a GLOBAL event, so every frame on
+    // the page and any opener reaches this handler, and a layer that no longer holds a single
+    // player has no business running an origin check plus a Map walk on each of them. The pair
+    // is symmetric — _playerLoad ensures, _removePlayerEntry releases.
+    let _playerMessageListenerAttached = false;
+
+    function _ensurePlayerMessageListener() {
+        if (_playerMessageListenerAttached) return;
+        _playerMessageListenerAttached = true;
+        window.addEventListener('message', _onPlayerFrameMessage);
+    }
+
+    function _releasePlayerMessageListenerIfIdle() {
+        if (!_playerMessageListenerAttached || _playerEmbeds.size > 0) return;
+        _playerMessageListenerAttached = false;
+        try { window.removeEventListener('message', _onPlayerFrameMessage); }
+        catch { /* a listener we cannot detach is harmless — the flag stays false and
+                   _ensurePlayerMessageListener would re-add it, which is idempotent for an
+                   identical (type, handler) pair. */ }
+    }
+
+    function _onPlayerFrameMessage(ev) {
+        // Origin check FIRST and unconditionally. `message` is a global event: every frame
+        // on the page, and any opener, can post to us. Only the YouTube embed origin has
+        // anything to say here, and accepting a payload from anywhere else would let a
+        // stray frame fake an "ended" and skip the streamer's track.
+        if (!ev || ev.origin !== _YT_EMBED_ORIGIN) return;
+
+        let entry = null;
+        for (const [, e] of _playerEmbeds) {
+            if (e.iframe && e.iframe.contentWindow === ev.source) { entry = e; break; }
+        }
+        if (!entry) return;
+
+        let msg;
+        try { msg = (typeof ev.data === 'string') ? JSON.parse(ev.data) : ev.data; }
+        catch { return; }
+        if (!msg || typeof msg !== 'object') return;
+
+        // ★ ANY reply at all is THE readiness signal, and it is the only real one this side
+        // of the wire has. A reply proves a YouTube player is running in that frame and is
+        // listening to us — which the iframe element's own `load` event does NOT: `load`
+        // fires for a CSP-blocked navigation, for an X-Frame-Options refusal and for a
+        // browser error page, so gating readiness on it reports a hard block as a healthy
+        // mount. Stop re-posting the handshake, retire the load watchdog, and push whatever
+        // transport/volume the channel has been asking for while nobody was listening.
+        _clearYtHandshake(entry);
+        if (!entry.handshook) {
+            entry.handshook = true;
+            _clearPlayerLoadWatchdog(entry);
+            _playerFlushTransport(entry);
+        }
+
+        if (msg.event === 'onError') {
+            // A fatal embed error IS an end of media: this track will never play, in this
+            // frame or any other. Reporting it as ended is what keeps a region-blocked or
+            // embedding-disabled request from wedging the queue forever — and it can only
+            // happen once per selection, because the advance moves play_token and the
+            // latch below is keyed on it. The card and the diagnostic still say WHY, so
+            // "the queue skipped my song" is never silent.
+            //
+            // Capped on READ, like _sendPlayerDiagnostic caps its detail at 240: `info` is a
+            // string this page did not author, and it lands in `card.textContent` — which the
+            // diagnostic's own cap does not protect, because the card is a different surface.
+            const code = String(msg.info == null ? '' : msg.info).slice(0, 32);
+            _playerFail(entry, 'player_embed_error',
+                'The embed refused this video (YouTube error ' + code + ') — commonly '
+                + 'embedding disabled by the uploader, region-blocked, or removed.');
+            _playerReportEnded(entry);
+            return;
+        }
+
+        if (msg.event === 'onStateChange') {
+            const state = Number(msg.info);
+            if (state === 1) {                 // PLAYING — the substrate works.
+                entry.sawPlaying = true;
+                _clearPlayerWatchdogs(entry);
+                _playerHideCard(entry);
+            } else if (state === 0) {          // ENDED
+                _playerReportEnded(entry);
+            }
+        }
+    }
+
+    /// Sends whatever the live channel is currently asking for, and ONLY on change.
+    ///
+    /// ★ THIS IS THE FUNCTION THE WIDGET'S RENDER CADENCE MADE NECESSARY. The desired
+    /// transport and volume are recorded on the entry by the eval below; ACTUALLY sending
+    /// them has to wait for the player to answer, and the answer arrives on a postMessage
+    /// — not on a render. A Player.Embed widget consumes no clock and carries no keyframes,
+    /// so it is never in the animator loop: its only re-render is a `songrequest.*` patch,
+    /// and the 2 s republish coalesces to nothing while the values are unchanged. So there
+    /// was, genuinely, no next render to come back on — the initial setVolume and the
+    /// initial transport were never dispatched at all, and every track played at YouTube's
+    /// default volume. Hence two call sites, both idempotent: the handshake reply above
+    /// (first chance) and the eval below (every later change).
+    function _playerFlushTransport(entry) {
+        if (!entry || entry.mode !== 'songrequest' || !entry.iframe) return;
+        if (!entry.handshook) return;   // nothing is listening yet — the reply will call back
+
+        if (entry.wantTransport && entry.lastTransport !== entry.wantTransport) {
+            entry.lastTransport = entry.wantTransport;
+            if (entry.wantTransport === 'pause') {
+                _ytCommand(entry, 'pauseVideo');
+                // A held track is not expected to report PLAYING, so the second-stage
+                // watchdog must not be left standing to accuse it of failing to.
+                _clearPlayerPlayingWatchdog(entry);
+            } else {
+                // Cleared with the ask, not merely at load: sawPlaying answers "has it played
+                // since the last time we told it to", so a RESUME that silently fails is
+                // caught by the same deadline as a first play. Left standing from an earlier
+                // track it would make every resume unwatchable.
+                entry.sawPlaying = false;
+                _ytCommand(entry, 'playVideo');
+                _armPlayerPlayingWatchdog(entry);
+            }
+        }
+
+        if (entry.wantVolume >= 0 && entry.lastVolume !== entry.wantVolume) {
+            entry.lastVolume = entry.wantVolume;
+            _ytCommand(entry, 'setVolume', [entry.wantVolume]);
+        }
+    }
+
+    /// Send MEDIA_ENDED at most once per loaded selection. The latch is on the ENTRY and is
+    /// reset by _playerLoad, so a track re-selected later (the same video requested twice)
+    /// reports again — which is correct, because Hub gave it a new play_token.
+    function _playerReportEnded(entry) {
+        if (!entry || entry.mode !== 'songrequest' || entry.ended) return;
+        if (!entry.videoId) return;
+        entry.ended = true;
+        sendMediaEnded(entry);
+    }
+
+    function _postYt(entry, message) {
+        try {
+            if (!entry || !entry.iframe || !entry.iframe.contentWindow) return;
+            entry.iframe.contentWindow.postMessage(JSON.stringify(message), _YT_EMBED_ORIGIN);
+        } catch (_) { /* frame torn down mid-post */ }
+    }
+
+    function _ytCommand(entry, func, args) {
+        _postYt(entry, { event: 'command', func, args: args || [], id: entry.frameId, channel: 'widget' });
+    }
+
+    function _startYtHandshake(entry) {
+        _clearYtHandshake(entry);
+        const post = () => _postYt(entry, { event: 'listening', id: entry.frameId, channel: 'widget' });
+        post();
+        entry.ytArmTimer = setInterval(post, _YT_HANDSHAKE_INTERVAL_MS);
+    }
+
+    function _clearYtHandshake(entry) {
+        if (entry && entry.ytArmTimer !== null) {
+            try { clearInterval(entry.ytArmTimer); } catch { /* ignore */ }
+            entry.ytArmTimer = null;
+        }
+    }
+
+    function _clearPlayerLoadWatchdog(entry) {
+        if (entry && entry.loadTimer !== null) {
+            try { clearTimeout(entry.loadTimer); } catch { /* ignore */ }
+            entry.loadTimer = null;
+        }
+    }
+
+    function _clearPlayerPlayingWatchdog(entry) {
+        if (entry && entry.readyTimer !== null) {
+            try { clearTimeout(entry.readyTimer); } catch { /* ignore */ }
+            entry.readyTimer = null;
+        }
+    }
+
+    function _clearPlayerWatchdogs(entry) {
+        _clearPlayerLoadWatchdog(entry);
+        _clearPlayerPlayingWatchdog(entry);
+    }
+
+    function _playerShowCard(entry, text) {
+        if (!entry || !entry.card) return;
+        entry.card.textContent = text;
+        entry.card.style.display = 'flex';
+    }
+
+    function _playerHideCard(entry) {
+        if (!entry || !entry.card) return;
+        entry.card.style.display = 'none';
+    }
+
+    /// The visible failure path. Paints the card AND pushes one TRIGGER_DIAGNOSTIC, because
+    /// the two reach different people: the card is what the streamer sees on the overlay
+    /// they are broadcasting, the log line is what survives to be read afterwards. Latched
+    /// per load so a repeating condition cannot spam either surface.
+    function _playerFail(entry, reason, text) {
+        if (!entry || entry.failed) return;
+        entry.failed = true;
+        _clearPlayerWatchdogs(entry);
+        _clearYtHandshake(entry);
+        _playerShowCard(entry, text);
+        _sendPlayerDiagnostic(entry, reason, text);
+    }
+
+    /// STAGE ONE — "did a player ever come up in that frame?", armed at every load.
+    ///
+    /// ★ The verdict is the HANDSHAKE, not the iframe's `load` event, and that distinction is
+    /// the whole point of this sprint's pre-flight. `load` is the classic non-signal for an
+    /// embed: it fires for a CSP `frame-src` refusal, for an X-Frame-Options block and for a
+    /// plain browser error page, all of which are exactly the outcomes the pre-flight has to
+    /// be able to name. Gating on it reported a hard block as a healthy mount and let the
+    /// SECOND stage take the verdict twelve seconds later — mislabelling "OBS blocked the
+    /// embed outright" as "autoplay was refused", i.e. answering the pre-flight wrongly from
+    /// the one log line built to answer it.
+    ///
+    /// `load` is still read, as the DISCRIMINATOR between the two shapes of failure: a frame
+    /// that never even navigated is a different fix from a frame that navigated to something
+    /// which is not a YouTube player.
+    function _armPlayerLoadWatchdog(entry) {
+        _clearPlayerLoadWatchdog(entry);
+        entry.loadTimer = setTimeout(() => {
+            entry.loadTimer = null;
+
+            if (entry.mode === 'songrequest') {
+                if (entry.handshook) return;
+                if (!entry.frameLoaded) {
+                    _playerFail(entry, 'player_embed_not_loaded',
+                        'The embed never loaded. In OBS this usually means the Browser Source '
+                        + 'cannot reach the embed host; check the network and that the source is '
+                        + 'not running with a cached page.');
+                } else {
+                    _playerFail(entry, 'player_embed_blocked',
+                        'The frame loaded but no YouTube player ever answered — the embed was '
+                        + 'REFUSED, not merely slow. A blocked frame (CSP frame-src, '
+                        + 'X-Frame-Options) and an error page both load successfully, so this '
+                        + 'is what a refusal looks like from outside: a document that is not a '
+                        + 'player.');
+                }
+                return;
+            }
+
+            // ── The clip leg's failure surface ────────────────────────────────────────
+            // A Twitch clip embed speaks no cross-origin protocol at all, so there is no
+            // handshake to wait for and `load` is genuinely the last thing knowable about
+            // it. Stated plainly rather than dressed up: this fires ONLY when the frame
+            // never navigated. Twitch refusing the embed over a `parent=` mismatch serves a
+            // 200 refusal PAGE, which loads fine and is indistinguishable from a playing
+            // clip here — which is why the two things that ARE detectable (an unusable
+            // parent host, and a value that is not a clip at all) are refused up front in
+            // _evalPlayerClip instead of being left to this timer.
+            if (entry.frameLoaded) return;
+            _playerFail(entry, 'player_clip_not_loaded',
+                'The clip embed never loaded. In OBS this usually means the Browser Source '
+                + 'cannot reach clips.twitch.tv; check the network and that the source is not '
+                + 'running with a cached page.');
+        }, _PLAYER_LOAD_TIMEOUT_MS);
+    }
+
+    /// STAGE TWO — "we asked it to play; did it?", armed by the transport flush when a
+    /// playVideo actually goes out, and cleared when the player reports PLAYING.
+    ///
+    /// Armed from the flush rather than from the load for two reasons that are really one:
+    /// a track the channel says is PAUSED is never asked to play, so accusing it of failing
+    /// to start would be a watchdog firing on correct behaviour; and a pause→play made later
+    /// is a fresh ask that deserves its own deadline. The queue-fed leg only — the clip leg
+    /// has no playback signal to wait for.
+    function _armPlayerPlayingWatchdog(entry) {
+        if (!entry || entry.mode !== 'songrequest') return;
+        _clearPlayerPlayingWatchdog(entry);
+        entry.readyTimer = setTimeout(() => {
+            entry.readyTimer = null;
+            if (entry.sawPlaying) return;
+            _playerFail(entry, 'player_embed_not_playing',
+                'The embed loaded but never started playing. The usual cause is the '
+                + 'browser refusing autoplay with sound; the track is selected in Phoenix '
+                + 'but nothing is being heard.');
+        }, _PLAYER_READY_TIMEOUT_MS);
+    }
+
+    /// Tear the frame down and return the entry to its idle shape. Removing the element
+    /// (rather than pointing it at about:blank) is what actually stops a background player
+    /// and releases its network connection, and it keeps the frame lifecycle unambiguous:
+    /// an entry either has a live frame for a known srcKey or has none.
+    function _playerUnload(entry) {
+        if (!entry) return;
+        _clearPlayerWatchdogs(entry);
+        _clearYtHandshake(entry);
+        if (entry.iframe) {
+            try { if (entry.iframe.parentNode) entry.iframe.parentNode.removeChild(entry.iframe); }
+            catch { /* ignore */ }
+            entry.iframe = null;
+        }
+        entry.srcKey       = '';
+        entry.videoId      = '';
+        entry.playToken    = 0;
+        entry.frameLoaded  = false;
+        entry.handshook    = false;
+        entry.sawPlaying   = false;
+        entry.ended        = false;
+        entry.failed       = false;
+        entry.lastTransport = '';
+        entry.lastVolume   = -1;
+        // The DESIRED transport/volume are channel state, not frame state — but an entry with
+        // no frame wants nothing, and clearing them here keeps a torn-down entry from handing
+        // a stale ask to the next load's flush. The eval re-derives both before every use.
+        entry.wantTransport = '';
+        entry.wantVolume   = -1;
+        _playerHideCard(entry);
+        entry.host.style.display = 'none';
+    }
+
+    /// (Re)load the frame for `srcKey`. Every per-load latch resets here, which is why the
+    /// same video selected twice in a row still reports its own end: Hub minted a new
+    /// play_token, so this is a new srcKey and a new load.
+    ///
+    /// ★ The caller must set entry.wantTransport / entry.wantVolume AFTER this returns —
+    /// _playerUnload clears them, and the flush that consumes them runs off the handshake
+    /// reply, which cannot land before this function has returned.
+    function _playerLoad(entry, srcKey, url) {
+        _playerUnload(entry);
+        entry.srcKey = srcKey;
+        entry.host.style.display = 'block';
+
+        const frame = document.createElement('iframe');
+        frame.className = 'phx-player-frame';
+        // allow= is what lets the embed autoplay with sound and go fullscreen-free inside
+        // the widget rect. It is a REQUEST, not a guarantee — whether OBS's CEF honours
+        // autoplay is precisely the unproven half of this substrate.
+        frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+        frame.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+        frame.setAttribute('frameborder', '0');
+        frame.setAttribute('scrolling', 'no');
+        frame.setAttribute('title', 'Phoenix player embed');
+        frame.addEventListener('load', () => {
+            entry.frameLoaded = true;
+            if (entry.mode === 'songrequest') _startYtHandshake(entry);
+        });
+        frame.src = url;
+        entry.iframe = frame;
+        entry.host.appendChild(frame);
+
+        _ensurePlayerMessageListener();
+        _armPlayerLoadWatchdog(entry);
+    }
+
+    function _playerHostCreate(container, widget, node) {
+        const host = document.createElement('div');
+        host.className = 'phx-overlay-host phx-player-host';
+        host.style.display = 'none';   // idle until something is actually selected
+        const card = document.createElement('div');
+        card.className = 'phx-player-card';
+        card.style.display = 'none';
+        host.appendChild(card);
+        container.appendChild(host);
+        return {
+            host, card,
+            iframe:      null,
+            rect:        null,
+            mode:        '',
+            widgetId:    (widget && widget.id) || '',
+            nodeId:      (node && node.Id) || '',
+            // Echoed through the YouTube handshake so its replies carry an id we chose.
+            // Frame matching is done on contentWindow identity, which is authoritative;
+            // this is for readability when inspecting frames by hand.
+            frameId:     'phx-' + String((widget && widget.id) || '') + '-' + String((node && node.Id) || ''),
+            triggerName: '',
+            srcKey:      '',
+            videoId:     '',
+            playToken:   0,
+            frameLoaded: false,
+            // THE readiness signal: a YouTube player in this frame answered our handshake.
+            // Distinct from frameLoaded on purpose — see _armPlayerLoadWatchdog.
+            handshook:   false,
+            sawPlaying:  false,
+            ended:       false,
+            failed:      false,
+            // What the channel is ASKING for, recorded by the eval and dispatched by
+            // _playerFlushTransport once a player is listening. Split from last* because the
+            // ask and the last thing actually sent are separated in time by the handshake.
+            wantTransport: '',
+            wantVolume:  -1,
+            lastTransport: '',
+            lastVolume:  -1,
+            ytArmTimer:  null,
+            loadTimer:   null,
+            readyTimer:  null,
+        };
+    }
+
+    /// Mount / refresh the iframe player for a Player.Embed sink node. Visited exactly like
+    /// evalWebOverlay: the visit IS the side effect, and it must stay cheap because a
+    /// keyframed or animated neighbour puts this on the rAF path.
+    ///
+    /// EDITOR CLIENTS MOUNT NO FRAME. A Visualist preview pane and the hidden
+    /// thumbnail-capture host both render this node, and a real embed there would autoplay
+    /// a stranger's music into the author's headphones while they drag widgets around —
+    /// and, for the capture host, into a screenshot. They get the card instead, which also
+    /// tells the author what the widget is rather than showing them an empty rect.
+    async function evalPlayerEmbed(ev, widget, node) {
+        const container = ensureDomOverlayContainer();
+        const key = _playerKey(widget.id, node.Id);
+        let entry = _playerEmbeds.get(key);
+        if (!entry) {
+            entry = _playerHostCreate(container, widget, node);
+            _playerEmbeds.set(key, entry);
+        }
+        entry.triggerName = (triggerContext && triggerContext.triggerName) || '';
+
+        // Position first, and in place — same rect discipline as evalWebOverlay: copy into
+        // the entry's own object rather than aliasing widget.rect, and never allocate here.
+        const rr = widgetRenderRect(widget);
+        const er = entry.rect || (entry.rect = { x: 0, y: 0, width: 0, height: 0 });
+        er.x      = rr.x;
+        er.y      = rr.y;
+        er.width  = rr.width;
+        er.height = rr.height;
+        const scale = _alignDomOverlayContainer(container);
+        _placeOverlayHost(entry.host, er, scale);
+
+        const mode = stripQuotes(String(attr(node, 'Source', 'songrequest') || 'songrequest'))
+            .trim().toLowerCase() === 'clip' ? 'clip' : 'songrequest';
+        if (entry.mode !== mode) { _playerUnload(entry); entry.mode = mode; }
+
+        if (CLIENT_KIND === 'editor') {
+            entry.host.style.display = 'block';
+            _playerShowCard(entry, mode === 'clip'
+                ? 'Player (clip) — the embed runs in OBS only'
+                : 'Player (song request) — the embed runs in OBS only');
+            return;
+        }
+
+        // Awaited, not fired and forgotten: the clip leg resolves a wired String socket,
+        // so dropping the promise would both lose its rejection and let the caller's
+        // reconcile pass run against a frame that had not been decided yet.
+        if (mode === 'clip') { await _evalPlayerClip(ev, entry, node); return; }
+        _evalPlayerSongRequest(entry);
+    }
+
+    /// Queue-fed: an ORDINARY SUBSCRIBER to songrequest.*. It owns no queue state and never
+    /// decides what plays next — it renders whatever Hub selected and reports the end.
+    ///
+    /// Reload is keyed on play_token, not on video_id, and that is the whole reason the key
+    /// exists Hub-side: the same song requested twice in a row is a NEW selection with an
+    /// identical id, and a video-id compare would resume the finished one instead of
+    /// starting it.
+    function _evalPlayerSongRequest(entry) {
+        const state   = liveTextOf(liveRenderableValue('songrequest.state')).trim().toLowerCase();
+        const videoId = _ytVideoId(liveTextOf(liveRenderableValue('songrequest.video_id')));
+        const token   = liveNumberOf(liveRenderableValue('songrequest.play_token'));
+        const volume  = liveNumberOf(liveRenderableValue('songrequest.volume'));
+
+        // Idle, switched off, or a channel value we refuse to trust — all one outcome: no
+        // frame and nothing on screen. An idle player must be INVISIBLE, not a card; the
+        // overlay is on air.
+        if (!videoId || state === 'idle' || state === '') { _playerUnload(entry); return; }
+
+        // The ask, derived before anything is mounted so the mount can honour it. `paused`
+        // must NOT autoplay: the frame is remounted by every OBS source restart and every
+        // browser-source refresh, and this leg only tears it down for idle/empty — so a
+        // hard-coded autoplay=1 resurrected a held track as playing music while Hub, the
+        // panel and the overlay all still read Paused.
+        const wantTransport = (state === 'paused') ? 'pause' : 'play';
+        const wantVolume    = Math.max(0, Math.min(100, Math.round(volume)));
+
+        const srcKey = 'yt:' + videoId + ':' + token;
+        if (entry.srcKey !== srcKey) {
+            _playerLoad(entry, srcKey, _ytEmbedUrl(videoId, wantTransport === 'play'));
+            entry.videoId   = videoId;
+            entry.playToken = token;
+        }
+
+        // Recorded AFTER the load, which resets them (see _playerLoad), and dispatched by the
+        // shared flush — which is also called from the handshake reply. That second call site
+        // is not belt-and-braces: this widget is not a clock consumer and carries no
+        // keyframes, so it is never in the animator loop and there is NO per-frame render
+        // here. Its only render trigger is a songrequest.* patch, and the 2 s republish
+        // coalesces to nothing while the values hold, so a `return` taken before the transport
+        // block was never revisited — which is exactly how every track ended up playing at
+        // YouTube's default volume with no setVolume ever sent.
+        entry.wantTransport = wantTransport;
+        entry.wantVolume    = wantVolume;
+        _playerFlushTransport(entry);
+    }
+
+    /// Trigger-fed one-shot: a shoutout plays its clip once. There is no queue and no
+    /// upward signal — nothing on the Hub side owns a clip sequence to advance, and a
+    /// Twitch clip embed exposes no cross-origin end event to report even if there were.
+    /// The widget's own trigger hold governs how long it stays up: when the hold expires
+    /// the widget reverts to onStartup, this node stops rendering, and
+    /// reconcileWidgetPlayers tears the frame down.
+    ///
+    /// ★ ITS FAILURE SURFACE, and why it is up here rather than in a watchdog. A Twitch clip
+    /// embed answers nothing cross-origin, and Twitch's own refusal (a `parent=` that does not
+    /// name the embedding host) is served as a 200 PAGE — it loads successfully and is
+    /// indistinguishable from a playing clip from outside the frame. So a timer can only ever
+    /// report "the frame never navigated", and the two failures a streamer actually hits have
+    /// to be refused BEFORE a frame is mounted:
+    ///
+    ///   • the value is not a clip — a typo, a plain twitch.tv channel link, a VOD URL. Silent
+    ///     until now: the widget simply stayed black, with nothing in any log.
+    ///   • there is no usable `parent` host. Twitch REQUIRES it, and the overlay is always
+    ///     served over http(s) from loopback, so an empty hostname means the page is being
+    ///     shown from somewhere no clip embed can ever work (a file:// or about:blank host).
+    ///     Mounting anyway would render Twitch's refusal page inside the streamer's overlay.
+    async function _evalPlayerClip(ev, entry, node) {
+        let raw = '';
+        try { raw = await ev._evalQuotedStringSocket(node, 'Clip', ''); }
+        catch (e) { console.warn('[Visualist] Player.Embed Clip eval failed:', e); }
+
+        // Empty is not a failure — it is an unconfigured or not-yet-triggered widget, and the
+        // overlay is on air. Only a value that was MEANT to be a clip and is not gets a card.
+        const trimmed = String(raw == null ? '' : raw).trim();
+        if (!trimmed) { _playerUnload(entry); return; }
+
+        // Both refusals latch through srcKey — the entry's "what am I currently showing", a
+        // failure card being as much a thing shown as a frame is. _playerFail's own `failed`
+        // flag cannot carry this, because _playerUnload clears it; without the srcKey latch a
+        // keyframed shoutout widget would repaint the card and re-send its diagnostic on every
+        // animator frame. A changed value produces a different latch and is reported afresh.
+        const slug = _twitchClipSlug(trimmed);
+        if (!slug) {
+            const badKey = 'clip-bad:' + trimmed;
+            if (entry.srcKey === badKey) return;
+            _playerUnload(entry);
+            entry.srcKey = badKey;
+            entry.host.style.display = 'block';
+            _playerFail(entry, 'player_clip_bad_slug',
+                'Not a Twitch clip: "' + trimmed.slice(0, 80) + '". Wire a clip slug, a '
+                + 'clips.twitch.tv link, or a twitch.tv/<channel>/clip/<slug> link.');
+            return;
+        }
+
+        const parentHost = String(window.location.hostname || '').trim();
+        if (!parentHost) {
+            const noParentKey = 'clip-noparent:' + slug;
+            if (entry.srcKey === noParentKey) return;
+            _playerUnload(entry);
+            entry.srcKey = noParentKey;
+            entry.host.style.display = 'block';
+            _playerFail(entry, 'player_clip_no_parent_host',
+                'Twitch clip embeds require a parent host, and this page has none. Point the '
+                + 'OBS Browser Source at the http://127.0.0.1 overlay URL Phoenix serves rather '
+                + 'than at a local file.');
+            return;
+        }
+
+        const srcKey = 'clip:' + slug;
+        if (entry.srcKey !== srcKey) _playerLoad(entry, srcKey, _twitchClipEmbedUrl(slug));
+    }
+
+    // Remove players owned by `widget` whose node isn't in the current trigger (trigger
+    // switch / node deletion). Mirrors reconcileWidgetOverlays exactly.
+    function reconcileWidgetPlayers(widget, activeNodeIds) {
+        const prefix = String(widget.id) + '::';
+        for (const [key, entry] of _playerEmbeds) {
+            if (key.indexOf(prefix) !== 0) continue;
+            const nodeId = key.slice(prefix.length);
+            if (!activeNodeIds.has(nodeId)) _removePlayerEntry(key, entry);
+        }
+    }
+
+    // Drop players for widgets no longer present in the layer at all.
+    function sweepPlayerEmbeds(validWidgetIds) {
+        for (const [key, entry] of _playerEmbeds) {
+            const wid = key.slice(0, key.indexOf('::'));
+            if (!validWidgetIds.has(wid)) _removePlayerEntry(key, entry);
+        }
+    }
+
+    function _removePlayerEntry(key, entry) {
+        // Unload BEFORE detaching the host: the timers and the frame are what actually keep
+        // a torn-down player alive, and dropping the host alone would leave an orphaned
+        // interval posting into a detached window forever.
+        try { _playerUnload(entry); } catch { /* ignore */ }
+        try { if (entry && entry.host && entry.host.parentNode) entry.host.parentNode.removeChild(entry.host); }
+        catch { /* ignore */ }
+        _playerEmbeds.delete(key);
+        _releasePlayerMessageListenerIfIdle();
+    }
+
+    // Reposition every mounted player (window resize / letterbox change). Same contract as
+    // syncWebOverlayLayout, and it must run even for an entry whose host is hidden: the
+    // host is placed once here and shown later without re-measuring.
+    function syncPlayerEmbedLayout() {
+        if (_playerEmbeds.size === 0) return;
+        const container = ensureDomOverlayContainer();
+        const scale = _alignDomOverlayContainer(container);
+        for (const [, entry] of _playerEmbeds) {
+            const rr = entry.rect || { x: 0, y: 0, width: logicalW, height: logicalH };
+            _placeOverlayHost(entry.host, rr, scale);
+        }
+    }
+
     function setManipulator(msg) {
         manipulatorState = {
             widgetId:    msg.widgetId    || '',
@@ -669,7 +3048,7 @@
     function getActiveNode() {
         const w = getActiveWidget();
         if (!w || !manipulatorState) return null;
-        const trig = w.triggers.find(t => t.name === manipulatorState.triggerName);
+        const trig = (w.triggers || []).find(t => t && t.name === manipulatorState.triggerName);
         if (!trig) return null;
         const nodes = (trig.graph && trig.graph.Nodes) || [];
         return nodes.find(n => n.Id === manipulatorState.nodeId) || null;
@@ -823,8 +3202,8 @@
     function requestRerenderActiveWidget() {
         const widget = getActiveWidget();
         if (!widget) return;
-        const trig = widget.triggers.find(t => t.name === manipulatorState.triggerName)
-                  || widget.triggers.find(t => t.name === 'onStartup');
+        const trig = (widget.triggers || []).find(t => t && t.name === manipulatorState.triggerName)
+                  || (widget.triggers || []).find(t => t && t.name === 'onStartup');
         if (!trig) return;
         // Skip the per-widget-lock pump and just re-render this widget. The
         // manipulator only runs in the embedded preview where we want
@@ -1572,28 +3951,19 @@
         } catch { return []; }
     }
 
-    // Image.Crop's Rect attribute can be a Vector4 literal "Vector4(x,y,w,h)"
-    // or a bare "x,y,w,h". Default to the full widget rect when missing/zero
-    // so the manipulator has a usable starting frame to drag.
-    function parseRect(raw, widgetRect) {
-        let x = 0, y = 0, w = widgetRect.width, h = widgetRect.height;
-        if (raw && typeof raw === 'string') {
-            const m = raw.replace(/[^\d.\-,]/g, '').split(',').map(parseFloat);
-            if (m.length === 4 && m.every(Number.isFinite)) {
-                x = m[0]; y = m[1]; w = m[2]; h = m[3];
-                if (w <= 0 || h <= 0) { x = 0; y = 0; w = widgetRect.width; h = widgetRect.height; }
-            }
-        }
-        return { x, y, w, h };
-    }
-
     // [QC50-08] Image.Crop's Rect is canonically stored as fractions (0..1) of
     // the source-image dimensions — see EvalImageCrop in NodeEvaluator.cs and
-    // the 'Image.Crop' case in the Evaluator below. The manipulator runs
+    // the 'Image.Crop' arm in the Evaluator below. The manipulator runs
     // against widget-rect pixel space, so we scale fractions × widget dims for
     // display. A degenerate or missing value defaults to the full widget rect
-    // (= no crop). Note the W/H ≤ 0 fallback matches parseRect() — a stored
-    // zero-area rect is treated as "passthrough" rather than "1×1 pixel".
+    // (= no crop) — a stored zero-area rect is treated as "passthrough" rather
+    // than "1×1 pixel".
+    //
+    // V14 — this replaced a pixel-space parseRect() that survived as a dead
+    // function long after QC50-08 moved Rect to fractions. parseRect is gone;
+    // this is the ONE Rect parser, and its callers are the three sites below.
+    // Both parsers shared the W/H ≤ 0 passthrough rule, so the rule itself is
+    // unchanged — only the now-orphaned second copy of it is.
     function parseFractionRect(raw, widgetRect) {
         let fx = 0, fy = 0, fw = 1, fh = 1;
         if (raw && typeof raw === 'string') {
@@ -1630,27 +4000,56 @@
     // sent via sendSocket() while the socket is not open get queued in a
     // bounded ring; the queue flushes on reconnect.
     //
-    // QC28-10 — split the single 64-cap drop-oldest outbox into TWO classes
-    // so that control-class messages (VISUAL_COMPLETE acks etc.) can't be
-    // evicted by data-class chatter (FPS heartbeats) during a long outage.
-    // Control queue has a smaller cap but is flushed first (priority send).
-    // Data queue keeps the original drop-oldest-when-full behavior. Classifier
-    // honours an explicit { control: true } option from the caller; we also
-    // default-classify messages with type VISUAL_COMPLETE / HUB_EVENT as
-    // control so existing sendSocket-style callers behave correctly without
-    // an explicit flag.
+    // QC28-10 — split the single 64-cap drop-oldest outbox into TWO classes so a
+    // control-class message (a VISUAL_COMPLETE ack) can't be evicted during a long
+    // outage. Control queue has a smaller cap but is flushed first (priority send);
+    // the data queue keeps the original drop-oldest-when-full behaviour. The
+    // classifier honours an explicit { control: true } option and otherwise
+    // default-classifies by message type.
+    //
+    // ★ V14 — what is actually reachable here today, because the original comment
+    // named a scenario that cannot happen. All THREE of sendSocket()'s callers pass
+    // { control: true } explicitly (the LIVE_HELLO send, sendComplete, and V15's
+    // sendMediaEnded), so:
+    //   • _isControlPayload is short-circuited away and never runs, and
+    //   • nothing ever enqueues into _outboxData.
+    // The "data-class chatter (FPS heartbeats)" the split was written to guard
+    // against does NOT go through sendSocket at all — the FPS heartbeat and the
+    // TRIGGER_RECEIVED / TRIGGER_DIAGNOSTIC / DEBUG_WIDGET_NODE / TRANSLATE_REQUEST
+    // frames all use a bare socket.send() guarded by a readyState check, so they are
+    // dropped outright while disconnected and never queued.
+    //
+    // The data branch and the default classifier are KEPT deliberately, not because
+    // they run: they are the defence-in-depth for the real Hub-outage ack-loss bug
+    // above. Delete them and the next caller that forgets { control: true } — or
+    // switches a bare socket.send to sendSocket — silently loses its frame while
+    // disconnected instead of being classified and queued.
     let _reconnectDelayMs = 1500;
     const _outboxControl = []; // priority queue (acks etc.)
-    const _outboxData    = []; // drop-oldest queue (heartbeats etc.)
+    const _outboxData    = []; // drop-oldest queue — currently no producer; see above
     const _outboxControlMax = 32;
     const _outboxDataMax    = 64;
-    const _CONTROL_TYPES = new Set(['VISUAL_COMPLETE', 'HUB_EVENT']);
+    // The default-classify set, i.e. the types _isControlPayload promotes to control
+    // class for a caller that passed no explicit flag. All three entries are frames this
+    // overlay really originates: the VISUAL_COMPLETE ack a waiting script blocks on;
+    // LIVE_HELLO, the ONE frame that arms the Overlay Live Channel for this layer
+    // (which is nevertheless the one control type flushOutbox deliberately DISCARDS;
+    // see there); and V15's MEDIA_ENDED, which advances the song-request queue and is
+    // therefore worth delivering after a reconnect rather than dropping (see
+    // sendMediaEnded for why a late one cannot mis-advance). V14 removed a fourth entry,
+    // 'HUB_EVENT': this set classifies OUTBOUND payloads and the overlay never builds a
+    // HUB_EVENT frame — there is no inbound arm for one either, so it was a breadcrumb
+    // for planned work, not a classification anything could reach.
+    const _CONTROL_TYPES = new Set(['VISUAL_COMPLETE', 'LIVE_HELLO', 'MEDIA_ENDED']);
 
     function _isControlPayload(text) {
         // Cheap front-of-string check. Only run JSON.parse if it looks like an
         // object whose first key is "type" — avoids parsing every heartbeat
         // for nothing. Defensive try/catch because the payload could be any
         // string from a future caller.
+        // Unreached today (all three callers pass { control: true }) and kept on
+        // purpose: it is the safety net that classifies a future caller correctly, and
+        // the only consumer of _CONTROL_TYPES.
         if (typeof text !== 'string' || text.length < 8 || text.charCodeAt(0) !== 123) return false;
         try {
             const obj = JSON.parse(text);
@@ -1669,10 +4068,24 @@
             if (_outboxControl.length >= _outboxControlMax) _outboxControl.shift();
             _outboxControl.push(text);
         } else {
+            // No producer reaches this branch today — see the V14 note on the outbox
+            // declarations. Kept as the correct handling for a future data-class
+            // caller, so that caller degrades to drop-oldest rather than to silence.
             if (_outboxData.length >= _outboxDataMax) _outboxData.shift();
             _outboxData.push(text);
         }
         return false;
+    }
+
+    /// True for a queued LIVE_HELLO frame. Same cheap front-of-string gate as
+    /// _isControlPayload — only parse what looks like an object literal — and only ever run
+    /// over the (≤32-entry) control queue once per reconnect, so the parse cost is noise.
+    function _isQueuedLiveHello(text) {
+        if (typeof text !== 'string' || text.length < 8 || text.charCodeAt(0) !== 123) return false;
+        try {
+            const obj = JSON.parse(text);
+            return !!(obj && obj.type === 'LIVE_HELLO');
+        } catch { return false; }
     }
 
     function flushOutbox() {
@@ -1681,6 +4094,15 @@
         // behind a backlog of FPS heartbeats accumulated during the outage.
         while (_outboxControl.length > 0) {
             const text = _outboxControl.shift();
+            // Exactly one LIVE_HELLO per connect. Our only caller is socket.onopen, which
+            // sends a FORCED hello immediately after this flush, re-derived from the current
+            // graph set. A hello queued while the socket was down is therefore redundant at
+            // best and STALER at worst — its key set predates anything the layer reloaded to
+            // during the outage — and letting it through would put two hellos on the wire,
+            // each answered with a whole-store LIVE_SNAPSHOT. Dropping it here (rather than
+            // flushing after the forced send) also keeps the stale set from being the LAST
+            // one Hub sees, which is what makes it a correctness fix and not just a saving.
+            if (_isQueuedLiveHello(text)) continue;
             try { socket.send(text); }
             catch { _outboxControl.unshift(text); return; } // put back, retry on next flush
         }
@@ -1691,13 +4113,61 @@
         }
     }
 
+    // Last key set announced to Hub, JSON-encoded for an O(1) equality test. The guard it feeds
+    // suppresses a re-announce Hub would answer with a redundant whole-store LIVE_SNAPSHOT —
+    // but it is only SAFE for a caller that knows Hub still holds this layer's subscription.
+    // Both of today's callers force past it precisely because neither can know that (see
+    // sendLiveHello); the guard stays as the correct default for a future caller that
+    // re-derives the key set with no Hub-side teardown in between.
+    let _liveHelloKeysJson = '';
+
+    /// Announces this overlay's Overlay Live Channel subscription. Hub pushes LIVE_SNAPSHOT /
+    /// LIVE_PATCH only to layers it has seen a LIVE_HELLO from, and it arms a HELLO deadline
+    /// the moment the socket connects — hence the control-class send.
+    ///
+    /// { force: true } bypasses the unchanged-key-set guard, and BOTH call sites need it:
+    ///  * socket.onopen — Hub clears a layer's subscription when its last socket closes, so a
+    ///    reconnect has to re-announce even a byte-identical key set.
+    ///  * end of softReloadLayer — a LAYER_RELOADED can arrive after OnLayerRemoved cleared
+    ///    the subscription while this socket stayed open. Unforced, the common reload (a rect
+    ///    nudge, a colour tweak — key set unchanged) no-ops and the overlay is starved of live
+    ///    data for the rest of the socket's life, with no diagnostic either: ClearLayer
+    ///    dropped the connection note and the hello-seen latch is sticky.
+    function sendLiveHello(opts) {
+        const keys  = buildLiveSubscription();
+        const json  = JSON.stringify(keys);
+        const force = !!(opts && opts.force === true);
+        if (!force && liveState.helloSent && json === _liveHelloKeysJson) return;
+        _liveHelloKeysJson  = json;
+        liveState.helloSent = true;
+        sendSocket({ type: 'LIVE_HELLO', proto: 1, keys }, { control: true });
+    }
+
     function connectSocket() {
-        const url = `ws://${window.location.host}/hud/${encodeURIComponent(layerId)}`;
+        // ?client=<kind> is the V6 bolt-on: the ONLY thing distinguishing a live OBS
+        // browser source from a Visualist design-time preview on this socket. See
+        // CLIENT_KIND for the vocabulary and why 'obs' has to be the default.
+        //
+        // V13 A3 — and the connect token, appended as a SECOND parameter with `&`. §8.3 writes
+        // the shape as `?token=<t>` because it describes the field, not its position: ?client=
+        // already owns the leading '?', so a second '?' here would make `token` part of the
+        // client value and Hub would read every socket as tokenless. Empty when the served page
+        // carried no token (a pre-upgrade cached page) — the parameter is then omitted entirely
+        // rather than sent blank, so Hub's tokenless grace arm is the one that fires.
+        const url = `ws://${window.location.host}/hud/${encodeURIComponent(layerId)}`
+                  + `?client=${encodeURIComponent(CLIENT_KIND)}`
+                  + (CONNECT_TOKEN ? `&token=${encodeURIComponent(CONNECT_TOKEN)}` : '');
         socket = new WebSocket(url);
         socket.onopen    = () => {
             setStatus('connected');
             _reconnectDelayMs = 1500; // reset backoff on successful connect
             flushOutbox();
+            // Re-arm the live channel. Forced because the previous socket's close dropped
+            // this layer's subscription Hub-side, so an unchanged key set still needs saying.
+            // This is the ONLY hello this connect puts on the wire: flushOutbox above
+            // deliberately discards any LIVE_HELLO the outage queued, whose key set can only
+            // be equal to or staler than the one we re-derive right here.
+            sendLiveHello({ force: true });
         };
         socket.onclose   = () => {
             setStatus('disconnected — retrying…');
@@ -1736,14 +4206,30 @@
         try { msg = JSON.parse(raw); } catch { return; }
 
         if (msg.type === 'LAYER_RELOADED') {
-            // Hub's LayerWatcher reloaded this layer's .phxlayer. Hard reload so the page
-            // refetches /api/layer/<id> and re-runs onStartup with the new graph. Clearing
-            // _triggerMeta first is belt-and-braces (the page reload drops it anyway) and
-            // matches L48's "re-run dedupe scan on LAYER_RELOADED" contract should the
-            // reload ever be skipped in the future.
-            _triggerMeta.clear();
+            // Hub's LayerWatcher reloaded this layer's .phxlayer. Prefer a SOFT
+            // reload — re-fetch /api/layer/<id> and repaint in place — over the old
+            // hard window.location.reload() so the OBS/preview surface doesn't flash
+            // and the WS / caches / live push state survive. Any failure falls back
+            // to the hard reload (today's exact behaviour); softReloadLayer clears
+            // _triggerMeta itself (matching L48's "re-run dedupe scan on reload").
             setStatus('reloading…');
-            window.location.reload();
+            softReloadLayer().catch(err => {
+                console.warn('[Visualist] soft reload failed, hard reload:', err);
+                try { _triggerMeta.clear(); } catch { }
+                window.location.reload();
+            });
+            return;
+        }
+
+        if (msg.type === 'HUD_RELOAD') {
+            // V13 §8.3 — Hub classified this socket Untrusted (no token, a token for another
+            // layer, or a page it never served) and is offering the one self-heal. The latch is
+            // inside _selfHealHardReload, NOT here: this arm can legally be reached again after
+            // the reload, and it is the storage latch that makes the second visit a no-op instead
+            // of a loop. Deliberately NOT gated on CLIENT_KIND — a design-time preview that lost
+            // its provenance is just as broken as an OBS source, and Hub only ever sends this to
+            // a socket that actually failed the check.
+            _selfHealHardReload(msg.reason);
             return;
         }
 
@@ -1760,7 +4246,60 @@
         // embedded WebView2). See LayerPreviewPanel.PostScrub / PostPlay / PostStop.
         if (msg.type === 'SCRUB')     { handleScrub(msg);    return; }
         if (msg.type === 'PLAY')      { handlePlay(msg);     return; }
-        if (msg.type === 'STOP_PLAY') { handleStopPlay();    return; }
+        if (msg.type === 'STOP_PLAY') {
+            handleStopPlay();
+            // ★ Stop HOLDS the frame. It no longer clears the latch set, and no longer re-seeds.
+            //
+            // The whole-set clear + _refreshAnimatorDemand() that used to live here were what
+            // produced the snap-to-end-pose: releasing the played widget handed its cursor back
+            // to the production clock, and the re-seed then repainted it at a page-load-old
+            // time. The two shipped comments in this area promised opposite things — one said
+            // stop holds the last played frame, the other said stop returns everything to the
+            // ambient clock — and the code did the second while documenting the first.
+            //
+            // What the clear DID buy was an escape hatch, and that hatch had to be replaced
+            // rather than simply dropped. The three signals that release a pin —
+            // RUN_TRIGGER for the widget, a SET_ACTIVE_TRIGGER tab switch (re-pins to 0),
+            // softReloadLayer on save — are all reachable on the single-widget editor
+            // preview and NONE of them is reachable on the whole-LAYER preview: it is
+            // never sent SET_ACTIVE_TRIGGER, RUN_TRIGGER needs a production script fire,
+            // and a save is not something an author should have to do to un-freeze a
+            // widget. A bare playhead drag there would have pinned a widget for the page's
+            // life with no way back.
+            //
+            // So the hatch moved to RELEASE_TIME_CURSOR (below), posted by the transport's
+            // STOP button. Pause holds the frame; stop releases. That split is what lets
+            // both properties hold at once.
+            //
+            // (Design-preview only — SCRUB / PLAY / STOP_PLAY arrive solely over the WebView2
+            // channel, never on a production OBS source.)
+            return;
+        }
+
+        if (msg.type === 'RELEASE_TIME_CURSOR') {
+            // The escape hatch, bound to the gesture that actually means "I am done
+            // scrubbing": the transport's STOP button (WidgetEditorView.OnStopClicked),
+            // as distinct from pause.
+            //
+            // ★ Why this exists as its own message. Pause holds the frame, which is the
+            // whole point of the latch surviving STOP_PLAY — but that left the LAYER
+            // preview with no reachable release at all. Its three theoretical hatches do
+            // not fire there: SET_ACTIVE_TRIGGER is never sent to the whole-layer surface,
+            // RUN_TRIGGER needs a production script fire from Hub, and softReloadLayer
+            // needs an explicit .phxlayer save. Meanwhile a bare playhead drag pins a
+            // widget and _seedWidgetAnimator refuses a pinned widget, so its ambient
+            // animation stopped for the page's life with no way back short of reloading —
+            // and STOP could not help, because TimelinePlayback.Stop() sets TimeMs = 0,
+            // which posts a SCRUB that RE-PINS at frame 0 rather than releasing.
+            //
+            // Posted AFTER that scrub by the click handler, so it lands last and wins.
+            _designTimeClockOwners.clear();
+            // Re-seed: the widgets just released have no animator slot (the seed refuses a
+            // design-time-owned widget), so nothing would ever schedule them a frame. This
+            // is what actually hands their ambient animation back, and it re-arms the loop.
+            _refreshAnimatorDemand();
+            return;
+        }
 
         // Track C — the embedded single-widget preview switches which trigger it
         // shows when the editor's active trigger tab changes. Record the trigger
@@ -1777,36 +4316,45 @@
             if (!layer || !layer.widgets || !msg.widgetId) return;
             const w = layer.widgets.find(x => x.id === msg.widgetId);
             if (!w) return;
+            // Snapshot the pre-edit rect so the targeted repaint can clear the
+            // vacated region (all widgets share one canvas). Track whether the rect
+            // / zIndex actually changed so a no-op or name-only push skips repaint.
+            const oldRect = w.rect
+                ? { x: w.rect.x, y: w.rect.y, width: w.rect.width, height: w.rect.height }
+                : null;
+            let rectChanged = false, zChanged = false;
             if (msg.rect) {
                 w.rect = w.rect || {};
-                if (typeof msg.rect.x      === 'number') w.rect.x      = msg.rect.x;
-                if (typeof msg.rect.y      === 'number') w.rect.y      = msg.rect.y;
-                if (typeof msg.rect.width  === 'number') w.rect.width  = msg.rect.width;
-                if (typeof msg.rect.height === 'number') w.rect.height = msg.rect.height;
+                if (typeof msg.rect.x      === 'number' && msg.rect.x      !== w.rect.x)      { w.rect.x      = msg.rect.x;      rectChanged = true; }
+                if (typeof msg.rect.y      === 'number' && msg.rect.y      !== w.rect.y)      { w.rect.y      = msg.rect.y;      rectChanged = true; }
+                if (typeof msg.rect.width  === 'number' && msg.rect.width  !== w.rect.width)  { w.rect.width  = msg.rect.width;  rectChanged = true; }
+                if (typeof msg.rect.height === 'number' && msg.rect.height !== w.rect.height) { w.rect.height = msg.rect.height; rectChanged = true; }
             }
-            if (typeof msg.zIndex === 'number') w.zIndex = msg.zIndex;
-            if (typeof msg.name   === 'string') w.name   = msg.name;
+            if (typeof msg.zIndex === 'number' && msg.zIndex !== w.zIndex) { w.zIndex = msg.zIndex; zChanged = true; }
+            if (typeof msg.name   === 'string') w.name = msg.name;
+
             // #4 — repaint the manipulator overlay after the re-render so the
             // handles aren't wiped by the fresh layer-canvas paint. drawManipulator
-            // no-ops when no manipulator is set (OBS / non-preview path).
-            renderAll()
-                .then(() => drawManipulator())
-                .catch(err => console.warn('WIDGET_UPDATE rerender failed:', err));
+            // no-ops when no manipulator is set (OBS / non-preview path). A pure
+            // rect change takes the targeted fast path; name-only skips repaint.
+            if (rectChanged || zChanged) {
+                applyWidgetUpdateRender(w, oldRect, rectChanged, zChanged)
+                    .then(() => { drawManipulator(); postRenderAck(w.id); })
+                    .catch(err => console.warn('WIDGET_UPDATE rerender failed:', err));
+            } else {
+                drawManipulator();
+            }
             return;
         }
 
-        if (msg.type === 'CAPTION_UPDATE') {
-            captionState.original       = msg.original       || '';
-            captionState.translated     = msg.translated     || captionState.original;
-            captionState.sourceLanguage = msg.sourceLanguage || '';
-            captionState.targetLanguage = msg.targetLanguage || '';
-            // M46 — only re-render widgets whose evaluator chain actually consumes
-            // captions. The blanket renderAll() that used to run here re-evaluated every
-            // widget on every caption frame (live captions can fire at >5 Hz), wasting
-            // image-load + canvas work on widgets that don't read Caption.* at all.
-            renderCaptionConsumers().catch(err => console.warn('caption rerender failed:', err));
-            return;
-        }
+        // The four bespoke live-data arms that used to sit here — CAPTION_UPDATE,
+        // TIMER_UPDATE, LOYALTY_UPDATE, COUNTER_UPDATE — are gone. Each was one family's
+        // private wire format, its own state object and its own near-identical re-render pass;
+        // all four now arrive as keys inside LIVE_SNAPSHOT / LIVE_PATCH below, and the readers
+        // resolve them out of liveState. Hub retired the four producers in the same rework, so
+        // these arms had nothing left to receive. Do NOT re-add one to "fix" a dark widget: the
+        // subscription is derived from the graph, so the thing to check is liveKeysForNode's
+        // arm and the LIVE_HELLO it produces.
 
         if (msg.type === 'TRANSLATE_RESPONSE') {
             const resolver = pendingTranslate.get(msg.reqId);
@@ -1814,6 +4362,59 @@
                 pendingTranslate.delete(msg.reqId);
                 resolver(msg.translated || '');
             }
+            return;
+        }
+
+        if (msg.type === 'LIVE_SNAPSHOT') {
+            // Shape: { type:"LIVE_SNAPSHOT", seq:8812,
+            //          entries:[{ k:"timer.main.progress", v:0.62, s:"active" }] }.
+            // Hub's answer to LIVE_HELLO and the channel's authoritative reset point: it carries
+            // every store entry matching our subscription, so it REPLACES liveState.entries
+            // wholesale and supersedes any patch still in flight. Build the fresh Map first and
+            // swap it in, so a malformed frame can't leave a half-cleared store behind.
+            //
+            // DELIBERATELY NOT seq-guarded — a snapshot ALWAYS applies and RESETS our counter.
+            // Hub's seq is a process-static counter with no persistence, so a Hub restart puts it
+            // back near 0 while this page (which reconnects via socket.onclose's setTimeout and is
+            // never reloaded) still holds a high seq from the previous process. Rejecting a
+            // low-seq snapshot would make the overlay discard the authoritative state and then
+            // every following patch, painting the DEAD Hub's values as live until the new counter
+            // organically climbed past the old high-water mark — and it could not even degrade to
+            // "stale", because that verdict only travels inside the frames being dropped.
+            // In-process the guard would also never fire here: BuildFrame stamps the global
+            // counter at build time, so a snapshot always outranks any patch already applied.
+            // Only LIVE_PATCH is an increment and therefore guardable; see the patch arm below.
+            const seq = _liveFrameSeq(msg);
+            const snapshot = Array.isArray(msg.entries) ? msg.entries : [];
+            const fresh = new Map();
+            for (const e of snapshot) {
+                if (e && typeof e.k === 'string') fresh.set(e.k, _liveEntryOf(e));
+            }
+            liveState.entries = fresh;
+            liveState.seq     = seq;
+            // null changedKeys = "everything" — a snapshot invalidates every binding.
+            renderLiveConsumers(null).catch(err => console.warn('live snapshot rerender failed:', err));
+            return;
+        }
+
+        if (msg.type === 'LIVE_PATCH') {
+            // Shape: { type:"LIVE_PATCH", seq:8813,
+            //          entries:[{ k:"timer.main.progress", v:0.63, s:"active" }] }.
+            // OverlayLiveStore's pump coalesces at PumpIntervalMs and only sends keys whose
+            // value (or liveness verdict) actually changed, so merge rather than replace and
+            // re-render only the widgets bound to THESE keys.
+            const seq = _liveFrameSeq(msg);
+            if (seq < liveState.seq) return;   // late/duplicate frame — see _liveFrameSeq
+            const patch = Array.isArray(msg.entries) ? msg.entries : [];
+            const changed = new Set();
+            for (const e of patch) {
+                if (!e || typeof e.k !== 'string') continue;
+                liveState.entries.set(e.k, _liveEntryOf(e));
+                changed.add(e.k);
+            }
+            liveState.seq = seq;
+            if (changed.size === 0) return;   // malformed / empty frame — nothing to repaint
+            renderLiveConsumers(changed).catch(err => console.warn('live patch rerender failed:', err));
             return;
         }
     }
@@ -1854,10 +4455,14 @@
     // authoring convention) but Hub's RUN_TRIGGER carries the bare '<name>' from
     // visual.trigger_queued(layer, widget, name). Match either form so 'onStartup' (no
     // prefix) and 'greet' → 'onTrigger:greet' both resolve.
+    ///
+    /// Both passes skip a null / nameless ELEMENT — `triggers: [null]` survives Hub-side
+    /// deserialisation and is served to the browser (see widgetConsumesTime). Mirrors
+    /// LayerRuntime.FindTrigger, which guards the same input on the Hub half of this handshake.
     function findTrigger(widget, name) {
         if (!widget || !widget.triggers || !name) return null;
-        return widget.triggers.find(t => t.name === name)
-            || widget.triggers.find(t => t.name === 'onTrigger:' + name)
+        return widget.triggers.find(t => t && t.name === name)
+            || widget.triggers.find(t => t && t.name === 'onTrigger:' + name)
             || null;
     }
 
@@ -1889,6 +4494,140 @@
             }));
         } catch (_) { /* best-effort */ }
     }
+
+    /// THE ONE TRIGGER_DIAGNOSTIC frame builder for the EVALUATION path — the diagnostics raised
+    /// deep inside a render, which have no inbound `msg` to attribute themselves to and therefore
+    /// read the layer and trigger off `triggerContext` instead. Its sibling above is the
+    /// message-driven half (handleRunTrigger's early-returns), which has a `msg` in hand.
+    ///
+    /// ★ WHY A console.warn IS NOT A DIAGNOSTIC HERE. On the production path the page is an OBS
+    /// Browser Source with no DevTools attached, and the widget-editor WebView2 preview is worse —
+    /// its console goes nowhere at all. So a render-path failure that only warns is byte-for-byte
+    /// indistinguishable from silence: a blank widget, an honest-looking State pin, no error on
+    /// either side. That is the symptom class several of these reports were filed against, not a
+    /// cosmetic gap. The Hub arm (HUDServer.cs, `case "TRIGGER_DIAGNOSTIC"`) logs at
+    /// LogLevel.System, i.e. the streamer reads it in the System Log without attaching anything,
+    /// and it accepts the frame from an editor client too (IsInboundAllowedFromEditorClient
+    /// refuses only VISUAL_COMPLETE and FPS), which is what gives the preview surface a voice.
+    ///
+    /// `triggerContext.layerId` / `.triggerName` are written by `_renderConsumerPass`, `renderAll`
+    /// and `handleRunTrigger` BEFORE any evaluation starts, and `layerId` itself is a page constant
+    /// with a 'main' fallback — so neither can be empty by the time an evaluator runs.
+    ///
+    /// ★ WHAT THE TWO FIELDS ARE ACTUALLY FOR — corrected. `triggerName` is load-bearing: Hub READS
+    /// it out of this payload (`ReadString(doc.RootElement, "triggerName")`) and prints it in the
+    /// System Log line, so it is the only trigger attribution a reader gets. `layerId` is
+    /// INFORMATIONAL: `HandleInboundFromBrowser` takes the layer from the SOCKET ROUTE
+    /// (`/hud/<layerId>`, injected by the receive loop precisely so the browser need not repeat
+    /// itself) and never reads the payload's copy for any frame type. An earlier version of this
+    /// comment claimed Hub DROPS a frame whose payload layerId is empty and that populating the
+    /// field was therefore load-bearing — it is not; the `if (string.IsNullOrEmpty(layerId)) return;`
+    /// guard it was pointing at tests the ROUTE value, which a `/hud/<id>` socket always has. The
+    /// field stays because the envelope is shared with the message-driven sibling above and because a
+    /// frame read off the wire is unattributable without it, not because anything consumes it.
+    ///
+    /// Callers keep their OWN console.warn (the media / args / list explanations differ, and the
+    /// console is still the right surface for the long fix-it sentence) and their OWN dedupe latch —
+    /// this function is deliberately NOT deduped, because the correct dedupe scope differs per
+    /// caller (per node+value, per node+arg, per key) and a shared latch would silence one caller's
+    /// first report on another's account.
+    ///
+    /// EVERY caller must gate its call, and all four now do — the requirement is real because an
+    /// evaluator runs per pin per render FRAME, and every latch here is therefore PAGE-scoped rather
+    /// than per-render: `_reportedRejectedMediaPaths` (per node+value), `_reportMissingArg`'s
+    /// `_reportedMissingArgs` (per node+arg+kind) and `_listParseWarned` (per key, shared by
+    /// reportListNotArray and liveListRows' catch). A per-render latch does NOT satisfy this: a
+    /// fresh Evaluator is constructed per renderWidgetTrigger, so on the animator path its "once"
+    /// resets every frame — which is exactly how `_reportMissingArg` used to push a frame per frame
+    /// off a keyframed widget whose `Result.If` arg is absent on every non-trigger render.
+    ///
+    /// No-throw by construction: a render read must never fault on a diagnostic.
+    function sendEvalDiagnostic(reason, detail, widgetId) {
+        try {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type:        'TRIGGER_DIAGNOSTIC',
+                    layerId:     triggerContext.layerId,
+                    triggerName: triggerContext.triggerName,
+                    widgetId:    widgetId || null,
+                    reason:      reason || '',
+                    detail:      detail ? String(detail).slice(0, 240) : '',
+                }));
+            }
+        } catch (_) { /* best-effort; the eval pass must continue */ }
+    }
+
+    // ── V13 A2 — DEBUG_WIDGET_NODE, the widget-graph trace frame ──────────────
+    //
+    // Architect flashes each node as its script line executes (DEBUG_NODE_EXEC). The widget
+    // graph had no equivalent, and it cannot get one built the same way: a script line runs
+    // once, whereas renderWidgetTrigger re-runs EVERY ANIMATION FRAME for any keyframed or
+    // animated-media widget. A per-node or per-render frame would push traffic at frame rate up
+    // the same socket that carries the live channel — 60 frames a second per widget, forever,
+    // for a diagnostic nobody asked for.
+    //
+    // So the unit is the ACTIVATION, not the render. The three genuine activation sites —
+    // handleRunTrigger, its idle revert, and handleSetActiveTrigger, i.e. exactly the three that
+    // bump the audio activation generation — ARM a widget; the next render of that widget spends
+    // the arm and sends ONE frame listing every node its evaluation walked. Animator frames,
+    // scrub frames, live-patch passes, WIDGET_UPDATE drags and the clock beat never arm, so they
+    // structurally cannot emit — the flooding case is closed by construction rather than by a
+    // rate limit somebody has to maintain.
+    //
+    // Spending the arm in renderWidgetTrigger's FINALLY is deliberate on both halves: a render
+    // that THREW still reports the nodes it reached (which is when a trace is worth most), and
+    // it still spends the arm, so a fault cannot leave a widget armed to fire its trace off some
+    // later unrelated render.
+    //
+    // DESIGN-TIME ONLY, gated on CLIENT_KIND === 'editor' — the EXPLICIT ?client= declaration,
+    // never IS_DESIGN_TIME (see CLIENT_KIND for why those two are not interchangeable). The gate
+    // is on ARMING, which is what makes the production cost real-zero: an OBS source spends one
+    // string comparison per activation, the arm set stays empty, and the Evaluator never even
+    // allocates a trace collector (see Evaluator.trace and evalNodeOutput).
+    //
+    // Data-class, best-effort bare send — the same idiom as the two TRIGGER_DIAGNOSTIC senders
+    // above, and deliberately NOT the control outbox: a trace queued through a disconnect would
+    // flash nodes for an activation that finished minutes ago.
+    const _traceArmedWidgets = new Set();   // widgetIds whose next render owes one trace frame
+    let   _widgetTraceSeq    = 0;           // monotonic per page, so the editor can drop a stale frame
+
+    function _armWidgetTrace(widgetId) {
+        if (CLIENT_KIND !== 'editor' || !widgetId) return;
+        _traceArmedWidgets.add(widgetId);
+    }
+
+    function sendWidgetNodeTrace(widget, trigger, nodeIds) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        try {
+            socket.send(JSON.stringify({
+                type:        'DEBUG_WIDGET_NODE',
+                layerId,
+                widgetId:    (widget && widget.id) || '',
+                triggerName: (trigger && trigger.name) || '',
+                nodeIds:     nodeIds || [],
+                seq:         ++_widgetTraceSeq,
+            }));
+        } catch (_) { /* best-effort; a trace must never fail a render */ }
+    }
+
+    /// V13 H1 — the completion payload a widget's Visual.Complete resolved on its LAST render,
+    /// keyed by widget. An ABSENT entry means "this trigger's Visual.Complete has no wired
+    /// Payload" (or the graph has no Visual.Complete at all), and that is what makes the wire
+    /// field OMITTED rather than empty: the sprint's compatibility gate is that an unwired pin
+    /// produces byte-identical wire output, and `"payload": ""` is not the same frame as no
+    /// field.
+    ///
+    /// Per WIDGET rather than one module slot because the animator loop is the one render path
+    /// that does NOT take withWidgetLock — a frame for widget B can interleave with A's render,
+    /// and a single slot would hand A's waiting script B's payload. handleRunTrigger reads its
+    /// own widget's entry into a LOCAL immediately after the trigger render and before the
+    /// 2000–60000 ms hold, so the idle revert's onStartup render (a second activation, with its
+    /// own Visual.Complete) cannot overwrite the value the triggering activation produced.
+    ///
+    /// No cleanup pass is needed for a widget deleted by a soft reload: every renderWidgetTrigger
+    /// either sets or DELETES the rendered widget's entry, and the only reader runs immediately
+    /// after a render of that same widget — so a stale entry can never be read.
+    const _widgetCompletionPayload = new Map();   // widgetId → resolved payload string
 
     async function handleRunTrigger(msg) {
         // Diagnostic ACK on receipt — fired BEFORE any early-return so the Hub
@@ -1938,6 +4677,20 @@
             try { triggerContext.eventDataJson = JSON.stringify(triggerContext.eventData); }
             catch { triggerContext.eventDataJson = '{}'; }
             triggerContext.timestamp     = Date.now() / 1000;
+            // V5 — the trigger starts at t=0, and this widget's activation clock restarts here
+            // so the animator's subsequent frames advance from this moment.
+            //
+            // Resetting timeMs also fixes a latent design-time bug: this handler never touched
+            // it, so in the embedded preview a RUN_TRIGGER fired after a scrub inherited the
+            // stale scrub cursor and the trigger played from the middle of its timeline. The
+            // production path is authoritative — an activation is always t=0.
+            triggerContext.timeMs        = 0;
+            _stampWidgetActivation(widget.id);
+            // A production trigger fire supersedes the editor's pinned cursor: the widget is
+            // showing NEW content, so the author's playhead no longer describes what is on
+            // screen. Release the design-time latch so this activation animates (on the layer
+            // design preview a previously scrubbed widget would otherwise stay frozen).
+            _designTimeClockOwners.delete(widget.id);
 
             // Per-widget dip-to-blank transition duration (0 = instant cut, legacy).
             // Applies to BOTH this swap and the idle revert below — an instant snap
@@ -1951,8 +4704,12 @@
             // wait_for_visual sees the same timing as the user actually does on screen.
             // A genuine trigger fire is a new audio activation — one-shot Audio.Play
             // nodes in this trigger play once (the animator re-renders that follow
-            // reuse this generation and won't replay them).
-            bumpAudioActivation();
+            // reuse this generation and won't replay them). Scoped to THIS widget so a
+            // neighbour mid-hold does not read our bump as its own re-activation.
+            bumpAudioActivation(widget.id);
+            // V13 A2 — and it is an activation for the trace too, so the render below owes ONE
+            // DEBUG_WIDGET_NODE frame. No-op unless this page is an editor surface.
+            _armWidgetTrace(widget.id);
             try {
                 await renderWithTransition(widget, trigger, transMs);
             } catch (e) {
@@ -1963,6 +4720,12 @@
             }
             bumpRenderCount();
 
+            // V13 H1 — capture THIS activation's completion payload now: before the hold, and
+            // before the idle revert renders onStartup, whose own Visual.Complete would
+            // otherwise overwrite the entry we are about to read. `undefined` (no entry) means
+            // the Payload pin was not wired, which omits the field from the ack entirely.
+            const completionPayload = _widgetCompletionPayload.get(widget.id);
+
             if (msg.triggerName !== 'onStartup') {
                 // Hold the trigger render on screen for the trigger's
                 // configured timeline duration before reverting to onStartup.
@@ -1972,8 +4735,13 @@
                 //
                 // Default when the timeline duration is unset / 0: 2000 ms.
                 // Authors can override per trigger via the TimelinePanel
-                // duration field in Visualist. Clamped to [0, 60000] so a
-                // misconfigured giant value can't lock the widget queue.
+                // duration field in Visualist.
+                //
+                // D12 doc fix: the effective clamp is [2000, 60000], not [0, 60000]. Anything
+                // <= 0 (and anything non-finite) becomes 2000 on the line below, so 2000 is a
+                // FLOOR and not just a default — a trigger authored with a 500 ms timeline is
+                // still held for 2 s. Hub's WidgetTriggerQueue mirrors this floor when it sizes
+                // the per-invocation completion timeout, so the two must not drift.
                 let holdMs = Number(trigger && trigger.timeline && trigger.timeline.duration) || 0;
                 if (!isFinite(holdMs) || holdMs <= 0) holdMs = 2000;
                 if (holdMs > 60000) holdMs = 60000;
@@ -1983,32 +4751,49 @@
                 triggerContext.eventData     = {};
                 triggerContext.eventDataJson = '{}';
                 triggerContext.timestamp     = Date.now() / 1000;
-                const startup = widget.triggers.find(t => t.name === 'onStartup');
+                // The idle revert is its own activation (it re-fires onStartup's one-shot audio
+                // via bumpAudioActivation below), so onStartup's animation restarts from t=0 too.
+                triggerContext.timeMs        = 0;
+                _stampWidgetActivation(widget.id);
+                const startup = widget.triggers.find(t => t && t.name === 'onStartup');
                 if (startup) {
                     // Reverting to idle is a fresh onStartup activation — let its
                     // audio (if any) fire once, then settle.
-                    bumpAudioActivation();
+                    bumpAudioActivation(widget.id);
+                    // V13 A2 — the idle revert is its own activation, so onStartup's own node
+                    // walk gets its own trace frame. The author sees what actually ran.
+                    _armWidgetTrace(widget.id);
                     try { await renderWithTransition(widget, startup, transMs); bumpRenderCount(); }
                     catch (e) { console.warn('idle-loop onStartup failed:', e); }
                 }
             }
 
-            sendComplete(msg);
+            sendComplete(msg, completionPayload);
         });
     }
 
-    function sendComplete(msg) {
+    /// Acks a RUN_TRIGGER. `payload` is V13 H1's completion payload and is OPTIONAL — every
+    /// early-return / error caller omits it, which is correct: those are failure acks whose only
+    /// job is to release a waiting script promptly.
+    function sendComplete(msg, payload) {
         // Route through the control outbox: a bare socket.send silently dropped
         // VISUAL_COMPLETE acks emitted during a disconnect — the exact cargo the
         // control queue exists to preserve — and Hub-side wait_for_visual then
         // stalled to its full timeout.
-        sendSocket({
+        const frame = {
             type: 'VISUAL_COMPLETE',
             layerId,
             widgetId:    msg.widgetId,
             triggerName: msg.triggerName,
             waitId:      msg.waitId || '',
-        }, { control: true });
+        };
+        // V13 H1 — `payload` is APPENDED, and only when the Visual.Complete's Payload pin was
+        // actually WIRED. Omitted (not '') otherwise, because §8.1 makes an unwired pin a
+        // byte-identical-wire compatibility gate; and appended LAST so the five pre-existing
+        // keys keep their existing JSON.stringify order, i.e. an unwired graph emits the exact
+        // same bytes it emitted before this sprint.
+        if (payload !== undefined && payload !== null) frame.payload = String(payload);
+        sendSocket(frame, { control: true });
     }
 
     // ── Sweep 21 — design-time scrub / play handlers ────────────────────────
@@ -2027,6 +4812,15 @@
         triggerContext.eventDataJson = '{}';
         triggerContext.timestamp     = Date.now() / 1000;
         triggerContext.timeMs        = Number(msg.timeMs) || 0;
+        // This widget's cursor now belongs to the editor's playhead. On the whole-layer design
+        // preview (?client=editor) the production clock is otherwise page-wide, so without this
+        // latch the animator loop overwrote the scrubbed timeMs on its next frame and the
+        // scrubbed picture lasted about 16 ms. See _designTimeClockOwners.
+        //
+        // The latch carries the CURSOR, not just the ownership: any other render of this widget
+        // (a live patch, a drag, the animator's own frame) re-establishes timeMs from this value
+        // instead of inheriting whichever widget the page global was last written for.
+        _designTimeClockOwners.set(widget.id, triggerContext.timeMs);
 
         await withWidgetLock(widget.id, async () => {
             try { await renderWidgetTrigger(widget, trigger); bumpRenderCount(); }
@@ -2048,17 +4842,39 @@
         const trigger = findTrigger(widget, msg.triggerName);
         if (!trigger) return;
 
-        // #6 — kill any per-widget GIF/animation rAF loop for this widget before
-        // starting the design-time Play loop. Otherwise the promoted animator
-        // (driven by performance.now()) keeps re-rendering in parallel with the
-        // Play tick (driven by triggerContext.timeMs), and the two fight over the
-        // canvas so the scrubbed/played GIF frame flickers against the free-running
-        // one. handlePlay owns timeMs while it runs.
-        const _existingAnimator = _widgetAnimators.get(widget.id);
-        if (_existingAnimator) {
-            try { cancelAnimationFrame(_existingAnimator.rafId); } catch { /* ignore */ }
-            _widgetAnimators.delete(widget.id);
-        }
+        // #6 — drop this widget's animator slot before starting the design-time Play loop.
+        // Otherwise the global animator loop keeps re-rendering it in parallel with the Play
+        // tick, and the two fight over the canvas so the scrubbed/played GIF frame flickers
+        // against the free-running one. handlePlay owns timeMs while it runs (see
+        // _productionClockOwnsTime, which suppresses the production clock for the whole page
+        // while a Play session exists). The loop ALSO skips PLAY-owned widgets, so this is
+        // belt-and-braces — but it is the documented #6 behaviour and it is what makes
+        // handleStopPlay's "hold the last played frame" work.
+        _widgetAnimators.delete(widget.id);
+        // Latch design-time ownership for this widget too, with the cursor the session starts
+        // from. Redundant while the session runs (a live _playState suppresses the production
+        // clock page-wide), but it keeps ONE record of "a design-time transport owns this cursor,
+        // and this is its value" for BOTH transports, released through the one path —
+        // handleStopPlay — instead of scrub and play each having their own mechanism. The tick
+        // below re-stores it on every frame so the pinned value never lags the picture.
+        // ★ Seed from THIS widget's own design-time cursor, never from the page-global
+        // triggerContext.timeMs. Before V5 those were the same thing, because SCRUB and
+        // PLAY were the only writers of that global. V5 made the production clock write
+        // it too — on the whole-layer preview (?client=editor, which is NOT widget-
+        // filtered) _productionClockOwnsTime() is true, so the animator tick, the
+        // consumer pass and renderAll all rewrite the global with whatever widget they
+        // last served, i.e. milliseconds since page load. Pressing ▶ then seeded
+        // startMs with tens of seconds, the first tick satisfied
+        // `timeMs >= durationMs` for any normal timeline, and the transport rendered
+        // the final keyframe and immediately stopped.
+        //
+        // The widget's own latch is the correct source: SCRUB sets it, so ▶ after a
+        // drag resumes from the playhead, and its absence means "never scrubbed" ⇒
+        // start at 0, which is what ▶ from a fresh preview must do.
+        const playStartMs = _designTimeClockOwners.has(widget.id)
+            ? (_designTimeClockOwners.get(widget.id) || 0)
+            : 0;
+        _designTimeClockOwners.set(widget.id, playStartMs);
 
         _playState = {
             widget,
@@ -2066,7 +4882,7 @@
             durationMs: Number(msg.durationMs) || 0,
             loop:       !!msg.loop,
             startWall:  performance.now(),
-            startMs:    triggerContext.timeMs || 0,
+            startMs:    playStartMs,
             raf:        0,
         };
         if (_playState.durationMs <= 0) { _playState = null; return; }
@@ -2089,6 +4905,11 @@
                 } else {
                     timeMs = ps.durationMs;
                     triggerContext.timeMs = timeMs;
+                    // Keep the latch's pinned cursor in step with the frame we are about to paint,
+                    // so a render from any OTHER path lands on the same value (see
+                    // _designTimeClockOwners / _applyWidgetTimeCursor). This is also the value the
+                    // held final frame keeps after the session ends.
+                    _designTimeClockOwners.set(ps.widget.id, timeMs);
                     await withWidgetLock(ps.widget.id, async () => {
                         if (_playState !== ps) return; // session ended/replaced while awaiting the lock
                         try { await renderWidgetTrigger(ps.widget, ps.trigger); bumpRenderCount(); }
@@ -2100,6 +4921,7 @@
                 }
             }
             triggerContext.timeMs = timeMs;
+            _designTimeClockOwners.set(ps.widget.id, timeMs);  // pinned cursor tracks the frame
             await withWidgetLock(ps.widget.id, async () => {
                 if (_playState !== ps) return; // session ended/replaced while awaiting the lock
                 try { await renderWidgetTrigger(ps.widget, ps.trigger); bumpRenderCount(); }
@@ -2115,19 +4937,37 @@
         if (_playState && _playState.raf) {
             try { cancelAnimationFrame(_playState.raf); } catch { }
         }
-        // #6 — when the design-time Play loop stops, also drop any per-widget
-        // animator slot for the played widget so a promoted GIF animator doesn't
-        // keep free-running (driven by performance.now()) after the transport
-        // stopped. Without this, stopping playback leaves the GIF looping on its
-        // own clock instead of holding the last played frame.
+        // #6 — when the design-time Play loop stops, also drop the played widget's animator
+        // slot so it doesn't keep free-running after the transport stopped. Without this,
+        // stopping playback leaves the GIF looping on its own clock instead of holding the
+        // last played frame.
         if (_playState && _playState.widget) {
-            const _slot = _widgetAnimators.get(_playState.widget.id);
-            if (_slot) {
-                try { cancelAnimationFrame(_slot.rafId); } catch { /* ignore */ }
-                _widgetAnimators.delete(_playState.widget.id);
-            }
+            _widgetAnimators.delete(_playState.widget.id);
+            // ★ The latch is deliberately KEPT, pinned at the frame the transport stopped on.
+            //
+            // It used to be released here, on the reasoning that "the transport is done, so the
+            // widget rejoins the production clock". That reasoning contradicted the line
+            // immediately above it: dropping the animator slot exists precisely so the widget
+            // HOLDS the last played frame, and releasing the latch handed the same widget's
+            // cursor straight back to the production clock, so the very next production-path
+            // render painted it at a page-load-old time — visibly snapping it to its end pose
+            // the instant the author pressed stop. Two mechanisms, opposite intents, three lines
+            // apart.
+            //
+            // Holding is also the answer the author's gesture implies: they moved a playhead to
+            // a frame and stopped there, so that frame is what the pane should show. The pin is
+            // released by the three signals that mean the playhead no longer describes the
+            // picture — a production RUN_TRIGGER for this widget, a SET_ACTIVE_TRIGGER tab
+            // switch (which re-pins to 0), and softReloadLayer on save.
         }
         _playState = null;
+        // A live _playState suppresses the production clock PAGE-WIDE, which on the whole-layer
+        // design preview means every OTHER time-only slot settled while the session ran (its
+        // cursor could not move, so a further frame was provably identical). Now that the page
+        // clock is live again those slots have to be re-armed, or one Play session would leave the
+        // rest of the layer frozen until the next genuine activation.
+        for (const [, slot] of _widgetAnimators) slot.settledAtExtent = false;
+        _ensureAnimatorLoop();
     }
 
     /// Track C — SET_ACTIVE_TRIGGER: the embedded single-widget preview pins the
@@ -2143,7 +4983,7 @@
         const widget = (layer && layer.widgets) ? layer.widgets.find(w => w.id === msg.widgetId) : null;
         if (!widget) return;
         const trigger = findTrigger(widget, msg.triggerName)
-                     || (widget.triggers ? widget.triggers.find(t => t.name === 'onStartup') : null);
+                     || (widget.triggers ? widget.triggers.find(t => t && t.name === 'onStartup') : null);
         if (!trigger) return;
 
         // Render the active trigger's starting frame (timeMs = 0) so the pane
@@ -2154,11 +4994,33 @@
         triggerContext.eventDataJson = '{}';
         triggerContext.timestamp     = Date.now() / 1000;
         triggerContext.timeMs        = 0;
+        // This handler does NOT take the design-time latch (that would freeze a layer-preview
+        // widget's ambient animation on a mere tab switch), but if the widget ALREADY holds one
+        // from an earlier scrub, the pinned value has to follow the cursor this render establishes
+        // — otherwise every later production-path render of that widget would resurrect the old
+        // scrub position over the t=0 frame the author is looking at.
+        if (_designTimeClockOwners.has(widget.id)) _designTimeClockOwners.set(widget.id, 0);
 
         // Switching the edited trigger tab is a genuine activation — its one-shot
         // audio plays once; subsequent scrub/play frames reuse this generation.
-        bumpAudioActivation();
+        // The activation clock restarts with it, the third and last stamp site.
+        bumpAudioActivation(widget.id);
+        _stampWidgetActivation(widget.id);
         withWidgetLock(widget.id, async () => {
+            // V13 A2 — third and last arm site, matching the three genuine activations exactly.
+            // Switching the edited trigger tab is precisely when the author wants to see which
+            // nodes the newly-selected trigger runs; the scrub / play frames that follow do not
+            // re-arm.
+            //
+            // ★ INSIDE the lock body, not before it, and that is a correctness requirement rather
+            // than tidiness. withWidgetLock AWAITS any previous holder, and this call is not
+            // awaited, so an arm raised outside could wait many ticks for the render it belongs
+            // to — while the global animator loop deliberately does NOT take withWidgetLock, so an
+            // animator frame for this same widget can enter renderWidgetTrigger, see the arm and
+            // SPEND it first. The author would then get a flash for a frame they never asked for
+            // and none for the tab switch they did. Raised here, the arm and the render it is for
+            // are the same critical section, exactly like the other two sites in handleRunTrigger.
+            _armWidgetTrace(widget.id);
             try { await renderWidgetTrigger(widget, trigger); bumpRenderCount(); }
             catch (e) { console.warn('[Visualist] SET_ACTIVE_TRIGGER render failed:', e); }
         }).then(() => drawManipulator());  // #4 — repaint handles after the re-render
@@ -2167,11 +5029,15 @@
     // ── Phase 9 (a) — render-rate reporting ─────────────────────────────────
     // The Hub status bar exposes a per-layer "FPS" indicator so the streamer
     // can see at a glance whether each browser-source layer is ticking. This
-    // is renders-per-second rather than display-frame-rate (the canvas only
-    // paints when a RUN_TRIGGER or CAPTION_UPDATE forces it; the underlying
-    // browser tab still runs at the display refresh). Bumped from
-    // renderWidgetTrigger / renderCaptionConsumers; flushed once per second
-    // and reset.
+    // is renders-per-second rather than display-frame-rate (the underlying
+    // browser tab still runs at the display refresh). Bumped from the
+    // message-driven render paths and from the shared consumer pass; flushed
+    // once per second and reset.
+    //
+    // The global animator loop deliberately does NOT bump it — it never did, and
+    // making it do so would change what the badge means from "how often is Hub
+    // data reaching this layer" (its diagnostic purpose: a layer reading 0 is a
+    // layer that is not being fed) to "is a GIF playing", which is always 60.
     let _renderCount = 0;
     function bumpRenderCount() { _renderCount++; }
     // QC28-02 — capture the FPS interval handle so we can clear it when the
@@ -2195,21 +5061,38 @@
     }
     _startFpsTimer();
 
-    // QC28-02 — single entry points to pause/resume the per-widget rAF loops.
-    // The visibilitychange handler calls these together with the FPS interval
-    // so an OBS scene-cut (page hidden) fully quiesces the compositor instead
-    // of continuing to burn GPU at full rAF rate. On resume, we re-promote
-    // any widget whose trigger was animated by re-firing its onStartup pass
-    // — that re-runs requestWidgetAnimator() through the normal eval path
-    // and the per-widget animator slot is rebuilt with a fresh failure count.
+    // Clock heartbeat — a 1 Hz re-render tick for browser-autonomous Clock.Now widgets. A
+    // Hub-backed timer rides the Overlay Live Channel and is repainted by the patch that carries
+    // its new value; a wall clock has no producer at all (evalClockNow reads the OBS machine's
+    // own Date.now()), so nothing would ever drive a per-second frame for it. Hence its own
+    // selector — it cannot ride the key-narrowed live pass, because it has no key.
+    //
+    // It no longer has a timer of its own: V5 folded the beat into the ONE global animator loop
+    // (_animatorTick / CLOCK_BEAT_INTERVAL_MS / _clockWidgetsPresent, decision record D10). The
+    // old setInterval fired independently of the animator, so its consumer pass could overwrite
+    // the shared triggerContext singleton in the middle of an animator render that was awaiting
+    // an image decode. Sharing the tick makes the two strictly ordered. When the animator has no
+    // frame work the loop schedules itself with a timeout sized to the next beat, so a Clock.Now
+    // widget on a static layer still costs one wakeup a second, exactly as the interval did.
+    //
+    // The shared pass early-returns for layers with no Clock.Now widget, so the steady-state cost
+    // is one memoized scan. Paused on visibilitychange together with the FPS timer, via
+    // pauseAllAnimations, so a hidden OBS scene costs zero.
+
+    // QC28-02 — single entry points to pause/resume the global animator loop (and with it the
+    // clock beat). The visibilitychange handler calls these together with the FPS interval so an
+    // OBS scene-cut (page hidden) fully quiesces the compositor instead of continuing to burn
+    // GPU at full rAF rate.
     let _animationsPaused = false;
+    // _nowMs() at the moment the page went hidden, or 0 when visible. The activation clocks are
+    // FROZEN across the hidden interval by shifting every stamp forward by this much on resume —
+    // see resumeAllAnimations.
+    let _animationsPausedAtMs = 0;
     function pauseAllAnimations() {
         if (_animationsPaused) return;
         _animationsPaused = true;
-        for (const [, slot] of _widgetAnimators) {
-            try { cancelAnimationFrame(slot.rafId); } catch { /* ignore */ }
-            slot.rafId = 0;
-        }
+        _animationsPausedAtMs = _nowMs();
+        _stopAnimatorLoop();
         // Stop the design-time Play loop too — same rationale: hidden page,
         // zero work.
         if (_playState && _playState.raf) {
@@ -2220,25 +5103,64 @@
     function resumeAllAnimations() {
         if (!_animationsPaused) return;
         _animationsPaused = false;
-        // Re-promote every widget whose trigger was animated. We re-render
-        // the same widget+trigger so the per-widget animator's eval pass runs
-        // through the normal `requestWidgetAnimator()` path; an empty result
-        // (no animated source) will let promoteWidgetAnimator drop the slot.
-        if (layer && Array.isArray(layer.widgets)) {
-            for (const [widgetId, slot] of Array.from(_widgetAnimators.entries())) {
-                const w = layer.widgets.find(x => x.id === widgetId);
-                if (!w) { _widgetAnimators.delete(widgetId); continue; }
-                const trig = slot.trigger;
-                // Reset the breaker before resuming — being hidden is not a
-                // sticky failure.
-                slot._consecutiveFailures = 0;
-                slot._suspendLogged = false;
-                withWidgetLock(w.id, async () => {
-                    try { await renderWidgetTrigger(w, trig); bumpRenderCount(); }
-                    catch (e) { console.warn('[compositor] resume re-render failed:', e); }
-                });
-            }
+        // Drop slots whose widget is gone and clear the breaker on the rest — being hidden is
+        // not a sticky failure.
+        //
+        // This used to also fire a burst of concurrent per-widget re-renders, so that each
+        // widget's eval pass re-ran requestWidgetAnimator() and an un-animated one got dropped
+        // by promoteWidgetAnimator. That burst is now redundant AND harmful: the restarted loop
+        // re-renders every registered slot on its very next frame, through the same eval path,
+        // with the same demotion rule — and it does so serially, whereas N fire-and-forget
+        // renders into one shared canvas with one shared triggerContext is the exact
+        // interleaving this sprint removed.
+        for (const [widgetId, slot] of Array.from(_widgetAnimators.entries())) {
+            const stillPresent = layer && Array.isArray(layer.widgets)
+                && layer.widgets.some(x => x && x.id === widgetId);
+            if (!stillPresent) { _widgetAnimators.delete(widgetId); continue; }
+            slot._consecutiveFailures = 0;
+            slot._suspendLogged       = false;
+            slot.suspended            = false;
         }
+        // _clockBeatLastMs is deliberately NOT re-anchored: a wall clock that has been hidden
+        // for minutes is showing a stale time, so the first resumed tick SHOULD beat immediately.
+        //
+        // The per-widget activation clocks are FROZEN across the hidden interval instead — every
+        // stamp is shifted forward by however long the page was hidden, so a widget resumes at
+        // exactly the elapsed time it was suspended at.
+        //
+        // Both of the alternatives are wrong, and one of them was what shipped:
+        //   • leave the stamps alone (the previous behaviour). _nowMs() is performance.now(),
+        //     which keeps advancing while the page is hidden, so a 3 s OBS scene cut
+        //     FAST-FORWARDED every in-flight animation by 3 s. A 2000 ms intro that had played
+        //     200 ms resumed past its own extent, settled on its last keyframe, and — because the
+        //     settle mark only clears on a genuine activation — could never play again for that
+        //     socket's life. Every alert that fired near a scene cut was silently lost.
+        //   • re-anchor to now. That restarts the track, i.e. it REPLAYS an alert's intro on every
+        //     scene return with no alert behind it. That is the property the old comment here was
+        //     defending, and freezing preserves it: a scene cut is not an activation.
+        // Freezing keeps both: no replay, and no skipped remainder.
+        //
+        // ACCEPTED CONSEQUENCE, stated plainly: a hold is paused, not cancelled. A widget hidden
+        // 30 s into a 2 s intro still has ~1.8 s of that intro left to play when the scene comes
+        // back, so the viewer sees the tail of an animation for an event that happened 30 s ago.
+        // That is the lesser of the three — one short visible tail, versus either a permanently
+        // dead widget or a phantom replay.
+        if (_animationsPausedAtMs) {
+            const hiddenMs = _nowMs() - _animationsPausedAtMs;
+            if (hiddenMs > 0) {
+                const nowMs = _nowMs();
+                for (const [id, start] of Array.from(_widgetActivationStart.entries())) {
+                    // Never shift a stamp past NOW: a RUN_TRIGGER that arrived WHILE the page was
+                    // hidden stamped mid-interval, and adding the whole hidden duration would put
+                    // its start in the future — _widgetTimeMs clamps negatives to 0, so the widget
+                    // would sit frozen at t=0 for the residual instead of starting at once.
+                    const shifted = start + hiddenMs;
+                    _widgetActivationStart.set(id, shifted > nowMs ? nowMs : shifted);
+                }
+            }
+            _animationsPausedAtMs = 0;
+        }
+        _ensureAnimatorLoop();
         // Resume the design-time Play loop if one was running.
         if (_playState && _playState.raf === 0) {
             // Re-anchor wall time so resume doesn't fast-forward the playhead
@@ -2261,7 +5183,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 _stopFpsTimer();
-                pauseAllAnimations();
+                pauseAllAnimations();   // also stops the clock beat — it rides the same loop
             } else {
                 _startFpsTimer();
                 resumeAllAnimations();
@@ -2271,20 +5193,64 @@
 
     // ── Rendering ────────────────────────────────────────────────────────────
 
+    /// The trigger name a WHOLE-LAYER paint renders.
+    ///
+    /// Track C — in single-widget preview mode the editor can pin an "active trigger" (the
+    /// trigger tab being edited) via SET_ACTIVE_TRIGGER. When present we render THAT trigger (at
+    /// the current timeMs) instead of the onStartup idle state so keyframing is visible. Bare
+    /// layer / OBS renders and the initial paint (previewActiveTrigger === null) keep onStartup.
+    function defaultRenderTriggerName() {
+        return (widgetFilterId && previewActiveTrigger) ? previewActiveTrigger : 'onStartup';
+    }
+
+    /// The trigger a whole-layer paint renders FOR ONE WIDGET: the pinned name when this widget
+    /// has it, else its onStartup idle. `name` lets renderAll pass the value it resolved once for
+    /// the whole pass, so a SET_ACTIVE_TRIGGER arriving mid-pass cannot make two widgets in the
+    /// same paint disagree with triggerContext.triggerName.
+    ///
+    /// Single-sourced because two callers must agree on the answer: renderAll (which paints it)
+    /// and _seedWidgetAnimator (which registers an animator slot for it before renderAll's
+    /// promotions have landed). If they disagreed, the seeded slot would animate a different
+    /// trigger than the one on screen.
+    ///
+    /// The onStartup fallback skips null / nameless elements for the same reason findTrigger's two
+    /// passes do: _seedWidgetAnimator calls this for EVERY widget on the layer, so a corrupt
+    /// element here throws on a path that has no per-widget try/catch (see widgetConsumesTime).
+    function defaultRenderTrigger(widget, name) {
+        if (!widget || !widget.triggers) return null;
+        return findTrigger(widget, name || defaultRenderTriggerName())
+            || widget.triggers.find(t => t && t.name === 'onStartup')
+            || null;
+    }
+
+    /// Z-ORDER FIX — paint order for a whole-layer repaint.
+    ///
+    /// The full-paint loops used to walk `layer.widgets` in serialized array order. Nothing in
+    /// the editor's restack commands reorders that array — Bring-Forward / Send-Back only assign
+    /// LayerWidget.ZIndex — so restacking a widget in Visualist never changed what OBS drew, and
+    /// two overlapping widgets stacked by whichever happened to be saved last.
+    ///
+    /// Sorts a COPY: layer.widgets is indexed into by other consumers, so reordering it in place
+    /// would move widgets out from under them. Array#sort is specified stable, which makes equal
+    /// zIndex keep serialized order — the same tiebreak the editor's OrderBy(ZIndex).ThenBy(index)
+    /// uses. Missing/garbage zIndex reads as 0 so a pre-zIndex .phxlayer paints as authored.
+    function widgetsInPaintOrder(widgets) {
+        if (!Array.isArray(widgets)) return [];
+        return widgets.slice().sort((a, b) => {
+            const az = (a && Number.isFinite(Number(a.zIndex))) ? Number(a.zIndex) : 0;
+            const bz = (b && Number.isFinite(Number(b.zIndex))) ? Number(b.zIndex) : 0;
+            return az - bz;
+        });
+    }
+
     async function renderAll() {
         // Guard the whole pass — a malformed/half-loaded layer (layer or
         // layer.widgets null/undefined) would otherwise throw TypeError on the
         // for-of below and abort the entire first paint. Symmetric with the
-        // guard renderCaptionConsumers already has.
+        // guard _renderConsumerPass already has.
         if (!layer || !layer.widgets) return;
-        // Track C — in single-widget preview mode the editor can pin an "active
-        // trigger" (the trigger tab being edited) via SET_ACTIVE_TRIGGER. When
-        // present we render THAT trigger (at the current timeMs) instead of the
-        // onStartup idle state so keyframing is visible. Bare layer / OBS renders
-        // and the initial paint (previewActiveTrigger === null) keep onStartup.
-        const renderTriggerName = (widgetFilterId && previewActiveTrigger)
-            ? previewActiveTrigger
-            : 'onStartup';
+        // Resolved ONCE for the pass — see defaultRenderTriggerName (Track C).
+        const renderTriggerName = defaultRenderTriggerName();
         // F5 — seed trigger context for the pass so Visual.OnStartup / Visual.OnTrigger
         // nodes have a populated LayerId / Timestamp before evaluation.
         triggerContext.layerId       = layerId;
@@ -2295,21 +5261,30 @@
 
         ctx.clearRect(0, 0, logicalW, logicalH);
         paintBackdrop({ x: 0, y: 0, width: logicalW, height: logicalH });
-        for (const widget of layer.widgets) {
+        // Z-ORDER FIX — paint back-to-front by zIndex, not by array position. See
+        // widgetsInPaintOrder above.
+        for (const widget of widgetsInPaintOrder(layer.widgets)) {
             if (!isWidgetVisible(widget)) continue;
             // [P1 swarm-audit 2026-05-29] guard widget.triggers — null/undefined
             // on a malformed widget; skip it rather than throwing on .find.
             if (!widget.triggers) continue;
             // Honor the active trigger when pinned (single-widget preview); fall
             // back to onStartup if the named trigger isn't present on this widget.
-            const trig = findTrigger(widget, renderTriggerName)
-                      || widget.triggers.find(t => t.name === 'onStartup');
+            const trig = defaultRenderTrigger(widget, renderTriggerName);
             if (!trig) continue;
-            // QC28-01 — symmetric with renderCaptionConsumers / handleRunTrigger which
+            // QC28-01 — symmetric with _renderConsumerPass / handleRunTrigger which
             // both wrap per-widget renders. Without this, a single bad widget's throw
             // aborts the full first-paint of the layer (the for-loop unwinds before
             // subsequent widgets get a chance). Log + continue so the rest of the
             // layer still paints; the broken widget will just show as blank/diagnostic.
+            // V5 — each widget renders at ITS OWN activation clock, same rule as the animator
+            // loop and the consumer pass. On the bootstrap paint every widget lazily stamps
+            // here, so a keyframed onStartup track starts at t=0 rather than inheriting the
+            // clock of whichever widget was painted before it. Per-WIDGET ownership: on the
+            // whole-layer design preview a scrubbed widget keeps the author's pinned cursor
+            // through a full repaint (the helper re-writes the pinned value, so the repaint can't
+            // silently adopt a neighbour's clock) while its neighbours keep animating.
+            _applyWidgetTimeCursor(widget.id);
             try {
                 await renderWidgetTrigger(widget, trig);
                 bumpRenderCount();
@@ -2317,29 +5292,384 @@
                 console.error('[compositor] renderAll: widget render failed', widget && widget.id, e);
             }
         }
+        // Drop DOM overlays for widgets that are no longer in the layer (e.g. a widget
+        // deleted in the editor between renders). Per-widget/trigger churn is handled by
+        // reconcileWidgetOverlays inside renderWidgetTrigger; this catches removed widgets.
+        const _liveWidgetIds = new Set((layer.widgets || []).map(w => w && w.id));
+        try { sweepWebOverlays(_liveWidgetIds); }
+        catch (e) { console.warn('[Visualist] WebOverlay sweep failed:', e); }
+        // V15 — the same sweep for iframe players, and it matters more here than for the
+        // WebOverlay track: an orphaned player entry keeps a live iframe and its watchdog
+        // timers, not just a stale <div>.
+        try { sweepPlayerEmbeds(_liveWidgetIds); }
+        catch (e) { console.warn('[Visualist] Player.Embed sweep failed:', e); }
     }
 
-    /// M46 — re-render only the widgets whose evaluator chain references Caption.*.
-    /// Called from CAPTION_UPDATE; uses the same per-widget render mutex as
-    /// handleRunTrigger so an in-flight RUN_TRIGGER pass isn't clobbered.
-    async function renderCaptionConsumers() {
-        if (!layer || !layer.widgets) return;
+    /// Targeted WIDGET_UPDATE repaint — the smooth-drag fast path. Re-renders ONLY
+    /// the moved widget instead of re-evaluating EVERY widget's graph (what a full
+    /// renderAll does on each drag frame). Returns true when it handled the repaint,
+    /// false to tell the caller "fall back to renderAll" (today's exact behaviour).
+    ///
+    /// Safe to targeted-repaint ONLY when the widget's vacated∪new region overlaps
+    /// no other widget: all widgets share one <canvas>, and renderWidgetTrigger's
+    /// clearRect ignores the clip path, so a partial repaint of an overlapping
+    /// neighbour would erase its pixels. Any overlap (or filter/degenerate case)
+    /// returns false so the correct full paint runs. The moved widget itself renders
+    /// through the identical renderWidgetTrigger path (same centred-extent/clip
+    /// contract), so a non-overlapping repaint is pixel-identical to renderAll's.
+    async function patchWidgetUpdate(movedWidget, oldRect) {
+        if (!layer || !layer.widgets) return false;
+        // Single-widget preview fills the whole stage and renders exactly one
+        // widget — renderAll is already cheap and the dirty-rect math doesn't apply.
+        if (widgetFilterId) return false;
+        const newRect = movedWidget && movedWidget.rect;
+        if (!newRect || !(newRect.width > 0) || !(newRect.height > 0)) return false;
+        const dirty = unionRect(oldRect || newRect, newRect);
+
+        // Overlap guard — defer to the full paint if the vacated∪new region touches
+        // any other widget.
+        for (const other of layer.widgets) {
+            if (!other || other === movedWidget || !other.rect) continue;
+            if (rectsIntersect(dirty, other.rect)) return false;
+        }
+
+        // Seed the pass context exactly as renderAll does so Visual.OnStartup /
+        // keyframe sampling see the same LayerId / timestamp. Layer mode always
+        // renders the onStartup idle (we already returned false for filter mode).
         triggerContext.layerId       = layerId;
         triggerContext.triggerName   = 'onStartup';
         triggerContext.eventData     = {};
         triggerContext.eventDataJson = '{}';
         triggerContext.timestamp     = Date.now() / 1000;
 
-        for (const widget of layer.widgets) {
-            if (!isWidgetVisible(widget)) continue;
-            if (!widgetConsumesCaption(widget)) continue;
-            const trig = (widget.triggers || []).find(t => t.name === 'onStartup');
-            if (!trig) continue;
-            await withWidgetLock(widget.id, async () => {
-                try { await renderWidgetTrigger(widget, trig); bumpRenderCount(); }
-                catch (e) { console.warn('caption-consumer rerender failed:', e); }
-            });
+        // Clear the vacated∪new region (+ backdrop) then repaint just this widget.
+        ctx.clearRect(dirty.x, dirty.y, dirty.width, dirty.height);
+        paintBackdrop(dirty);
+        if (!isWidgetVisible(movedWidget) || !movedWidget.triggers) return true; // hidden → cleared region is the result
+        const trig = findTrigger(movedWidget, 'onStartup')
+                  || movedWidget.triggers.find(t => t && t.name === 'onStartup');
+        if (!trig) return true;
+        // V5 — this widget's own activation clock, same rule as renderAll (this IS renderAll's
+        // fast path). Without it a drag frame would repaint the moved widget at the clock of
+        // whichever widget the animator loop rendered last — and for a SCRUBBED widget being
+        // dragged, at a neighbour's clock rather than the author's pinned cursor.
+        _applyWidgetTimeCursor(movedWidget.id);
+        await renderWidgetTrigger(movedWidget, trig);
+        bumpRenderCount();
+        return true;
+    }
+
+    /// WIDGET_UPDATE render dispatch. A pure rect change (the common drag/resize)
+    /// tries the targeted fast path; a zIndex change reorders the whole paint stack
+    /// so it always takes the full renderAll. Falls back to renderAll whenever the
+    /// targeted path can't safely repaint in place.
+    async function applyWidgetUpdateRender(movedWidget, oldRect, rectChanged, zChanged) {
+        if (rectChanged && !zChanged) {
+            let handled = false;
+            try { handled = await patchWidgetUpdate(movedWidget, oldRect); }
+            catch (e) {
+                console.warn('[Visualist] targeted WIDGET_UPDATE repaint failed, full render:', e);
+                handled = false;
+            }
+            if (handled) return;
         }
+        await renderAll();
+    }
+
+    /// Post a RENDER_ACK back to the WinUI capture host (WidgetCanvasPreviewer) once
+    /// a WIDGET_UPDATE has re-rendered AND been presented, so the host can grab the
+    /// fresh frame deterministically instead of guessing with staggered timers. The
+    /// double-rAF defers the ack until the browser has composited the new frame — a
+    /// capture fired the instant JS finished drawing could still grab the pre-present
+    /// frame (exactly why the C# side used the 40/120 ms stagger). No-op outside a
+    /// WebView2 host (OBS / bare browser have no chrome.webview).
+    function postRenderAck(widgetId) {
+        try {
+            if (typeof chrome === 'undefined' || !chrome.webview || !chrome.webview.postMessage) return;
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                try { chrome.webview.postMessage({ type: 'RENDER_ACK', widgetId: widgetId }); } catch { }
+            }));
+        } catch { }
+    }
+
+    /// Soft LAYER_RELOADED — re-fetch the layer JSON and repaint in place instead of
+    /// a hard window.location.reload(). Kills the OBS/preview flash on every save and
+    /// keeps the WS, the decoded-image cache, the translation cache and the Overlay Live
+    /// Channel's entries alive across the reload. Any failure throws so the caller falls
+    /// back to the hard reload (today's exact behaviour).
+    async function softReloadLayer() {
+        // Cache-bust so CEF can't hand back a stale layer body across the reload.
+        const resp = await fetch(`/api/layer/${encodeURIComponent(layerId)}?t=${Date.now()}`);
+        if (!resp.ok) throw new Error('layer fetch ' + resp.status);
+        const newLayer = await resp.json();
+        if (!newLayer || !Array.isArray(newLayer.widgets)) throw new Error('malformed layer json');
+
+        // Graphs may have changed — drop the per-widget/trigger memo (its Display /
+        // consumer / sink scans are cached immutable-until-reload).
+        _triggerMeta.clear();
+
+        // Tear down EVERY animator slot before the swap so no ghost animator keeps painting an
+        // old (possibly removed) widget object; renderAll re-promotes the ones still animated.
+        // Simpler and safer than a per-widget diff. The render mutex map is left intact so an
+        // in-flight render serialises with the fresh one rather than racing it. Media / image /
+        // translation caches and the live channel's entries deliberately survive — the win over
+        // the hard reload. Activation stamps survive too (a save is not an activation, and
+        // restarting every animation from t=0 on each keystroke-driven save would be worse);
+        // _refreshAnimatorDemand below prunes the ones whose widget is gone.
+        _stopAnimatorLoop();
+        _widgetAnimators.clear();
+        _animatorResumeId = null;   // the round-robin cursor named a slot that no longer exists
+        // Also forget any in-flight render. A wedged widget (a remote source that accepted the
+        // connection and then stalled) would otherwise stay blocked from ever animating again
+        // for the rest of the page's life; a .phxlayer save is the author's "start over", and
+        // it is exactly the recovery the N per-widget loops had.
+        _animatorInFlight.clear();
+        // Same argument for the animator's stall report: a save is the author's "start over", so
+        // let the next wedge be reported instead of staying silent because an earlier version of
+        // the graph already used up the one-shot.
+        _animatorStallLatch.warned = false;
+        // And the same argument for the design-time cursor latches. A pinned playhead describes a
+        // TIMELINE the save may have just re-authored (keyframes moved, the duration changed, the
+        // trigger renamed), so holding a widget at a stale cursor across a reload would pin it to a
+        // position that no longer means anything — and while latched it is refused an animator
+        // seed, so it would also sit out the fresh renderAll's animation. A save is the author's
+        // "start over"; the next SCRUB / PLAY re-takes ownership immediately.
+        _designTimeClockOwners.clear();
+
+        const resolutionChanged = !layer || !layer.resolution || !newLayer.resolution
+            || layer.resolution.width  !== newLayer.resolution.width
+            || layer.resolution.height !== newLayer.resolution.height;
+
+        layer = newLayer;
+
+        if (resolutionChanged) {
+            applyResolution();
+            try { syncManipulatorOverlaySize(); } catch { }
+        }
+
+        await renderAll();
+        drawManipulator();
+
+        // The reloaded graphs may have gained or lost a Clock.Now widget, and widgets may have
+        // been deleted. Re-derive the clock demand and prune the activation stamps.
+        _refreshAnimatorDemand();
+
+        // The reloaded graphs may read a different live-key set, so re-derive and re-announce.
+        // FORCED: a LAYER_RELOADED is also what a delete+recreate looks like from here, and
+        // OnLayerRemoved has by then cleared this layer's subscription Hub-side even though our
+        // socket never closed. An unforced call would no-op on the unchanged-key-set guard for
+        // the common save (rect nudge, colour tweak) and leave the overlay silently starved of
+        // live data for the rest of this socket's life. The cost of forcing is one extra
+        // whole-store LIVE_SNAPSHOT per .phxlayer save — a design-time-only event.
+        sendLiveHello({ force: true });
+    }
+
+    // ── The ONE consumer re-render pass ─────────────────────────────────────
+    //
+    // Five near-identical passes used to live here — renderCaptionConsumers,
+    // renderTimerConsumers, renderClockConsumers, renderLoyaltyConsumers and
+    // renderCounterConsumers — differing only in the one line that decided whether a widget
+    // was interesting. Four of them existed because each data family had its own push frame;
+    // those frames are gone, so the four selectors collapsed into ONE key-level selector
+    // (_widgetLiveKeys). The clock survives as a selector, not as a pass.
+    //
+    // What the shared body preserves, unchanged from the clones: the onStartup trigger
+    // context, the serial for-loop, the per-widget withWidgetLock so an in-flight RUN_TRIGGER
+    // render is never clobbered, the per-widget try/catch so one bad widget cannot abort the
+    // rest, and bumpRenderCount() inside the try.
+    //
+    // What it adds: the S7 guarantee, now universal. The clones wrote the shared
+    // triggerContext singleton BEFORE discovering they had nothing to do — and
+    // renderWidgetTrigger awaits image decodes, so an alert render in flight would resume
+    // against a blanked context and paint with no donor name and no amount. The pre-scan below
+    // makes "no work" cost zero writes for every caller, not just the live one.
+    //
+    //   _liveRenderPending  — a pass is running; further calls coalesce instead of racing it.
+    //   _liveRenderDirty    — keys accumulated during the running pass (null when none).
+    //   _liveRenderDirtyAll — a LIVE_SNAPSHOT landed mid-pass, so the follow-up round has to
+    //                         re-render everything and the per-key set is moot.
+    //
+    // The latch guards the LIVE path only. The clock heartbeat deliberately does not take it:
+    // it fires at a fixed 1 Hz that no knob raises, its widgets are disjoint from the live ones
+    // in every realistic layer, and withWidgetLock already serialises any widget the two passes
+    // did share. Giving it the latch would let a slow live pass swallow clock ticks.
+    let _liveRenderPending  = false;
+    let _liveRenderDirty    = null;
+    let _liveRenderDirtyAll = false;
+
+    // One-shot "gave up waiting on a widget" latches, one per PASS FAMILY rather than one for
+    // the page. They used to be a single boolean, so whichever pass stalled first silenced the
+    // report for the other one forever — and the two mean very different things: a stalled live
+    // pass is a wedged data-driven widget, a stalled animator frame is the thing that just cost
+    // every OTHER widget on the layer its animation (the loop is serial). Diagnosing the second
+    // must not depend on the first never having happened.
+    const _liveStallLatch     = { warned: false };
+    const _animatorStallLatch = { warned: false };
+
+    // Ceiling on how long ONE widget may hold up a consumer pass. The latch above is
+    // page-lifetime and only its own `finally` clears it, so an await that never settles would
+    // strand it true and silently swallow every future patch for the rest of the page's life —
+    // converting one wedged widget into a dead channel. That is reachable: loadImage and the
+    // blur rasteriser wire only onload/onerror, so a remote host that accepts the connection
+    // and then stalls leaves the promise pending forever. The latch is required (unguarded
+    // stacking is worse), so it gets a bound instead. The clock pass shares the bound even
+    // though it holds no latch — a wedged widget must not silently stop the wall clock either.
+    //
+    // The global animator loop (V5) shares it for the strongest version of the same reason: it
+    // is serial, so ONE stalled widget would otherwise stop every other widget's animation AND
+    // the clock beat, page-permanently. Its per-slot `inFlight` flag is what keeps the cost of a
+    // stalled widget at one slow frame rather than one slow frame per frame, and the loop's frame
+    // budget (ANIMATOR_FRAME_BUDGET_MS) is what keeps N stalled widgets from costing N × this
+    // ceiling on a SINGLE tick: the first over-budget render ends the tick, so the rest of the
+    // registry is served on following ticks instead of queueing behind every stall in turn.
+    //
+    // Racing does NOT risk interleaved renders of the same widget: withWidgetLock chains onto the
+    // prior promise, so a later pass still queues behind the stalled render. Losing the race only
+    // lets the pass move on to the NEXT widget, which is what completion would have done anyway.
+    const LIVE_PASS_WIDGET_TIMEOUT_MS = 5000;
+
+    /// Awaits `work`, giving up after LIVE_PASS_WIDGET_TIMEOUT_MS. Warns once per page PER
+    /// LATCH (`latch`, default the live pass's) so a chronically stalling widget is diagnosable
+    /// without spamming the console at pump cadence — and so one pass family's stall cannot
+    /// swallow another's report. The timer is always cleared, so a fast render leaves nothing
+    /// pending behind it.
+    function _raceWidgetRender(work, widgetId, label, latch) {
+        const warnLatch = latch || _liveStallLatch;
+        let timer = 0;
+        const bail = new Promise(resolve => {
+            timer = setTimeout(() => {
+                if (!warnLatch.warned) {
+                    warnLatch.warned = true;
+                    console.warn(
+                        `[Visualist] ${label} pass gave up waiting on widget '${widgetId}' after ` +
+                        `${LIVE_PASS_WIDGET_TIMEOUT_MS} ms — its render is still in flight. The ` +
+                        `overlay continues; a stalled remote image/video source is the usual cause.`);
+                }
+                resolve();
+            }, LIVE_PASS_WIDGET_TIMEOUT_MS);
+        });
+        return Promise.race([work, bail]).finally(() => { try { clearTimeout(timer); } catch { } });
+    }
+
+    /// THE consumer pass — one body, shared by the live channel and the clock heartbeat.
+    ///
+    /// `selects(widget)` decides whether a widget is interesting; everything else is the
+    /// invariant set the five deleted clones all carried. `label` only names the pass in a
+    /// diagnostic, so a stall report says which caller was starved.
+    ///
+    /// The pre-scan is load-bearing, not an optimisation: the shared triggerContext singleton
+    /// must not be touched by a pass that turns out to have nothing to render, because
+    /// renderWidgetTrigger awaits image decodes and an alert render already in flight would
+    /// resume against the blanked context and paint with no donor name and no amount.
+    async function _renderConsumerPass(selects, label) {
+        if (!layer || !layer.widgets) return;
+
+        // Cheap because both selectors are memoized (getTriggerMeta / _widgetLiveKeys); the
+        // loop below re-asks rather than materialising a list, so a widget hidden between the
+        // two passes is still skipped by the live isWidgetVisible check.
+        //
+        // The null-widget guard is not paranoia: isWidgetVisible returns TRUE for a null widget
+        // in layer mode (its test is `!widgetFilterId || …`), so a malformed .phxlayer with a
+        // hole in its widgets array would reach the selector and throw on `widget.id`. renderAll
+        // and sweepWebOverlays already defend the same way.
+        let any = false;
+        for (const widget of layer.widgets) {
+            if (widget && isWidgetVisible(widget) && selects(widget)) { any = true; break; }
+        }
+        if (!any) return;
+
+        triggerContext.layerId       = layerId;
+        triggerContext.triggerName   = 'onStartup';
+        triggerContext.eventData     = {};
+        triggerContext.eventDataJson = '{}';
+        triggerContext.timestamp     = Date.now() / 1000;
+
+        // Z-ORDER FIX — this pass repaints a SUBSET onto the same shared canvas, so it has to
+        // stack the same way renderAll does or a live patch would contradict the full paint that
+        // preceded it. (The pre-scan above stays in array order: it only answers "is there any
+        // work?", where order is meaningless.)
+        for (const widget of widgetsInPaintOrder(layer.widgets)) {
+            if (!widget || !isWidgetVisible(widget)) continue;
+            if (!selects(widget)) continue;
+            const trig = (widget.triggers || []).find(t => t && t.name === 'onStartup');
+            if (!trig) continue;
+            // V5 — the same per-widget activation clock the animator loop writes. A keyframed
+            // widget can ALSO be a live-key or Clock.Now consumer, so it gets re-rendered here
+            // too; without this write it would sample at whatever timeMs the previously rendered
+            // widget left behind, which is a different widget's clock. A design-time-owned
+            // (scrubbed) widget keeps its pinned cursor through a live patch / clock beat —
+            // written, not merely left standing, since the value in the singleton right now
+            // belongs to whichever widget this pass rendered previously.
+            _applyWidgetTimeCursor(widget.id);
+            // Bounded — see LIVE_PASS_WIDGET_TIMEOUT_MS. A never-settling render must not strand
+            // the pending latch and take the whole channel down with it.
+            await _raceWidgetRender(withWidgetLock(widget.id, async () => {
+                try { await renderWidgetTrigger(widget, trig); bumpRenderCount(); }
+                catch (e) { console.warn(`${label}-consumer rerender failed:`, e); }
+            }), widget.id, label);
+        }
+    }
+
+    /// Re-renders the widgets bound to live keys. `changedKeys` is the Set of literal keys a
+    /// LIVE_PATCH carried, or null for "everything" (LIVE_SNAPSHOT). This is the channel's
+    /// entry point: it owns the coalescing latch and the drain loop, and delegates the actual
+    /// walk to _renderConsumerPass.
+    async function renderLiveConsumers(changedKeys) {
+        // Provably inert for a layer with no live bindings — and this bail is why. A
+        // LIVE_SNAPSHOT arrives on EVERY socket open for EVERY layer, so without it the pass
+        // below would overwrite the shared triggerContext singleton (triggerName, eventData,
+        // timestamp) on a layer that has nothing to re-render. renderWidgetTrigger awaits image
+        // decodes, so an alert render already in flight would resume against the blanked
+        // context and paint with no donor name and no amount. Bail BEFORE any write to it.
+        // Duplicated at the top of _liveConsumerPass so the drain loop cannot re-enter past it.
+        if (_widgetLiveKeys.size === 0) return;
+
+        if (_liveRenderPending) {
+            if (changedKeys === null) { _liveRenderDirtyAll = true; _liveRenderDirty = null; }
+            else if (!_liveRenderDirtyAll) {
+                if (!_liveRenderDirty) _liveRenderDirty = new Set();
+                for (const k of changedKeys) _liveRenderDirty.add(k);
+            }
+            return;
+        }
+
+        _liveRenderPending = true;
+        try {
+            let keys = changedKeys;
+            // Drain loop rather than re-entering: however many patches land during a round,
+            // they collapse into exactly one follow-up round carrying their union.
+            for (;;) {
+                await _liveConsumerPass(keys);
+                if (_liveRenderDirtyAll)   keys = null;
+                else if (_liveRenderDirty) keys = _liveRenderDirty;
+                else break;
+                _liveRenderDirtyAll = false;
+                _liveRenderDirty    = null;
+            }
+        } finally {
+            _liveRenderPending  = false;
+            _liveRenderDirtyAll = false;
+            _liveRenderDirty    = null;
+        }
+    }
+
+    /// One live round over the layer: the shared pass, narrowed to the widgets whose subscribed
+    /// keys intersect `changedKeys` (null = a snapshot, so every bound widget repaints).
+    async function _liveConsumerPass(changedKeys) {
+        // Second half of the inert-layer guard (see renderLiveConsumers): the drain loop calls
+        // straight back in here, and a soft reload can empty _widgetLiveKeys between rounds. No
+        // bindings means nothing to render at all, so bail before even building the selector.
+        // _renderConsumerPass's own pre-scan would also catch this, but the explicit check is
+        // what makes "a layer with no live bindings is provably inert" readable at a glance.
+        if (_widgetLiveKeys.size === 0) return;
+
+        await _renderConsumerPass(widget => {
+            const subscribed = _widgetLiveKeys.get(widget.id);
+            if (!subscribed || subscribed.length === 0) return false;
+            // Patch-scoped round — skip a widget none of whose keys are in the changed set.
+            if (changedKeys && !subscribed.some(k => _liveEntryMatchesChanged(k, changedKeys))) return false;
+            return true;
+        }, 'live');
     }
 
     /// Renders the widget's trigger graph. Visits Display first (the visual sink),
@@ -2347,22 +5677,90 @@
     /// Returns when both sinks have settled (or only Display if no completion node).
     async function renderWidgetTrigger(widget, trigger) {
         // Sweep 21 — bind the active timeline so attribute readers can sample
-        // animated parameters at triggerContext.timeMs. Reset to null after the
-        // render so non-trigger code paths (e.g. caption rerenders) don't see
-        // stale state if they run between scrub frames.
+        // animated parameters at triggerContext.timeMs.
+        //
+        // D12 doc fix: this used to claim the binding is "reset to null after the render". It
+        // is NOT — nothing in this file ever assigns activeTimeline = null. It stays bound to
+        // the LAST trigger rendered, and the only thing that keeps that harmless is that every
+        // render path re-binds it here on entry. Which is precisely why the animator loop is
+        // serial: activeTimeline is a module-level singleton read by attrAnimated DURING async
+        // evaluation, so two renders in flight at once would sample each other's timeline.
         activeTimeline = trigger.timeline || null;
         // Track E — bind the trigger's master volume (0..1) so evalAudioPlay can
         // scale each Audio.Play node's level by it. Default 1 when the trigger
         // predates the property so existing layers play at their authored volume.
-        activeTriggerVolume = clamp(Number(trigger.Volume ?? 1), 0, 1);
-        const ev = new Evaluator(trigger.graph, widgetRenderRect(widget));
+        //
+        // WIRE-NAME FIX — the key is lower-case 'volume'. WidgetTrigger.Volume carries
+        // [JsonPropertyName("volume")], so the PascalCase read this used to do was permanently
+        // undefined on parsed layer JSON and the fader below was a no-op: every trigger played
+        // at 1.0 no matter where the mixer sat. The PascalCase arm survives only as a fallback
+        // for a hand-written .phxlayer.
+        activeTriggerVolume = clamp(Number(trigger.volume ?? trigger.Volume ?? 1), 0, 1);
+        const ev = new Evaluator(trigger.graph, widgetRenderRect(widget), widget && widget.id);
+
+        // V13 A2 — collect visited node ids ONLY when this widget owes a trace frame. On a
+        // production OBS source the arm set is permanently empty (see _armWidgetTrace's
+        // CLIENT_KIND gate), so ev.trace stays null and evalNodeOutput's whole per-node cost is
+        // one property read. Captured into a local rather than re-tested later: the arm is
+        // cleared in the finally below, and re-reading the set there would make "did I collect?"
+        // and "should I send?" two different questions.
+        const _traceThisRender = _traceArmedWidgets.has((widget && widget.id) || '');
+        if (_traceThisRender) ev.trace = new Set();
+
+        // The two animator request flags are module-level (the Evaluator raises them from free
+        // functions, deep inside image/video/particle kernels), so they are SAVED here, cleared,
+        // and RESTORED in the finally below. Same save+restore shape ScriptEngine uses for its
+        // per-execution state, and it closes two ways the promotion latch could be donated to a
+        // widget that asked for nothing:
+        //
+        //   • a THROWN render. The request is raised at the top of this try and consumed at the
+        //     bottom by promoteWidgetAnimator, so anything that threw in between used to leave
+        //     the flag standing — and the NEXT widget rendered got promoted on it. An
+        //     intermittently-throwing widget re-leaked it every frame.
+        //   • an OVERLAPPING render. This loop is not the only render path (see the animator
+        //     block comment): an animator frame can interleave with a message-driven render.
+        //     Whoever promoted first cleared the other's flag, so the second one demoted a
+        //     widget that had raised its request — the animation just stopped. Restoring the
+        //     value the interrupted render had makes each render's request its own.
+        const _savedAnimatorRequestMedia = _animatorRequestMediaForCurrentRender;
+        const _savedAnimatorRequestTime  = _animatorRequestTimeForCurrentRender;
+        _animatorRequestMediaForCurrentRender = false;
+        _animatorRequestTimeForCurrentRender  = false;
+
+        // This render's position in RENDER ORDER — the second half of making the save/restore
+        // above safe, and the thing that stops a stale render from winning. See _renderSeq and
+        // promoteWidgetAnimator's stale-promotion rejection for the exact interleave.
+        const renderSeq = ++_renderSeq;
 
         try {
             // L48 — Display sink is now resolved via getTriggerMeta which dedupe-scans the
             // graph and warns when more than one Display node is present (memoized per
             // widget+trigger so the scan only runs on first visit / after layer reload).
             const meta = getTriggerMeta(widget, trigger);
+
+            // V5 — the second half of the production-clock fix, and the half that is easy to
+            // miss. The animator request is an OPT-IN LATCH: promoteWidgetAnimator (bottom of
+            // this function) keeps a widget in the animator loop only if something during the
+            // render raised it, and demotes it to render-once otherwise. Before V5 the only
+            // callers were the animated-GIF branches of evalImageLoad / evalImageLoadUrl,
+            // Particles.Emit and evalVideoLoad — so a keyframed widget was demoted after its
+            // first paint and never re-rendered. Advancing timeMs without this call changes
+            // NOTHING on screen: the frame it would have advanced never happens.
+            //
+            // Routing it through the same latch (rather than promoting directly) is what keeps
+            // demotion symmetric: a widget whose author deletes the last keyframe stops raising
+            // the flag on its next render and drops out of the loop by the existing rule.
+            if (meta.consumesTime) requestWidgetTimeAnimator();
+
             const display = meta.displayNode;
+            // A widget whose only content is a WebOverlay.Custom sink legitimately leaves
+            // the auto-injected Display unwired — suppress the "no Image input" hint card
+            // in that case so the DOM overlay isn't backed by a diagnostic rectangle.
+            // V15 — a Player.Embed widget is in exactly the same position: its content is an
+            // iframe on the DOM track and its Display is legitimately unwired, so without
+            // counting it here the preset would paint a "no Image input" diagnostic card
+            // BEHIND the player on every render.
+            const hasOverlaySink = meta.overlaySinks.length > 0 || meta.playerSinks.length > 0;
             if (display) {
                 debugLog('renderWidgetTrigger.start', { widgetId: widget.id, trigger: trigger.name });
                 // Pre-eval check: does Display even have an inbound Image link? Lets
@@ -2419,7 +5817,10 @@
                     if (!inLink)              reason = 'no Image input';
                     else if (result == null)  reason = 'load failed';
                     else                      reason = 'input is not an image';
-                    paintDisplayDiagnostic(renderRect, reason);
+                    // Overlay-only widget: don't paint the "no Image input" card behind the
+                    // DOM overlay (a genuine load failure / wrong-type input still surfaces).
+                    if (!(reason === 'no Image input' && hasOverlaySink))
+                        paintDisplayDiagnostic(renderRect, reason);
                     debugLog('renderWidgetTrigger.empty', {
                         widgetId: widget.id,
                         reason,
@@ -2435,27 +5836,86 @@
             // [P1 swarm-audit 2026-05-29] guard trigger.graph / trigger.graph.Nodes —
             // a trigger may carry no graph (empty/legacy widget). Matches the
             // `(trigger.graph && trigger.graph.Nodes) || []` pattern used elsewhere.
-            const graphNodes = (trigger.graph && trigger.graph.Nodes) || [];
-            const audioSinks = graphNodes.filter(n => n.Title === 'Audio.Play');
+            //
+            // ── V7: TWO KNOWN LIMITS, DOCUMENTED AND NOT TO BE "FIXED" ──────────────
+            //
+            //  1. This pass is NOT Result.If-gated. It sits outside every Display /
+            //     Result.If branch and pulls its own upstream via findLinkTo(id,'Audio'),
+            //     so no image-side gate can suppress it: every Audio.Play in the graph
+            //     plays, whichever visual branch won. This is STRUCTURAL, not an
+            //     oversight — Result.If's In/Out are Image-typed and Audio.Play's only
+            //     input is Audio-typed, so the barrier cannot be placed in an audio
+            //     chain at all.
+            //  2. Audio.Play is a per-graph singleton: the widget editor rejects a
+            //     second drop per trigger (WidgetGraphCanvas has mirror gates on spawn,
+            //     duplicate and paste), even though this loop would happily run several.
+            //
+            // Together those two are exactly WHY String.Select exists. "One sound per
+            // alert kind" cannot be expressed as N gated Audio.Play nodes; it is
+            // expressed as ONE Audio.Load + ONE Audio.Play whose Path is selected BY
+            // VALUE upstream. Do not attempt branch-gated audio — the type systems do
+            // not meet, and an audio-typed Result.If clone would be a second, divergent
+            // gate semantics for authors to learn.
+            const audioSinks = meta.audioSinks;
             for (const audioSink of audioSinks) {
                 try { await ev.evalNodeOutput(audioSink.Id, ''); }
                 catch (e) { console.warn('[Visualist] Audio.Play sink eval failed:', e); }
             }
 
+            // WebOverlay.Custom sinks — DOM-overlay track. Visited like Audio.Play: the
+            // visit mounts/refreshes a live HTML+CSS element over the widget rect (browser
+            // animates it natively; no rAF promotion needed). Multiple overlay nodes per
+            // trigger are allowed, but the editor caps drops at one per trigger.
+            const overlaySinks = meta.overlaySinks;
+            const overlayIds = new Set();
+            for (const ov of overlaySinks) {
+                try { await evalWebOverlay(ev, widget, ov); overlayIds.add(ov.Id); }
+                catch (e) { console.warn('[Visualist] WebOverlay.Custom sink eval failed:', e); }
+            }
+            // Tear down any overlay this widget mounted for a prior trigger / deleted node.
+            reconcileWidgetOverlays(widget, overlayIds);
+
+            // V15 — Player.Embed sinks, the second DOM-overlay track pass. Same shape as the
+            // block above, and separate from it on purpose: the two keep independent entry
+            // maps because their teardown is not the same operation (a player also has to
+            // stop timers and destroy a live iframe), and folding them would make one
+            // reconcile sweep responsible for two lifecycles.
+            const playerSinks = meta.playerSinks;
+            const playerIds = new Set();
+            for (const pl of playerSinks) {
+                try { await evalPlayerEmbed(ev, widget, pl); playerIds.add(pl.Id); }
+                catch (e) { console.warn('[Visualist] Player.Embed sink eval failed:', e); }
+            }
+            // Tears the frame down on the revert-to-onStartup that ends a clip shoutout.
+            reconcileWidgetPlayers(widget, playerIds);
+
             // Visual.Complete sink — if present, "visiting" it via upstream evaluation IS the
             // completion signal. The default no-op visit just resolves any upstream chain so
             // graph authors can gate completion timing (e.g., chain through a future Wait node).
-            const completeSink = graphNodes.find(n => n.Title === 'Visual.Complete');
+            const completeSink = meta.completeSink;
             if (completeSink) {
                 // Evaluate upstream of the Complete sink so any side-effecting nodes execute.
                 // We don't care about the value — reaching this point means the chain settled.
                 await ev.evalAnyInputOf(completeSink);
+                // V13 H1 — and NOW read the Payload pin. AFTER evalAnyInputOf, not instead of
+                // it: that probe already walked every inbound link including this one, so the
+                // read below lands on the Evaluator's memo and no upstream node — including a
+                // side-effecting one — runs twice.
+                const payload = await ev.resolveCompletionPayload(completeSink);
+                if (payload === null) _widgetCompletionPayload.delete(widget.id);
+                else                  _widgetCompletionPayload.set(widget.id, payload);
+            } else {
+                // No completion sink in THIS trigger's graph — drop whatever a previous trigger
+                // of the same widget left behind, so a stale string cannot ride out on an
+                // unrelated activation's ack.
+                _widgetCompletionPayload.delete(widget.id);
             }
 
             // Per-widget animator — if any node in this trigger flagged itself as
             // animated (Video.Load, .gif Image.Load), keep redrawing this widget
-            // until a different trigger arrives or the widget unbinds.
-            promoteWidgetAnimator(widget, trigger);
+            // until a different trigger arrives or the widget unbinds. `renderSeq` is what lets
+            // the promotion be REJECTED when a newer render has already claimed the slot.
+            promoteWidgetAnimator(widget, trigger, renderSeq);
 
             return true;
         } finally {
@@ -2466,6 +5926,22 @@
             // release (e.g. mid-shutdown when canvasPool is torn down)
             // doesn't escape the finally and mask the original error.
             try { ev.releaseEscapes(); } catch (e) { /* shutdown best-effort */ }
+            // Restore the animator request flags this render displaced (see the save above).
+            // On the normal path promoteWidgetAnimator has already consumed and cleared them, so
+            // this puts back the false a top-level render started from — and on a throw it is the
+            // only thing that clears them at all.
+            _animatorRequestMediaForCurrentRender = _savedAnimatorRequestMedia;
+            _animatorRequestTimeForCurrentRender  = _savedAnimatorRequestTime;
+            // V13 A2 — spend the trace arm. In the FINALLY so a render that threw still reports
+            // the nodes it did reach and still consumes the arm: leaving it armed would fire this
+            // activation's trace off whichever unrelated render happened next (an animator frame,
+            // a live patch), attributing it to the wrong trigger. Clearing BEFORE the send so a
+            // throw inside the sender cannot leave the arm standing either.
+            if (_traceThisRender) {
+                _traceArmedWidgets.delete((widget && widget.id) || '');
+                try { sendWidgetNodeTrace(widget, trigger, Array.from(ev.trace || [])); }
+                catch (e) { /* best-effort; a diagnostic must never mask the render's own error */ }
+            }
         }
     }
 
@@ -2474,8 +5950,9 @@
     // OLD widget content out to blank over the first half, then fade the NEW
     // content in over the second half — instead of the instant clearRect→drawImage
     // cut. transMs === 0 is the legacy instant path (byte-identical). Widget ids
-    // mid-transition are held here so the per-widget animator pauses (it would
-    // otherwise repaint live content over the dip; see promoteWidgetAnimator/tick).
+    // mid-transition are held here so the animator loop skips the widget (it would
+    // otherwise repaint live content over the dip; see promoteWidgetAnimator and
+    // _animatorTick, which both consult this set).
     const _widgetTransitions = new Set();
 
     // Snapshot the widget's current on-canvas pixels into a pooled offscreen, in
@@ -2547,9 +6024,24 @@
             try { canvasPool.release(oldCap); } catch (e) { }
             if (newCap) { try { canvasPool.release(newCap); } catch (e) { } }
             // Final live render: replaces the NEW snapshot with live content and
-            // (re-)arms the per-widget animator now the dip is finished. For a
-            // static NEW this is an identical redraw; for video/GIF it starts the
-            // rAF loop that the paused animator couldn't.
+            // (re-)arms the animator slot now the dip is finished. For a static NEW
+            // this is an identical redraw; for video/GIF/keyframes it registers the
+            // slot that promoteWidgetAnimator refused to create mid-dip.
+            //
+            // The clock is re-stamped and written HERE, for two reasons that both showed up as
+            // "the intro doesn't play":
+            //   • the activation was stamped BEFORE the dip, so a transitionMs-length slice of
+            //     the widget's own track had already elapsed by the time its first live frame
+            //     existed. At the 1000 ms transition ceiling any sub-second intro was skipped
+            //     outright. Re-stamping when the dip ENDS starts the track at the moment the
+            //     content actually appears.
+            //   • this render site did not establish triggerContext.timeMs at all, and the dip
+            //     awaits rAF for up to a second — during which the animator loop writes timeMs
+            //     for OTHER widgets. So the first frame after a dip sampled a different widget's
+            //     clock, which for a late-running page clamped every keyframe to its last value.
+            //     Mirror the other render sites and write this widget's own cursor.
+            _stampWidgetActivation(widget.id);
+            _applyWidgetTimeCursor(widget.id);
             try { await renderWidgetTrigger(widget, trigger); } catch (e) { /* best-effort */ }
         }
     }
@@ -2589,11 +6081,79 @@
         }
     }
 
+    // THE single media-source resolver. All three local-file loaders ride it —
+    // evalImageLoad, evalVideoLoad and evalAudioLoad, and nothing else — so image, video
+    // and audio inherit one and the same server-side guard: a relative path becomes
+    // /media/<segments>, which HUDServer routes into ServeFileFromRootAsync, whose
+    // Path.GetFullPath + root-prefix comparison 403s anything that escapes MediaDirectory.
+    // (Image.LoadUrl and WebSource deliberately do NOT come here; they go through the
+    // /asset/url proxy, which does its own SSRF + MIME validation.)
+    //
+    // ★ THE THREE ESCAPE HATCHES, and who is allowed to use them.
+    //
+    // A leading '/', an http(s): URL and a data: URI all pass through UNPROXIED and therefore
+    // un-guarded — that is what isNonRelativeMediaPath below names. Those three exist for the
+    // streamer: an author who types an absolute path or a CDN URL into the Path box has
+    // deliberately pointed the overlay off-tree, and taking that away would break authored
+    // work. They keep working, unchanged, for an ATTRIBUTE value.
+    //
+    // They must NOT be reachable from a WIRED Path, because V7 made Path wirable and its own
+    // headline chain wires Visual.Arg (i.e. eventData, i.e. a chat argument) into it:
+    //
+    //     viewer types "!sound https://attacker/x.mp3"
+    //       → the script forwards it as Args1
+    //       → Visual.Arg → String.Select → Audio.Load.Path
+    //       → the streamer's OBS fetches an attacker-named URL
+    //
+    // which discloses the streamer's home IP to the attacker and plays arbitrary media on air
+    // (a data: URL renders attacker content inline instead). So the rejection is provenance-
+    // aware and lives in Evaluator._evalMediaPathSocket — NOT here: this function has no idea
+    // where its argument came from, and a blanket refusal here would break the author case.
+    // ONE predicate serves both so the pass-through set and the rejection set cannot drift.
+    function isNonRelativeMediaPath(p) {
+        return p.startsWith('/') || /^https?:/i.test(p) || p.startsWith('data:');
+    }
+
+    // THE single media-source resolver. All three local-file loaders ride it —
+    // evalImageLoad, evalVideoLoad and evalAudioLoad, and nothing else — so image, video
+    // and audio inherit one and the same server-side guard: a relative path becomes
+    // /media/<segments>, which HUDServer routes into ServeFileFromRootAsync, whose
+    // Path.GetFullPath + root-prefix comparison 403s anything that escapes MediaDirectory.
+    // (Image.LoadUrl and WebSource deliberately do NOT come here; they go through the
+    // /asset/url proxy, which does its own SSRF + MIME validation.)
     function resolveMediaPath(p) {
         if (!p) return p;
-        if (p.startsWith('/') || /^https?:/i.test(p) || p.startsWith('data:')) return p;
+        if (isNonRelativeMediaPath(p)) return p;
         return `/media/${p.split('/').map(encodeURIComponent).join('/')}`;
     }
+
+    // Page-lifetime dedupe for the rejected-wired-media-path diagnostic, keyed
+    // `<nodeId>|<value>`. PAGE-level, never per-Evaluator: an Evaluator is built per render, so a
+    // latch living on it dedupes once per RENDER, and a rejected path on a widget in the animator
+    // loop would push a TRIGGER_DIAGNOSTIC frame plus a console.warn at frame rate. A rejection is
+    // a STATIC condition (this node, this value) rather than a per-fire event, so one report per
+    // (node, value) per page is both sufficient and bounded. Cleared with the rest of the page
+    // state in _disposeGlobals.
+    const _reportedRejectedMediaPaths = new Set();
+
+    // Page-lifetime dedupe for the missing-arg diagnostics (Result.If's gate and Text.Render's
+    // {ArgsN} substitution), keyed `<nodeId>|<arg>|<kind>`.
+    //
+    // ★ THIS USED TO LIVE ON THE EVALUATOR and that was the bug: `loggedMissingArgs` was described
+    // as "once per fire", but a fresh Evaluator is constructed per renderWidgetTrigger, so its once
+    // was really once per RENDER. A keyframed or animated widget whose Result.If arg is absent —
+    // which is the NORMAL state on every onStartup render, every live patch and every animator tick,
+    // because triggerContext.eventData is {} outside a trigger fire — therefore pushed a
+    // TRIGGER_DIAGNOSTIC frame and a console.warn at frame rate into Hub's socket and System Log.
+    // sendEvalDiagnostic's contract requires every caller to gate; this is the same page-scoped
+    // shape its two siblings above already use, so the requirement now actually holds for all of
+    // them.
+    //
+    // The cost is the same trade the other two latches accept: the same (node, arg, kind) going
+    // missing a second time is not re-reported within one page. That is acceptable because the first
+    // report already names the node and the arg to go and look at, and because the alternative is a
+    // diagnostic so noisy it buries every other line in the log.
+    const _reportedMissingArgs = new Set();
 
     // Pool of <video> elements keyed by node id. Created off-screen so video
     // decode runs but they don't affect layout. Reused across renders so the
@@ -2656,10 +6216,17 @@
     // Capped for the same reason as the video pool above.
     const AUDIO_POOL_MAX = 32;
     const _audioPool = new Map();
-    // nodeId → the _audioActivationGen value that last (re)started this node. A
-    // playback is (re)started only when the current generation differs from this,
-    // so the animator / Play loop / scrub re-renders within one activation never
-    // replay a finished one-shot. Cleared on layer teardown (_disposeGlobals).
+    // nodeId → the generation value that last (re)started this node, as read from
+    // _audioActivationGen for the OWNING WIDGET (the map is per widget — see it). A playback
+    // is (re)started only when the current generation differs from this, so the animator /
+    // Play loop / scrub re-renders within one activation never replay a finished one-shot,
+    // and neither does a NEIGHBOUR widget's activation. Keyed by node id, which is a GUID and
+    // therefore already widget-unique, so no re-keying was needed here.
+    // Cleared on layer teardown (_disposeGlobals).
+    //
+    // V7 — the generation now latches the SOURCE as well as the start, because Path is
+    // wirable and can resolve differently between two renders of one activation. See the
+    // long block inside ensureAudioElementAndPlay.
     const _audioPlayedGen = new Map();
     function _teardownAudioElement(a) {
         try { a.pause(); } catch { }
@@ -2687,24 +6254,62 @@
         }
         _audioPool.set(nodeId, a);
         _evictOldestPoolEntry(_audioPool, AUDIO_POOL_MAX, _teardownAudioElement);
-        // Re-source only when the path actually changes — same-source replays
-        // would otherwise restart on every render tick.
-        if (a.dataset.src !== src) {
-            a.dataset.src = src;
-            a.src = src;
-            try { a.load(); } catch { }
-        }
+        // Level and loop mode DO track every visit — the trigger master volume can change
+        // between render ticks. The SOURCE deliberately does not; see below.
         a.volume = opts.volume;
         a.loop   = opts.loop;
 
         if (!newActivation) {
             // Re-render within the SAME activation. For a looping clip a.loop keeps
             // it going natively; for a one-shot we must not restart it. Either way,
-            // never call play() again here — just keep the level in sync (the
-            // trigger master volume can change between render ticks).
+            // never call play() again here — just keep the level in sync.
+            //
+            // ── V7: THE SOURCE IS LATCHED AT ACTIVATION ─────────────────────────────
+            // Until V7 the src-change block sat ABOVE this return, and with a fixed
+            // author-typed Path that was unreachable dead weight. A wirable Path makes it
+            // reachable, and it was wrong in both directions:
+            //
+            //   • What it DID do: reassign a.src + a.load(), which STOPS the clip that is
+            //     currently playing, and then return without play(). Audio died mid-alert
+            //     and never came back. Not a spurious replay — a spurious silence.
+            //   • What it must NOT do instead: re-source AND play(). renderWidgetTrigger
+            //     re-runs per animation frame (V5 put a per-frame clock on this path) and
+            //     on every WIDGET_UPDATE drag, and a wired path can legitimately resolve
+            //     differently between two of those renders — a Var.Live key patched at
+            //     1 Hz, a Time.* driven chain. Treating a changed src as "new" would
+            //     therefore replay the clip at up to frame rate: the 2026-06-23
+            //     "Loop = false audio loops" bug, restored and worse.
+            //
+            // So the gate distinguishes a path change from a re-trigger by NOT CONSULTING
+            // THE PATH AT ALL. Only the activation generation — bumped by exactly three
+            // message-driven sites (RUN_TRIGGER, its idle revert, SET_ACTIVE_TRIGGER) and
+            // by nothing on the animator / clock / patch route — decides whether playback
+            // starts. Within one activation the clip that started keeps playing to its own
+            // end; a newly resolved path is picked up by the next genuine activation.
+            //
+            // ★ "ONE ACTIVATION PLAYS ONE CLIP" IS A PER-WIDGET STATEMENT, and saying it
+            // without that qualifier was wrong for as long as the generation was a page-wide
+            // counter. The invariant only holds because `gen` now comes from
+            // audioActivationGen(widgetId): with one shared counter, activating widget B
+            // inside widget A's 2 s hold bumped the number A's animator frames compare
+            // against, so A's next frame read "new activation" and replayed A's one-shot
+            // against whatever triggerContext B had just installed — one activation, two
+            // plays, second one with the wrong clip. The scoping is what makes the sentence
+            // true; do not re-collapse the map to a scalar.
             return;
         }
-        // Genuine (re)activation for this node — stamp the generation and (re)start.
+        // Genuine (re)activation for this node — adopt the source resolved for THIS
+        // activation, stamp the generation, and (re)start. Re-sourcing lives here, inside
+        // the new-activation branch, precisely so a mid-activation resolution change can
+        // never touch the live element (see the block above). The guard still matters: a
+        // re-trigger with the SAME clip must not re-load it, because load() would discard
+        // the decoded buffer and re-fetch for no reason — currentTime = 0 below is what
+        // replays it.
+        if (a.dataset.src !== src) {
+            a.dataset.src = src;
+            a.src = src;
+            try { a.load(); } catch { }
+        }
         _audioPlayedGen.set(nodeId, gen);
 
         // Auto-evict on natural completion so non-looping one-shots don't
@@ -2731,105 +6336,641 @@
         try { a.play().catch(() => { }); } catch { }
     }
 
-    // Per-widget animator — set during evaluation when Video.Load / animated GIF
-    // / Particles.Emit is encountered, then promoted to a rAF loop after the
-    // render that discovered it. Cancelled when a different trigger renders
-    // into the widget.
-    let _animatorRequestForCurrentRender = false;
-    function requestWidgetAnimator() { _animatorRequestForCurrentRender = true; }
+    // Animator opt-in for the render currently in progress, consumed by promoteWidgetAnimator at
+    // the end of it. A widget with both flags down is demoted to render-once.
+    //
+    // TWO flags, not one, and the split is load-bearing:
+    //   • MEDIA — an animated GIF, a <video>, a particle emitter. Unbounded by nature: only the
+    //     source knows when it is done, and it never tells us.
+    //   • TIME  — the trigger's keyframes / Time.* nodes (V5). BOUNDED when it is keyframes
+    //     only, which is what lets the loop stop at meta.timeExtentMs.
+    // A widget that raised MEDIA must never be stopped by the time bound, or a GIF beside a
+    // 500 ms keyframed fade-in would freeze half a second after it appeared — the exact class of
+    // "GIF renders static in OBS" defect this file has already been bitten by twice (0.12.27's
+    // off-DOM decode and #6's competing Play loop). One shared boolean could not tell the two
+    // reasons apart, so the bound could not have been added safely without this split.
+    let _animatorRequestMediaForCurrentRender = false;
+    let _animatorRequestTimeForCurrentRender  = false;
+    function requestWidgetAnimator()     { _animatorRequestMediaForCurrentRender = true; }
+    function requestWidgetTimeAnimator() { _animatorRequestTimeForCurrentRender  = true; }
+
+    // Monotonic RENDER ORDER stamp. Incremented once at the top of renderWidgetTrigger and
+    // captured into a local there, so every render carries a number that says where it sits in the
+    // sequence of renders this page has STARTED — and every animator slot remembers the number of
+    // the render that installed it (promoteWidgetAnimator).
+    //
+    // Why it exists: renderWidgetTrigger's save/restore of the request flags fixed the direction
+    // where an overlapping render DEMOTED a widget, and made the opposite direction worse. Exact
+    // interleave, all on ONE widget A:
+    //
+    //   1. the animator loop starts rendering A's onStartup and raises the time request,
+    //   2. that render suspends on a cold image decode,
+    //   3. a RUN_TRIGGER for A arrives, renders A's alert, and promotes a slot for the ALERT,
+    //   4. the animator's finally RESTORES its saved request flag, its render resumes,
+    //   5. …and it promotes A's OLD onStartup trigger over the fresh alert slot.
+    //
+    // Before the save/restore, step 5 merely STOPPED the animation. After it, the loop repaints the
+    // OLD trigger's graph over the NEW content on stream and keeps doing it for the whole hold. A
+    // slot may therefore only ever move FORWARD in render order; see the rejection in
+    // promoteWidgetAnimator. There is no wraparound concern: at a sustained 60 renders/second this
+    // stays exact for ~4.7 million years of Number.MAX_SAFE_INTEGER.
+    let _renderSeq = 0;
 
     // Sprint 92 — Particles.Emit per-node state. Each Particles.Emit node keeps
     // its own active particle list + last-tick timestamp here, keyed by node id.
     // Survives across renders so particles flow continuously between triggers
-    // (the per-widget rAF animator promoted by requestWidgetAnimator() drives
-    // the re-render). Capped at PARTICLE_HARD_CAP per node to keep a runaway
-    // Rate from OOMing the browser when an author types 99999.
+    // (the global animator loop, which requestWidgetAnimator() opts the widget
+    // into, drives the re-render). Capped at PARTICLE_HARD_CAP per node to keep a
+    // runaway Rate from OOMing the browser when an author types 99999.
     const PARTICLE_HARD_CAP = 500;
     const _particleState = new Map(); // nodeId → { particles: [...], lastTickMs: number }
 
-    const _widgetAnimators = new Map(); // widgetId → { rafId, widget, trigger }
-    function promoteWidgetAnimator(widget, trigger) {
-        // #6 — while the design-time Play loop owns this widget, IT is the
-        // re-render driver (its rAF tick advances triggerContext.timeMs and
-        // re-renders). Promoting a separate per-widget animator here would
-        // re-create exactly the competing free-running loop the fix removes:
-        // renderWidgetTrigger runs on every Play frame and would otherwise
-        // re-add the slot via requestWidgetAnimator() one frame after handlePlay
-        // deleted it. Skip promotion (and consume the per-render request flag so
-        // it doesn't leak into the next non-Play render) when Play drives this
-        // widget. handleStopPlay drops the slot so the GIF holds its last frame.
-        if (_playState && _playState.widget && _playState.widget.id === widget.id) {
-            _animatorRequestForCurrentRender = false;
+    // ── THE global animator loop ─────────────────────────────────────────────
+    //
+    // Registry of animated widgets. `_widgetAnimators` is now a pure registry — a slot no
+    // longer owns a requestAnimationFrame handle, because there is exactly ONE loop for the
+    // whole page and it walks this map.
+    //
+    //   widgetId → { widget, trigger, suspended,
+    //                _consecutiveFailures, _suspendLogged }
+    //
+    // ★ Why one serial loop instead of N per-widget loops (what this replaced)
+    //
+    // triggerContext and activeTimeline are module-level SINGLETONS. Both are written at the
+    // top of renderWidgetTrigger and read during evaluation — and evaluation awaits image
+    // decodes, font loads and video seeks. With N concurrent rAF loops, widget B's render
+    // overwrote those globals while widget A's render was suspended mid-decode, so A resumed
+    // and sampled B's timeline. That hazard was already live for activeTimeline before any
+    // clock existed; a per-widget timeMs write would simply have added a second victim.
+    //
+    // What serialising ACTUALLY buys, stated no wider than the code earns: the loop cannot race
+    // ITSELF. Two animator frames never overlap, and neither do two widgets within one frame, so
+    // the N-loops failure above is gone for every render this loop starts.
+    //
+    // It is NOT a proof that the two singletons are safe. This loop is the one render path that
+    // does NOT take withWidgetLock, so it still interleaves with every MESSAGE-driven render —
+    // including a RUN_TRIGGER on the SAME widget. An animator frame suspended mid-decode can
+    // still resume after a trigger render has rebound activeTimeline / rewritten timeMs, and
+    // paint one frame sampled against the other trigger's cursor.
+    //
+    // Wrapping the loop in withWidgetLock is NOT the fix and must not be attempted:
+    // handleRunTrigger holds that lock across its entire 2000–60000 ms hold, so the triggered
+    // widget's animation would freeze for the whole hold — it would break the feature this loop
+    // exists for. The correct closure is one of:
+    //   • a page-level render mutex taken around render BODIES only, never across the hold, or
+    //   • threading timeMs + timeline through the Evaluator so there is no singleton to race.
+    // Both are deliberately NOT attempted here. The second is why threading was rejected for V5:
+    // attrAnimated / attrAnimatedColor are free functions called from 67 sites, none via `this.`,
+    // on the hottest path in the file — unverifiable headlessly, and it would have left
+    // activeTimeline broken anyway. Until one of them lands, the residual exposure is exactly
+    // those two values (a frame sampled at another trigger's cursor, worst case one wrong frame
+    // that the next frame corrects). The animator REQUEST flags are no longer part of it —
+    // renderWidgetTrigger saves and restores them, so an interleave can no longer donate or
+    // consume a promotion.
+    //
+    // It costs no extra work: every animated widget was already re-rendering once per frame and
+    // they all paint into ONE shared 2D context. Only the ordering changed, from concurrent to
+    // serial, which for a shared canvas is strictly safer.
+    //
+    // The loop is also the single tick source for the 1 Hz clock heartbeat (decision record
+    // D10). That beat used to be its own setInterval whose consumer pass could interleave with
+    // an animator render — same singleton, same hazard. Riding this loop it cannot.
+    const _widgetAnimators = new Map();
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    const CLOCK_BEAT_INTERVAL_MS   = 1000;
+
+    /// The trigger payload a promoting render ran under, captured onto its animator slot.
+    ///
+    /// ★ WHY A SLOT NEEDS ONE. triggerContext.eventData / .triggerName are page-wide
+    /// singletons, but an animator slot is per widget — so an animator frame for widget A
+    /// re-evaluated A's graph against whatever eventData the page had LAST written, which on a
+    /// multi-widget layer is routinely somebody else's: widget B's RUN_TRIGGER overwrites it
+    /// mid-hold, and the 1 Hz clock beat and every live-patch pass blank it to {} outright
+    /// (_renderConsumerPass does so deliberately). Every eventData reader on the animator path
+    /// then reads the wrong activation — Result.If gates on a foreign arg, substituteArgs
+    /// drops the donor name, and after V7 a wired Audio.Load / Image.Load Path resolves to a
+    /// DIFFERENT FILE than the activation the frame belongs to.
+    ///
+    /// Snapshotting at promotion is the fix in the same shape V5 used for the clock: the slot
+    /// already remembers WHICH trigger to re-render, so it also remembers the payload that
+    /// trigger was activated with, and the loop restores both before each frame.
+    ///
+    /// The eventData OBJECT is stored by reference, not cloned, and that is safe by
+    /// construction: every writer installs a fresh object (handleRunTrigger takes
+    /// `msg.eventData || {}` off the inbound message; the idle revert, the scrub / play /
+    /// active-trigger handlers and the consumer passes all assign a brand-new `{}`) and
+    /// nothing in this file mutates the object in place. A clone would cost a JSON round trip
+    /// per promotion for no additional guarantee.
+    function _captureActivationContext() {
+        return {
+            triggerName:   triggerContext.triggerName || '',
+            eventData:     triggerContext.eventData || {},
+            eventDataJson: triggerContext.eventDataJson || '{}',
+        };
+    }
+
+    /// Re-establishes the payload of the activation a slot belongs to, immediately before the
+    /// animator renders it. The mirror of _applyWidgetTimeCursor for event data: same reason
+    /// (a per-widget value living in a page-wide singleton), same placement (once, right
+    /// before the render that reads it).
+    function _applyActivationContext(slot) {
+        const a = slot && slot.activation;
+        if (!a) return;
+        triggerContext.triggerName   = a.triggerName;
+        triggerContext.eventData     = a.eventData;
+        triggerContext.eventDataJson = a.eventDataJson;
+    }
+
+    // How much wall clock ONE tick may spend rendering before it yields — about one 60 Hz frame.
+    //
+    // Without a budget the loop's cadence was 1 / (sum of every animated widget's render time),
+    // because the next rAF is only requested in the tick's finally. That is the cost of making
+    // the loop serial, and the per-widget ceiling (LIVE_PASS_WIDGET_TIMEOUT_MS = 5000) is what
+    // made it unbounded in the bad case: N simultaneously stalled widgets cost N × 5 s on ONE
+    // tick, during which NOTHING animates and the clock beat does not fire at all. The N
+    // per-widget loops this replaced at least let the fast widgets keep 60 Hz.
+    //
+    // The budget restores that property without giving up serial rendering: once a tick is over
+    // budget it stops and lets the browser present, and the next tick resumes from where it
+    // stopped (see _animatorResumeId). Every widget still gets served, just across more ticks —
+    // and the clock beat, which runs after the render walk, is reached on every tick either way.
+    const ANIMATOR_FRAME_BUDGET_MS = 24;
+
+    // Widget ids whose animator render has not settled yet. Keyed by WIDGET, not by slot, so
+    // replacing a slot mid-render (a trigger swap) cannot start a second concurrent render of
+    // the same widget — the N per-widget loops could, and only got away with it because a
+    // superseded tick returned on its identity check before rendering again.
+    const _animatorInFlight = new Set();
+
+    let _animatorHandle       = 0;      // pending tick handle (0 = nothing scheduled)
+    let _animatorHandleIsRaf  = false;  // which canceller the handle belongs to
+    let _animatorTickInFlight = false;  // a tick's async body is running right now
+    let _clockBeatLastMs      = 0;      // _nowMs() of the last clock beat
+    let _clockWidgetsPresent  = false;  // does `layer` carry a Clock.Now widget at all
+    // Round-robin cursor for the frame budget: the widget id the NEXT tick should start from,
+    // or null for "start at the beginning". Stored as an ID rather than an index because the
+    // registry can gain or lose slots between ticks, and an index would then resume at an
+    // unrelated widget (or skip one silently, which is how a widget stops animating for no
+    // visible reason). A resume id that is no longer registered falls back to the start.
+    let _animatorResumeId     = null;
+
+    /// True when at least one registered widget wants a repaint every frame. A slot stays in the
+    /// map but is NOT work once it is settled — its keyframe track played out, or a design-time
+    /// transport pinned its cursor so the loop cannot change its picture (see _animatorTick) —
+    /// and likewise once the circuit breaker has tripped it.
+    function _animatorHasFrameWork() {
+        for (const [, slot] of _widgetAnimators)
+            if (!slot.suspended && !slot.settledAtExtent) return true;
+        return false;
+    }
+
+    /// Schedules the next tick, picking the cheapest source for the work that is actually
+    /// pending.
+    ///
+    /// rAF when a widget needs a frame-rate repaint. A plain timeout, sized to the next beat,
+    /// when the ONLY pending work is the 1 Hz clock heartbeat: a Clock.Now widget on an
+    /// otherwise static layer must not cost 60 wakeups a second to repaint once. The
+    /// setInterval this consolidated woke exactly once per second, and Manifesto §4.10's
+    /// "inactive layers cost zero" is a promise about idle layers specifically — riding rAF
+    /// unconditionally would have quietly traded that away for tidier code.
+    ///
+    /// Nothing pending at all ⇒ the loop stays stopped. Every path that creates work calls back
+    /// in here (promoteWidgetAnimator, _refreshAnimatorDemand, resumeAllAnimations, and the
+    /// tick's own finally), so there is no state from which the loop can fail to restart.
+    ///
+    /// ★ FRAME WORK PREEMPTS A PENDING CLOCK BEAT, and that is not an optimisation — it is what
+    /// makes animation start on time. A pending handle normally means "already scheduled, nothing
+    /// to do", so this used to return on any handle at all. But the only non-rAF handle this
+    /// function creates is the clock-beat timeout, which is armed up to CLOCK_BEAT_INTERVAL_MS
+    /// (1000 ms) ahead — so on a layer that carries a Clock.Now widget, a widget promoted AFTER
+    /// the beat was armed could not get a frame until that timeout fired. Every animation on such
+    /// a layer started 0–1000 ms late, and any track SHORTER than the delay rendered exactly one
+    /// frame — at its FINAL keyframe pose, because the extent bound then retired it immediately.
+    /// The bootstrap paint hit it every time: _refreshAnimatorDemand arms the loop before
+    /// renderAll's first promotion exists.
+    function _ensureAnimatorLoop() {
+        if (_animationsPaused) return;
+        // A tick is mid-body: its finally calls back in here, so there is nothing to schedule and
+        // nothing to preempt (a running tick holds no handle).
+        if (_animatorTickInFlight) return;
+        if (_animatorHandle !== 0) {
+            // Already on rAF, or the pending timeout is still the cheapest correct source
+            // (no frame work) ⇒ leave it alone.
+            if (_animatorHandleIsRaf || !_animatorHasFrameWork()) return;
+            // Frame work appeared while a clock-beat timeout was pending: drop the timeout and
+            // fall through to rAF. Losing nothing — the rAF path re-derives the beat from
+            // _clockBeatLastMs at the end of every tick.
+            _stopAnimatorLoop();
+        }
+        if (_animatorHasFrameWork()) {
+            _animatorHandleIsRaf = true;
+            _animatorHandle      = requestAnimationFrame(_animatorTick);
             return;
         }
+        if (!_clockWidgetsPresent) return;
+        const wait = Math.max(0, CLOCK_BEAT_INTERVAL_MS - (_nowMs() - _clockBeatLastMs));
+        _animatorHandleIsRaf = false;
+        _animatorHandle      = setTimeout(_animatorTick, wait);
+    }
+
+    function _stopAnimatorLoop() {
+        if (_animatorHandle === 0) return;
+        try {
+            if (_animatorHandleIsRaf) cancelAnimationFrame(_animatorHandle);
+            else                      clearTimeout(_animatorHandle);
+        } catch { /* ignore */ }
+        _animatorHandle = 0;
+    }
+
+    /// Re-derives whether the layer carries a Clock.Now widget, SEEDS the animator for every
+    /// time-consuming widget, prunes activation stamps for widgets that no longer exist, and
+    /// (re)starts the loop if there is now work.
+    ///
+    /// Called at the two — and only two — moments `layer` is replaced: the bootstrap fetch and
+    /// softReloadLayer. Clock.Now is the one live reader with no Hub producer at all, so if this
+    /// is not called nothing else will ever schedule a frame for it.
+    ///
+    /// ★ The SEED (widgetConsumesTime) exists because the loop's start must not depend on
+    /// renderAll's promotions having completed. renderAll is not awaited at bootstrap and it
+    /// paints widgets one at a time with image decodes in between, so the first promotion can be
+    /// tens to hundreds of ms out — and until one exists the loop has no frame work, so it arms
+    /// the 1 Hz clock timeout instead and (before the preemption above) sat on it. Seeding is
+    /// the positive half: the moment the layer is known, every keyframed widget is registered, so
+    /// _ensureAnimatorLoop schedules rAF straight away and a short intro track actually plays
+    /// instead of appearing once at its last keyframe.
+    ///
+    /// Seeding cannot promote anything wrongly: the slot is provisional, and the render latch
+    /// (requestWidgetTimeAnimator → promoteWidgetAnimator) re-decides it on the very first frame
+    /// — a widget whose CURRENT trigger has no keyframes raises nothing and is demoted out again.
+    /// The cost of a wrong seed is one render, once per layer load.
+    function _refreshAnimatorDemand() {
+        let present = false;
+        if (layer && Array.isArray(layer.widgets)) {
+            const alive = new Set();
+            for (const w of layer.widgets) {
+                if (!w) continue;
+                alive.add(w.id);
+                // Per-WIDGET containment, the same shape renderAll and _renderConsumerPass use:
+                // this walk touches every widget's whole trigger list (the clock rollup and the
+                // seed both do), and one malformed widget must cost at most its own animation. The
+                // element guards downstream make a throw here unlikely; this makes it survivable
+                // even if a future reader forgets one — the caller is a bootstrap `.then` and a
+                // soft reload, and neither may lose its remaining work over one bad widget.
+                try {
+                    if (!present && widgetConsumesClock(w)) present = true;
+                    _seedWidgetAnimator(w);
+                } catch (e) {
+                    console.warn('[Visualist] animator demand scan failed for widget',
+                        w && w.id, e);
+                }
+            }
+            // Bound the activation-stamp map — and the design-time ownership map, which is fed by
+            // every playhead move — to widgets that still exist, so a long editing session of
+            // add/delete/save cycles can't grow either without limit.
+            for (const id of Array.from(_widgetActivationStart.keys()))
+                if (!alive.has(id)) _widgetActivationStart.delete(id);
+            for (const id of Array.from(_designTimeClockOwners.keys()))
+                if (!alive.has(id)) _designTimeClockOwners.delete(id);
+        }
+        _clockWidgetsPresent = present;
+        _ensureAnimatorLoop();
+    }
+
+    /// Registers a provisional animator slot for `widget` when its graphs are time-consuming and
+    /// nothing has promoted it yet. Mirrors promoteWidgetAnimator's refusals so a seed can never
+    /// do something a promotion would have declined:
+    ///   • an existing slot is never touched (its breaker state / played-out mark / media flag
+    ///     carry information a seed does not have),
+    ///   • a widget the design-time PLAY transport owns is left to that transport (#6),
+    ///   • a widget mid dip-to-blank is left to renderWithTransition's final render,
+    ///   • an invisible widget is skipped — in `?widget=` preview mode the loop must render only
+    ///     the filtered widget, and unlike promotion (which can only happen inside a render, and
+    ///     renders only happen for visible widgets) a seed has no such implicit gate.
+    ///
+    /// It also refuses a widget whose clock a DESIGN-TIME transport owns, because the seed would
+    /// buy nothing there: the loop cannot move a pinned cursor, so the slot's only effect would be
+    /// one duplicate full-graph render racing the paint that is already happening. Those widgets
+    /// still get a slot the moment a render promotes one (media needs it) — exactly as before.
+    function _seedWidgetAnimator(widget) {
+        if (!widget || !widget.id) return;
+        if (_widgetAnimators.has(widget.id)) return;
+        if (!isWidgetVisible(widget)) return;
+        if (!_productionClockOwnsWidgetTime(widget.id)) return;
+        if (_playState && _playState.widget && _playState.widget.id === widget.id) return;
+        if (_widgetTransitions.has(widget.id)) return;
+        if (!widgetConsumesTime(widget)) return;
+        const trigger = defaultRenderTrigger(widget);
+        if (!trigger) return;
+        _widgetAnimators.set(widget.id, {
+            widget, trigger,
+            // A seed happens OUTSIDE any render, so there is no activation to capture — and
+            // capturing the ambient singleton here would be exactly the bug the snapshot
+            // exists to prevent (a seeded onStartup slot inheriting some other widget's
+            // alert payload). An empty payload is what an onStartup render legitimately sees;
+            // the first real render re-decides the slot and captures for real.
+            activation:      { triggerName: trigger.name || '', eventData: {}, eventDataJson: '{}' },
+            // Time-only until a render proves otherwise: media is raised from inside the render
+            // (promoteWidgetAnimator's sticky arm flips this off), and guessing media here would
+            // hand the widget an unbounded loop the extent bound could never stop.
+            timeOnly:        true,
+            suspended:       false,
+            settledAtExtent: false,
+            // Render order 0 — a seed happens OUTSIDE any render, and it is provisional by
+            // contract, so it must never win promoteWidgetAnimator's stale-promotion check against
+            // a real render (whose seq is always >= 1). See that check.
+            renderSeq:       0,
+            _consecutiveFailures: 0,
+            _suspendLogged:       false,
+        });
+    }
+
+    /// QC28-03 — circuit breaker. A broken widget used to spam the console at full rAF rate
+    /// forever; after N consecutive throws the slot is suspended so one broken widget cannot pin
+    /// a core and flood logs. The slot STAYS in the map so a future promoteWidgetAnimator() with
+    /// a different trigger can replace it (and resumeAllAnimations clears the trip) — it is
+    /// simply skipped by the loop until then.
+    function _noteAnimatorFailure(slot, err) {
+        slot._consecutiveFailures++;
+        console.warn('[Visualist] widget animator render failed:', err);
+        if (slot._consecutiveFailures < MAX_CONSECUTIVE_FAILURES) return;
+        slot.suspended = true;
+        if (slot._suspendLogged) return;
+        slot._suspendLogged = true;
+        console.error('[Visualist] suspending widget animator after',
+            MAX_CONSECUTIVE_FAILURES, 'consecutive failures; widget=', slot.widget && slot.widget.id);
+    }
+
+    /// One tick: render animated widgets in turn — as many as the frame budget allows, resuming
+    /// where the previous tick stopped — then beat the clock if a second has passed. Awaiting each
+    /// render before starting the next IS the safety property — see the block comment above.
+    async function _animatorTick() {
+        _animatorHandle       = 0;
+        _animatorTickInFlight = true;
+        try {
+            if (_animationsPaused) return;
+
+            // Snapshot the entries: promoteWidgetAnimator runs INSIDE the renders we await and
+            // can add or drop slots, and mutating a Map mid-iteration is exactly the kind of
+            // thing that skips a widget silently.
+            const entries = Array.from(_widgetAnimators.entries());
+            // Resume point for the frame budget (round-robin, by widget id — see
+            // _animatorResumeId). A resume id that is no longer registered restarts at 0 rather
+            // than guessing, which costs at most one re-served widget.
+            let startAt = 0;
+            if (_animatorResumeId !== null) {
+                const at = entries.findIndex(e => e[0] === _animatorResumeId);
+                if (at >= 0) startAt = at;
+                _animatorResumeId = null;
+            }
+            const walkStartedMs = _nowMs();
+            for (let n = 0; n < entries.length; n++) {
+                const [widgetId, slot] = entries[(startAt + n) % entries.length];
+                // Identity check — this slot may have been retired, or superseded by one for a
+                // different trigger, while we awaited an earlier widget in this same frame.
+                if (_widgetAnimators.get(widgetId) !== slot) continue;
+                if (slot.suspended) continue;
+                // Its keyframe track has played out and nothing else in the graph is unbounded,
+                // so every further frame would redraw identical pixels. Set below; cleared by
+                // _stampWidgetActivation when the widget is genuinely re-triggered.
+                if (slot.settledAtExtent) continue;
+                // The design-time PLAY transport owns this widget's clock and its repaints (#6).
+                if (_playState && _playState.widget && _playState.widget.id === widgetId) continue;
+                // A dip-to-blank transition owns the widget: keep the slot registered (so the
+                // loop resumes it if it isn't replaced) but don't repaint live content over the
+                // fade. renderWithTransition's final render re-promotes.
+                if (_widgetTransitions.has(widgetId)) continue;
+                // A render from an earlier frame has still not settled — a stalled remote decode
+                // is the usual cause. Skip rather than starting a SECOND concurrent render of
+                // the same widget: the N per-widget loops got that property for free by only
+                // scheduling their next frame after their own await resolved.
+                if (_animatorInFlight.has(widgetId)) continue;
+
+                // The per-widget activation clock, and the bound that lets this loop STOP.
+                //
+                // What changed in V5 is the DESIGN-TIME arm: it now settles a time-only slot
+                // unconditionally, without consulting the extent at all. That is what fixed the
+                // embedded `?widget=` preview, where _productionClockOwnsWidgetTime is always false
+                // — the whole block used to live inside that gate, so nothing ever settled, and
+                // every keyframed widget opened in the widget editor got a permanent
+                // display-refresh-rate FULL-GRAPH render loop (image decodes, blur rasterisation,
+                // canvas-pool churn) redrawing identical pixels. That preview repainted only on
+                // SCRUB / PLAY / SET_ACTIVE_TRIGGER before V5, and it does again.
+                //
+                // The extent read stays INSIDE the production gate because that is the only arm
+                // that uses it: the design-time settle needs no bound (see below). Hoisting it out
+                // bought nothing and implied a coupling the code does not have.
+                if (_productionClockOwnsWidgetTime(widgetId)) {
+                    const extent = getTriggerMeta(slot.widget, slot.trigger).timeExtentMs;
+                    let t = _widgetTimeMs(widgetId);
+                    if (extent !== null && t >= extent) {
+                        // Clamp to the final keyframe — keyframeSampleScalar would clamp anyway,
+                        // so this is the same picture stated honestly — and if time was the ONLY
+                        // reason this widget is in the loop, this is its LAST frame.
+                        t = extent;
+                        if (slot.timeOnly) slot.settledAtExtent = true;
+                    }
+                    triggerContext.timeMs = t;
+                } else {
+                    // A design-time transport owns this widget's cursor, so paint at the value that
+                    // transport PINNED. Not "leave the singleton alone": between two animator
+                    // frames this loop writes timeMs for every OTHER widget it serves, so skipping
+                    // the write would sample this widget at a neighbour's clock — the hazard the
+                    // whole two-owner rule exists to prevent. _applyWidgetTimeCursor holds the one
+                    // copy of that rule (and writes nothing when nobody has pinned a value, e.g.
+                    // the untouched `?widget=` preview or a widget that is not the one being
+                    // played).
+                    _applyWidgetTimeCursor(widgetId);
+                    if (slot.timeOnly) {
+                        // The pinned cursor changes ONLY when a SCRUB / PLAY / SET_ACTIVE_TRIGGER
+                        // message arrives, and every one of those re-renders the widget itself. So
+                        // for a time-only slot the picture is a pure function of a value this loop
+                        // cannot move — one frame from now it would redraw identical pixels
+                        // forever, whether the pinned cursor sits before the extent or past it.
+                        // Hence no extent read here: the stop is STRONGER than the bound. Settle
+                        // after this frame (the render below still happens, so a slot seeded by
+                        // _refreshAnimatorDemand does get its paint) and hand the widget back to
+                        // the message paths, which is what drives a design preview.
+                        //
+                        // A slot that also wants MEDIA is never settled here — a GIF / video /
+                        // particle emitter still needs frames at design time, and `timeOnly` is
+                        // exactly the flag that tells the two apart.
+                        slot.settledAtExtent = true;
+                    }
+                }
+
+                // Re-establish the PAYLOAD of the activation this slot belongs to, for the same
+                // reason the block above re-establishes its clock: triggerContext.eventData is a
+                // page-wide singleton that a neighbour's RUN_TRIGGER, the 1 Hz clock beat and
+                // every live-patch pass all overwrite, so without this an animator frame
+                // re-evaluates THIS widget's graph against a FOREIGN activation's arguments.
+                // After V7 that also picks a foreign file: a wired Audio.Load / Image.Load Path
+                // resolves through Visual.Arg → eventData.
+                _applyActivationContext(slot);
+
+                _animatorInFlight.add(widgetId);
+                // Failure bookkeeping hangs off the REAL render promise, not off the race below,
+                // so a timeout is never miscounted as a render failure and never trips the
+                // breaker. Attaching both handlers here also means the promise is always
+                // handled, even when the race gives up on it.
+                const settled = renderWidgetTrigger(slot.widget, slot.trigger).then(
+                    () => { _animatorInFlight.delete(widgetId); slot._consecutiveFailures = 0; },
+                    e  => { _animatorInFlight.delete(widgetId); _noteAnimatorFailure(slot, e); });
+                // Bounded (V4's per-widget render timeout): one never-settling render must not
+                // stall the whole loop, because every other widget AND the clock beat queue
+                // behind it now. The inFlight guard above is what keeps the cost of a stall to
+                // one slow frame instead of one slow frame per frame. Its own warn latch, so a
+                // stalled live pass cannot silence the animator's report (or vice versa).
+                await _raceWidgetRender(settled, widgetId, 'animator', _animatorStallLatch);
+
+                // Frame budget — yield once this tick has spent about a frame's worth of wall
+                // clock rendering, and remember who to serve first next time. Without this the
+                // loop's cadence was 1 / (sum of every widget's render time), so a handful of slow
+                // widgets dragged the FAST ones down with them and N stalled ones could hold the
+                // tick (and the clock beat below) for N × the per-widget ceiling.
+                if (n + 1 < entries.length && _nowMs() - walkStartedMs > ANIMATOR_FRAME_BUDGET_MS) {
+                    _animatorResumeId = entries[(startAt + n + 1) % entries.length][0];
+                    break;
+                }
+            }
+
+            // The 1 Hz clock heartbeat, on this tick source rather than its own interval (D10).
+            // Runs AFTER the animator renders and is awaited, so its write of the shared
+            // triggerContext can never land inside one of them.
+            const now = _nowMs();
+            if (now - _clockBeatLastMs >= CLOCK_BEAT_INTERVAL_MS) {
+                _clockBeatLastMs = now;
+                try { await _renderConsumerPass(widgetConsumesClock, 'clock'); }
+                catch (err) { console.warn('clock rerender failed:', err); }
+            }
+        } catch (e) {
+            // The tick must survive anything the loop body itself can throw — a malformed
+            // .phxlayer reaching getTriggerMeta, a torn-down canvas mid-shutdown. There is one
+            // loop for the whole page now, and an uncaught throw here would reject the tick's
+            // promise unhandled on EVERY frame; the finally below would keep rescheduling, so
+            // the console noise would bury whatever actually broke.
+            console.warn('[Visualist] animator tick failed:', e);
+        } finally {
+            _animatorTickInFlight = false;
+            _ensureAnimatorLoop();
+        }
+    }
+
+    /// `renderSeq` is the promoting render's position in render order (see _renderSeq). A render
+    /// that STARTED before the slot currently in the map was installed may not replace it.
+    function promoteWidgetAnimator(widget, trigger, renderSeq) {
+        // Read AND clear both request flags first, unconditionally. Every early return below
+        // depends on that: a flag left standing would leak into the next widget's render and
+        // promote a widget that asked for nothing. renderWidgetTrigger's finally is the backstop
+        // for the paths that never reach this line at all (a throwing render) and for overlapping
+        // renders — it restores the value this render displaced. See the save/restore there.
+        const wantsMedia = _animatorRequestMediaForCurrentRender;
+        const wantsTime  = _animatorRequestTimeForCurrentRender;
+        _animatorRequestMediaForCurrentRender = false;
+        _animatorRequestTimeForCurrentRender  = false;
+
+        // #6 — while the design-time Play loop owns this widget, IT is the
+        // re-render driver (its rAF tick advances triggerContext.timeMs and
+        // re-renders). Registering an animator slot here would re-create exactly
+        // the competing free-running repaint the fix removes: renderWidgetTrigger
+        // runs on every Play frame and would otherwise re-add the slot one frame
+        // after handlePlay deleted it. handleStopPlay drops the slot so the GIF
+        // holds its last frame.
+        if (_playState && _playState.widget && _playState.widget.id === widget.id) return;
         // A dip-to-blank transition owns this widget right now — don't promote a
         // competing animator that would repaint live content over the fade. The
         // final render in renderWithTransition re-promotes once the dip completes.
-        if (_widgetTransitions.has(widget.id)) {
-            _animatorRequestForCurrentRender = false;
-            return;
-        }
-        const existing = _widgetAnimators.get(widget.id);
-        if (!_animatorRequestForCurrentRender) {
-            // No animated source on this trigger — stop any prior animator.
-            if (existing) {
-                try { cancelAnimationFrame(existing.rafId); } catch { }
-                _widgetAnimators.delete(widget.id);
-            }
-            return;
-        }
-        _animatorRequestForCurrentRender = false;
+        if (_widgetTransitions.has(widget.id)) return;
 
-        // Restart if the trigger changed; otherwise leave the existing loop running.
-        if (existing && existing.trigger === trigger) return;
-        if (existing) {
-            try { cancelAnimationFrame(existing.rafId); } catch { }
+        const existing = _widgetAnimators.get(widget.id);
+
+        // ★ STALE-PROMOTION REJECTION — a slot may only ever advance FORWARD in render order.
+        //
+        // The interleave this prevents, on ONE widget (full write-up at _renderSeq): the animator
+        // loop starts rendering A's onStartup, raises the time request and suspends on a cold image
+        // decode; a RUN_TRIGGER for A arrives and installs a slot for the ALERT trigger; the
+        // suspended animator render then resumes — with its own request flag faithfully restored by
+        // renderWidgetTrigger's finally — and lands here carrying the OLD trigger. Without this
+        // check it replaces the fresh alert slot, and the loop then repaints the old graph over the
+        // new content for the whole hold, on stream. With it, the older render simply loses.
+        //
+        // ONE comparison covers all three mutations below (demote-delete, media refresh, replace),
+        // because all three are "this render decides what the slot is" and a superseded render is
+        // entitled to decide nothing. It is inert on every ordinary path: renders that do not
+        // overlap always arrive in increasing seq, and `>` (not `>=`) lets a render refresh the
+        // slot it installed itself.
+        //
+        // A seeded slot carries seq 0 (_seedWidgetAnimator) precisely so it never blocks anything:
+        // a seed is provisional and the first real render must be free to re-decide it.
+        if (existing && existing.renderSeq > renderSeq) return;
+
+        if (!wantsMedia && !wantsTime) {
+            // Nothing animated on this trigger — demote to render-once. This is the arm that
+            // makes the V5 latch symmetric: a widget whose last keyframe the author just
+            // deleted stops raising the flag and drops out of the loop here.
+            if (existing) _widgetAnimators.delete(widget.id);
+            return;
         }
-        // QC28-03 — circuit breaker. A broken widget previously spammed the
-        // console at full rAF rate forever; trip after N consecutive throws
-        // so a single broken widget can't pin a core and flood logs.
-        const slot = { rafId: 0, widget, trigger, _consecutiveFailures: 0, _suspendLogged: false };
-        const MAX_CONSECUTIVE_FAILURES = 5;
-        const tick = async () => {
-            const cur = _widgetAnimators.get(widget.id);
-            if (!cur || cur !== slot) return;
-            // Paused while a dip-to-blank transition owns the widget — keep the
-            // loop alive (so it resumes if it isn't replaced) but don't repaint
-            // over the fade. renderWithTransition's final render re-promotes.
-            if (_widgetTransitions.has(widget.id)) {
-                slot.rafId = requestAnimationFrame(tick);
-                return;
+
+        if (existing && existing.trigger === trigger) {
+            // Same trigger, already registered — leave the slot (its breaker state, and whether
+            // its keyframe track has already played out) alone.
+            //
+            // One thing must still be refreshed: media can start being requested on a LATER
+            // render than the promoting one — a Result.If branch that now resolves to the GIF
+            // arm, or a Path attribute edited to a .gif. Once media has been seen the slot stops
+            // being time-only forever (sticky in the safe direction), so the extent bound can
+            // never stop a widget that has an unbounded source.
+            if (wantsMedia && existing.timeOnly) {
+                existing.timeOnly        = false;
+                existing.settledAtExtent = false;
             }
-            try {
-                await renderWidgetTrigger(widget, trigger);
-                slot._consecutiveFailures = 0;
-            }
-            catch (e) {
-                slot._consecutiveFailures++;
-                console.warn('[Visualist] widget animator render failed:', e);
-                if (slot._consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                    if (!slot._suspendLogged) {
-                        console.error('[Visualist] suspending widget animator after',
-                            MAX_CONSECUTIVE_FAILURES, 'consecutive failures; widget=', widget && widget.id);
-                        slot._suspendLogged = true;
-                    }
-                    // Stop scheduling — leave slot in the map so a future
-                    // promoteWidgetAnimator() with a different trigger can replace it.
-                    return;
-                }
-            }
-            if (_widgetAnimators.get(widget.id) === slot)
-                slot.rafId = requestAnimationFrame(tick);
-        };
-        slot.rafId = requestAnimationFrame(tick);
-        _widgetAnimators.set(widget.id, slot);
+            // Advance the slot's render-order stamp: this render is at least as new as whatever
+            // installed it (the rejection above guarantees renderSeq >= existing.renderSeq), so the
+            // guard keeps describing the NEWEST render that spoke for this slot rather than
+            // freezing at the first one.
+            existing.renderSeq = renderSeq;
+            // …and re-capture the payload for the same reason. Re-firing the SAME trigger with
+            // new args (the normal case for an alert widget: two raids in a row both render
+            // "onTrigger:alert") lands in this branch, and a slot still carrying the first
+            // activation's eventData would animate the second raid with the first raider's
+            // name — and, after V7, with the first raid's clip.
+            existing.activation = _captureActivationContext();
+        } else {
+            // Trigger changed (or first promotion): a fresh slot, which also resets the failure
+            // count and the played-out mark. The loop's identity check retires the superseded
+            // slot even if it is mid-render.
+            _widgetAnimators.set(widget.id, {
+                widget, trigger,
+                // The payload THIS render ran under — see _captureActivationContext. Captured
+                // here rather than read live by the loop, because by the time the loop renders,
+                // the page singleton belongs to whichever widget/pass wrote it last.
+                activation:      _captureActivationContext(),
+                timeOnly:        !wantsMedia,
+                suspended:       false,
+                settledAtExtent: false,
+                renderSeq,
+                _consecutiveFailures: 0,
+                _suspendLogged:       false,
+            });
+        }
+        _ensureAnimatorLoop();
     }
 
     // ── Graph evaluator ──────────────────────────────────────────────────────
 
     class Evaluator {
-        constructor(graph, frame) {
+        constructor(graph, frame, widgetId) {
             this.graph    = graph;
+            // Which WIDGET this evaluation belongs to. Carried on the Evaluator rather than
+            // read off a module singleton at use time because the only consumer is the audio
+            // sink's per-widget activation generation, and that lookup happens AFTER awaits:
+            // a module-level "widget currently rendering" would be whatever the last
+            // interleaving render wrote (renderWidgetTrigger is re-entrant — see the animator
+            // block comment on triggerContext), and picking the wrong widget's generation is
+            // exactly the replay bug the per-widget scoping exists to remove. The Evaluator is
+            // constructed once per render, so `this` cannot drift. Empty for a tooling /
+            // legacy construction, which then simply shares one implicit bucket.
+            this.widgetId = widgetId || '';
             // Bug #2 — the rect this widget renders INTO, in logical widget pixels
             // (same space the manipulator handles + the Display sink use). Lets
             // Text.Render rasterize at FRAME size instead of a tight bitmap, so the
@@ -2840,11 +6981,21 @@
             this.frame    = (frame && frame.width > 0 && frame.height > 0) ? frame : null;
             this.memo     = new Map();
             this.visiting = new Set();
-            // Once-per-fire dedup for Result.If's missing-arg diagnostic. The
-            // Evaluator is instantiated per renderWidgetTrigger call, so the Set's
-            // lifetime is exactly one trigger fire — matching the C# side's
-            // _loggedMissingArgs ThreadStatic that resets per Evaluate() call.
-            this.loggedMissingArgs = new Set();
+            // V13 A2 — the trace collector, or null when nothing is tracing THIS render. Declared
+            // here (rather than only assigned by the one caller that wants it) so the object shape
+            // is stable for every Evaluator the hot render path constructs, and so the null check
+            // in evalNodeOutput is a plain property read on a known field. renderWidgetTrigger
+            // assigns a Set only when the widget owes a DEBUG_WIDGET_NODE frame — see
+            // _traceArmedWidgets for why that is per activation and design-time only.
+            this.trace    = null;
+            // NO missing-arg latch here on purpose. It used to live on the Evaluator and
+            // was documented as "once per fire", but the Evaluator is instantiated per
+            // renderWidgetTrigger call, so its real lifetime is one RENDER — and both
+            // reporters run on every non-trigger render, so the diagnostic went out at
+            // frame rate. The latch is now the page-scoped _reportedMissingArgs, matching
+            // the other two eval-path reporters. (The C# mirror's _loggedMissingArgs
+            // ThreadStatic keeps its per-Evaluate() lifetime: NodeEvaluator is design-time
+            // only and pushes no frame to Hub, so per-call there costs nothing.)
             // Sprint 7 — every kernel canvas returned via `value.image` is
             // tracked here so renderWidgetTrigger's finally clause can return
             // them to canvasPool as a batch once the Display sink has painted.
@@ -2980,6 +7131,35 @@
             }
         }
 
+        /// V13 H1 — resolves Visual.Complete's `Payload` input, or NULL when that pin is not
+        /// WIRED. Null is the signal to OMIT the field from the VISUAL_COMPLETE frame, and that
+        /// omission is the sprint's compatibility gate: an unwired pin must put byte-identical
+        /// bytes on the wire and leave every exporter golden byte-identical.
+        ///
+        /// The test is a LINK test, deliberately not a value test, and it is also what makes this
+        /// half inert until the C# template grows the socket: findLinkTo resolves the socket by
+        /// name on the node itself, so against today's one-input Visual.Complete it returns null
+        /// and nothing changes for anybody.
+        ///
+        /// The value comes from _evalStringSocket — the same resolver every other wirable String
+        /// input in this file reads through (String.Concat / Upper / Lower / Slice / Replace, the
+        /// WebOverlay.Custom slots) — and NOT from its sibling _evalQuotedStringSocket: that one
+        /// exists to strip the JSON quoting the Inspector puts on an ATTRIBUTE, and this pin's
+        /// attribute is never consulted, because an unwired pin is omitted by contract.
+        async resolveCompletionPayload(node) {
+            if (!node) return null;
+            if (!this.findLinkTo(node.Id, 'Payload')) return null;
+            try { return await this._evalStringSocket(node, 'Payload', ''); }
+            catch (e) {
+                // The chain was already walked (and its throw already logged) by evalAnyInputOf,
+                // so this only fires for a repeat throw. A payload we cannot resolve degrades to
+                // "no payload" rather than failing the completion: dropping the ack itself would
+                // hang the waiting script until wait_for_visual's full timeout.
+                console.warn('[Visualist] Visual.Complete Payload resolve failed:', e);
+                return null;
+            }
+        }
+
         async evalNodeOutput(nodeId, socketId) {
             if (this.visiting.has(nodeId)) {
                 // M68 — cycle detection. C# NodeEvaluator returns
@@ -2999,6 +7179,13 @@
             if (!node) return null;
 
             this.visiting.add(nodeId);
+            // V13 A2 — record the visit. Placed right after the visiting mark, which puts it
+            // AFTER the memo hit above and after the unknown-node bail: a diamond node is
+            // therefore listed once rather than once per downstream consumer, and a dangling
+            // link contributes nothing. That is exactly where the C# mirror records it
+            // (NodeEvaluator.EvalImage's `visited.Add(nodeId)` follows `visiting.Add(nodeId)`),
+            // so the two sides list the same nodes for the same graph.
+            if (this.trace) this.trace.add(nodeId);
             let value;
             switch (node.Title) {
                 case 'Image.Load':          value = await this.evalImageLoad(node);    break;
@@ -3018,7 +7205,30 @@
                 case 'Vector3.Constant':    value = this.evalVector3Constant(node);    break;
                 case 'Vector4.Constant':    value = this.evalVector4Constant(node);    break;
                 case 'Vector.Rect4':        value = this.evalVectorRect4(node);        break;
+                // Overlay Live Channel readers. Every one of these resolves its value out of
+                // liveState — the keys it declared in liveKeysForNode and nothing else.
                 case 'Caption.LiveCaption': value = this.evalCaptionLive(node, socketId); break;
+                case 'Timer.Remaining':     value = this.evalTimerRemaining(node, socketId); break;
+                // Countdown.Remaining / Stopwatch.Elapsed read the SAME timer.<root>.* key
+                // family as Timer.Remaining — Hub publishes the mode-aware display value
+                // (elapsed for a stopwatch, remaining for a countdown) in the short/long/clock
+                // fields, so the reader is shared. Clock.Now is the odd one out: browser-
+                // autonomous, no key, no producer — it reads the OBS machine's own wall clock.
+                case 'Countdown.Remaining': value = this.evalTimerRemaining(node, socketId); break;
+                case 'Stopwatch.Elapsed':   value = this.evalTimerRemaining(node, socketId); break;
+                case 'Clock.Now':           value = this.evalClockNow(node); break;
+                case 'Loyalty.Leaderboard': value = this.evalLoyaltyLeaderboard(node, socketId); break;
+                case 'Loyalty.Balance':     value = this.evalLoyaltyBalance(node, socketId);     break;
+                case 'Counter.Value':       value = this.evalCounterValue(node, socketId);       break;
+                // The author-facing binding node — any channel key by literal name, tool-owned
+                // or overlay.publish'd, with the type coercion done at the pin the author chose.
+                case 'Var.Live':            value = this.evalVarLive(node, socketId);            break;
+                // V10 — the two family readers. Goal.Progress reads the reserved goal.<kind>.*
+                // root; List.Live reads any key holding a JSON array. Both are generic rather
+                // than per-tool: a Stat.LatestFollower or a TipJar.Total would be exactly the
+                // per-tool special-casing the channel exists to abolish.
+                case 'Goal.Progress':       value = this.evalGoalProgress(node, socketId);       break;
+                case 'List.Live':           value = await this.evalListLive(node, socketId);     break;
                 case 'Text.Translate':      value = await this.evalTextTranslate(node); break;
                 case 'Text.Render':         value = await this.evalTextRender(node);  break;
 
@@ -3097,8 +7307,14 @@
                     // the static attribute for un-keyframed parameters.
                     const tx = parseFloat(attrAnimated(node, 'TranslateX', '0')) || 0;
                     const ty = parseFloat(attrAnimated(node, 'TranslateY', '0')) || 0;
-                    const sx = parseFloat(attrAnimated(node, 'ScaleX', '1')) || 1;
-                    const sy = parseFloat(attrAnimated(node, 'ScaleY', '1')) || 1;
+                    // FALSY-ZERO FIX — ScaleX/ScaleY are canonical animation targets, so a
+                    // keyframed 0 (the natural first frame of a scale-in) is legitimate and
+                    // `|| 1` snapped it to full size. TranslateX/Y/Rotation default to 0, so
+                    // their `|| 0` is a no-op on a real 0 and stays as-is.
+                    const _sxRaw = parseFloat(attrAnimated(node, 'ScaleX', '1'));
+                    const _syRaw = parseFloat(attrAnimated(node, 'ScaleY', '1'));
+                    const sx = Number.isFinite(_sxRaw) ? _sxRaw : 1;
+                    const sy = Number.isFinite(_syRaw) ? _syRaw : 1;
                     const rot = parseFloat(attrAnimated(node, 'Rotation', '0')) || 0;
                     const w = upstream.width  || upstream.image.width;
                     const h = upstream.height || upstream.image.height;
@@ -3183,6 +7399,12 @@
                 case 'Mask.Polygon':         value = this.evalMaskPolygon(node);         break;
                 case 'Mask.Bezier':          value = this.evalMaskBezier(node);          break;
                 case 'Mask.Star':            value = this.evalMaskStar(node);            break;
+                // V10 — Image.Solid: the palette's only COLOURED, WIRABLE fill. The Mask.*
+                // family above emits white-on-transparent from attribute-only geometry, so
+                // nothing in the catalog could tint a shape or let a live value drive one.
+                // Note the geometry space differs from the masks on purpose: their fractions
+                // are of the LAYER, these are of the WIDGET FRAME (see evalImageSolid).
+                case 'Image.Solid':          value = await this.evalImageSolid(node);    break;
                 case 'Image.Blend':       value = await this.evalImageBlend(node);       break;
                 case 'Image.Combine':     value = await this.evalImageCombine(node);     break;
                 case 'Image.Tile':        value = await this.evalImageTile(node);        break;
@@ -3191,8 +7413,9 @@
                 // triggerContext.eventData[When] (e.g. "Args1") and the Equals attribute
                 // (or wired Equals input). On match → pass In through. On mismatch or
                 // when the named arg is missing → emit null so Display sees nothing
-                // flowing into this branch. Per-fire missing-arg diagnostic via
-                // sendTriggerDiagnostic, deduped on this.loggedMissingArgs.
+                // flowing into this branch. Missing-arg diagnostic via
+                // sendEvalDiagnostic, deduped once per (node, arg, kind) per page on
+                // _reportedMissingArgs.
                 case 'Result.If':         value = await this.evalResultIf(node);         break;
 
                 // Sprint 91 — WebSource runtime: fetch + image-content-type
@@ -3203,10 +7426,10 @@
                 // and the loadImage promise rejects, surfacing a clear
                 // WebSource-specific console.warn.
                 case 'WebSource':         value = await this.evalWebSource(node);    break;
-                // Sprint 92 — Particles.Emit per-widget rAF runtime.
-                // Tick-based emitter, sprite render, requestWidgetAnimator
-                // hooks the widget into a continuous rAF loop so
-                // particles flow between triggers.
+                // Sprint 92 — Particles.Emit rAF-driven runtime. Tick-based
+                // emitter, sprite render; requestWidgetAnimator hooks the widget
+                // into the global animator loop so particles flow between
+                // triggers.
                 case 'Particles.Emit':    value = this.evalParticlesEmit(node);      break;
 
                 // Track D — numeric Math kernels. Scalar attrs read via attrAnimated
@@ -3244,6 +7467,9 @@
                 case 'String.Length':     value = await this.evalStringLength(node);  break;
                 case 'String.Slice':      value = await this.evalStringSlice(node);   break;
                 case 'String.Replace':    value = await this.evalStringReplace(node); break;
+                // V7 — the per-kind mapping node. See evalStringSelect for the matching
+                // rules and why the Default row is mandatory.
+                case 'String.Select':     value = await this.evalStringSelect(node);  break;
 
                 // Track D — Convert nodes (scalar↔string, RGBA→Color, hex→Color).
                 case 'Convert.NumberToString': value = await this.evalConvertNumberToString(node); break;
@@ -3254,6 +7480,9 @@
                 // Track D — Message.Read: the read-out node for the transmitted
                 // message. Reads triggerContext.eventData[Key] with MockValue fallback.
                 case 'Message.Read':      value = this.evalMessageRead(node);         break;
+                // V7 — Visual.Arg: the same read, but its placeholder is design-time only,
+                // so an unsupplied field renders nothing on stream. Prefer it in new graphs.
+                case 'Visual.Arg':        value = this.evalVisualArg(node);           break;
 
                 default:
                     console.warn(`compositor: unsupported node '${node.Title}' — returning null.`);
@@ -3272,8 +7501,17 @@
             return this.graph.Links.find(l => l.ToNodeId === nodeId && l.ToSocketId === sock.Id);
         }
 
+        // V7 — Path is a wirable String input with the attribute as its fallback, so the
+        // file can be chosen at trigger time. Everything downstream is unchanged: the GIF
+        // sniff still reads `path`, and both returns still go through
+        // fitLoadedImageToFrame, so a dynamic source is contain-fitted exactly like a
+        // typed one.
+        //
+        // Reads through _evalMediaPathSocket, which is the provenance guard: a WIRED path
+        // must be relative (rejected values return '' and land in the empty-path bail
+        // below), an attribute path behaves exactly as before.
         async evalImageLoad(node) {
-            const path = stripQuotes(attr(node, 'Path', ''));
+            const path = await this._evalMediaPathSocket(node);
             if (!path) {
                 debugLog('evalImageLoad.empty-path', { nodeId: node.Id });
                 return null;
@@ -3382,8 +7620,9 @@
         // Rate=0.5 still drips one particle every two seconds), and renders
         // each surviving particle as a filled circle on a fresh canvas at
         // the layer resolution. requestWidgetAnimator() opts the widget into
-        // a continuous rAF loop so the state ticks between author triggers
-        // — the decision A2b "per-widget rAF opt-in" model. Particles
+        // the global animator loop so the state ticks between author triggers
+        // — the decision A2b rAF-opt-in model, now with ONE loop for the whole
+        // page instead of one per widget (see promoteWidgetAnimator). Particles
         // already cap at PARTICLE_HARD_CAP per node (500) to bound RAM.
         //
         // Position / Velocity are unit-space (0..1 in each axis), so the
@@ -3487,21 +7726,29 @@
             // shorter axis (1% of min(w,h)) so a portrait layer paints the
             // same dot size as a landscape one.
             const baseRadius = Math.max(2, Math.min(w, h) * 0.01);
+            const TAU = Math.PI * 2;   // hoisted out of the per-particle loop
             octx.fillStyle = color;
             for (let i = 0; i < state.particles.length; i++) {
                 const p = state.particles[i];
                 const lifeFrac = 1 - (p.age / p.lifetime);
                 octx.globalAlpha = Math.max(0, Math.min(1, lifeFrac));
                 octx.beginPath();
-                octx.arc(p.x * w, p.y * h, baseRadius, 0, Math.PI * 2);
+                octx.arc(p.x * w, p.y * h, baseRadius, 0, TAU);
                 octx.fill();
             }
             octx.globalAlpha = 1;
             return { image: off, width: w, height: h };
         }
 
+        // V7 — wirable Path (see evalImageLoad). ensureVideoElement already handled a
+        // changing src correctly (it re-arms the one-shot alpha probe), and the function
+        // still ends at the fitLoadedImageToFrame return below, so the contain-fit that a
+        // prior sweep added survives a dynamic source. Losing it would report a native-
+        // size clip at native size and Display would centre-crop instead of fit.
         async evalVideoLoad(node, socketId) {
-            const path = stripQuotes(attr(node, 'Path', ''));
+            // _evalMediaPathSocket = resolve + the wired-must-be-relative guard; see it and
+            // evalImageLoad. A rejected wired path returns '' and bails on the next line.
+            const path = await this._evalMediaPathSocket(node);
             if (!path) return null;
             const loop  = String(attr(node, 'Loop',  'true')).toLowerCase() !== 'false';
             const muted = String(attr(node, 'Muted', 'true')).toLowerCase() !== 'false';
@@ -3589,8 +7836,16 @@
             return { image: video, width: fit.width, height: fit.height };
         }
 
+        // V7 — wirable Path (see evalImageLoad). This is the loader the per-kind alert
+        // sound runs through: one Audio.Load + one Audio.Play, clip chosen by VALUE
+        // upstream (String.Select) because branch-gated audio is not expressible — see
+        // the audio-sink pass in renderWidgetTrigger for why.
         async evalAudioLoad(node) {
-            const path = stripQuotes(attr(node, 'Path', ''));
+            // _evalMediaPathSocket = resolve + the wired-must-be-relative guard. THE most
+            // exposed of the three: this is the loader a chat-driven soundboard wires, so
+            // "!sound https://attacker/x.mp3" reaches exactly here. A rejected wired path
+            // returns '' and bails on the next line — no audio element, no fetch.
+            const path = await this._evalMediaPathSocket(node);
             if (!path) return null;
             // Audio is opaque to the image pipeline — Display would render
             // nothing useful from it. Audio.Play (sink) consumes this shape.
@@ -3602,15 +7857,21 @@
             if (!inLink) return null;
             const upstream = await this.evalNodeOutput(inLink.FromNodeId, inLink.FromSocketId);
             if (!upstream || upstream.kind !== 'audio' || !upstream.src) return null;
-            const nodeVolume = Math.max(0, Math.min(1, parseFloat(attr(node, 'Volume', '1')) || 1));
+            // FALSY-ZERO FIX — `parseFloat(...) || 1` rewrote a legitimate 0 (the mixer's mute
+            // position) to full volume, so an alert deliberately muted on the node played at
+            // 100% on stream. Only a non-finite read may fall back to the default.
+            const rawVolume  = parseFloat(attr(node, 'Volume', '1'));
+            const nodeVolume = Math.max(0, Math.min(1, Number.isFinite(rawVolume) ? rawVolume : 1));
             // Track E — scale the node's own Volume by the active trigger's master
             // volume (default 1) and re-clamp to 0..1 so the mixer can attenuate all
             // audio in the trigger without touching per-node attributes.
             const volume = Math.max(0, Math.min(1, nodeVolume * activeTriggerVolume));
             const loop   = String(attr(node, 'Loop', 'false')).toLowerCase() === 'true';
-            // Pass the current activation generation so a one-shot fires once per
-            // genuine trigger, not once per animator/Play/scrub render tick.
-            ensureAudioElementAndPlay(node.Id, upstream.src, { volume, loop, gen: _audioActivationGen });
+            // Pass THIS WIDGET's activation generation so a one-shot fires once per genuine
+            // trigger of this widget — not once per animator/Play/scrub render tick, and not
+            // once per activation of some OTHER widget on the layer (see _audioActivationGen).
+            ensureAudioElementAndPlay(
+                node.Id, upstream.src, { volume, loop, gen: audioActivationGen(this.widgetId) });
             return null;
         }
 
@@ -3622,7 +7883,10 @@
 
             const factorLink = this.findLinkTo(node.Id, 'Factor');
             // Sweep 21 — Factor is a canonical animation target; honor keyframes.
-            let factor = parseFloat(attrAnimated(node, 'Factor', '1')) || 1;
+            // FALSY-ZERO FIX — same swallow as Image.Transform's scale reads; see the clamp
+            // below for why letting 0 through is only half the job.
+            const _factorRaw = parseFloat(attrAnimated(node, 'Factor', '1'));
+            let factor = Number.isFinite(_factorRaw) ? _factorRaw : 1;
             if (factorLink) {
                 const f = await this.evalNodeOutput(factorLink.FromNodeId, factorLink.FromSocketId);
                 if (typeof f === 'number') {
@@ -3643,10 +7907,16 @@
                 // No link — clear any stale error glyph from a prior render.
                 if (node._errorGlyph) delete node._errorGlyph;
             }
+            // Clamp exactly as NodeEvaluator.EvalImageScale does: a strictly positive floor on
+            // the factor, and each side floored at 1px. Necessary because every downstream
+            // consumer reads dimensions as `x.width || x.image.width`, so a 0x0 result would be
+            // re-inflated to the natural size — the same falsy-zero swallow one node later.
+            // Written as `!(factor >= …)` rather than C#'s `factor < …` so a NaN is caught too.
+            if (!(factor >= 0.001)) factor = 0.001;
             return {
                 image:  upstream.image,
-                width:  Math.round(upstream.width  * factor),
-                height: Math.round(upstream.height * factor),
+                width:  Math.max(1, Math.round(upstream.width  * factor)),
+                height: Math.max(1, Math.round(upstream.height * factor)),
             };
         }
 
@@ -3720,28 +7990,646 @@
             return null;
         }
 
-        /// Caption.LiveCaption emits two outputs — Original (raw) and Translated (post-translator).
-        /// Compositor.js can't see which output the caller asked for from socketId alone, so we
-        /// look up the node's socket by id and dispatch on its name. L49 — names sourced from
-        /// CAPTION_SOCKETS so a C# rename can be tracked in one place; an unrecognized socket
-        /// name is warned about (once per name) instead of silently falling through.
+        /// Caption.LiveCaption emits two outputs — the untranslated stream and the
+        /// post-translator one — reading `caption.original` / `caption.translated` off the
+        /// channel. Compositor.js can't see which output the caller asked for from socketId
+        /// alone, so we look up the node's socket by id and dispatch on its name.
+        ///
+        /// L49 — names sourced from CAPTION_SOCKETS so a C# rename can be tracked in one place;
+        /// an unrecognized socket name is warned about (once per name) instead of silently
+        /// falling through. The template actually names its first output "Text", which is why
+        /// CAPTION_ORIGINAL_SOCKETS exists — see that constant.
+        ///
+        /// Translated falls back to the original when only the original is live, which is the
+        /// correct degradation for a translator that has not answered yet (and for a
+        /// TargetLang the streamer left empty, where Hub publishes the two keys identically).
         evalCaptionLive(node, socketId) {
+            const live = liveRenderableValue(LIVE_KEY_CAPTION_ORIGINAL);
+            // Design-time only: an empty caption widget in the editor is indistinguishable from
+            // a broken one, so the mock earns its place there. In OBS a caption nobody is
+            // speaking renders nothing.
+            const original = live === undefined ? liveMock(node) : liveTextOf(live);
+
             const sock = (node.Sockets || []).find(s => s.Id === socketId);
-            if (!sock) return captionState.original;
+            if (!sock) return original;
             if (sock.Name === CAPTION_SOCKETS.TRANSLATED) {
-                return captionState.translated || captionState.original;
+                return liveTextOf(liveRenderableValue(LIVE_KEY_CAPTION_TRANSLATED)) || original;
             }
-            if (sock.Name === CAPTION_SOCKETS.ORIGINAL) {
-                return captionState.original;
+            if (CAPTION_ORIGINAL_SOCKETS.has(sock.Name)) {
+                return original;
             }
             if (!_warnedUnknownCaptionSockets.has(sock.Name)) {
                 _warnedUnknownCaptionSockets.add(sock.Name);
                 console.warn(
                     `[Visualist] Caption.LiveCaption: unrecognized socket name "${sock.Name}" — ` +
-                    `expected one of ${JSON.stringify(Object.values(CAPTION_SOCKETS))}. ` +
-                    'Falling back to Original. Check NodeTemplates.cs vs CAPTION_SOCKETS in compositor.js.');
+                    `expected one of ${JSON.stringify(Object.values(CAPTION_SOCKETS))} ` +
+                    `or ${JSON.stringify(Array.from(CAPTION_ORIGINAL_SOCKETS))}. ` +
+                    'Falling back to the original stream. Check NodeTemplates.cs vs CAPTION_SOCKETS.');
             }
-            return captionState.original;
+            return original;
+        }
+
+        /// Timer.Remaining / Countdown.Remaining / Stopwatch.Elapsed — the live Hub-timer
+        /// readout, sourced from the channel's `timer.<root>.*` family. Dispatch is on the
+        /// requested output socket's name; the root comes from liveTimerRoot, THE same helper
+        /// liveKeysForNode subscribed with, so the key read and the key asked for cannot drift.
+        ///
+        /// Each socket reads exactly ONE field:
+        ///   State    — the timer's RUN state: Running / Paused / Stopped / Ended, read from the
+        ///              VALUE of `<root>state`. This is the meaning State has had since the node
+        ///              shipped and it is PRESERVED — widgets in the wild branch on 'Paused' and
+        ///              on 'Ended', and quietly redefining the pin to a liveness word broke every
+        ///              one of them while the graph still looked correct.
+        ///              ⚠ The asymmetry a reader will trip over: on the other channel readers
+        ///              that HAVE a State socket (Counter.Value, Loyalty.Leaderboard,
+        ///              Loyalty.Balance, Var.Live) "State" means LIVENESS, because that is what
+        ///              State already meant on those nodes before the channel. "State" is
+        ///              therefore per-node shorthand for "the most useful status this node has".
+        ///              The timer trio is the one family with TWO statuses worth reporting, so it
+        ///              got a second pin appended rather than a redefinition of the first.
+        ///              Caption.LiveCaption is NOT in that list: it reads channel keys but
+        ///              declares no State socket at all — only Text and Translated (see
+        ///              evalCaptionLive, which has no State arm).
+        ///              ⚠ And the liveness VOCABULARY is not uniform either, which matters when
+        ///              an author writes a Result.If branch:
+        ///                • timer.* keys — Active / Stale / Missing. The Timer tool is the ONLY
+        ///                  publisher that declares an ExpectedInterval, and Hub's ComputeState
+        ///                  can only return Stale for a key that declared one. So a Stale branch
+        ///                  is meaningful HERE, on the Live pin, and on a Var.Live bound to a
+        ///                  timer.* key.
+        ///                • counter.* / loyalty.* / caption.* and any key a script publishes with
+        ///                  overlay.publish — Active / Missing only. They are event-driven and
+        ///                  promise no cadence, so they never decay. A widget branching
+        ///                  Equals="Stale" on one of them can never fire.
+        ///                • loyalty.leaderboard is the one vocabulary exception: its State pin
+        ///                  reports Empty rather than Missing for a board with no rows (see
+        ///                  evalLoyaltyLeaderboard for that rule and why it is load-bearing).
+        ///   Live     — the timer family's LIVENESS: Active / Stale / Missing. Judged on
+        ///              `<root>state`, which exists if and only if a timer resolved under this
+        ///              root — deliberately NOT `<root>slug`, which Hub publishes even when
+        ///              there is no default timer at all and would report Active for nothing.
+        ///              Note it can read Stale while State reads 'Running': the run state is the
+        ///              last one published, and its age is exactly what this pin is for.
+        ///   Progress — 0..1, clamped Hub-side.
+        ///   Seconds  — `display_seconds`, i.e. the SAME mode-aware value Text formats, so a
+        ///              stopwatch's Seconds counts up exactly as its Text does. Not
+        ///              remaining_seconds, which would count the wrong way for a stopwatch.
+        ///   Paused   — the paused flag as text ('true' / 'false').
+        ///   Mode     — the TimerMode name (Countdown / Stopwatch / …).
+        ///   Text     — short | long | clock, per the Format attribute.
+        ///
+        /// Only Text carries a design-time mock: PreviewText is a formatted duration
+        /// ("01:23:45"), which is meaningless as a stand-in for Progress, Paused or Mode.
+        evalTimerRemaining(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+            const root = liveTimerRoot(node);
+
+            if (socketName === 'State') {
+                // The RUN state, from the key's VALUE — never the liveness verdict. A stale but
+                // known timer keeps reporting the run state it last published (that is what the
+                // Live pin is for), so this pin says 'Running' / 'Paused' / 'Stopped' / 'Ended'
+                // exactly as it did before the channel existed.
+                //
+                // No entry at all means no timer resolved under this root, so there is no run
+                // state to name: fall through to the liveness vocabulary ('Missing') rather than
+                // hand a widget the empty string liveTextOf(undefined) would give it. That keeps
+                // an unresolvable TimerName visibly wrong instead of invisibly blank.
+                const stateKey = root + 'state';
+                if (!liveEntry(stateKey)) return liveStateOf(stateKey);
+                return liveTextOf(liveRenderableValue(stateKey));
+            }
+            // The appended liveness pin. Same key State judges presence on, read for its
+            // provenance instead of its value.
+            if (socketName === 'Live')     return liveStateOf(root + 'state');
+            if (socketName === 'Progress') return liveNumberOf(liveRenderableValue(root + 'progress'));
+            if (socketName === 'Seconds')  return liveNumberOf(liveRenderableValue(root + 'display_seconds'));
+            if (socketName === 'Paused')   return liveTextOf(liveRenderableValue(root + 'paused'));
+            if (socketName === 'Mode')     return liveTextOf(liveRenderableValue(root + 'mode'));
+
+            const fmt = stripQuotes(attr(node, 'Format', 'short'));
+            const field = fmt === 'long' ? 'long' : (fmt === 'clock' ? 'clock' : 'short');
+            const value = liveRenderableValue(root + field);
+            // The fake-fallback kill, in one line: no live timer means the mock at design time
+            // and NOTHING in production. The pre-channel reader painted PreviewText in OBS, so
+            // a stopped-or-unnamed timer showed a convincing frozen "01:23:45" on stream.
+            if (value === undefined) return liveMock(node);
+            return liveTextOf(value);
+        }
+
+        /// Clock.Now — live digital wall-clock. Browser-autonomous: reads the OBS
+        /// machine's own clock (Date.now) each 1 Hz clock heartbeat, shifts it by
+        /// UtcOffset hours, and formats per the Format attribute. Needs no Hub state.
+        /// Tokens: HH (24h) · hh (12h) · mm · ss · A (AM/PM). We read the SHIFTED
+        /// instant's UTC fields so the OBS machine's own timezone never leaks in —
+        /// offset 0 = true UTC, offset 2 = UTC+2, etc.
+        evalClockNow(node) {
+            const offsetHours = parseFloat(stripQuotes(attr(node, 'UtcOffset', '0'))) || 0;
+            const fmt = stripQuotes(attr(node, 'Format', 'HH:mm:ss')) || 'HH:mm:ss';
+            const shifted = new Date(Date.now() + offsetHours * 3600000);
+            const H24 = shifted.getUTCHours();
+            const mm  = shifted.getUTCMinutes();
+            const ss  = shifted.getUTCSeconds();
+            const H12 = (H24 % 12) || 12;
+            const p2  = n => (n < 10 ? '0' + n : '' + n);
+            // Two-char tokens first, then the AM/PM token last (the digit
+            // substitutions never re-introduce a token character).
+            return fmt
+                .replace(/HH/g, p2(H24))
+                .replace(/hh/g, p2(H12))
+                .replace(/mm/g, p2(mm))
+                .replace(/ss/g, p2(ss))
+                .replace(/A/g,  H24 >= 12 ? 'PM' : 'AM');
+        }
+
+        /// Loyalty.Leaderboard — live viewer-points leaderboard readout, sourced from the
+        /// channel's `loyalty.leaderboard` (a real JSON array of { rank, name, balance }) plus
+        /// `loyalty.currency` for the {currency} token. Dispatch is on the output socket's name.
+        ///
+        ///   State                 — Active / Stale / EMPTY. The ONE reader whose State vocabulary
+        ///                           is not the plain Active/Stale/Missing triple, and the
+        ///                           deliberate asymmetry is back-compat: before the channel this
+        ///                           pin answered 'Empty' for a board with no rows, INCLUDING a
+        ///                           board that had never been published (the pre-channel reader
+        ///                           held the board in memory, so "never arrived" and "arrived
+        ///                           empty" were the same zero-length array to it). Widgets branch
+        ///                           `Equals="Empty"` to draw a "No scores yet" card, so 'Empty'
+        ///                           has to cover BOTH no-data cases or those cards stop drawing.
+        ///                           THE RULE, and it must survive every rework of this reader:
+        ///                             • Stale                     → 'Stale'  (kept distinct — the
+        ///                               rows are still painted, just a beat old, and a widget
+        ///                               hiding on Empty must not hide on Stale)
+        ///                             • no rows, for ANY reason   → 'Empty'  (never published,
+        ///                               or published as an empty array — indistinguishable to a
+        ///                               widget, and both mean "nothing to show")
+        ///                             • rows present              → 'Active'
+        ///                           'Missing' is therefore never reported HERE. That is not an
+        ///                           oversight: Loyalty.Balance next door does report Missing, for
+        ///                           the different question "is this VIEWER on the board".
+        ///   Rank / Name / Balance  — ONE row, addressed by the Index attribute. Index is
+        ///                           1-BASED and reads as a rank: Index 1 is first place, which
+        ///                           is what makes the Rank this node reports equal the Index
+        ///                           the author typed. Out of range yields '' / 0 — never a
+        ///                           wrapped or clamped row, because silently showing rank 1
+        ///                           where the author asked for rank 12 is worse than a blank.
+        ///   Text (default)        — the top `Size` rows, newline-joined through the Format
+        ///                           template.
+        evalLoyaltyLeaderboard(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+
+            const board = liveLeaderboardRows();
+
+            if (socketName === 'State') {
+                // See the doc comment above for the rule and why it is load-bearing. Only
+                // Stale short-circuits: it is the one verdict a widget must be able to tell
+                // apart from 'Empty', because a stale board still HAS rows and still paints
+                // them (liveRenderableValue), so a widget that hides itself on Empty must not
+                // hide on Stale. Everything else falls through to the row count, which folds
+                // never-published (Missing → zero rows) and published-but-empty into the one
+                // 'Empty' answer the pre-channel pin gave for both.
+                if (liveStateOf(LIVE_KEY_LOYALTY_BOARD) === 'Stale') return 'Stale';
+                return board.length ? 'Active' : 'Empty';
+            }
+
+            if (socketName === 'Rank' || socketName === 'Name' || socketName === 'Balance') {
+                const idx = liveLeaderboardIndex(node);
+                const row = (idx >= 0 && idx < board.length) ? (board[idx] || null) : null;
+                if (socketName === 'Name')    return (row && row.name != null) ? String(row.name) : '';
+                if (socketName === 'Balance') return row ? liveNumberOf(row.balance) : 0;
+                // Rank: prefer the row's own rank (Hub owns the ordering), fall back to the
+                // 1-based position so a payload without ranks still reads sensibly.
+                return row ? (row.rank != null ? liveNumberOf(row.rank) : idx + 1) : 0;
+            }
+
+            // No rows to paint → the mock at design time, NOTHING in production. This is the
+            // single most user-visible line in the rework: the shipped PreviewText default is
+            // "1. viewer_one — 12,400 / 2. viewer_two — 9,830 / …", and the pre-channel reader
+            // painted it in OBS whenever the board was empty — which, with "shut down source
+            // when not visible", was every scene return until the first LOYALTY_UPDATE landed.
+            // A STALE board does NOT land here: it keeps its last rows and keeps rendering them,
+            // with the staleness reported on the State pin (see liveRenderableValue).
+            if (!board.length) return liveMock(node);
+
+            let size = parseInt(stripQuotes(attr(node, 'Size', '10')), 10);
+            if (!Number.isFinite(size) || size <= 0) size = board.length;
+
+            const fmt = stripQuotes(attr(node, 'Format', '{rank}. {name} — {balance}'));
+            const currency = liveTextOf(liveRenderableValue(LIVE_KEY_LOYALTY_CURRENCY));
+            const count = Math.min(size, board.length);
+            const lines = [];
+            for (let i = 0; i < count; i++) {
+                const e = board[i] || {};
+                const rank = (e.rank != null) ? e.rank : (i + 1);
+                lines.push(this.formatLoyaltyLine(fmt, rank, e.name, e.balance, currency));
+            }
+            return lines.join('\n');
+        }
+
+        /// Loyalty.Balance — single-viewer points readout. Derived from the SAME
+        /// `loyalty.leaderboard` array (per-user balance keys are deliberately not published —
+        /// that family is unbounded), matching the User attribute case-insensitively.
+        ///
+        ///   State   — liveness first: a Missing or Stale board is exactly that, whoever the
+        ///             user is. With a live board, "this viewer is not on it" is honestly
+        ///             Missing — which both preserves the per-user signal the pre-channel
+        ///             reader gave and stays inside the Active/Stale/Missing vocabulary.
+        ///             Stale here would mean "the balance below is a few seconds old", not
+        ///             "blank": the row still resolves off the last board (see
+        ///             liveRenderableValue). In PRACTICE it never fires — `loyalty.leaderboard`
+        ///             declares no ExpectedInterval (balances are event-driven), so Hub's
+        ///             ComputeState can only ever answer Active or Missing for it. The arm stays
+        ///             because the verdict is the store's to define, not this reader's; do not
+        ///             advertise Stale to authors here (see evalTimerRemaining's vocabulary note).
+        ///   Balance — the viewer's balance, 0 when unresolved.
+        ///   Text    — the Format line for the matched row; the mock at design time and
+        ///             NOTHING in production when unresolved. The old fallback rendered the
+        ///             template with a literal zero, so an unknown or misspelled viewer showed
+        ///             a confident "someviewer: 0" on stream.
+        ///
+        /// A {currency} token is substituted EMPTY here, on purpose: per the reader matrix this
+        /// node subscribes only `loyalty.leaderboard`, so printing a currency label would mean
+        /// printing a value we never asked Hub for and whose freshness we cannot vouch for.
+        evalLoyaltyBalance(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+            const user = stripQuotes(attr(node, 'User', ''));
+            const row  = liveLeaderboardRow(user);
+
+            if (socketName === 'State') {
+                const boardState = liveStateOf(LIVE_KEY_LOYALTY_BOARD);
+                if (boardState !== 'Active') return boardState;
+                return row ? 'Active' : 'Missing';
+            }
+            if (socketName === 'Balance') return row ? liveNumberOf(row.balance) : 0;
+
+            if (!row) return liveMock(node);
+            const fmt = stripQuotes(attr(node, 'Format', '{name}: {balance}'));
+            return this.formatLoyaltyLine(fmt, row.rank, row.name, row.balance, '');
+        }
+
+        /// Substitutes the {rank}/{name}/{balance}/{currency} tokens in a Loyalty.* Format line.
+        /// Balance is thousands-grouped (12400 → "12,400"); a non-numeric balance is emitted
+        /// verbatim. A blank rank leaves {rank} empty. `currency` defaults to '' so a caller
+        /// that has no subscribed currency key substitutes the token away rather than leaking
+        /// the literal "{currency}" onto the canvas.
+        formatLoyaltyLine(fmt, rank, name, balance, currency = '') {
+            const n = Number(balance);
+            const balStr = Number.isFinite(n)
+                ? n.toLocaleString('en-US')
+                : String(balance == null ? '' : balance);
+            return String(fmt)
+                .replace(/\{rank\}/g, (rank == null || rank === '') ? '' : String(rank))
+                .replace(/\{name\}/g, name == null ? '' : String(name))
+                .replace(/\{balance\}/g, balStr)
+                .replace(/\{currency\}/g, currency == null ? '' : String(currency));
+        }
+
+        /// Counter.Value — live named-counter readout, sourced from the channel's
+        /// `counter.<name>.count`. The key IS the counter, so key-liveness and
+        /// counter-existence are ALMOST the same question — with the one exception the State
+        /// entry records below, State needs no special case:
+        ///
+        ///   State — Active or Missing for that one key. Missing means "nothing has ever been
+        ///           published under it": a counter that has never moved, a misspelled name, or
+        ///           a node that names none at all.
+        ///           ⚠ Missing is NOT the same as "the counter was deleted". OverlayLiveStore
+        ///           has no per-key remove and no TTL, so once a key has been published it can
+        ///           never go back to Missing. CountersService retracts a deleted ad-hoc
+        ///           counter by publishing JSON null, which blanks Text and zeroes Value but
+        ///           still reads Active here — see its RetractCount, which records the same
+        ///           limit from the publisher's side. So `Result.If Equals="Missing" → hide`
+        ///           catches the never-published case only; branch on the blank Text to catch
+        ///           a delete as well.
+        ///
+        ///           Stale is NOT reachable here: `counter.*` is
+        ///           event-driven and declares no ExpectedInterval, so Hub's ComputeState never
+        ///           returns it for this family — do not advertise a Stale branch to authors on
+        ///           this node (see evalTimerRemaining's vocabulary note). Were it ever to
+        ///           arrive, it would not blank the readout: Value and Text keep serving the last
+        ///           published count (see liveRenderableValue) and this pin is the only place the
+        ///           age would show up.
+        ///   Value — the count as a number, 0 when unresolved.
+        ///   Text  — the Format line; the mock at design time, NOTHING in production. The old
+        ///           fallback rendered the template with a literal zero, so an unnamed or
+        ///           misspelled counter showed a confident "0" on stream — and a "deaths: 0"
+        ///           overlay is indistinguishable from a real counter that hasn't moved.
+        evalCounterValue(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+            const key = liveCounterKey(node);
+
+            if (socketName === 'State') return liveStateOf(key);
+
+            const value = liveRenderableValue(key);
+            if (socketName === 'Value') return liveNumberOf(value);
+
+            if (value === undefined) return liveMock(node);
+            const name = stripQuotes(attr(node, 'Name', ''));
+            const fmt  = stripQuotes(attr(node, 'Format', '{count}'));
+            return this.formatCounterLine(fmt, name, value);
+        }
+
+        /// Var.Live — the author-facing binding node: ONE Overlay Live Channel key, read by its
+        /// literal name, whoever published it. `timer.main.progress` and a hand-published
+        /// `boss_hp` bind identically; that symmetry ("no special treatment") is the point of
+        /// the channel.
+        ///
+        /// Value typing lives HERE rather than at the publisher because this is where the author
+        /// expressed intent by choosing a pin: overlay.publish stores every author value as a
+        /// JSON string and deliberately refuses to sniff whether the text looks numeric, so
+        /// "007" survives as "007". Tool keys keep their real JSON types, which makes Number
+        /// exact for them and best-effort for author strings.
+        ///
+        ///   Text   — the value as text (JSON string → its content; number/bool → its literal;
+        ///            array/object → compact JSON), or the design-time mock when there is nothing
+        ///            paintable.
+        ///   Number — invariant parse; 0 on failure, never NaN.
+        ///   State  — Active / Stale / Missing. Liveness, as it always was on this node — unlike
+        ///            the timer trio, where State is the RUN state and a separate Live pin carries
+        ///            the liveness. See evalTimerRemaining for why that asymmetry exists.
+        ///            This is the ONE reader where all three words are reachable, and only
+        ///            because the bound key decides: Stale requires a key whose publisher declared
+        ///            an ExpectedInterval, and `timer.*` is the only family that does. Bind a
+        ///            `counter.*` / `loyalty.*` / `caption.*` key, or one your own script published
+        ///            with overlay.publish, and this pin can only ever answer Active or Missing.
+        ///
+        /// PreviewText is read for the Text pin, and ONLY on a design-time surface (liveMock
+        /// enforces that, not this reader). The template ships the attribute and all four lang
+        /// bubbles advertise it as an author-editable placeholder, so a node that ignored it was
+        /// inert on exactly the two surfaces the author looks at while building — the ?widget=
+        /// preview and the capture thumbnail — while promising otherwise in the UI. In production
+        /// an unbound or never-published key still renders NOTHING; that gate is the reason the
+        /// mock is allowed to exist at all.
+        ///
+        /// Number and State stay honest on EVERY surface (0 / the real verdict). A mocked number
+        /// would silently poison a Math chain the author is trying to debug, and a mocked verdict
+        /// would hide the very condition the verdict exists to report.
+        evalVarLive(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+            const key = liveVarKey(node);
+
+            if (socketName === 'State')  return liveStateOf(key);
+            const value = liveRenderableValue(key);
+            if (socketName === 'Number') return liveNumberOf(value);
+            // Text — symmetric with the five other channel readers: nothing paintable means the
+            // mock at design time and '' in production. liveMock owns the surface gate, so the
+            // only decision here is "is there a value", and 'Stale' is NOT that decision (a stale
+            // key still has its last value and paints it).
+            if (value === undefined) return liveMock(node);
+            return liveTextOf(value);
+        }
+
+        /// Goal.Progress — the goal.<kind>.* family reader (V10). One root, four published
+        /// fields, six pins: Text / State / Progress / Current / Target / Label.
+        ///
+        /// Why a node rather than four Var.Live bindings: Var.Live can already bind any one of
+        /// the four keys, so this buys nothing an author could not wire by hand — what it
+        /// removes is the four chances to mistype a dotted key. The subscription is derived from
+        /// attribute TEXT at graph-scan time, so a typo'd key is a permanently blank pin with a
+        /// valid graph, a running publisher and no error anywhere. One Kind box, one prefix
+        /// subscription, four pins that cannot drift.
+        ///
+        ///   State    — Active / Stale / Missing for the whole root (liveGoalState), so a
+        ///              partial publisher still reads Active.
+        ///   Progress — 0..1, clamped. A published progress wins; current/target is the
+        ///              documented fallback so a script that publishes only those two still
+        ///              gets a working bar.
+        ///   Current  — the exact published number, 0 when unpublished.
+        ///   Target   — likewise.
+        ///   Label    — the publisher's display label, '' when unpublished. It must NOT fall
+        ///              back to PreviewText: that attribute holds a whole formatted LINE, so a
+        ///              pin carrying one label would hand its consumer the entire mock.
+        ///   Text     — Format rendered; the design-time mock when nothing at all is published.
+        ///
+        /// Only Text carries a mock, and only through liveMock — so in production an
+        /// unpublished goal renders NOTHING. That gate is the whole point of the rework: the
+        /// pre-channel readers painted their PreviewText in OBS, which is how fake data reached
+        /// live streams on every scene return.
+        evalGoalProgress(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+            const root = liveGoalRoot(node);
+
+            if (socketName === 'State') return liveGoalState(root);
+
+            // A node with no Kind can never resolve, and it must not fall through to the
+            // bare-field keys liveGoalRoot refuses to build. Numeric pins read 0, Label reads
+            // '', and Text is the only pin allowed the design-time mock.
+            if (!root) {
+                if (socketName === 'Progress' || socketName === 'Current' || socketName === 'Target') return 0;
+                if (socketName === 'Label') return '';
+                return liveMock(node);
+            }
+
+            const currentV   = liveRenderableValue(root + 'current');
+            const targetV    = liveRenderableValue(root + 'target');
+            const publishedP = liveRenderableValue(root + 'progress');
+            const labelV     = liveRenderableValue(root + 'label');
+
+            if (socketName === 'Current')  return liveNumberOf(currentV);
+            if (socketName === 'Target')   return liveNumberOf(targetV);
+            if (socketName === 'Progress') return goalProgressOf(publishedP, currentV, targetV);
+            if (socketName === 'Label')    return liveTextOf(labelV);
+
+            // Text. "Nothing paintable" is the whole ROOT being unpublished — one filled field
+            // is a working goal and prints, with the unfilled tokens substituted empty (the same
+            // rule Loyalty's blank {rank} follows). A STALE root does NOT land here: it keeps
+            // its last values and keeps printing them, with the age reported on State.
+            if (currentV === undefined && targetV === undefined
+                && publishedP === undefined && labelV === undefined) {
+                return liveMock(node);
+            }
+            return this.formatGoalLine(
+                stripQuotes(attr(node, 'Format', '{current} / {target}')),
+                currentV, targetV,
+                goalProgressOf(publishedP, currentV, targetV),
+                liveTextOf(labelV),
+                root.slice(GOAL_KEY_PREFIX.length, -1));
+        }
+
+        /// Substitutes the goal tokens in a Goal.Progress Format line:
+        ///   {current} {target}  — thousands-grouped, matching the Counter and Loyalty
+        ///                         formatters. An UNPUBLISHED side substitutes EMPTY rather
+        ///                         than 0: "120 / " is honest about a missing target, while
+        ///                         "120 / 0" invents one.
+        ///   {progress}          — the 0..1 fraction, trimmed to at most three decimals so a
+        ///                         float artefact ("0.6180000000000001") never reaches a canvas.
+        ///   {percent}           — the fraction as a whole number, WITHOUT a sign, so the author
+        ///                         writes "{percent}%" and controls their own spacing.
+        ///   {label} {kind}      — the publisher's label and the resolved kind slug.
+        formatGoalLine(fmt, currentV, targetV, progress, label, kind) {
+            const num = v => {
+                if (v === undefined) return '';
+                const n = Number(v);
+                return Number.isFinite(n) ? n.toLocaleString('en-US') : liveTextOf(v);
+            };
+            const frac = Number.isFinite(progress) ? progress : 0;
+            return String(fmt)
+                .replace(/\{current\}/g,  num(currentV))
+                .replace(/\{target\}/g,   num(targetV))
+                .replace(/\{progress\}/g, String(Number(frac.toFixed(3))))
+                .replace(/\{percent\}/g,  String(Math.round(frac * 100)))
+                .replace(/\{label\}/g,    label == null ? '' : String(label))
+                .replace(/\{kind\}/g,     kind == null ? '' : String(kind));
+        }
+
+        /// List.Live — the channel ARRAY reader (V10). Binds ONE literal key whose value is a
+        /// JSON array and exposes the rows four ways: all of them joined (Text), one of them
+        /// formatted (Row), one FIELD of one of them raw (Value), and that field as a number.
+        ///
+        /// Var.Live handles any single value; on an array its Text pin yields compact JSON,
+        /// which is unpaintable. The only list reader in the catalog was Loyalty.Leaderboard and
+        /// it is hardwired to one key with three loyalty tokens. Eight members of the
+        /// channel-fed widget family are list-shaped (event list, tip ticker, top-donator board,
+        /// viewer queue, emote wall, end credits, sponsor rotator, poll rows), so this is ONE
+        /// node standing in for eight per-tool readers.
+        ///
+        ///   State  — Active / Stale / EMPTY. 'Empty' rather than 'Missing' for a row-less list,
+        ///            matching Loyalty.Leaderboard: widgets branch on that word to draw a
+        ///            "nothing yet" card, and a never-published list and a published-empty one
+        ///            are the same thing to a widget. Stale stays distinct — a stale list keeps
+        ///            painting its last rows, so a widget hiding on Empty must not hide on Stale.
+        ///   Count  — how many rows the array holds.
+        ///   Row    — the addressed row, Format-templated.
+        ///   Value  — row[Field], raw and unformatted. This is the pin that feeds a wirable
+        ///            Image.Load Path for an emote wall or a sponsor logo.
+        ///   Number — row[Field] as a number; 0 on failure, never NaN.
+        ///   Text   — the top Size rows, Format-templated and newline-joined. Text.Render draws
+        ///            those rows AS rows (its multi-line pass landed with this node).
+        ///
+        /// Index is a wirable Scalar with the attribute as its fallback, which is what turns
+        /// this node into a rotator: a Time.Sawtooth scaled by Count and floored drives a tip
+        /// ticker or a sponsor carousel with no further nodes. It is 1-BASED, matching
+        /// Loyalty.Leaderboard's Index — the rows a board prints are 1-based, so any other
+        /// choice would put this node's own two numbers in contradiction. Out of range yields
+        /// '' / 0 and never a wrapped row: showing row 1 where the author asked for row 12 is a
+        /// wrong answer dressed as a right one.
+        ///
+        /// Only Text carries the design-time mock, through liveMock, so an unpublished list
+        /// renders NOTHING in production. The per-row pins stay empty even at design time — see
+        /// the note at the Row arm for why slicing the mock would be dishonest rather than kind.
+        async evalListLive(node, socketId) {
+            const sock = (node.Sockets || []).find(s => s.Id === socketId);
+            const socketName = sock ? sock.Name : '';
+            const key  = liveListKey(node);
+            // widgetId only decorates the malformed-string diagnostic Hub logs — see liveListRows.
+            const rows = liveListRows(key, this.widgetId);
+
+            if (socketName === 'State') {
+                // Only Stale short-circuits: a stale list still HAS rows and still paints them,
+                // so a widget that hides itself on Empty must not hide on Stale. Everything else
+                // folds never-published and published-but-empty into the one 'Empty' answer.
+                if (key && liveStateOf(key) === 'Stale') return 'Stale';
+                return rows.length ? 'Active' : 'Empty';
+            }
+            if (socketName === 'Count') return rows.length;
+
+            const fmt   = stripQuotes(attr(node, 'Format', '{index}. {name}'));
+            const field = stripQuotes(attr(node, 'Field', 'name'));
+
+            if (socketName === 'Row' || socketName === 'Value' || socketName === 'Number') {
+                const idx = await this._listLiveIndex(node);
+                const row = (idx >= 0 && idx < rows.length) ? rows[idx] : null;
+                if (socketName === 'Number') return liveNumberOf(liveListField(row, field));
+                if (socketName === 'Value')  return liveTextOf(liveListField(row, field));
+                // Row. Empty when unresolved, on EVERY surface including design time — and not
+                // because a mock would be hard to produce. PreviewText holds already-FORMATTED
+                // lines, so slicing line N out of it would hand this pin the output of a
+                // template it never applied, while the Value and Number pins beside it (which
+                // need raw field data the mock does not contain) stayed empty. A Row that mocks
+                // while its own siblings cannot is worse than three honest blanks. Same call
+                // Loyalty.Leaderboard's per-row pins make.
+                if (row === null || row === undefined) return '';
+                return this.formatListRow(fmt, row, idx + 1);
+            }
+
+            // Text — the joined block. No rows means the mock at design time and NOTHING in
+            // production. A STALE list does not land here (it keeps its rows).
+            if (!rows.length) return liveMock(node);
+
+            // Size 0 / non-numeric means "all of them", the same forgiving default
+            // Loyalty.Leaderboard's Size takes.
+            let size = parseInt(stripQuotes(attr(node, 'Size', '10')), 10);
+            if (!Number.isFinite(size) || size <= 0) size = rows.length;
+            const count = Math.min(size, rows.length);
+            const lines = [];
+            for (let i = 0; i < count; i++) lines.push(this.formatListRow(fmt, rows[i], i + 1));
+            return lines.join('\n');
+        }
+
+        /// The 0-BASED row a List.Live's Row / Value / Number pins address, from its 1-based
+        /// Index. Wired Scalar wins over the attribute (_evalAnimScalarSocket), which is what
+        /// lets a Time.Sawtooth rotate the addressed row.
+        ///
+        /// Floored, because a rotator's driver is a continuous ramp rather than an integer. A
+        /// missing, non-numeric or sub-1 Index means the first row — the same forgiving default
+        /// liveLeaderboardIndex takes. Out-of-range is NOT clamped here; the caller renders
+        /// '' / 0 (see evalListLive).
+        async _listLiveIndex(node) {
+            const raw = await this._evalAnimScalarSocket(node, 'Index', 1);
+            const n = Math.floor(Number(raw));
+            return (Number.isFinite(n) && n >= 1) ? n - 1 : 0;
+        }
+
+        /// Renders ONE list row through a Format template.
+        ///
+        /// FORMAT TOKENS ARE FIELD NAMES, which is the design decision that lets one node serve
+        /// eight list-shaped widgets: {index} is the 1-based row position, {value} is the row
+        /// itself when the array holds bare strings or numbers, and every other {token} is
+        /// looked up as a FIELD of the row object, case-insensitively. So a publisher chooses
+        /// its own row shape — { name, amount } or { label, votes } or { user, months } — and no
+        /// row schema is baked into the palette.
+        ///
+        /// ★ ONLY AN ACTUAL JSON NUMBER IS THOUSANDS-GROUPED. A published STRING is emitted
+        /// verbatim, whatever it looks like — and that split is a correctness requirement, not a
+        /// style choice, because this formatter's tokens are arbitrary publisher FIELD NAMES
+        /// rather than a fixed vocabulary. Grouping anything that merely looked numeric corrupted
+        /// real data with no opt-out: a tip ticker publishing { name: "12345678", amount: "5.00" }
+        /// rendered "12,345,678 tipped 5" — a comma injected into an all-digit Twitch login (which
+        /// is legal) and the cents silently dropped. "2026" became "2,026" and "007" became "7".
+        ///
+        /// This does NOT match the sibling formatters, and an earlier version of this comment
+        /// claimed it did. formatLoyaltyLine coerces ONE nominated token ({balance}) and emits
+        /// {name} / {rank} verbatim; formatCounterLine coerces only {count}. Both know which token
+        /// is a number because their row shape is fixed. Here nothing is fixed, so the VALUE's own
+        /// JSON type is the only honest signal — and overlay.publish preserves it (tool keys keep
+        /// real numbers, script keys are strings by design, see liveNumberOf).
+        ///
+        /// {index} is unaffected: it is this formatter's own row counter, never publisher data.
+        ///
+        /// An unresolvable token renders EMPTY rather than leaking its own braces onto the
+        /// canvas: a literal "{amount}" on a live overlay reads as a broken widget, whereas a
+        /// gap reads as missing data, which is what it is.
+        formatListRow(fmt, row, index) {
+            return String(fmt).replace(/\{([A-Za-z0-9_]+)\}/g, (_, token) => {
+                if (token.toLowerCase() === 'index') return String(index);
+                // Every other token goes through the ONE field resolver, including {value}: on
+                // an OBJECT row it looks up a field literally named "value" (so a publisher can
+                // have one), and on a BARE row liveListField returns the row itself whatever the
+                // token was — which is what makes the default "{index}. {name}" template work
+                // unchanged on an array of plain strings.
+                const raw = liveListField(row, token);
+                if (raw === undefined || raw === null) return '';
+                if (typeof raw === 'number') {
+                    return Number.isFinite(raw) ? raw.toLocaleString('en-US') : '';
+                }
+                return liveTextOf(raw);
+            });
+        }
+
+        /// Substitutes the {name}/{count} tokens in a Counter.Value Format line.
+        /// Count is thousands-grouped (12400 → "12,400") to match the Loyalty style;
+        /// a non-numeric count is emitted verbatim.
+        formatCounterLine(fmt, name, count) {
+            const n = Number(count);
+            const countStr = Number.isFinite(n)
+                ? n.toLocaleString('en-US')
+                : String(count == null ? '' : count);
+            return String(fmt)
+                .replace(/\{name\}/g, name == null ? '' : String(name))
+                .replace(/\{count\}/g, countStr);
         }
 
         async evalTextTranslate(node) {
@@ -3821,6 +8709,17 @@
                 if (v) strokeColor = colorToCss(v);
             }
 
+            // Optional background fill behind the text — same wired-link-then-attr
+            // resolution as every styling input above. Default #00000000 is fully
+            // transparent (no background box, so existing Text.Render nodes are
+            // unchanged); any non-zero alpha paints a solid plate over the frame.
+            const bgLink = this.findLinkTo(node.Id, 'Background');
+            let background = attrAnimatedColor(node, 'Background', '"#00000000"');
+            if (bgLink) {
+                const v = await this.evalNodeOutput(bgLink.FromNodeId, bgLink.FromSocketId);
+                if (v) background = colorToCss(v);
+            }
+
             // M64 — make sure the FontFace is loaded BEFORE measuring. Without this, the
             // first render of a custom font measures with the system fallback's metrics
             // and the layout is off; once the real font swaps in the canvas is already
@@ -3875,29 +8774,66 @@
             const c = off.getContext('2d');
             c.scale(SS, SS);   // draw in LOGICAL frame coords; the backing store is SS× denser
             c.clearRect(0, 0, fw, fh);
+            // Background plate first (logical frame coords), so the outline + fill
+            // glyphs sit on top of it. Skipped when fully transparent.
+            if (!_isTransparentCss(background)) {
+                c.fillStyle = background;
+                c.fillRect(0, 0, fw, fh);
+            }
             c.font         = `${fontSize}px ${fontFam}`;
             c.fillStyle    = color;
             c.textBaseline = 'middle';
             c.textAlign    = alignment === 'left' ? 'left' : alignment === 'right' ? 'right' : 'center';
             // Horizontal: honour Alignment within the frame, inset off the edge for
-            // left/right. Vertical: centred — Image.Transform's TranslateY repositions it
-            // from there. Single line; overflow clips at the frame edge (or the author
+            // left/right. Vertical: the row BLOCK is centred — Image.Transform's TranslateY
+            // repositions it from there. Overflow clips at the frame edge (or the author
             // scales it down with an Image.Transform).
             const pad   = Math.max(4, Math.round(fontSize * 0.15));
             const textX = alignment === 'left' ? pad : alignment === 'right' ? (fw - pad) : (fw / 2);
+
+            // ── V10 — MULTI-LINE, and why it is a repair rather than a feature ──────
+            //
+            // This block used to be a single fillText at fh/2. Canvas fillText does not break
+            // lines, so any text containing a newline was already rendered WRONGLY: the rows
+            // collapsed onto one baseline and everything after the first \n was effectively
+            // lost. That was never theoretical — Loyalty.Leaderboard has always emitted its
+            // ranks newline-joined, and every list-shaped member of the channel-fed widget
+            // family (List.Live, an event list, a top-donator board, a viewer queue, end
+            // credits) emits rows the same way. A multi-row readout could be produced by
+            // existing nodes but not displayed by any of them.
+            //
+            // A ONE-row string takes the identical old path at the identical baseline
+            // (rows.length === 1 ⇒ blockTop === fh / 2), so every saved single-line graph
+            // renders byte-for-byte as before; only text that was already broken changes.
+            const lhRaw = parseFloat(attr(node, 'LineHeight', '1.25'));
+            const lineHeight = fontSize * (Number.isFinite(lhRaw) ? Math.max(0.5, Math.min(3, lhRaw)) : 1.25);
+            let rows = String(text).split(/\r?\n/);
+            // Wrap is OFF by default: wrapping silently changes the height of authored text,
+            // and a PRE-BROKEN list wants its own rows honoured rather than re-flowed.
+            if (this._readBool(node, 'Wrap')) {
+                const limit = Math.max(1, fw - 2 * pad);
+                const wrapped = [];
+                for (const row of rows) for (const piece of _wrapTextRow(c, row, limit)) wrapped.push(piece);
+                rows = wrapped;
+            }
+            const blockTop = fh / 2 - ((rows.length - 1) * lineHeight) / 2;
             // [text-stroke 2026-06-10] Draw the outline FIRST so the fill sits on
             // top of the inner half of the centred stroke — the standard crisp-
             // outline technique. lineJoin/miterLimit keep glyph corners rounded
             // instead of spiking. lineWidth is in LOGICAL px (we're inside the
             // c.scale(SS,SS) frame) so it matches the author's "width in px".
+            // Per ROW, so a stroked multi-row list outlines every row.
             if (strokeWidth > 0) {
                 c.lineJoin    = 'round';
                 c.miterLimit  = 2;
                 c.lineWidth   = strokeWidth;
                 c.strokeStyle = strokeColor;
-                c.strokeText(text, textX, fh / 2);
             }
-            c.fillText(text, textX, fh / 2);
+            for (let i = 0; i < rows.length; i++) {
+                const ly = blockTop + i * lineHeight;
+                if (strokeWidth > 0) c.strokeText(rows[i], textX, ly);
+                c.fillText(rows[i], textX, ly);
+            }
 
             // Image-shaped result; width/height are the LOGICAL frame size, so the Display
             // sink and every downstream kernel keep using logical coordinates.
@@ -3973,23 +8909,19 @@
             });
         }
 
+        /// Reports a named event arg that was not supplied, once per (node, arg, kind) per PAGE —
+        /// see _reportedMissingArgs for why the latch cannot live on the Evaluator. Both callers
+        /// (Result.If's gate and {ArgsN} substitution) re-evaluate on every non-trigger render, so a
+        /// per-render latch reported at frame rate, which sendEvalDiagnostic's contract forbids.
         _reportMissingArg(node, when, kind) {
             const key = `${node.Id}|${when}|${kind}`;
-            if (this.loggedMissingArgs.has(key)) return;
-            this.loggedMissingArgs.add(key);
+            if (_reportedMissingArgs.has(key)) return;
+            _reportedMissingArgs.add(key);
             const code = kind === 'result_if' ? 'args_missing_branch' : 'args_missing_text';
-            try {
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({
-                        type:        'TRIGGER_DIAGNOSTIC',
-                        layerId:     triggerContext.layerId,
-                        triggerName: triggerContext.triggerName,
-                        widgetId:    null,
-                        reason:      code,
-                        detail:      `node=${node.Id} when='${when}'`,
-                    }));
-                }
-            } catch (_) { /* best-effort; eval pass must continue */ }
+            // Same shared frame builder as the media-path and malformed-list reports — it used to
+            // be a third hand-rolled copy of the identical literal, which is how one of them ended
+            // up console-only in the first place.
+            sendEvalDiagnostic(code, `node=${node.Id} when='${when}'`, this.widgetId);
             try { console.warn(`[compositor] ${code}: node=${node.Id} when='${when}'`); }
             catch (_) { /* console disabled */ }
         }
@@ -4144,6 +9076,130 @@
             return String(attr(node, name, fallback));
         }
 
+        /// V7 — resolves a String input whose inline ATTRIBUTE is stored as a JSON-quoted
+        /// literal. This is the resolver the dynamic media sources (Image.Load /
+        /// Video.Load / Audio.Load "Path") and String.Select ("When") use.
+        ///
+        /// It is the exact mirror of NodeEvaluator.ResolveStringOrAttr, and it is a
+        /// SEPARATE function from _evalStringSocket above for two reasons that are both
+        /// bugs if you collapse them:
+        ///
+        ///   1. QUOTING. The Inspector commits String / Enum / MediaPath params as
+        ///      JSON-quoted literals (NodeParamVm.CommitText), and every other reader of
+        ///      Path unwraps them with stripQuotes. _evalStringSocket does NOT strip, so
+        ///      routing Path through it would turn the stored "clip.mp3" into the 10-char
+        ///      string including its quote marks and 404 every unwired graph in existence.
+        ///      Only the ATTRIBUTE is stripped — a wired upstream value arrives already
+        ///      unquoted (String.Constant, String.Select and friends all stripQuotes their
+        ///      own literals), so stripping it again could eat a real leading/trailing
+        ///      quote character out of somebody's filename.
+        ///   2. WIRED-BUT-UNRESOLVED. _evalStringSocket returns its `fallback` ARGUMENT
+        ///      when a link exists but yields null; the C# resolver falls back to the
+        ///      node's own ATTRIBUTE instead. The C# behaviour is the one the sprint
+        ///      contract specifies ("the attribute STAYS as the fallback"), and it is the
+        ///      friendlier one: a dangling wire leaves the author's typed path working.
+        ///      Note this is NOT reached when the upstream resolves to an empty string —
+        ///      '' is not null, so a String.Select that matched nothing correctly yields
+        ///      an empty path and the loader bails instead of silently playing the
+        ///      attribute's clip.
+        ///
+        /// KNOWN divergence left alone on purpose: _evalStringSocket's un-stripped
+        /// attribute read means String.Concat / Upper / Lower / Slice / Replace and the
+        /// WebOverlay.Custom slots DO see quote marks in their inline attributes today,
+        /// where the C# mirror does not. That is a real pre-existing bug across ~12 call
+        /// sites with no test coverage on the browser side; it is reported rather than
+        /// swept into this sprint, because changing it silently alters what authored
+        /// graphs render.
+        ///
+        /// ── PROVENANCE ───────────────────────────────────────────────────────────────
+        /// `provenance`, when supplied, is an out-parameter sink: the resolver stamps
+        /// `provenance.wired = true` iff the returned value came from an UPSTREAM NODE, and
+        /// false when it came from this node's own attribute. It reports where the value came
+        /// FROM, not merely whether a link exists — a dangling wire that resolved to null
+        /// falls back to the attribute and is therefore reported as an ATTRIBUTE value, which
+        /// is what keeps the media-path guard below from punishing an author for a broken wire.
+        ///
+        /// An out-param rather than an object return so the resolver keeps ONE contract and
+        /// ONE return shape for all three of its call sites: only the media loaders care about
+        /// provenance, and String.Select's `When` (which is just a string) should not have to
+        /// unwrap a tuple to get it.
+        async _evalQuotedStringSocket(node, name, fallback = '', provenance = null) {
+            const link = this.findLinkTo(node.Id, name);
+            if (link) {
+                const v = await this.evalNodeOutput(link.FromNodeId, link.FromSocketId);
+                if (v != null) {
+                    if (provenance) provenance.wired = true;
+                    return String(v);
+                }
+                // fall through to the attribute — mirrors ResolveStringOrAttr
+            }
+            if (provenance) provenance.wired = false;
+            return stripQuotes(String(attr(node, name, fallback)));
+        }
+
+        /// THE media-path input resolver — the one chokepoint all three local-file loaders
+        /// (Image.Load / Video.Load / Audio.Load) read their `Path` through, and the place the
+        /// provenance rule is enforced. Mirrored exactly by NodeEvaluator.ResolveMediaPathInput
+        /// so the design-time preview agrees with what OBS will fetch.
+        ///
+        /// ★ THE RULE, and it is deliberately NOT a blanket refusal:
+        ///
+        ///     An ATTRIBUTE value keeps today's behaviour exactly — a leading '/', an
+        ///     http(s): URL and a data: URI all still pass straight through, because the
+        ///     author who typed them into the Path box IS the streamer.
+        ///
+        ///     A WIRED value must be a RELATIVE path. A wired leading '/', http(s): or
+        ///     data: string is rejected: the resolver reports a trigger diagnostic naming
+        ///     the rejected value and returns '', so the loader's own empty-path check
+        ///     bails cleanly (no element created, no fetch, no render).
+        ///
+        /// Why provenance and not a flat rule: V7 made Path wirable and its headline chain
+        /// wires Visual.Arg — i.e. triggerContext.eventData, i.e. a chat argument — into it.
+        /// A viewer typing `!sound https://attacker/x.mp3` into a command that forwards its
+        /// text would otherwise make the streamer's OBS fetch an attacker-named URL: the
+        /// streamer's home IP disclosed to the attacker, arbitrary media on air, and a data:
+        /// URL rendering attacker content inline. The escape hatches are for the author, so
+        /// they are gated on authorship rather than removed. See isNonRelativeMediaPath for
+        /// the single shared definition of "non-relative" (the same predicate resolveMediaPath
+        /// uses for its pass-through, so the two sets cannot drift apart).
+        ///
+        /// A rejected path returns '' rather than falling back to the attribute. Falling back
+        /// would play the author's leftover clip in response to attacker input, which is a
+        /// quieter version of the same problem — and it would mask the diagnostic.
+        async _evalMediaPathSocket(node) {
+            const provenance = { wired: false };
+            const path = await this._evalQuotedStringSocket(node, 'Path', '', provenance);
+            if (!path) return '';
+            // Author-typed: unchanged behaviour, absolute paths and URLs included.
+            if (!provenance.wired) return path;
+            if (!isNonRelativeMediaPath(path)) return path;
+            this._reportRejectedMediaPath(node, path);
+            return '';
+        }
+
+        /// Reports a wired media path that failed the relative-path rule, once per
+        /// (node, value) per page — see _reportedRejectedMediaPaths for why the dedupe has to be
+        /// page-level rather than per-Evaluator (an Evaluator is built per render, so a latch on it
+        /// resets every animator frame).
+        ///
+        /// The value IS named in the detail, on purpose: without it the streamer sees "a path
+        /// was rejected" and has no way to tell a typo in their own graph from somebody
+        /// probing their overlay. The frame itself is built by sendEvalDiagnostic, which
+        /// truncates to 240 characters, so a megabyte-long data: URI cannot flood the Hub log.
+        _reportRejectedMediaPath(node, value) {
+            const key = `${node.Id}|${value}`;
+            if (_reportedRejectedMediaPaths.has(key)) return;
+            _reportedRejectedMediaPaths.add(key);
+            const detail = `node=${node.Id} title=${node.Title} path='${String(value).slice(0, 160)}'`;
+            sendEvalDiagnostic('media_path_not_relative', detail, this.widgetId);
+            try {
+                console.warn('[compositor] media_path_not_relative: a WIRED media path must be '
+                           + 'relative to data/media — absolute paths, http(s): URLs and data: '
+                           + 'URIs are refused because a wired path can carry viewer input. '
+                           + detail);
+            } catch (_) { /* console disabled */ }
+        }
+
         // Numeric Math — unary (V or Degrees) and binary (A,B) scalar kernels.
         async evalMathUnary(node, name, op) {
             return op(await this._evalAnimScalarSocket(node, name, 0));
@@ -4204,9 +9260,21 @@
             return result ? 1.0 : 0.0;
         }
 
-        // Time / animation — timeMs is in milliseconds; convert to seconds. Production
-        // renders keep timeMs=0, so these resolve to their start value (matching the
-        // design-time C# t=0 mirror in NodeEvaluator).
+        // Time / animation — timeMs is in milliseconds; convert to seconds.
+        //
+        // V5 made this real: a production render's triggerContext.timeMs ADVANCES from the
+        // widget's last activation (the global animator loop writes `now - activationStart`
+        // immediately before each frame), so an Oscillator on stream actually oscillates. It used
+        // to stay 0 forever in production, which is why these three read as "resolve to their
+        // start value" in older comments — that was the defect, not the contract.
+        //
+        // The C# mirror in NodeEvaluator has NOT changed here and deliberately does not match:
+        // its Time.Elapsed / Oscillator / Sawtooth arms are hard-coded to t = 0 because that
+        // mirror has no clock of its own to sample. What V11 threads into it (EvalContext.TimeMs,
+        // the editor's playhead) reaches the KEYFRAME sampler — KeyframeInterpolation.SampleScalar
+        // — not these kernels. So keyframed attributes agree between C# and JS at a given cursor;
+        // a graph whose motion comes from a Time.* node animates in OBS and sits at its origin in
+        // a design-time thumbnail. Anyone chasing "mirror drift" should check that boundary first.
         evalTimeElapsed() {
             return (triggerContext.timeMs || 0) / 1000;
         }
@@ -4232,13 +9300,18 @@
         // OBS agree; Mode is an enum attribute (plain attr).
         async evalTimeEasing(node) {
             const t = clamp(await this._evalAnimScalarSocket(node, 'T', 0), 0, 1);
-            const mode = stripQuotes(attr(node, 'Mode', 'EaseInOut'));
+            // Folded the same way applyCurveKf now folds its keyframe token. Mode arrives from
+            // node.Attributes (authored PascalCase) rather than the enum serializer, so this
+            // site was not broken — but the two dispatchers must stay one shape, and folding
+            // makes this one tolerant of a camelCase Mode written by any future producer.
+            const rawMode = stripQuotes(attr(node, 'Mode', 'easeInOut'));
+            const mode = typeof rawMode === 'string' ? rawMode.toLowerCase() : rawMode;
             switch (mode) {
-                case 'Linear':    return t;
-                case 'EaseIn':    return t * t;
-                case 'EaseOut':   return 1 - (1 - t) * (1 - t);
-                case 'EaseInOut': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-                case 'Step':      return 0;
+                case 'linear':    return t;
+                case 'easein':    return t * t;
+                case 'easeout':   return 1 - (1 - t) * (1 - t);
+                case 'easeinout': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+                case 'step':      return 0;
                 default:          return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
             }
         }
@@ -4325,6 +9398,71 @@
             const mock = stripQuotes(attr(node, 'MockValue', ''));
             const ed = triggerContext && triggerContext.eventData;
             return (ed && ed[key] != null) ? String(ed[key]) : mock;
+        }
+
+        // ── V7 — Visual.Arg: one named field of the trigger payload, as a String ──
+        //
+        // Same eventData read as evalMessageRead directly above, with ONE deliberate
+        // difference that is the reason the node exists: the placeholder goes through
+        // liveMock, so it reaches a canvas only on a design-time surface. Message.Read's
+        // MockValue renders IN PRODUCTION, which is the fake-data-on-stream class this
+        // whole rework removed (the shipped leaderboard placeholder painting invented
+        // viewer names onto a live stream after every OBS scene return). Here an
+        // unsupplied field renders NOTHING on air, exactly like Var.Live and every
+        // channel reader.
+        //
+        // liveMock is used rather than an inline attr read on purpose: it is THE single
+        // place in this file allowed to touch PreviewText, so there is exactly one
+        // surface gate to get right and one place to audit. A reader that reached for the
+        // attribute itself would bypass that gate — BugFixSweep3 pins the count at one.
+        //
+        // No missing-arg diagnostic, unlike Result.If and substituteArgs, and that is a
+        // decision rather than an omission. A missing field is the NORMAL state outside a
+        // trigger fire: every onStartup render, every live patch and every animator frame
+        // re-evaluates this node with triggerContext.eventData reset to {}, so "missing" is
+        // not evidence of an authoring mistake here the way it is inside a Result.If gate.
+        // A report would therefore be wrong, not merely noisy.
+        //
+        // (The frame-rate hazard that used to be the second half of this argument is gone:
+        // both existing reporters now latch on the PAGE-scoped _reportedMissingArgs rather
+        // than on the Evaluator instance, so neither fires per render any more. The reason
+        // above is the one that still stands, and it stands on its own.)
+        evalVisualArg(node) {
+            const key = stripQuotes(attr(node, 'Key', 'Args1')).trim();
+            const ed  = triggerContext && triggerContext.eventData;
+            if (key && ed && Object.prototype.hasOwnProperty.call(ed, key) && ed[key] != null)
+                return String(ed[key]);
+            return liveMock(node);
+        }
+
+        // ── V7 — String.Select: N-way string mapping with a mandatory default ──
+        //
+        // Byte-identical to the NodeEvaluator arm of the same name. First Case row whose
+        // text EXACTLY equals the selector wins and the node emits that row's Value;
+        // nothing matched emits Default. Three rules, each load-bearing:
+        //   • Ordinal case-SENSITIVE compare, matching the Result.If gate. Case-insensitive
+        //     was rejected because JS toLowerCase() and .NET OrdinalIgnoreCase do not agree
+        //     on every Unicode input, and the browser and the design-time mirror picking
+        //     different rows is the worst failure this node could have.
+        //   • An EMPTY Case is an unconfigured row and is skipped. Without that, an empty
+        //     selector — the normal state on an onStartup render — would match the first
+        //     blank row and emit its Value, so a freshly dropped node would look as though
+        //     it had chosen row 1.
+        //   • Default is a real row: the Alerts tool labels an unmapped family
+        //     generically, so a value nobody mapped genuinely arrives, and a select with
+        //     no default would render nothing at all for it.
+        // Rows are ATTRIBUTES, not sockets (the Logic.Switch precedent), so a node
+        // hand-authored with fewer rows behaves identically — a missing Case reads ''
+        // and is skipped.
+        async evalStringSelect(node) {
+            const selector = await this._evalQuotedStringSocket(node, 'When', '');
+            for (let row = 1; row <= STRING_SELECT_ROWS; row++) {
+                const caseText = stripQuotes(String(attr(node, `Case${row}`, '')));
+                if (!caseText) continue;
+                if (caseText !== selector) continue;
+                return stripQuotes(String(attr(node, `Value${row}`, '')));
+            }
+            return stripQuotes(String(attr(node, 'Default', '')));
         }
 
         async evalVectorSplit(node, socketId) {
@@ -4711,8 +9849,9 @@
             const octx = off.getContext('2d');
 
             const twoPiF = (2 * Math.PI * freq);
+            const denomIh = Math.max(1, ih);   // loop-invariant; keep as divisor (byte-identical FP)
             for (let y = 0; y < ih; y++) {
-                const dx = amp * Math.sin(twoPiF * y / Math.max(1, ih));
+                const dx = amp * Math.sin(twoPiF * y / denomIh);
                 octx.drawImage(src, 0, y, w, 1, dx, y, w, 1);
             }
             if (mode === 'ripple') {
@@ -4722,8 +9861,9 @@
                 const stage = canvasPool.acquire(w, ih);
                 stage.getContext('2d').drawImage(off, 0, 0, w, ih);
                 octx.clearRect(0, 0, w, ih);
+                const denomW = Math.max(1, w);   // loop-invariant; keep as divisor (byte-identical FP)
                 for (let x = 0; x < w; x++) {
-                    const dy = amp * Math.sin(twoPiF * x / Math.max(1, w));
+                    const dy = amp * Math.sin(twoPiF * x / denomW);
                     octx.drawImage(stage, x, 0, 1, ih, x, dy, 1, ih);
                 }
                 canvasPool.release(stage);
@@ -4870,8 +10010,35 @@
             ctx.globalCompositeOperation = 'source-over';
         }
 
+        /// Reads a bool-valued node attribute. true / 1 / yes — any case, surrounding whitespace
+        /// ignored — are TRUE; everything else, an absent attribute included, is FALSE.
+        ///
+        /// ★ SURROUNDING DOUBLE QUOTES ARE STRIPPED FIRST, and that is DEFENCE IN DEPTH, not a
+        /// shape this file wants to see. The shape a bool is supposed to have is bare
+        /// true / false: NodeParamKind.Bool commits unquoted, and the catalog-wide rule that no
+        /// bool-valued attribute may ship a <Key>__KnownValues companion exists to keep it that
+        /// way (the Enum control kind outranks everything in ResolveParamKind, and its CommitText
+        /// JSON-quotes the value). That rule is enforced template-side by
+        /// WidgetFamilyV10Tests.No_BoolValued_Attribute_In_The_Catalog_Ships_A_KnownValues_Companion.
+        ///
+        /// But the template is not the only thing that can put a quoted "true" in front of this
+        /// reader. The guard scans WidgetNodeRegistry.Templates, while the Inspector resolves the
+        /// control kind off node.Attributes, and LayerGraphMigrator.BackfillFromTemplate is
+        /// ADDITIVE ONLY — it never prunes a key the template has since dropped. So a node
+        /// serialised while a companion existed keeps its quoted value forever, invisibly to the
+        /// template-side guard, and a hand-edited .phxlayer can carry the same shape. Stripping
+        /// here makes both read correctly instead of silently FALSE with the Inspector showing the
+        /// right word — the failure class this whole rework exists to remove.
+        ///
+        /// Stripping cannot change what any current caller means: every _readBool site reads
+        /// Text.Render's Wrap or a Mask.* Inverted / Closed, all of which ship BARE true/false
+        /// defaults, so there are no quotes to remove in the intended shape. (Image.Tile's Wrap is
+        /// a quoted STRING enum and does not come through here.) The trim runs before the strip so
+        /// a padded "true" still presents its quotes as first and last character, and again after
+        /// so whitespace inside the quotes is ignored too.
         _readBool(node, key) {
-            const raw = (attr(node, key, 'false') || 'false').toString().toLowerCase().trim();
+            const raw = stripQuotes((attr(node, key, 'false') || 'false').toString().trim())
+                .toLowerCase().trim();
             return raw === 'true' || raw === '1' || raw === 'yes';
         }
 
@@ -5130,6 +10297,119 @@
             this._maskApplyFeather(ctx, w, h, fe);
             this._maskApplyInvert(ctx, w, h, inv);
             return { image: off, width: w, height: h };
+        }
+
+        // ── V10 — Image.Solid: the colour plate, and the goal BAR's primitive ───
+        //
+        /// Emits a Colour-filled rounded rectangle as an Image. The rectangle is expressed as
+        /// 0..1 fractions and every geometry pin is WIRABLE, which is the whole reason the node
+        /// exists: it is the only fill geometry a live channel value can drive, so
+        /// `Goal.Progress.Progress → Width` IS the bar.
+        ///
+        /// ── GEOMETRY SPACE, a deliberate divergence from the Mask.* family above ──
+        /// Mask fractions are of the LAYER; these are of the WIDGET FRAME. The frame is the
+        /// space Display draws 1:1 and the space Text.Render already rasterises into, so
+        /// Width 0.6 means "60% of MY widget" — the only reading under which a bar and its own
+        /// caption compose. Fractions of the layer would make the same bar change length when
+        /// the author moved the widget.
+        ///
+        /// ── THE RENDER CONTRACT (dep d), and why the extent is not simply the frame ──
+        /// The rule is: compose in CONTENT-EXTENT space centred on the widget centre, and crop
+        /// ONLY at Display. So this kernel does not clip the author's rectangle to the frame.
+        /// The emitted extent is the frame's half-size about the FRAME CENTRE, grown to contain
+        /// an overhanging rect:
+        ///
+        ///     halfX = max(0.5, |x0 - 0.5|, |x1 - 0.5|)   (and likewise for Y)
+        ///     extent = 2 * half * frame
+        ///
+        /// Consequences, both intended:
+        ///   • a rect inside 0..1 (every normal bar) yields EXACTLY the frame, so this is
+        ///     byte-identical to the naive frame-sized implementation for the common case and
+        ///     composes with a frame-sized Text.Render at a 1:1 union extent.
+        ///   • a rect that overhangs (Width 1.4 for a bar that bleeds off the widget, a negative
+        ///     X for an entry slide) grows the canvas symmetrically instead of losing the
+        ///     overhang, and Display performs the single crop. Growing symmetrically is what
+        ///     keeps the widget centre mapped to the canvas centre, which is the anchor every
+        ///     downstream consumer centre-aligns on (see Image.Blend / Image.Combine).
+        /// The extent never SHRINKS below the frame: a narrow bar keeps a frame-sized canvas so
+        /// its position inside the frame is carried by the pixels rather than by an extent a
+        /// downstream union would then have to reason about.
+        ///
+        /// Colour is wired-socket-wins with attrAnimatedColor as the fallback, so a keyframed
+        /// colour animates; the four geometry attributes read through attrAnimated for the same
+        /// reason. That keyframe path is also how an author previews a bar while building, since
+        /// a channel-fed Scalar honestly reads 0 on a canvas with no channel behind it.
+        async evalImageSolid(node) {
+            // Frame in LOGICAL widget pixels. The layer resolution is the fallback for an
+            // Evaluator built without a frame (tooling / legacy construction) — the same
+            // fallback _maskCanvas uses, so a standalone evaluation still produces something
+            // sensible rather than a 1×1.
+            const frame = this.frame;
+            const fw = Math.max(1, Math.round(frame ? frame.width
+                : ((layer && layer.resolution) ? layer.resolution.width : logicalW)));
+            const fh = Math.max(1, Math.round(frame ? frame.height
+                : ((layer && layer.resolution) ? layer.resolution.height : logicalH)));
+
+            const colorLink = this.findLinkTo(node.Id, 'Color');
+            let color = attrAnimatedColor(node, 'Color', '"#ffffff"');
+            if (colorLink) {
+                const v = await this.evalNodeOutput(colorLink.FromNodeId, colorLink.FromSocketId);
+                if (v) color = colorToCss(v);
+            }
+
+            // NaN guard on every geometry pin. _evalAnimScalarSocket forwards a wired number
+            // as-is and NaN is typeof 'number', so a NaN arriving from a Math chain would reach
+            // fillRect and silently paint nothing while the extent math produced NaN dimensions
+            // (canvasPool then allocates a 0×0 canvas). Refuse it at the door.
+            const fin = (n, d) => Number.isFinite(n) ? n : d;
+            const x = fin(await this._evalAnimScalarSocket(node, 'X',      0), 0);
+            const y = fin(await this._evalAnimScalarSocket(node, 'Y',      0), 0);
+            const w = fin(await this._evalAnimScalarSocket(node, 'Width',  1), 1);
+            const h = fin(await this._evalAnimScalarSocket(node, 'Height', 1), 1);
+
+            // Ordered span, so a NEGATIVE width (legal, and what a mirrored/right-anchored bar
+            // driven off one Math.Sub produces) describes the same rectangle drawn leftwards
+            // rather than an inverted extent.
+            const x0 = Math.min(x, x + w), x1 = Math.max(x, x + w);
+            const y0 = Math.min(y, y + h), y1 = Math.max(y, y + h);
+
+            const halfX = Math.max(0.5, Math.abs(x0 - 0.5), Math.abs(x1 - 0.5));
+            const halfY = Math.max(0.5, Math.abs(y0 - 0.5), Math.abs(y1 - 0.5));
+            // Cap the growth so an absurd wired value (a bar driven by an unclamped counter)
+            // cannot ask for a gigapixel canvas. 8× the frame is far past anything Display can
+            // show and keeps the pool's own 16 MP ceiling meaningful.
+            const cw = Math.max(1, Math.round(Math.min(8, 2 * halfX) * fw));
+            const ch = Math.max(1, Math.round(Math.min(8, 2 * halfY) * fh));
+
+            const off  = this.acquireEscape(cw, ch);
+            const octx = off.getContext('2d');
+            // Frame origin inside the (possibly grown) canvas — the two centres coincide.
+            const ox = (cw - fw) / 2;
+            const oy = (ch - fh) / 2;
+            const rx = ox + x0 * fw;
+            const ry = oy + y0 * fh;
+            const rw = (x1 - x0) * fw;
+            const rh = (y1 - y0) * fh;
+            // A zero-extent rect is a legitimate state — it is what progress 0 looks like — so
+            // the canvas is still returned, transparent. Returning null instead would make an
+            // Image.Blend drop the whole branch and an empty bar would take its own frame with it.
+            if (rw > 0 && rh > 0) {
+                // CornerRadius is a fraction of the shorter FRAME axis (Mask.Rectangle's
+                // convention) and is attribute-only: a pill bar sets it once and never drives it
+                // from data. Clamped to half the rect's shorter side so a short bar stays a
+                // capsule instead of throwing on an over-large radius.
+                const r = Math.max(0, (parseFloat(attrAnimated(node, 'CornerRadius', '0')) || 0))
+                        * Math.min(fw, fh);
+                octx.fillStyle = color;
+                octx.beginPath();
+                if (r > 0 && typeof octx.roundRect === 'function') {
+                    octx.roundRect(rx, ry, rw, rh, Math.min(r, rw / 2, rh / 2));
+                } else {
+                    octx.rect(rx, ry, rw, rh);
+                }
+                octx.fill();
+            }
+            return { image: off, width: cw, height: ch };
         }
 
         /// Image.Blend — blends Top (B) over Bottom (A) using a CSS blend mode.
@@ -5474,23 +10754,33 @@
     }
 
     // ── Sweep 21: keyframe sampling ─────────────────────────────────────────
-    // Mirrors KeyframeInterpolation.cs for design-time scrub via the WebView2
-    // bridge. Read by attrAnimated below; OBS path (no SCRUB/PLAY message)
-    // resolves to fallback because triggerContext.timeMs stays 0.
+    // Mirrors KeyframeInterpolation.cs. Read by attrAnimated / attrAnimatedColor below, on BOTH
+    // clocks: the design-time scrub cursor from the WebView2 bridge, and (since V5) the production
+    // activation clock the animator loop writes before each frame. The OBS path no longer
+    // "resolves to fallback because timeMs stays 0" — that was the defect V5 fixed.
 
+    // WIRE-NAME FIX — dispatch on the token LayerSerializer actually emits. The .phxlayer
+    // carries the KeyframeCurve enum in camelCase because LayerSerializer registers
+    // JsonStringEnumConverter<KeyframeCurve>(JsonNamingPolicy.CamelCase); this dispatcher used
+    // to switch on the C# PascalCase spelling, so EVERY non-linear curve fell through to
+    // `default: return t` and played Linear on the OBS overlay — and the custom-handle guard
+    // above the switch was unreachable, so handles dragged in CurveEditorDialog never applied.
+    // Folding the token to lower case before dispatch fixes both and keeps a hand-edited
+    // PascalCase .phxlayer working, since both spellings fold to the same label.
     function applyCurveKf(t, kf) {
         t = Math.max(0, Math.min(1, t));
-        const curve = kf && kf.curve;
-        if (curve === 'Bezier' && kf.p1x != null && kf.p1y != null && kf.p2x != null && kf.p2y != null) {
+        const rawCurve = kf && kf.curve;
+        const curve = typeof rawCurve === 'string' ? rawCurve.toLowerCase() : rawCurve;
+        if (curve === 'bezier' && kf.p1x != null && kf.p1y != null && kf.p2x != null && kf.p2y != null) {
             return cubicBezier(t, kf.p1x, kf.p1y, kf.p2x, kf.p2y);
         }
         switch (curve) {
-            case 'Linear':    return t;
-            case 'EaseIn':    return t * t;
-            case 'EaseOut':   return 1 - (1 - t) * (1 - t);
-            case 'EaseInOut': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-            case 'Bezier':    return cubicBezier(t, 0.25, 0.1, 0.25, 1.0);
-            case 'Step':      return 0;
+            case 'linear':    return t;
+            case 'easein':    return t * t;
+            case 'easeout':   return 1 - (1 - t) * (1 - t);
+            case 'easeinout': return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+            case 'bezier':    return cubicBezier(t, 0.25, 0.1, 0.25, 1.0);
+            case 'step':      return 0;
             default:          return t;
         }
     }
@@ -5539,9 +10829,18 @@
     /// Read a node attribute, overriding from the active timeline's keyframes
     /// when one matches `<node.Id>.<socketName>`. Used by kernels whose inline
     /// attributes are common animation targets (Image.Transform, Image.Scale,
-    /// Scalar.Constant, Vector*.Constant). Production paths (no SCRUB) sample
-    /// at timeMs=0 which yields the first keyframe's value, equivalent to the
-    /// static attribute for un-keyframed parameters.
+    /// Scalar.Constant, Vector*.Constant).
+    ///
+    /// Production paths sample at an ADVANCING cursor since V5: triggerContext.timeMs is
+    /// `now - activationStart` for the widget being rendered, so an authored track plays in OBS
+    /// from the moment the widget was last activated. (It used to be pinned at 0 on every
+    /// production path, so every keyframe resolved to its first value and the animation the author
+    /// scrubbed in the editor never moved on stream. That was the V5 defect.) An un-keyframed
+    /// parameter still returns the static attribute, unchanged.
+    ///
+    /// The C# mirror (NodeEvaluator, KeyframeInterpolation.SampleScalar) samples the same tracks at
+    /// whatever cursor its caller threads in — V11 passes the editor's playhead so node-body
+    /// thumbnails follow it. Same curve, same clamping; only the clock differs.
     function attrAnimated(node, key, fallback) {
         if (activeTimeline && activeTimeline.keyframes && activeTimeline.keyframes.length) {
             const path = `${node.Id}.${key}`;
@@ -5599,6 +10898,35 @@
         return s;
     }
 
+    /// V10 — greedy word wrap for ONE row of Text.Render, measured against the caller's own
+    /// context (so the font already set there is the font measured with). Returns at least one
+    /// row, always, so a caller can concatenate the result without an emptiness check.
+    ///
+    /// A single WORD wider than the limit is emitted intact rather than broken mid-glyph-run.
+    /// Character-level breaking is the wrong default for an overlay: the strings that overflow
+    /// are viewer names, emote codes and URLs, and a name split across two lines is less
+    /// readable than one that runs to the frame edge — where the author can see it and scale it
+    /// down with an Image.Transform. This is also why Wrap ships OFF.
+    function _wrapTextRow(ctx, row, maxWidth) {
+        const text = String(row === null || row === undefined ? '' : row);
+        if (!text) return [''];
+        if (ctx.measureText(text).width <= maxWidth) return [text];
+        const words = text.split(' ');
+        const out = [];
+        let line = '';
+        for (const word of words) {
+            const candidate = line ? line + ' ' + word : word;
+            if (line && ctx.measureText(candidate).width > maxWidth) {
+                out.push(line);
+                line = word;
+            } else {
+                line = candidate;
+            }
+        }
+        out.push(line);
+        return out;
+    }
+
     // F3 — Color.Constant payload parsing. Hex string (#rgb / #rrggbb / #rrggbbaa) →
     // { r, g, b, a } with components in 0..1. Anything malformed → opaque white.
     function parseHexColor(hex) {
@@ -5627,6 +10955,26 @@
         const b = Math.round(((c.b ?? 1)) * 255);
         const a = c.a ?? 1;
         return `rgba(${r}, ${g}, ${b}, ${a})`;
+    }
+
+    // True when a CSS colour string is fully transparent (alpha 0). Used by
+    // Text.Render's Background so the default #00000000 paints nothing. Handles
+    // #rrggbbaa / #rgba hex and rgba()/rgb(); opaque #rgb / #rrggbb / named ⇒ false.
+    function _isTransparentCss(css) {
+        if (!css) return true;
+        const s = String(css).trim().toLowerCase();
+        if (s === 'transparent') return true;
+        if (s[0] === '#') {
+            if (s.length === 9) return s.slice(7) === '00';   // #rrggbbaa
+            if (s.length === 5) return s[4] === '0';           // #rgba
+            return false;                                       // #rgb / #rrggbb opaque
+        }
+        const m = s.match(/^rgba?\(([^)]+)\)$/);
+        if (m) {
+            const parts = m[1].split(',').map(x => x.trim());
+            if (parts.length === 4) return parseFloat(parts[3]) === 0;
+        }
+        return false;
     }
 
     // Parse a colour string into 0–255 {r,g,b,a} channels — handles hex (#rgb /
@@ -5758,14 +11106,22 @@
         // the rendered frame tracks the scrub/play time instead of the free-
         // running wall clock that previously fought it.
         //
-        // DEVIATION from the literal task snippet (`typeof timeMs === 'number'`
-        // is ALWAYS true): in OBS / layer mode triggerContext.timeMs stays at its
-        // 0 default forever (no SCRUB/PLAY is ever sent and the per-widget rAF
-        // animator does not bump it), so an unconditional timeMs would freeze
-        // every production GIF on frame 0 — a silent regression of the shipped
-        // 0.12.27 WebCodecs GIF animation. Gating on widgetFilterId (the `?widget=`
-        // param only the embedded preview sets) keeps OBS on performance.now()
-        // and fixes the design-time scrub case the defect is actually about.
+        // DEVIATION from the literal task snippet (`typeof timeMs === 'number'` is
+        // ALWAYS true), restated after V5 made the production clock real: this gate
+        // originally existed because production timeMs stayed 0 forever, so reading
+        // it unconditionally froze every OBS GIF on frame 0. That is no longer why
+        // it stays — the production clock now advances timeMs from the widget's last
+        // ACTIVATION, which would re-phase every GIF on every trigger fire and idle
+        // revert. A GIF's playhead is a property of the source, not of the trigger
+        // that happens to be showing it, so production deliberately keeps sampling
+        // performance.now() — the shipped 0.12.27 behaviour.
+        //
+        // The gate is `?widget=` and NOT "a design-time surface", and not the sibling
+        // _productionClockOwnsWidgetTime() either. `?widget=` is where the transport was built to
+        // drive one widget's GIF frame-by-frame; the whole-layer preview (?client=editor) also
+        // sends SCRUB / PLAY, but there the source of truth for a GIF is still its own playhead —
+        // pinning it to the scrub cursor would freeze every OTHER widget's GIF on the layer at
+        // whatever cursor the widget under the playhead happens to sit at.
         const designTime = widgetFilterId != null;
         const now = (designTime && triggerContext && typeof triggerContext.timeMs === 'number')
             ? triggerContext.timeMs

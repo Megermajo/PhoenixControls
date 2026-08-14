@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Phoenix.Controls.Hub.WinUI.Services;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 using Windows.System;
 using Windows.UI;
@@ -273,11 +274,11 @@ public sealed partial class StatusDot : UserControl
     {
         string stateLabel = State switch
         {
-            ConnectionState.Connected    => "connected",
-            ConnectionState.Connecting   => "connecting…",
-            ConnectionState.Degraded     => "degraded",
-            ConnectionState.Errored      => "error",
-            _                            => "disconnected",
+            ConnectionState.Connected    => Localizer.T("panel.statusstrip.dot.state.connected",    "connected"),
+            ConnectionState.Connecting   => Localizer.T("panel.statusstrip.dot.state.connecting",   "connecting…"),
+            ConnectionState.Degraded     => Localizer.T("panel.statusstrip.dot.state.degraded",     "degraded"),
+            ConnectionState.Errored      => Localizer.T("panel.statusstrip.dot.state.errored",      "error"),
+            _                            => Localizer.T("panel.statusstrip.dot.state.disconnected", "disconnected"),
         };
         string subText = string.IsNullOrEmpty(Sub) ? "" : $"\n{Sub}";
         TooltipText = $"{Label} — {stateLabel}{subText}";

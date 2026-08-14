@@ -186,6 +186,11 @@ public sealed partial class ArchitectWindowChrome : UserControl
     /// </summary>
     private void ApplyHighContrastFallback()
     {
+        // Drop LeftRail's static theme-hex cache so rail swatches re-resolve
+        // against the post-toggle resource dictionary (every HC/theme retune
+        // funnels through here — ctor settle-baseline + watcher callback).
+        LeftRail.InvalidateThemeColorCache();
+
         if (_window is null) return;
         bool hc = _hcWatcher?.IsHighContrast == true;
         try

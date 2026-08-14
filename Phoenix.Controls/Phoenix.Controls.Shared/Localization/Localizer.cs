@@ -142,9 +142,48 @@ namespace Phoenix.Controls.Shared.Localization
             if (cur != null && cur.TryGet(key, out var v)) return v;
             if (fb != null && fb.TryGet(key, out var fv))
             {
+                ReportStaleTranslation(key);
                 return fv;
             }
             return fallback ?? $"[{key}]";
+        }
+
+        /// <summary>
+        /// Logs, once per key per session, that the active bundle had no entry
+        /// and the English fallback was used.
+        ///
+        /// <para>The class summary has promised this since the bundles shipped
+        /// and it never actually happened: <c>_missingKeysLogged</c> was
+        /// declared and cleared on <see cref="Init"/> but nothing ever added to
+        /// it, so a de/fr/es gap produced English text with no exception, no log
+        /// line, and no failing test — invisible from every direction at once.
+        /// The build-time guards (<c>LocalizationBundleParityTests</c>,
+        /// <c>LocalizationKeyCoverageTests</c>) are still the real net; this is
+        /// the runtime signal for the case they cannot see, a translator's
+        /// hand-edited bundle on a user's disk.</para>
+        ///
+        /// <para>Deliberately outside <c>_lock</c> for the log call itself — a
+        /// <see cref="GlobalLogger"/> handler is free to call back into
+        /// <see cref="T"/> (chrome re-rendering a status line does exactly
+        /// that), and holding the bundle lock across that re-entry would
+        /// deadlock.</para>
+        /// </summary>
+        private static void ReportStaleTranslation(string key)
+        {
+            string language;
+            lock (_lock)
+            {
+                if (string.Equals(_currentLanguage, FallbackLanguage, StringComparison.OrdinalIgnoreCase)) return;
+                if (!_missingKeysLogged.Add(key)) return;
+                language = _currentLanguage;
+            }
+
+            // Line shape is the one lang/README.md has documented since the
+            // bundles shipped — it is what the README tells people to filter the
+            // System Log for, so it is a contract, not a free-form message.
+            GlobalLogger.Log(
+                $"Localizer: missing key '{key}' in '{language}' — using '{FallbackLanguage}' fallback",
+                "Localizer", LogLevel.Debug);
         }
 
         private static LanguageBundle? LoadBundle(string langDir, string language)

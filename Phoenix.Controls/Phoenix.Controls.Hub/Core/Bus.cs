@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -53,6 +53,34 @@ namespace Phoenix.Controls.Hub.Core
         // Tracks pending WaitForVisual / WaitForEvent completions: key = waitId, value = TaskCompletionSource
         private readonly ConcurrentDictionary<string, TaskCompletionSource<BusMessage>> _pendingWaits = new();
 
+        // ─── V13 §8.1 — the resolved-visual-wait ledger ─────────────────────
+        //
+        // Records waitIds that a VISUAL_COMPLETE has already resolved, purely so a
+        // LATER ack for the same waitId can be reported EXACTLY ONCE per waitId
+        // instead of once per ack. Value is a 0/1 "already logged" latch.
+        //
+        // WHY THE LATCH CANNOT LIVE IN WidgetTriggerQueue.NotifyComplete, which is
+        // otherwise the natural home (it is already the idempotent first-ack-wins
+        // gate for the invocation): that method reads `_inFlight`, and the pump's
+        // `finally` clears `_inFlight` asynchronously as soon as the FIRST ack
+        // resolves the invocation's TCS. A second socket's ack arriving a few
+        // microseconds later therefore hits the `current is null` early-return and
+        // is indistinguishable from an ack for a trigger that was never queued — so
+        // a fan-out of 8 would log somewhere between 0 and 1 lines depending on
+        // thread-pool scheduling. `ResolveVisualWait`'s atomic
+        // `_pendingWaits.TryRemove` is the one first-wins decision that is keyed by
+        // waitId AND survives the invocation, which is why the report is anchored
+        // here. No second completion mechanism is introduced: both gates already
+        // existed and both remain idempotent; only the reporting is added.
+        //
+        // BOUNDED: capacity-capped FIFO. Entries are 32-char waitIds and are only
+        // ever added by a REAL resolution, so steady-state occupancy is "the last N
+        // visual waits this Hub completed". Trimming the oldest is correct because a
+        // late ack that arrives more than N completions after its own resolution is
+        // long past being an interesting collision.
+        private const int MaxResolvedVisualWaitLedger = 128;
+        private readonly ConcurrentDictionary<string, int> _resolvedVisualWaits = new(StringComparer.Ordinal);
+        private readonly ConcurrentQueue<string> _resolvedVisualWaitOrder = new();
         // LOGIC_RELOAD refresh scheduling (see the LOGIC_RELOAD case in
         // RouteIncomingMessage): LEADING-edge immediate refresh on a thread-pool
         // thread for the common single-save case (the bus path is the FAST
@@ -144,6 +172,30 @@ namespace Phoenix.Controls.Hub.Core
             Volatile.Write(ref _onMessageReceivedCache, typed);
         }
 
+        // Shared OnMessageReceived fan — ONE loop shape for all three
+        // delivery sites (WS receive loop, in-proc bridge PublishAsync, and the
+        // Hub-origin local delivery inside BroadcastAsync) so the isolation
+        // semantics cannot drift apart between paths. Iterates the cached
+        // invocation array via Volatile.Read (no per-message GetInvocationList()
+        // Delegate[] allocation; the cache is rebuilt on subscribe/unsubscribe
+        // under _msgHandlerGate) with per-handler try/catch so one throwing
+        // subscriber can't kill the calling loop or starve later handlers.
+        // errorContext prefixes the log label so the three call sites keep
+        // their historically distinct breadcrumbs ("" / "InProc " / "Hub-local ").
+        private void FanOnMessageReceived(BusMessage msg, string errorContext)
+        {
+            var handlers = Volatile.Read(ref _onMessageReceivedCache);
+            for (int i = 0; i < handlers.Length; i++)
+            {
+                try { handlers[i](msg); }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("Bus",
+                        $"{errorContext}OnMessageReceived subscriber threw on {msg.Type} from {msg.Source}", ex);
+                }
+            }
+        }
+
         public event Action<string, bool>? OnClientConnectionChanged // clientId, connected
         {
             add    { lock (_connHandlerGate) { _onClientConnectionChanged += value; RebuildOnClientConnectionChangedCache(); } }
@@ -200,9 +252,29 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // Connection status for dashboard display
-        public bool IsVisualistConnected => _clients.ContainsKey("Visualist");
-        public bool IsArchitectConnected  => _clients.ContainsKey("Architect");
+        // Connection status for dashboard display.
+        //
+        // ★ Counts IN-PROCESS subscribers as well as WebSocket clients. This used
+        // to be `_clients.ContainsKey("Architect")` alone, which was correct only
+        // while Architect was a separate process. Since T15 it is a library hosted
+        // in Hub's own process and connects over the InProcBus bridge, so it never
+        // appears in `_clients` — the predicate was permanently FALSE in every
+        // shipping build, and both Hub→Architect node-level emitters
+        // (DEBUG_NODE_EXEC and DEBUG_VAR_SET in ScriptManager) were gated off. The
+        // live-debug node flash has been dead the whole time, including the
+        // GUID-first/title-fallback lookup repair that landed on that dead wire.
+        //
+        // Two definitions of "connected" disagreed and one of them was on screen:
+        // ArchitectBusClient.IsConnected goes true on the in-proc bridge and paints
+        // the chrome dot GREEN, so the UI asserted a link that emitted nothing.
+        //
+        // A remote WebSocket Architect (a future out-of-process peer, or a dev
+        // attaching one) still satisfies the first half, so this is strictly wider
+        // than what it replaces.
+        public bool IsArchitectConnected
+            => _clients.ContainsKey("Architect")
+               || Volatile.Read(ref _inProcSubscribersCache).Length > 0;
+
         public int  ConnectedClientCount  => _clients.Count;
 
         // Status-strip readiness probe. True when the HttpListener owns its
@@ -217,7 +289,8 @@ namespace Phoenix.Controls.Hub.Core
         // In-process subscriber list — Architect (and any future
         // peer that lives in Hub's process) subscribes here via the
         // InProcBus bridge, skipping the localhost-WebSocket hop. Fanned at
-        // the end of BroadcastAsync alongside the remote-client send loop.
+        // the end of BroadcastToPeersAsync (the transport tail of every
+        // broadcast) alongside the remote-client send loop.
         private Action<BusMessage>[] _inProcSubscribersCache = Array.Empty<Action<BusMessage>>();
         private Action<BusMessage>? _inProcSubscribers;
         private readonly object _inProcSubscriberGate = new();
@@ -240,8 +313,8 @@ namespace Phoenix.Controls.Hub.Core
             _port = port;
             // Self-register so in-process peers can publish + subscribe
             // without the localhost-WebSocket round trip. Registration happens at
-            // Bus.Instance first access; ArchitectBusClient probes InProcBus.IsRegistered
-            // at Start() to decide between in-proc and WebSocket transport.
+            // Bus.Instance first access; ArchitectBusClient reads InProcBus.Instance
+            // at Start() (null → WebSocket fallback).
             try { InProcBus.Register(new BusInProcBridgeImpl(this)); }
             catch (Exception ex) { GlobalLogger.Error("Bus", "InProcBus.Register", ex); }
 
@@ -289,17 +362,10 @@ namespace Phoenix.Controls.Hub.Core
                 // arriving via HandleClientAsync.
                 msg.SentAt = DateTime.UtcNow;
 
-                // 1) Hub-side OnMessageReceived fanout (ScriptManager, etc.).
-                var handlers = Volatile.Read(ref _bus._onMessageReceivedCache);
-                for (int i = 0; i < handlers.Length; i++)
-                {
-                    try { handlers[i](msg); }
-                    catch (Exception ex)
-                    {
-                        GlobalLogger.Error("Bus",
-                            $"InProc OnMessageReceived subscriber threw on {msg.Type} from {msg.Source}", ex);
-                    }
-                }
+                // 1) Hub-side OnMessageReceived fanout (ScriptManager, etc.)
+                //    via the shared fan helper — same per-handler isolation as
+                //    the WS-arrival and Hub-origin-broadcast sites.
+                _bus.FanOnMessageReceived(msg, "InProc ");
 
                 // 2) Internal routing (visual-wait resolution, VISUAL_TRIGGER
                 //    → LayerRuntime, etc.). Mirrors the WS-arrival path at
@@ -659,24 +725,11 @@ namespace Phoenix.Controls.Hub.Core
                             // (the model file is off-limits for this sweep) and stamp both
                             // here.
                             msg.SentAt = DateTime.UtcNow;
-                            // Iterate handlers individually so one throwing subscriber
-                            // can't kill the receive loop or starve later handlers.
-                            //
-                            // Read the cached invocation array via
-                            // Volatile.Read instead of GetInvocationList()'s per-message
-                            // Delegate[] allocation. Subscribe/unsubscribe rebuild the
-                            // cache under _msgHandlerGate via the custom event accessors.
-                            var handlers = Volatile.Read(ref _onMessageReceivedCache);
-                            for (int i = 0; i < handlers.Length; i++)
-                            {
-                                try { handlers[i](msg); }
-                                catch (Exception subEx)
-                                {
-                                    GlobalLogger.Error("Bus",
-                                        $"OnMessageReceived subscriber threw on {msg.Type} from {clientId}",
-                                        subEx);
-                                }
-                            }
+                            // Fan handlers via the shared helper — per-handler
+                            // try/catch so one throwing subscriber can't kill the
+                            // receive loop or starve later handlers (msg.Source is
+                            // clientId here; it was overwritten above).
+                            FanOnMessageReceived(msg, "");
                             RouteIncomingMessage(msg);
                         }
                     }
@@ -831,8 +884,10 @@ namespace Phoenix.Controls.Hub.Core
             Volatile.Write(ref _onSceneChangedCache, typed);
         }
 
-        // Gate for the per-message on_bus fan-out at the bottom of
-        // RouteIncomingMessage. Building the busVars dictionary + closure and
+        // Gate for the per-message on_bus fan-out in DispatchOnBusScripts
+        // (reached from RouteIncomingMessage's tail for peer frames and from
+        // BroadcastAsync's Hub-local delivery for Hub-origin broadcast
+        // frames). Building the busVars dictionary + closure and
         // entering ExecuteOnBusScriptsAsync (init-gate await + registry scan)
         // costs allocations on EVERY bus message even when no script declares an
         // on_bus header. Cache "any enabled script carries an on_bus block" and
@@ -880,32 +935,15 @@ namespace Phoenix.Controls.Hub.Core
 
         private void RouteIncomingMessage(BusMessage msg)
         {
-            // Wait keys are stored as `${type}:${filter}:${waitId}` so multiple
-            // callers can await the same (type, filter) pair without colliding.
-            // Drain every waiter whose prefix matches the message — both
-            // specific-payload waits and wildcard-payload waits.
-            //
-            // O(1) prefix lookup via _waitPrefixIndex instead of
-            // a per-message ToArray() snapshot + linear StartsWith scan over every
-            // pending wait. The two prefix buckets we need to drain are looked up
-            // directly; matched entries are removed atomically from both _pendingWaits
-            // and the prefix bucket. Visual waits (bare-guid keys) are unaffected —
-            // they're never inserted into the prefix index.
-            //
-            // Skip the whole drain when nothing is pending — the specific
-            // prefix interpolates the FULL payload into a string, a payload-sized
-            // allocation per inbound message that matches nothing for the vast
-            // majority of traffic (waiters exist only while a script awaits a bus
-            // response). _pendingWaits also holds visual waits (bare-guid keys),
-            // so an active visual wait occasionally lets a non-matching drain
-            // through; that only costs what every message paid before the guard.
-            if (!_pendingWaits.IsEmpty)
-            {
-                string specificPrefix = $"{msg.Type}:{msg.Payload ?? ""}:";
-                string wildcardPrefix = $"{msg.Type}:*:";
-                DrainPrefixBucket(specificPrefix, msg);
-                DrainPrefixBucket(wildcardPrefix, msg);
-            }
+            // Structure: the switch below holds the INFRASTRUCTURE arms —
+            // reactions to PEER frames (WS receive loop + in-proc bridge are the
+            // only two callers). The Hub-consumer legs (pending-wait resolution +
+            // on_bus dispatch) live in DeliverToHubConsumers, called as this
+            // method's tail AND from BroadcastAsync for Hub-origin broadcast
+            // frames — Hub-origin frames deliberately get the consumer legs
+            // WITHOUT this switch (see the DeliverToHubConsumers doc for why
+            // running these arms on Hub's own broadcasts would double-dispatch
+            // visual triggers and re-enter the MACRO_* arms).
 
             // Named event routing
             switch (msg.Type)
@@ -946,6 +984,15 @@ namespace Phoenix.Controls.Hub.Core
                                     "Bus", LogLevel.Communication);
                             }
                         }
+                        // V13 §8.1 — DELIBERATELY no payload on this route. The
+                        // completion payload is a browser capability that arrives on
+                        // /hud/<layerId>, where HUDServer classifies the socket and
+                        // strips the payload from an Untrusted one. A bus peer has no
+                        // equivalent classification, so honouring a `payload` property
+                        // here would hand every connected bus client an unfiltered write
+                        // into `global._wait_payload` — the exact surface §8.3 exists to
+                        // narrow. The relay still RESOLVES the wait (dropping that would
+                        // hang the script); it just cannot supply data.
                         if (!string.IsNullOrEmpty(waitId))
                             ResolveVisualWait(waitId);
                     }
@@ -1010,8 +1057,14 @@ namespace Phoenix.Controls.Hub.Core
                         // payload before it feeds BusMessage.Payload — matches the
                         // `?? "[]"` / `?? "{}"` idioms used by the neighbouring cases.
                         string ackPayload = msg.Payload ?? "{}";
+                        // Transport-only send (BroadcastToPeersAsync, not
+                        // BroadcastAsync): the ACK is an infrastructure echo for the
+                        // editor that requested the reload, never a Hub-consumer
+                        // event. Targeted at "Architect" so BroadcastAsync's local
+                        // Target gate would skip it anyway; converted for uniformity
+                        // with the MACRO_* arms below.
                         _ = AsyncErrorBoundary.SafeRunAsync(
-                            () => BroadcastAsync(new BusMessage
+                            () => BroadcastToPeersAsync(new BusMessage
                             {
                                 Type   = "LOGIC_RELOAD_ACK",
                                 Source = "Hub",
@@ -1043,7 +1096,15 @@ namespace Phoenix.Controls.Hub.Core
                     {
                         string merged = await Task.Run(() => MergeMacroLibrary(syncPayload, removedId: null)).ConfigureAwait(false);
                         GlobalLogger.Log($"MACRO_SYNC from {srcLabel} — library updated.", "Bus", LogLevel.System);
-                        await BroadcastAsync(new BusMessage { Type = "MACRO_SYNC", Source = "Hub", Target = "*", Payload = merged }).ConfigureAwait(false);
+                        // Transport-only re-broadcast (BroadcastToPeersAsync,
+                        // NOT BroadcastAsync). This frame is Target "*", so the full
+                        // BroadcastAsync would hand it to Hub's own consumers — and
+                        // if local delivery ever grew a routing leg, this very arm
+                        // would re-enter: MACRO_SYNC → MergeMacroLibrary →
+                        // re-broadcast → ∞, with a file merge per iteration. The
+                        // merged library is peer-facing infrastructure state, not a
+                        // Hub-consumer event; keep it off the local legs entirely.
+                        await BroadcastToPeersAsync(new BusMessage { Type = "MACRO_SYNC", Source = "Hub", Target = "*", Payload = merged }).ConfigureAwait(false);
                     }, "Bus", $"MACRO_SYNC from {srcLabel}");
                     break;
                 }
@@ -1051,13 +1112,25 @@ namespace Phoenix.Controls.Hub.Core
                 case "MACRO_REMOVE":
                 {
                     // Same offload rationale as MACRO_SYNC above.
+                    //
+                    // D7 2026-08-02 — kept deliberately despite ZERO in-suite
+                    // producers: Architect never sends MACRO_REMOVE (peer
+                    // deletion propagates via MACRO_SYNC canonical-library
+                    // diffing — see MacroOps.ApplyCanonicalGlobalMacros). This
+                    // arm stays as inbound API surface for external clients on
+                    // the open local bus (ws://127.0.0.1:18081); deleting a
+                    // working inbound handler would be behavior removal, not
+                    // dead-code cleanup.
                     string srcLabel  = msg.Source;
                     string? removeId = msg.Payload?.Trim();
                     _ = AsyncErrorBoundary.SafeRunAsync(async () =>
                     {
                         string merged = await Task.Run(() => MergeMacroLibrary("[]", removedId: removeId)).ConfigureAwait(false);
                         GlobalLogger.Log($"MACRO_REMOVE '{removeId}' from {srcLabel}.", "Bus", LogLevel.System);
-                        await BroadcastAsync(new BusMessage { Type = "MACRO_SYNC", Source = "Hub", Target = "*", Payload = merged }).ConfigureAwait(false);
+                        // Transport-only — same recursion rationale as the
+                        // MACRO_SYNC arm above (this re-broadcast is also a
+                        // Target "*" MACRO_SYNC).
+                        await BroadcastToPeersAsync(new BusMessage { Type = "MACRO_SYNC", Source = "Hub", Target = "*", Payload = merged }).ConfigureAwait(false);
                     }, "Bus", $"MACRO_REMOVE '{removeId}' from {srcLabel}");
                     break;
                 }
@@ -1070,7 +1143,12 @@ namespace Phoenix.Controls.Hub.Core
                     {
                         string macroPath = GetGlobalMacroPath();
                         string payload = await Task.Run(() => File.Exists(macroPath) ? File.ReadAllText(macroPath) : "[]").ConfigureAwait(false);
-                        await BroadcastAsync(new BusMessage { Type = "MACRO_SYNC", Source = "Hub", Target = requesterLabel, Payload = payload }).ConfigureAwait(false);
+                        // Transport-only for uniformity with the arms above.
+                        // The reply targets the requester's label (non-wildcard),
+                        // so BroadcastAsync's local Target gate would skip Hub-local
+                        // delivery anyway — this just keeps every infrastructure
+                        // echo on the same send shape.
+                        await BroadcastToPeersAsync(new BusMessage { Type = "MACRO_SYNC", Source = "Hub", Target = requesterLabel, Payload = payload }).ConfigureAwait(false);
                     }, "Bus", $"MACRO_REQUEST from {requesterLabel}");
                     break;
                 }
@@ -1081,13 +1159,17 @@ namespace Phoenix.Controls.Hub.Core
                 // Both are emitted with Target = "*" from Hub-internal callers
                 // (AI_CHUNK from ScriptManager.AI.cs's streaming loop, WIDGET_TIMEOUT
                 // from WidgetTriggerQueue.cs when a widget completion times out).
+                // As Hub-origin broadcasts they now reach scripts through
+                // BroadcastAsync's local delivery (DeliverToHubConsumers) at send
+                // time — they no longer depend on arriving back from a peer.
                 //
-                // Script-side delivery is already handled below by the unconditional
-                // ExecuteOnBusScriptsAsync fan-out (~line 915) — `on_bus("AI_CHUNK")`
-                // and `on_bus("WIDGET_TIMEOUT")` will fire from there. These explicit
-                // arms exist so the switch is a complete routing audit: any reader
-                // can see at a glance that the message type is known, intentionally
-                // has no transport-side fan-out, and reaches scripts via on_bus.
+                // Script-side delivery for PEER-sent copies of these types is
+                // handled by DeliverToHubConsumers in this method's tail —
+                // `on_bus("AI_CHUNK")` and `on_bus("WIDGET_TIMEOUT")` fire from
+                // there. These explicit arms exist so the switch is a complete
+                // routing audit: any reader can see at a glance that the message
+                // type is known, intentionally has no transport-side fan-out, and
+                // reaches scripts via on_bus.
                 //
                 // If a future feature needs an in-process listener (e.g. a Hub-side
                 // "abandon all in-flight AI calls on widget timeout" rule), wire it
@@ -1098,17 +1180,124 @@ namespace Phoenix.Controls.Hub.Core
                     break;
             }
 
-            // Route bus messages to on_bus({Type}): script blocks. bus.target
-            // is now exposed alongside bus.source so the Bus.OnMessage Source/Target
-            // wildcard guards (emitted by ScriptExporter) can compare against it.
-            // Defensive null coalesce — Target defaults to "" on the model but a
-            // legacy sender could set it null explicitly.
-            //
-            // Gated on the cached on_bus probe: when no enabled script carries an
-            // on_bus header, the dictionary + closure + ExecuteOnBusScriptsAsync
-            // scan would all be dead weight — skip them.
+            // Shared Hub-consumer tail — pending-wait resolution + on_bus
+            // dispatch. BroadcastAsync calls the same helper for Hub-origin
+            // broadcast frames, so the two delivery paths cannot diverge. (The
+            // OnMessageReceived fan is NOT in the helper: both arrival callers
+            // fanned it before invoking this method.)
+            DeliverToHubConsumers(msg);
+        }
+
+        /// <summary>
+        /// The Hub-side CONSUMER legs of message delivery — everything a frame
+        /// owes to Hub's own in-process consumers, shared verbatim between the
+        /// two paths that owe it:
+        ///   * the arrival tail (<see cref="RouteIncomingMessage"/> — peer frames
+        ///     from the WS receive loop / in-proc bridge), and
+        ///   * <see cref="BroadcastAsync"/>'s Hub-origin local delivery (gated on
+        ///     Target == "*" or "Hub"), which is what makes bus.send/bus.broadcast
+        ///     scripts, on_bus handlers, Async.WaitForEvent and the Live Feed see
+        ///     Hub-origin events at all.
+        ///
+        /// <para>DELIBERATELY NOT the <see cref="RouteIncomingMessage"/> switch.
+        /// Those arms are infrastructure reactions to PEER frames and must not run
+        /// for Hub-origin broadcasts. Concretely: a Hub-origin VISUAL_TRIGGER
+        /// already reaches LayerRuntime through its own direct path — visual.trigger
+        /// / visual.trigger_queued (ScriptManager.Visual.cs) and the alerts/loyalty
+        /// fan-out (FireVisualTriggerFanOutAsync) all call
+        /// <see cref="TriggerVisualQueuedAsync"/> or
+        /// <see cref="TriggerVisualAndWaitWithPayloadAsync"/>, both of which enqueue
+        /// into LayerRuntime.Instance.EnqueueTriggerAsync BEFORE broadcasting the
+        /// bus envelope. Running DispatchVisualTrigger here would enqueue every
+        /// Hub-origin trigger a second time (double-firing every widget; the
+        /// Source=="Hub" skip inside DispatchVisualTrigger is a second net, not a
+        /// license). The MACRO_* arms are the same hazard in recursion form —
+        /// re-entering the arm that produced the frame.</para>
+        ///
+        /// <para>Pending-wait resolution is INCLUDED on purpose: it is single-shot
+        /// safe for Hub-origin frames because (a) DrainPrefixBucket's
+        /// _pendingWaits.TryRemove is an atomic first-wins per waiter, so one frame
+        /// can never resolve the same waiter twice, and (b) a Hub-origin frame
+        /// traverses exactly ONE delivery site (this call from BroadcastAsync) —
+        /// it never re-enters an arrival path, since the WS receive loop overwrites
+        /// Source with the peer's clientId and "Hub" is a reserved client id, so
+        /// any peer echo is a distinct new frame.</para>
+        /// </summary>
+        private void DeliverToHubConsumers(BusMessage msg)
+        {
+            ResolvePendingEventWaits(msg);
+            DispatchOnBusScripts(msg);
+        }
+
+        // Wait keys are stored as `${type}:${filter}:${waitId}` so multiple
+        // callers can await the same (type, filter) pair without colliding.
+        // Drain every waiter whose prefix matches the message — both
+        // specific-payload waits and wildcard-payload waits.
+        //
+        // O(1) prefix lookup via _waitPrefixIndex instead of
+        // a per-message ToArray() snapshot + linear StartsWith scan over every
+        // pending wait. The two prefix buckets we need to drain are looked up
+        // directly; matched entries are removed atomically from both _pendingWaits
+        // and the prefix bucket. Visual waits (bare-guid keys) are unaffected —
+        // they're never inserted into the prefix index.
+        //
+        // Skip the whole drain when nothing is pending — the specific
+        // prefix interpolates the FULL payload into a string, a payload-sized
+        // allocation per inbound message that matches nothing for the vast
+        // majority of traffic (waiters exist only while a script awaits a bus
+        // response). _pendingWaits also holds visual waits (bare-guid keys),
+        // so an active visual wait occasionally lets a non-matching drain
+        // through; that only costs what every message paid before the guard.
+        private void ResolvePendingEventWaits(BusMessage msg)
+        {
+            if (!_pendingWaits.IsEmpty)
+            {
+                string specificPrefix = $"{msg.Type}:{msg.Payload ?? ""}:";
+                string wildcardPrefix = $"{msg.Type}:*:";
+                DrainPrefixBucket(specificPrefix, msg);
+                DrainPrefixBucket(wildcardPrefix, msg);
+            }
+        }
+
+        // Route bus messages to on_bus({Type}): script blocks. bus.target
+        // is exposed alongside bus.source so the Bus.OnMessage Source/Target
+        // wildcard guards (emitted by ScriptExporter) can compare against it.
+        // Defensive null coalesce — Target defaults to "" on the model but a
+        // legacy sender could set it null explicitly.
+        //
+        // Gated on the cached on_bus probe: when no enabled script carries an
+        // on_bus header, the dictionary + closure + ExecuteOnBusScriptsAsync
+        // scan would all be dead weight — skip them.
+        private void DispatchOnBusScripts(BusMessage msg)
+        {
             if (AnyOnBusHandlers())
             {
+                // Relay-depth gate. Before D0a a Hub-origin broadcast never reached
+                // Hub's own on_bus handlers, so a script that answered a bus message
+                // by broadcasting could not re-trigger itself. Local delivery closes
+                // that loop, and NOTHING else bounds it: every generation is a fresh
+                // fire-and-forget execution, so ExecuteScriptAsync resets
+                // _executionDepth (ScriptEngine) and MaxExecutionDepth never sees a
+                // chain. Two authoring shapes reach it — a self-loop (on_bus("X") that
+                // broadcasts "X") and a ping-pong across two scripts (A answers "X"
+                // with "Y", B answers "Y" with "X"), the second of which no per-
+                // execution cap could ever catch because each execution completes
+                // normally.
+                //
+                // The counter rides the ambient ExecutionContext: SafeRunAsync below
+                // captures it, so the value set for generation N is what generation
+                // N+1 observes when its script's bus.broadcast re-enters here. A child
+                // never writes back to its parent's flow, so sibling relays are
+                // measured independently and a legitimate fan-out is not penalised by
+                // a busy neighbour.
+                int depth = _busRelayDepth.Value;
+                if (depth >= MaxBusRelayDepth)
+                {
+                    ReportBusRelayDepthExceededOnce(msg.Type);
+                    return;
+                }
+                int next = depth + 1;
+
                 var busVars = new Dictionary<string, string>
                 {
                     { "bus.type",    msg.Type           },
@@ -1117,9 +1306,45 @@ namespace Phoenix.Controls.Hub.Core
                     { "bus.payload", msg.Payload ?? ""  }
                 };
                 _ = AsyncErrorBoundary.SafeRunAsync(
-                    () => ScriptManager.Instance.ExecuteOnBusScriptsAsync(msg.Type, busVars),
+                    () =>
+                    {
+                        _busRelayDepth.Value = next;
+                        return ScriptManager.Instance.ExecuteOnBusScriptsAsync(msg.Type, busVars);
+                    },
                     "Bus", $"on_bus({msg.Type})");
             }
+        }
+
+        /// <summary>
+        /// How many chained on_bus relays one originating bus message may cause before
+        /// the chain is cut. A generation is "an on_bus script ran and broadcast
+        /// something that reached on_bus again", so this bounds a RELAY CHAIN, never
+        /// the number of scripts answering one message (siblings each start from the
+        /// same inherited depth) and never ordinary traffic (a message nobody relays
+        /// dispatches at depth 0 forever).
+        /// </summary>
+        internal const int MaxBusRelayDepth = 8;
+
+        // Ambient per-chain relay counter — see DispatchOnBusScripts. AsyncLocal (not a
+        // field) because the chain is the unit being measured and it crosses
+        // fire-and-forget task boundaries that no lock or instance field would follow.
+        private readonly AsyncLocal<int> _busRelayDepth = new();
+
+        // One CriticalError per message type per process. A tripped relay chain is an
+        // authoring bug that repeats at the speed of the loop, so logging per
+        // occurrence would bury the log in the same flood the cap exists to stop.
+        private readonly ConcurrentDictionary<string, byte> _busRelayDepthReported = new();
+
+        private void ReportBusRelayDepthExceededOnce(string msgType)
+        {
+            string key = string.IsNullOrEmpty(msgType) ? "(none)" : msgType;
+            if (!_busRelayDepthReported.TryAdd(key, 1)) return;
+            GlobalLogger.Log(
+                $"on_bus relay chain for '{key}' hit the depth cap ({MaxBusRelayDepth}) and was cut. " +
+                "A script answering this bus message is broadcasting a message that reaches on_bus again — " +
+                "check for a Bus.OnMessage/Bus.Broadcast loop (either one script re-emitting its own event, " +
+                "or two scripts answering each other). Further trips for this type are not logged.",
+                "Bus", LogLevel.CriticalError);
         }
 
         // Register a prefix-keyed wait so RouteIncomingMessage
@@ -1196,9 +1421,14 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         // internal so the macro-audit test suite can drive concurrent calls and
         // verify the read–merge–write atomicity contract.
+        // Shared, immutable-after-first-use options — hoisted off the per-message
+        // VISUAL_TRIGGER deserialize path (and reused here) so STJ's metadata cache
+        // isn't defeated by a fresh options instance each call.
+        private static readonly JsonSerializerOptions s_caseInsensitiveJson = new() { PropertyNameCaseInsensitive = true };
+
         internal static string MergeMacroLibrary(string incomingJson, string? removedId)
         {
-            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var opts = s_caseInsensitiveJson;
             string macroPath = GetGlobalMacroPath();
 
             lock (_macroLibraryGate)
@@ -1319,9 +1549,22 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>Broadcast a message to all connected clients (or a specific target).
-        /// Also fans to in-process subscribers via the InProcBus bridge so
-        /// Architect-in-Hub-process sees broadcasts without paying the localhost-WebSocket
-        /// hop.
+        /// Fans to remote WebSocket peers and to in-process subscribers via the
+        /// InProcBus bridge (so Architect-in-Hub-process sees broadcasts without
+        /// paying the localhost-WebSocket hop) — and, for Target "*" / "Hub"
+        /// frames, ALSO delivers to Hub's own in-process consumers
+        /// (OnMessageReceived subscribers such as the Live Feed, pending
+        /// wait_for_event waits, and on_bus script handlers). Pre-fix, a
+        /// Hub-originated broadcast never reached any Hub-side consumer: the
+        /// Bus.Send / Bus.Broadcast Architect nodes were inert, on_bus scripts
+        /// never fired for Hub-origin events, and the Live Feed missed every
+        /// Hub-side trigger.
+        ///
+        /// Target discipline: local Hub delivery happens ONLY for
+        /// Target == "*" or "Hub". Targeted frames (DEBUG_NODE_EXEC → "Architect",
+        /// DEBUG_WIDGET_NODE → "Visualist", MACRO_SYNC → requester) must never
+        /// reach Hub-local consumers — see HUDServer.ForwardWidgetNodeTrace's
+        /// targeting rationale, which depends on this gate.
         ///
         /// Accepts an optional CancellationToken so a caller that wants
         /// shutdown to interrupt a hung ws.SendAsync can thread one through; existing
@@ -1339,10 +1582,59 @@ namespace Phoenix.Controls.Hub.Core
             // Pre-fix the broadcast appeared to succeed (no exception, no log) which
             // masks send paths that fire during teardown. Surface the drop at
             // Communication tier so the log feed shows the broadcast was suppressed.
+            // The guard sits ABOVE local delivery on purpose: after Stop, Hub-local
+            // consumers are torn down too, so the whole broadcast drops as one unit.
             if (Volatile.Read(ref _stopped) != 0)
             {
                 GlobalLogger.Log(
                     $"Bus.BroadcastAsync: bus is stopped — dropping {msg.Type} → {msg.Target}.",
+                    "Bus", LogLevel.Communication);
+                return;
+            }
+
+            // Local Hub delivery — mirror an ARRIVAL's Hub-side legs (fan
+            // OnMessageReceived first, then the shared consumer tail), exactly the
+            // order the in-proc bridge and the WS receive loop use. Deliberately
+            // NOT RouteIncomingMessage: its switch arms are peer-frame
+            // infrastructure and would double-dispatch / recurse for Hub-origin
+            // frames — see DeliverToHubConsumers' doc.
+            string localTarget = msg.Target ?? "*";
+            if (localTarget == "*" || localTarget == "Hub")
+            {
+                FanOnMessageReceived(msg, "Hub-local ");
+                DeliverToHubConsumers(msg);
+            }
+
+            await BroadcastToPeersAsync(msg, ct).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Transport-only fan: remote WebSocket peers + in-proc bridge
+        /// subscribers, WITHOUT the Hub-local consumer legs (OnMessageReceived /
+        /// pending-wait resolution / on_bus dispatch) that
+        /// <see cref="BroadcastAsync"/> adds for Target "*" / "Hub" frames.
+        ///
+        /// This is the send shape RouteIncomingMessage's infrastructure arms
+        /// (MACRO_SYNC / MACRO_REMOVE / MACRO_REQUEST / LOGIC_RELOAD_ACK) use for
+        /// their re-broadcasts: routing those through the full BroadcastAsync
+        /// would hand a Hub-origin MACRO_SYNC back to Hub's own consumers — and
+        /// if local delivery ever grew a routing leg, it would re-enter the very
+        /// arm that sent it (MACRO_SYNC → MergeMacroLibrary → re-broadcast → ∞,
+        /// one file merge per iteration). Keeping infrastructure echoes
+        /// transport-only kills that cycle structurally, independent of what the
+        /// local-delivery legs contain.
+        ///
+        /// Carries the same _stopped guard + per-client send-lock semantics those
+        /// call sites previously got from BroadcastAsync. (When invoked through
+        /// BroadcastAsync the guard re-checks — a benign double-read that only
+        /// logs twice if Stop lands between the two reads.)
+        /// </summary>
+        private async Task BroadcastToPeersAsync(BusMessage msg, CancellationToken ct = default)
+        {
+            if (Volatile.Read(ref _stopped) != 0)
+            {
+                GlobalLogger.Log(
+                    $"Bus.BroadcastToPeersAsync: bus is stopped — dropping {msg.Type} → {msg.Target}.",
                     "Bus", LogLevel.Communication);
                 return;
             }
@@ -1368,15 +1660,19 @@ namespace Phoenix.Controls.Hub.Core
         /// <summary>
         /// Remote-only fan: serialises and writes the envelope to each
         /// matching connected WebSocket peer. Used internally by
-        /// <see cref="BroadcastAsync"/> and by the in-proc bridge's PublishAsync
+        /// <see cref="BroadcastToPeersAsync"/> (the transport tail of every
+        /// broadcast) and by the in-proc bridge's PublishAsync
         /// (which fires its own subscriber fanout via Hub-side OnMessageReceived
         /// before invoking this, so the in-proc subscriber list is intentionally
         /// skipped here to avoid echoing the publisher's own message back to itself).
         ///
         /// <paramref name="ct"/> is threaded down to ws.SendAsync; a hung
         /// peer can be interrupted by signalling the token rather than burning
-        /// the full ClientSendLockTimeout. Defaulting to none preserves pre-fix
-        /// semantics for callers that don't supply one.
+        /// the full ClientSendLockTimeout. Defaulting to none is safe because the
+        /// send is ALSO bounded independently: each write runs under a linked CTS
+        /// armed with ClientSendLockTimeout, so a peer that has stopped draining
+        /// its socket can no longer stall the fan-out for callers that supply no
+        /// token (which is every production caller).
         /// </summary>
         private async Task BroadcastToRemoteAsync(BusMessage msg, CancellationToken ct = default)
         {
@@ -1395,10 +1691,11 @@ namespace Phoenix.Controls.Hub.Core
             // when the slot still holds the same value). The previous bare TryRemove(id)
             // would happily evict a fresh peer's send-lock and ws if a reconnect race
             // re-installed the same clientId between detection and cleanup.
-            var toRemove = new List<(string Id, WebSocket Ws, SemaphoreSlim SendLock)>();
+            // Lazy — the happy path (no peer evicted) never allocates the list.
+            List<(string Id, WebSocket Ws, SemaphoreSlim SendLock)>? toRemove = null;
+            var target = msg.Target ?? "*";   // loop-invariant
             foreach (var (id, ws) in _clients)
             {
-                var target = msg.Target ?? "*";
                 if (target != "*" && target != id) continue;
                 // TryGetValue (not GetOrAdd). HandleClientAsync owns
                 // the SemaphoreSlim lifecycle (installs on connect, disposes on
@@ -1437,7 +1734,7 @@ namespace Phoenix.Controls.Hub.Core
                             GlobalLogger.Log(
                                 $"Bus.BroadcastAsync: '{id}' send slot did not acquire within {ClientSendLockTimeout.TotalSeconds:0}s — dropping frame for that peer (type={msg.Type}).",
                                 "Bus", LogLevel.Communication);
-                            toRemove.Add((id, ws, sendLock));
+                            (toRemove ??= new()).Add((id, ws, sendLock));
                             continue;
                         }
                     }
@@ -1451,24 +1748,67 @@ namespace Phoenix.Controls.Hub.Core
                         GlobalLogger.Log(
                             $"Bus.BroadcastAsync: send lock for '{id}' was disposed — skipping ({ode.GetType().Name}).",
                             "Bus", LogLevel.Communication);
-                        toRemove.Add((id, ws, sendLock));
+                        (toRemove ??= new()).Add((id, ws, sendLock));
                         continue;
                     }
 
                     if (ws.State == WebSocketState.Open)
-                        // Propagate the caller's ct so shutdown can interrupt
-                        // a peer whose recv side is hung; pre-fix this always used
-                        // CancellationToken.None and a wedged send pinned the per-
-                        // client send slot until the WebSocket itself timed out.
-                        await ws.SendAsync(segment, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
+                    {
+                        // Bound the send ITSELF, not just the slot acquisition.
+                        // The WaitAsync above only bounds waiting on a peer whose
+                        // PREVIOUS send is stuck; the FIRST stuck send acquires a free
+                        // slot and then blocks here. Every production caller passes no
+                        // token, so pre-fix this write had no bound at all: a peer that
+                        // stopped draining its socket (suspended process, paused
+                        // debugger, wedged dispatcher) filled the loopback send buffer
+                        // and pinned the whole fan-out — later peers never got the
+                        // frame, the broadcast Task never completed, and any script
+                        // awaiting it (wait_for_visual) was stranded mid-graph.
+                        //
+                        // The linked CTS keeps the caller's cancellation (shutdown
+                        // still interrupts immediately) and adds the same
+                        // ClientSendLockTimeout budget the slot wait uses. Cost is one
+                        // CTS + timer per peer per broadcast — acceptable next to the
+                        // JSON + UTF-8 encode already done above.
+                        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        sendCts.CancelAfter(ClientSendLockTimeout);
+                        try
+                        {
+                            await ws.SendAsync(segment, WebSocketMessageType.Text, true, sendCts.Token).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // ★ ONLY the per-send TIMEOUT evicts. A caller-cancelled
+                            // broadcast says nothing about the peer's health — during
+                            // shutdown EVERY peer's send cancels at once, and evicting
+                            // there would run the cleanup loop's ws.Abort() across every
+                            // healthy socket and fire a spurious OnClientConnectionChanged
+                            // (false) for each. That is strictly worse than the dropped
+                            // frame this arm exists to handle, so the two causes are
+                            // dispositioned differently, not just logged differently.
+                            if (ct.IsCancellationRequested)
+                            {
+                                GlobalLogger.Log(
+                                    $"Bus.BroadcastAsync: send to '{id}' cancelled by caller — dropping frame for that peer, peer left connected (type={msg.Type}).",
+                                    "Bus", LogLevel.Communication);
+                            }
+                            else
+                            {
+                                GlobalLogger.Log(
+                                    $"Bus.BroadcastAsync: send to '{id}' did not complete within {ClientSendLockTimeout.TotalSeconds:0}s — peer is not draining its socket; dropping frame and evicting (type={msg.Type}).",
+                                    "Bus", LogLevel.Communication);
+                                (toRemove ??= new()).Add((id, ws, sendLock));
+                            }
+                        }
+                    }
                     else
                         // Socket is no longer Open (Aborted/Closed/CloseSent/None).
                         // Either the reconnect path swapped a placeholder in, or the
                         // remote tore down. Evict here so the dead clientId doesn't
                         // accumulate forever; the next reconnect will re-register.
-                        toRemove.Add((id, ws, sendLock));
+                        (toRemove ??= new()).Add((id, ws, sendLock));
                 }
-                catch { toRemove.Add((id, ws, sendLock)); }
+                catch { (toRemove ??= new()).Add((id, ws, sendLock)); }
                 finally
                 {
                     if (acquired)
@@ -1482,13 +1822,48 @@ namespace Phoenix.Controls.Hub.Core
             // Remove(KeyValuePair) only succeeds when the slot still holds the same
             // value, so a reconnect that re-installed (id → freshWs/freshLock) is left
             // alone and the dead pair is the only thing evicted.
-            var clientsCol = (ICollection<KeyValuePair<string, WebSocket>>)_clients;
-            var locksCol   = (ICollection<KeyValuePair<string, SemaphoreSlim>>)_sendLocks;
-            foreach (var entry in toRemove)
+            if (toRemove != null)
             {
-                clientsCol.Remove(new KeyValuePair<string, WebSocket>(entry.Id, entry.Ws));
-                if (locksCol.Remove(new KeyValuePair<string, SemaphoreSlim>(entry.Id, entry.SendLock)))
-                    try { entry.SendLock.Dispose(); } catch { }
+                var clientsCol = (ICollection<KeyValuePair<string, WebSocket>>)_clients;
+                var locksCol   = (ICollection<KeyValuePair<string, SemaphoreSlim>>)_sendLocks;
+                foreach (var entry in toRemove)
+                {
+                    bool evicted = clientsCol.Remove(new KeyValuePair<string, WebSocket>(entry.Id, entry.Ws));
+                    if (evicted)
+                    {
+                        // Tear the socket down as well as the dictionary entry.
+                        // A timeout-arm eviction can hit a peer whose socket is still
+                        // Open and whose receive loop is still running: dropping only
+                        // the _clients entry left that peer permanently invisible to
+                        // every later broadcast (no LOGIC_RELOAD_ACK / MACRO_SYNC /
+                        // LAYER_RELOADED / DEBUG_NODE_EXEC for the rest of the session)
+                        // with no signal to trigger its reconnect backoff, because
+                        // _clients is only ever written at connect time in
+                        // HandleClientAsync. Abort unblocks its ReceiveAsync so the
+                        // handler runs its normal finally and the peer reconnects.
+                        // Mirrors the reconnect path's oldSocket.Abort().
+                        //
+                        // Only ever aborts a socket we actually evicted: the
+                        // KVP-scoped Remove above fails if a reconnect already
+                        // installed a fresh ws for this id, so a live replacement is
+                        // never touched.
+                        try { entry.Ws.Abort(); } catch { }
+
+                        // Announce the disconnect from here. The handler's finally
+                        // gates InvokeClientConnectionChanged on its own successful
+                        // Remove, which is now false (we removed the pair first), so
+                        // without this the peer's departure was completely silent —
+                        // no subscriber notification, no "Bus client disconnected"
+                        // line. Exactly-once still holds: ICollection.Remove(KVP) on a
+                        // ConcurrentDictionary is an atomic compare-and-remove, so only
+                        // one of the two sites can win for a given (id, ws) pair.
+                        InvokeClientConnectionChanged(entry.Id, false);
+                        GlobalLogger.Log($"Bus client disconnected: {entry.Id} (evicted by broadcast fan-out)",
+                            "Bus", LogLevel.Communication);
+                    }
+                    if (locksCol.Remove(new KeyValuePair<string, SemaphoreSlim>(entry.Id, entry.SendLock)))
+                        try { entry.SendLock.Dispose(); } catch { }
+                }
             }
         }
 
@@ -1533,7 +1908,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 var payload = JsonSerializer.Deserialize<VisualTriggerPayload>(
                     msg.Payload ?? "{}",
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    s_caseInsensitiveJson);
                 if (payload is null || string.IsNullOrEmpty(payload.LayerId)) return;
 
                 // Skip if this is the broadcast echo of a Hub-originated trigger — the Hub
@@ -1621,8 +1996,53 @@ namespace Phoenix.Controls.Hub.Core
         /// The browser sends VISUAL_COMPLETE back through HUDServer; LayerRuntime forwards via
         /// <see cref="ResolveVisualWait"/>, which sets the TCS here. Returns true on completion,
         /// false on timeout. Inactive layers fast-succeed via LayerRuntime's short-circuit.
+        ///
+        /// <para>★ V13 — this is the PAYLOAD-DISCARDING form and it has NO caller at all any
+        /// more: <c>wait_for_visual</c> calls <see cref="TriggerVisualAndWaitWithPayloadAsync"/>
+        /// directly, because dropping <c>result.Payload</c> here is exactly what left §8.1's
+        /// completion payload with no reader in the first round. It is retained deliberately as
+        /// the documented payload-agnostic entry point for a future fire-and-forget waiter, but
+        /// nothing exercises it, so treat its body and its <c>timeoutMs</c> default as
+        /// unverified: the third of the three independent 10 s constants B3 keeps aligned is
+        /// pinned on the payload-bearing overload below
+        /// (<c>LayerRuntimeCompletionTimeoutTests.Script_Wait_Budget_Is_Forwarded_By_The_Waiting_Bus_Path</c>),
+        /// which is the method the live path uses. An earlier revision of this comment claimed
+        /// the pin was on THIS method; it was, and that was the defect — it guarded a method no
+        /// stream can reach. If you are adding a new waiting call site, call the payload-bearing
+        /// overload.</para>
         /// </summary>
         public async Task<bool> TriggerVisualAndWaitAsync(
+            string layerId,
+            string widgetId,
+            string triggerName,
+            Dictionary<string, string>? eventData = null,
+            int timeoutMs = 10000,
+            CancellationToken ct = default)
+        {
+            var result = await TriggerVisualAndWaitWithPayloadAsync(
+                layerId, widgetId, triggerName, eventData, timeoutMs, ct).ConfigureAwait(false);
+            return result.Completed;
+        }
+
+        /// <summary>
+        /// V13 §8.1 — the payload-bearing form of <see cref="TriggerVisualAndWaitAsync"/>.
+        /// Identical dispatch and identical completion semantics; it additionally hands back
+        /// the browser's <c>Visual.Complete → Payload</c> string.
+        ///
+        /// <para><c>Payload</c> is <c>""</c> whenever the pin is unwired, the wait resolved by
+        /// any path other than a real VISUAL_COMPLETE (queue hard-timeout, inactive-layer
+        /// fast-succeed, outer timeout), or the ack was declined its payload for arriving on an
+        /// Untrusted socket (§8.3). It is never null, so a caller can assign it straight into a
+        /// script var without a coalesce.</para>
+        ///
+        /// <para>The intended consumer is <c>wait_for_visual</c>, which must write it to
+        /// <c>global._wait_payload</c> — the SAME var <c>wait_for_event</c> already writes, via
+        /// the same <c>SetScriptVarAsync</c> call, because the exporter's
+        /// <c>Async.WaitForVisual.Payload</c> data-out resolves to <c>{global._wait_payload}</c>
+        /// (ScriptExporter.cs, alongside the WaitForEvent mapping). Do not invent a second var
+        /// name.</para>
+        /// </summary>
+        public async Task<(bool Completed, string Payload)> TriggerVisualAndWaitWithPayloadAsync(
             string layerId,
             string widgetId,
             string triggerName,
@@ -1658,10 +2078,31 @@ namespace Phoenix.Controls.Hub.Core
                 // Task<bool> resolves on VISUAL_COMPLETE OR the queue's hard-timeout OR inactive-layer
                 // fast-succeed; either way we use it as a fallback signal so the script doesn't deadlock.
                 var elem = JsonSerializer.SerializeToElement(triggerPayload.EventData);
-                var queueTask = LayerRuntime.Instance.EnqueueTriggerAsync(layerId, widgetId, triggerName, elem, waitId);
+                var queueTask = LayerRuntime.Instance.EnqueueTriggerAsync(layerId, widgetId, triggerName, elem, waitId,
+                    scriptWaitTimeoutMs: timeoutMs);
+
+                // Arm the wait budget BEFORE the broadcast. Pre-fix the
+                // `await BroadcastAsync(...)` sat above this line, so the script's
+                // wait_for_visual was completely unprotected across it: a peer that
+                // stopped draining its socket stalled the broadcast and the wait took
+                // neither the Done nor the Timeout branch — it never returned at all
+                // and the script was stranded mid-graph. The timeout must cover the
+                // broadcast, not start after it.
+                //
+                // Wait for: (a) VISUAL_COMPLETE arrives via ResolveVisualWait → tcs resolves; or
+                //           (b) the queue's path completes (timeout / inactive-layer fast-succeed); or
+                //           (c) the outer timeoutMs; or
+                //           (d) caller cancels via the script CT.
+                using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var delayTask = Task.Delay(timeoutMs, delayCts.Token);
 
                 // Also broadcast on the bus so external observers (Architect dashboards) see it.
-                await BroadcastAsync(new BusMessage
+                // Started, not awaited-to-completion unconditionally: this frame is pure
+                // observability for peers, and no part of the wait below depends on its
+                // transport leg finishing. BroadcastAsync's Hub-local delivery leg runs
+                // synchronously before its first await, so Hub-side consumers still see
+                // the frame in the same order as before.
+                var broadcastTask = BroadcastAsync(new BusMessage
                 {
                     Type    = "VISUAL_TRIGGER",
                     Source  = "Hub",
@@ -1669,25 +2110,59 @@ namespace Phoenix.Controls.Hub.Core
                     Payload = JsonSerializer.Serialize(triggerPayload)
                 });
 
-                // Wait for: (a) VISUAL_COMPLETE arrives via ResolveVisualWait → tcs resolves; or
-                //           (b) the queue's path completes (timeout / inactive-layer fast-succeed); or
-                //           (c) the outer timeoutMs; or
-                //           (d) caller cancels via the script CT.
-                using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var delayTask = Task.Delay(timeoutMs, delayCts.Token);
+                if (broadcastTask.IsCompleted)
+                {
+                    // Normal case (no remote peers, or every peer's socket accepted the
+                    // write synchronously): observe it inline so a broadcast fault still
+                    // propagates to the caller exactly as it did pre-fix.
+                    await broadcastTask.ConfigureAwait(false);
+                }
+                else
+                {
+                    // A peer is draining slowly. Hand the tail to the error boundary so a
+                    // fault is logged rather than lost as an unobserved task exception,
+                    // and let the wait run on its own budget.
+                    _ = AsyncErrorBoundary.SafeRunAsync(() => broadcastTask, "Bus",
+                        $"VISUAL_TRIGGER broadcast for {layerId}/{widgetId}");
+                }
                 var completed = await Task.WhenAny(tcs.Task, queueTask, delayTask).ConfigureAwait(false);
                 // Cancel the delay if we resolved by another path so its timer is freed.
                 try { delayCts.Cancel(); } catch { }
+                // ★ V13 — the wait's own TCS is authoritative whenever it resolved, REGARDLESS
+                // of which task WhenAny handed back. One browser ack completes both this TCS
+                // and queueTask, and LayerRuntime.NotifyTriggerComplete resolves THIS ONE
+                // FIRST (see the ordering comment there) — so if WhenAny returned because
+                // queueTask completed, this TCS is already completed too, by program order on
+                // the notifying thread. Checking it before the winner comparison is what turns
+                // "the payload usually survives" into "the payload always survives": the
+                // pre-V13 shape let the thread pool decide, biased toward the payload-less
+                // queueTask because its continuation was queued first.
+                //
+                // Only a genuine VISUAL_COMPLETE completes this TCS successfully. A shutdown /
+                // timeout cancel leaves it Canceled, which IsCompletedSuccessfully excludes,
+                // so the fallback branches below keep their exact pre-V13 meaning.
+                if (tcs.Task.IsCompletedSuccessfully)
+                    return (true, tcs.Task.Result.Payload ?? "");
+
                 if (completed == tcs.Task)
-                    return tcs.Task.Status == TaskStatus.RanToCompletion;
+                {
+                    // Reached only when the TCS completed UNSUCCESSFULLY (cancelled by
+                    // CancelPendingVisualWait or StopAsync) — the successful case is handled
+                    // by the authoritative check above.
+                    return (false, "");
+                }
                 if (completed == queueTask)
-                    return queueTask.Status == TaskStatus.RanToCompletion && queueTask.Result;
+                {
+                    // Queue path: hard-timeout, inactive-layer fast-succeed, or an evicted
+                    // enqueue. None of those is a browser ack, so there is no payload.
+                    return (queueTask.Status == TaskStatus.RanToCompletion && queueTask.Result, "");
+                }
                 tcs.TrySetCanceled();
                 // Distinguish caller-cancelled (script CT) from timeout: throw to let the
                 // script engine's `_executionCt.ThrowIfCancellationRequested` chain unwind
                 // cleanly.
                 ct.ThrowIfCancellationRequested();
-                return false;
+                return (false, "");
             }
             finally
             {
@@ -1699,20 +2174,95 @@ namespace Phoenix.Controls.Hub.Core
         /// Resolves a pending VISUAL_COMPLETE wait by waitId. Called by LayerRuntime when the
         /// browser echoes VISUAL_COMPLETE back through HUDServer. Idempotent — the underlying
         /// TCS uses TrySetResult so multi-client echo storms are absorbed.
+        ///
+        /// <para>V13 §8.1 — <paramref name="payload"/> is the browser's optional
+        /// <c>Visual.Complete → Payload</c> string. It rides the resolved envelope's
+        /// <c>Payload</c> field, which <see cref="TriggerVisualAndWaitWithPayloadAsync"/>
+        /// hands back to the caller. That field previously echoed the waitId; nothing
+        /// read it (the only consumer is the waiter, which minted the waitId itself and
+        /// therefore already knows it), so carrying the completion payload there costs
+        /// nothing and keeps the value on the SAME happens-before edge as the TCS
+        /// completion — no side table, no eviction race, no read-after-free window.</para>
+        ///
+        /// <para><b>Unwired ⇒ unchanged.</b> A browser that omits <c>payload</c> reaches
+        /// here with <c>null</c> and the envelope carries <c>""</c>, so a caller that
+        /// ignores the payload (every pre-V13 call site) sees byte-identical behaviour.</para>
+        ///
+        /// <para><b>First ack wins.</b> The atomic <c>TryRemove</c> below IS that decision:
+        /// exactly one caller can take the TCS, so exactly one payload is delivered and
+        /// every later ack for the same waitId is dropped. Two OBS sources on one layer
+        /// therefore make the payload nondeterministic; that is the accepted §8.1
+        /// behaviour, reported once per waitId by <see cref="ReportLateVisualAckOnce"/>.</para>
         /// </summary>
-        public void ResolveVisualWait(string waitId)
+        public void ResolveVisualWait(string waitId, string? payload = null)
         {
             if (string.IsNullOrEmpty(waitId)) return;
             if (_pendingWaits.TryRemove(waitId, out var tcs))
             {
+                // Ledger FIRST, then complete the TCS. A racing second ack must be
+                // able to find the record; if the order were reversed, the waiter's
+                // continuation could run and the second ack could arrive in the window
+                // before the record existed, and the collision would go unreported.
+                NoteVisualWaitResolved(waitId);
                 tcs.TrySetResult(new BusMessage
                 {
                     Type    = "VISUAL_COMPLETE",
                     Source  = "Browser",
                     Target  = "Hub",
-                    Payload = waitId,
+                    Payload = payload ?? "",
                 });
+                return;
             }
+
+            // No pending wait for this id. Either a LATE ack for a waitId this Hub
+            // already resolved (the §8.1 fan-out case — report once), or an id this
+            // Hub has no record of at all (an expired/timed-out wait, or a spoofed
+            // frame). The latter stays a silent no-op, exactly as before V13: logging
+            // it would let anything that can reach the bus or /hud write log lines.
+            ReportLateVisualAckOnce(waitId);
+        }
+
+        /// <summary>
+        /// V13 §8.1 — records that <paramref name="waitId"/> has been resolved, so the
+        /// first LATE ack for it can be reported and the rest suppressed. Capacity-capped
+        /// FIFO; see the <c>_resolvedVisualWaits</c> field comment for why the record has
+        /// to outlive the invocation.
+        /// </summary>
+        private void NoteVisualWaitResolved(string waitId)
+        {
+            // TryAdd, not indexer-assign: a waitId is a fresh GUID per wait, so a
+            // collision is impossible in practice — but if one ever happened, keeping
+            // the EXISTING entry preserves its already-logged latch rather than
+            // re-arming it and allowing a second line for the same id.
+            if (!_resolvedVisualWaits.TryAdd(waitId, 0)) return;
+            _resolvedVisualWaitOrder.Enqueue(waitId);
+            while (_resolvedVisualWaitOrder.Count > MaxResolvedVisualWaitLedger
+                   && _resolvedVisualWaitOrder.TryDequeue(out var oldest))
+            {
+                _resolvedVisualWaits.TryRemove(oldest, out _);
+            }
+        }
+
+        /// <summary>
+        /// V13 §8.1 — reports a dropped VISUAL_COMPLETE for an already-resolved waitId,
+        /// at most ONCE per waitId. A fan-out of eight sources produces one line, not seven.
+        ///
+        /// <para>Communication tier, not System: two browser sources on one layer is a
+        /// legitimate setup and the drop is the DECIDED behaviour, so it must not light the
+        /// operator's error surfaces. It is logged at all because "my Visual.Complete
+        /// payload sometimes carries the other source's value" is otherwise undiagnosable.</para>
+        /// </summary>
+        private void ReportLateVisualAckOnce(string waitId)
+        {
+            // TryUpdate(key, 1, 0) is the whole latch: it succeeds for exactly one
+            // caller per waitId, so N concurrent late acks produce one log line.
+            if (!_resolvedVisualWaits.TryUpdate(waitId, 1, 0)) return;
+            GlobalLogger.Log(
+                $"Bus: VISUAL_COMPLETE for waitId '{waitId}' arrived after that wait was already " +
+                $"resolved — first ack wins, so this ack (and any payload it carried) is dropped. " +
+                $"Two browser sources rendering one layer make the completion payload " +
+                $"nondeterministic by design. (Logged once per waitId.)",
+                "Bus", LogLevel.Communication);
         }
 
         /// <summary>
@@ -1735,20 +2285,19 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>Broadcasts an OBS scene change event to the bus.
         ///
-        /// IMPORTANT: this is FAN-OUT ONLY. There is no Hub-side
-        /// consumer for SCENE_CHANGED today; the bus simply ships the message to every
-        /// connected external client (Architect dashboards, etc). Do NOT call this method
-        /// from a future Hub-internal feature expecting an in-process handler to react —
-        /// nothing in Hub subscribes to its own broadcasts via the wire loop.
+        /// Historically this was FAN-OUT ONLY — nothing in Hub saw its own
+        /// broadcasts. Since BroadcastAsync gained Hub-local delivery for
+        /// Target "*" / "Hub" frames, that is no longer true: this SCENE_CHANGED
+        /// broadcast now ALSO reaches Hub-side consumers — OnMessageReceived
+        /// subscribers (Live Feed), pending wait_for_event("SCENE_CHANGED") waits,
+        /// and on_bus("SCENE_CHANGED") script handlers — in addition to every
+        /// connected external client (Architect dashboards, etc).
         ///
-        /// If a Hub-internal hook is ever needed, subscribe to the dedicated
-        /// <see cref="OnSceneChanged"/> event below (which we raise in addition to the
-        /// broadcast) rather than round-tripping through <see cref="OnMessageReceived"/>
-        /// or calling this method directly. The event surface is intentionally provided
-        /// so future scene-aware features can hook in without changing fan-out semantics.
-        ///
-        /// TODO: surface as in-process event if Hub gains a scene-aware feature
-        /// (the OnSceneChanged event below is the agreed-upon hook point).
+        /// For a strongly-typed Hub-internal hook, prefer the dedicated
+        /// <see cref="OnSceneChanged"/> event below (raised synchronously before
+        /// the broadcast) over pattern-matching raw envelopes out of
+        /// <see cref="OnMessageReceived"/> — the typed event hands you the scene
+        /// name without JSON plumbing and fires even if the broadcast faults.
         /// </summary>
         public Task BroadcastSceneChangedAsync(string sceneName)
         {
@@ -1945,6 +2494,11 @@ namespace Phoenix.Controls.Hub.Core
             // Drop prefix index buckets in lockstep with the
             // dictionary they shadow.
             _waitPrefixIndex.Clear();
+            // V13 — the resolved-visual-wait ledger describes waits that no longer
+            // exist, so it goes with them. Without this a Stop→StartAsync would carry
+            // the previous session's already-logged latches into the new one.
+            _resolvedVisualWaits.Clear();
+            while (_resolvedVisualWaitOrder.TryDequeue(out _)) { }
 
             // Abort + drop all live websockets so background HandleClientAsync loops
             // exit and their finally blocks dispose sockets.

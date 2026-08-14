@@ -1,12 +1,14 @@
-/* overlay.css — extracted from index.html so the future server-side
-   Content-Security-Policy header (`default-src 'self'`) can be added
+/* overlay.css — extracted from index.html so the server-side
+   Content-Security-Policy header (`default-src 'self'`) could be added
    without an inline-style violation. Loaded by index.html via
    <link rel="stylesheet" href="/overlay.css">.
 
-   CSP-READY: this file is self-hosted; no inline styles remain on the
-   overlay page. The header lives in HUDServer.cs and is intentionally
-   owned by a separate agent — DO NOT add it from compositor / overlay
-   work; the response-header path is the HUDServer agent's scope. */
+   That header HAS since landed and is emitted by ServeLayerHtmlAsync in
+   HUDServer.cs — this file is self-hosted and no inline styles remain on
+   the overlay page, which is what keeps it satisfied. The header is a
+   RESPONSE-HEADER concern and stays there: never try to express a policy
+   change from here or from compositor.js, because a <meta> CSP would be a
+   second, divergent policy on the same document. */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -25,6 +27,69 @@ html, body {
 canvas#layer {
     background: transparent;
     image-rendering: auto;
+}
+
+/* DOM-overlay track (WebOverlay.Custom and Player.Embed sinks). compositor.js
+   sizes + positions this to overlap #layer; per-widget hosts are absolutely
+   positioned inside it in the canvas's LOGICAL coordinate space and CSS-scaled to
+   the on-screen canvas, so author CSS is written in the widget's authored pixels.
+   Display-only (pointer-events:none) so overlays never intercept OBS / preview
+   input. Sits above canvas#layer (z 0) and below #manipulator (z 50) and #status. */
+#dom-overlay {
+    position: absolute; left: 0; top: 0;
+    width: 0; height: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 10;
+}
+#dom-overlay .phx-overlay-host {
+    position: absolute;
+    transform-origin: top left;
+    overflow: hidden; /* clip to the widget rect, mirroring the Display sink's edge clip */
+    pointer-events: none;
+}
+
+/* V15 — the iframe player host. It carries .phx-overlay-host too, so it inherits the
+   whole placement contract above (absolute, top-left transform origin, clipped,
+   pointer-events:none) and adds only what an <iframe> needs.
+
+   pointer-events STAYS none, inherited, and that is a decision rather than an
+   oversight: an OBS overlay is a render surface nobody clicks, and both feeds run
+   with the native controls off, so there is nothing to click. Scoping it back to
+   auto here would only put a live click target over the author's canvas in the
+   Visualist preview.
+
+   The frame fills the host at 100%/100% — the host is already sized in LOGICAL widget
+   px and CSS-scaled from its top-left, so the embed lays itself out in authored
+   pixels exactly the way a WebOverlay's shadow content does. Opaque black because a
+   video letterboxes against SOMETHING, and a transparent gap would show the canvas
+   through the bars of a playing video. */
+#dom-overlay .phx-player-host {
+    background: #000;
+}
+#dom-overlay .phx-player-frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+/* The failure card. Hidden by default and shown ONLY when a watchdog fires — or, in
+   the Visualist preview, to say that the embed runs in OBS only. An IDLE player hides
+   its whole host instead of showing a card, because the overlay is on air and a
+   permanent text box there is not acceptable. Legible rather than loud: this is the
+   one thing a streamer can see when the embed substrate does not work. */
+#dom-overlay .phx-player-card {
+    position: absolute; left: 0; top: 0;
+    width: 100%; height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 8%;
+    background: #14100c;
+    color: #e6d9c6;
+    font: 500 18px/1.35 system-ui, sans-serif;
+    pointer-events: none;
 }
 
 /* The status badge is for debug-only inspection. Hidden by default

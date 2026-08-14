@@ -65,11 +65,12 @@ public sealed class VarChainTraceDialog : ContentDialog
 
     public VarChainTraceDialog()
     {
-        Title = "Trace Variable";
+        Title = Localizer.T("architect.dialog.var_chain.title", "Trace Variable");
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "Pin to canvas (dim others)";
-        CloseButtonText = "Close";
+        PrimaryButtonText = Localizer.T("architect.dialog.var_chain.pin_button",
+            "Pin to canvas (dim others)");
+        CloseButtonText = Localizer.T("common.button.close", "Close");
         DefaultButton = ContentDialogButton.Primary;
 
         // Root: Grid 640x500 with four rows (Auto / Auto / * / Auto).
@@ -83,8 +84,9 @@ public sealed class VarChainTraceDialog : ContentDialog
         var info = new InfoBar
         {
             Severity = InfoBarSeverity.Informational,
-            Title = "Read-only reference",
-            Message = "Click a row to jump to that node on the canvas, or pin a variable to highlight its chain.",
+            Title = Localizer.T("architect.dialog.var_chain.infobar.title", "Read-only reference"),
+            Message = Localizer.T("architect.dialog.var_chain.infobar.body",
+                "Click a row to jump to that node on the canvas, or pin a variable to highlight its chain."),
             IsOpen = true,
             IsClosable = false,
             Margin = new Thickness(0, 0, 0, 8),
@@ -102,7 +104,7 @@ public sealed class VarChainTraceDialog : ContentDialog
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0),
             FontSize = 11,
-            Text = "Variable",
+            Text = Localizer.T("architect.dialog.var_chain.variable_label", "Variable"),
         };
         Grid.SetColumn(VariableLabel, 0);
 
@@ -145,6 +147,7 @@ public sealed class VarChainTraceDialog : ContentDialog
             ItemTemplate = (DataTemplate)XamlReader.Load(RowTemplateXaml),
         };
         WritersList.ItemClick += OnRowClick;
+        WritersList.ContainerContentChanging += OnRowContainerChanging;
         Grid.SetRow(WritersList, 1);
 
         WritersEmpty = new TextBlock
@@ -152,7 +155,7 @@ public sealed class VarChainTraceDialog : ContentDialog
             Visibility = Visibility.Collapsed,
             Margin = new Thickness(2, 6, 0, 0),
             FontSize = 11,
-            Text = "No writers.",
+            Text = Localizer.T("architect.dialog.var_chain.writers_empty", "No writers."),
         };
         Grid.SetRow(WritersEmpty, 1);
 
@@ -190,6 +193,7 @@ public sealed class VarChainTraceDialog : ContentDialog
             ItemTemplate = (DataTemplate)XamlReader.Load(RowTemplateXaml),
         };
         ReadersList.ItemClick += OnRowClick;
+        ReadersList.ContainerContentChanging += OnRowContainerChanging;
         Grid.SetRow(ReadersList, 1);
 
         ReadersEmpty = new TextBlock
@@ -197,7 +201,7 @@ public sealed class VarChainTraceDialog : ContentDialog
             Visibility = Visibility.Collapsed,
             Margin = new Thickness(2, 6, 0, 0),
             FontSize = 11,
-            Text = "No readers.",
+            Text = Localizer.T("architect.dialog.var_chain.readers_empty", "No readers."),
         };
         Grid.SetRow(ReadersEmpty, 1);
 
@@ -287,6 +291,20 @@ public sealed class VarChainTraceDialog : ContentDialog
         // Editable ComboBox drops focus after Enter;
         // restore it so the user can immediately type another query.
         try { sender.Focus(FocusState.Programmatic); } catch { /* best-effort */ }
+    }
+
+    // The row template is authored as DataTemplate markup and loaded through
+    // XamlReader.Load, which cannot carry the loc: attached properties, so the
+    // row's one chrome string resolves here per realized container instead.
+    // The template literal stays as the pre-realization fallback.
+    private static void OnRowContainerChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue) return;
+        if (args.ItemContainer?.ContentTemplateRoot is FrameworkElement rowRoot)
+        {
+            ToolTipService.SetToolTip(rowRoot,
+                Localizer.T("architect.dialog.var_chain.row.tip", "Click to jump to this node"));
+        }
     }
 
     // Click a writer/reader row → reveal the node on the

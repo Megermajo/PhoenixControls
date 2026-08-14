@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Controls.PreBuildsHostView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Every tool page merges this for the house button / text
+                     grammar; the rail's notice button uses the same secondary
+                     recipe rather than inventing a second look for one button. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- The Pre-Builds surface: a left rail of every pre-built tool beside the
+         selected tool's page. A peer to the pillar views — MainWindow foregrounds
+         it in MainPaneRegion when the Pre-Builds tab is clicked and hides (never
+         destroys) it when a pillar tab is clicked, so the built tool pages and
+         their ViewModel state survive the round-trip.
+
+         Replaces the ToolTabHost strip (Majo, 1.1.7: "can we change the pre-builds
+         to a separate tab instead of a dropdown? With the different tools lined up
+         left similar to the Settings layout"). Two things follow from the rail
+         that the tab strip could not offer: every tool is visible without opening
+         a menu first, and there is no way to end up with a surface holding no
+         tools at all.
+
+         Deliberately shaped like SettingsDialog — 188 px rail over CoalShell with
+         a 1 px divider, and rows that carry the ember-shadow fill + ember border
+         when active. The rail is wider here (206) because "Custom Commands" and
+         "User Management" are long enough to wrap at 188 once translated, and it
+         carries group captions the Settings rail does not need at nine rows. -->
+    <Grid Background="{StaticResource CoalShellBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="206" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Left rail — rows built in code-behind so the coal/ember styling and the
+             per-row pop-out affordance stay in one place (same posture as
+             SettingsDialog.BuildCategoryRail). -->
+        <Border Grid.Column="0"
+                Background="{StaticResource CoalShellBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,0,1,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="RailPanel" Spacing="2" Padding="8,12" />
+            </ScrollViewer>
+        </Border>
+
+        <!-- Tool host. Pages are constructed on first selection and kept alive
+             afterwards, so switching tools does not re-run a VM's load or lose an
+             in-flight edit. -->
+        <Grid Grid.Column="1">
+            <ContentControl x:Name="ContentHost"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch" />
+
+            <!-- Shown in place of a tool that is currently open in its own window.
+                 The house pop-out rule (HubWorkspaceView.SetRegionVisibility) is
+                 that the embedded copy collapses while a pop-out is up, so the
+                 streamer never sees the same surface twice; this says so rather
+                 than leaving the column blank. -->
+            <StackPanel x:Name="PoppedOutNotice"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="10"
+                        MaxWidth="360">
+                <TextBlock x:Name="PoppedOutText"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="12"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                <Button x:Name="BringToFrontButton"
+                        Style="{StaticResource ToolSecondaryButtonStyle}"
+                        HorizontalAlignment="Center"
+                        Click="OnBringToFrontClick" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

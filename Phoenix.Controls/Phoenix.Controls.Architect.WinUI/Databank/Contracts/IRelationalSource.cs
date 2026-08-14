@@ -21,7 +21,9 @@ namespace Phoenix.Controls.Architect.WinUI.Databank.Contracts;
 // used to host.
 public interface IRelationalSource
 {
-    /// <summary>List user tables (no system tables) in display order.</summary>
+    /// <summary>List every table in display order, protected ones included —
+    /// the browser groups and gates them from the <see cref="TableInfo"/>
+    /// flags rather than by omission, so they stay inspectable.</summary>
     Task<IReadOnlyList<TableInfo>> ListTablesAsync(CancellationToken ct = default);
 
     /// <summary>Column schema for a specific table.</summary>
@@ -86,7 +88,7 @@ public interface IRelationalSource
 
     /// <summary>
     /// Drop a column from a user table. Implementations MUST reject
-    /// system tables and the primary-key column, logging the rejection
+    /// app-owned tables and the primary-key column, logging the rejection
     /// rather than throwing. Returns <c>true</c> when the column was
     /// dropped.
     /// </summary>
@@ -99,7 +101,7 @@ public interface IRelationalSource
     /// Rename a column on a user table. Implementations MUST validate
     /// the new identifier (alphanumeric + underscore, not a reserved
     /// SQLite rowid alias, not a collision with an existing column) and
-    /// reject system tables. Returns <c>true</c> on success.
+    /// reject app-owned tables. Returns <c>true</c> on success.
     /// </summary>
     Task<bool> RenameColumnAsync(
         string tableName,
@@ -110,8 +112,8 @@ public interface IRelationalSource
     /// <summary>
     /// Change a column's declared SQLite affinity (table-recreation
     /// pattern; SQLite has no <c>ALTER COLUMN ... TYPE</c>). Allowed
-    /// affinities are <c>TEXT / INTEGER / REAL / BLOB / NUMERIC</c>; system
-    /// tables are rejected. Returns <c>true</c> on success.
+    /// affinities are <c>TEXT / INTEGER / REAL / BLOB / NUMERIC</c>;
+    /// app-owned tables are rejected. Returns <c>true</c> on success.
     /// </summary>
     Task<bool> ChangeColumnTypeAsync(
         string tableName,
@@ -133,23 +135,41 @@ public interface IRelationalSource
     Task ClearTableAsync(string tableName, CancellationToken ct = default);
 
     /// <summary>
-    /// Drop a user table entirely. Implementations MUST reject system tables
-    /// (<c>Vars</c>, <c>EventLog</c>, <c>SystemHistory</c>, plus the Viewer
-    /// remote-bridge tables) so an out-of-band caller can't trip the persistence
-    /// layer's defense-in-depth guard.
+    /// Drop a user table entirely. Implementations MUST reject app-owned
+    /// tables — DROP TABLE is a schema change, so the whole
+    /// <c>DB.IsAppOwnedTableName</c> set is refused by the persistence layer,
+    /// not just the two write-locked ones.
     /// </summary>
     Task DropTableAsync(string tableName, CancellationToken ct = default);
 }
 
 /// <summary>
-/// One table in the databank. <see cref="IsSystem"/> tags the protected
-/// Hub-managed tables (<c>Vars</c> / <c>EventLog</c> / <c>SystemHistory</c>
-/// / Viewer remote-bridge) so the Architect Databank UI can dim them in the
-/// sidebar list and disable destructive toolbar buttons when one is
-/// selected. The persistence layer enforces the same guard independently —
-/// this flag is presentation only.
+/// One table in the databank. The two protection flags mirror the two
+/// registries in <c>DB.cs</c> and answer DIFFERENT questions — a UI that
+/// gates both kinds of operation on one of them enables controls the
+/// persistence layer then refuses.
+///
+/// <para><see cref="IsSystem"/> — stamped from <c>DB.IsSystemTableName</c>
+/// (the write lock): no caller may change this table's DATA. Only
+/// <c>PairedDevices</c> and <c>RemoteAuditLog</c> carry it. Gates cell
+/// editing, row insert/delete and clear.</para>
+///
+/// <para><see cref="IsAppOwned"/> — stamped from
+/// <c>DB.IsAppOwnedTableName</c>: Phoenix Controls owns this table's
+/// SCHEMA, so DDL (create/drop table, add/drop/rename/retype column) is
+/// refused while rows and cells stay open. Covers the 25 tool-maintained
+/// tables, including the two above. Gates the column context menu and the
+/// drop-table affordance.</para>
+///
+/// The persistence layer enforces both guards independently — these flags
+/// are presentation only.
 /// </summary>
-public sealed record TableInfo(string Name, int RowCount, int ColumnCount, bool IsSystem = false);
+public sealed record TableInfo(
+    string Name,
+    int    RowCount,
+    int    ColumnCount,
+    bool   IsSystem   = false,
+    bool   IsAppOwned = false);
 
 public sealed record ColumnInfo(string Name, string SqlType);
 

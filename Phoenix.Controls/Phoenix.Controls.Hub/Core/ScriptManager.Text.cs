@@ -40,7 +40,7 @@ namespace Phoenix.Controls.Hub.Core
                 // is true), while empty-source / non-empty-search reports false. Returning
                 // null when both were empty (the old guard) left downstream Bool consumers
                 // with a missing value instead of a usable flag.
-                return source.Contains(search, StringComparison.OrdinalIgnoreCase).ToString().ToLower();
+                return source.Contains(search, StringComparison.OrdinalIgnoreCase) ? "true" : "false";
             });
 
             // text.to_upper(value) — returns uppercased string
@@ -56,7 +56,7 @@ namespace Phoenix.Controls.Hub.Core
                 var bound = _engine.CurrentBoundArgs;
                 string list      = bound?.GetOrDefault<string>("List", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 string separator = bound?.GetOrDefault<string>("Separator", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
-                return string.Join(separator, list.Split(','));
+                return list.Replace(",", separator);
             });
 
             // ── Text ops — return result ─────────────────────────────────
@@ -79,18 +79,18 @@ namespace Phoenix.Controls.Hub.Core
                 // exporters and hand-authored scripts both work without a translation
                 // step at the seam. ASCII A..Z covers up to 26 args which is well past
                 // anything the manifesto contemplates.
-                string result = template;
+                var sb = new System.Text.StringBuilder(template);
                 for (int i = 0; i < rest.Count; i++)
                 {
                     string val = rest[i] ?? string.Empty;
-                    result = result.Replace($"{{{i}}}", val);
+                    sb.Replace($"{{{i}}}", val);
                     if (i < 26)
                     {
                         char letter = (char)('A' + i);
-                        result = result.Replace("{" + letter + "}", val);
+                        sb.Replace("{" + letter + "}", val);
                     }
                 }
-                return result;
+                return sb.ToString();
             });
             _engine.RegisterCommand("text.replace", async (args) => {
                 var bound = _engine.CurrentBoundArgs;
@@ -108,7 +108,7 @@ namespace Phoenix.Controls.Hub.Core
                 string source    = bound?.GetOrDefault<string>("Source", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 string delimiter = bound?.GetOrDefault<string>("Delimiter", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
                 if (string.IsNullOrEmpty(delimiter)) return null;
-                return string.Join(",", source.Split(delimiter));
+                return source.Replace(delimiter, ",");
             });
             // L2 — Text.Length must count grapheme clusters, not UTF-16 code units.
             // String.Length reports a surrogate pair (e.g. an emoji like "🎉") as 2,

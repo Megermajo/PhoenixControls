@@ -3,15 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <title>Phoenix HUD</title>
-    <!-- QC28-05: styles live in overlay.css (self-hosted) so the future
-         Content-Security-Policy header (`default-src 'self'`) won't trip
-         on an inline <style> block. Same goes for compositor.js below —
-         loaded by src, never inlined or injected dynamically. -->
+    <!-- QC28-05: styles live in overlay.css (self-hosted) so the
+         Content-Security-Policy header (`default-src 'self'`, emitted by
+         HUDServer.ServeLayerHtmlAsync) does not trip on an inline <style>
+         block. Same goes for compositor.js below — loaded by src, never
+         inlined or injected dynamically. That header is also the only place
+         a policy is expressed: there is deliberately no <meta> CSP here,
+         which would be a second and divergent policy on this document. -->
     <link rel="stylesheet" href="/overlay.css">
 </head>
 <body>
     <div id="stage">
         <canvas id="layer"></canvas>
+        <!-- DOM-overlay track for the two DOM sinks — WebOverlay.Custom and V15's
+             Player.Embed (Path B). compositor.js (syncWebOverlayLayout /
+             syncPlayerEmbedLayout) positions this to overlap #layer exactly. A
+             WebOverlay widget mounts a shadow-DOM host here so author HTML/CSS
+             animates natively OVER the canvas without being rasterised into it; a
+             Player widget mounts a third-party iframe host the same way. Both are
+             drawn by the browser above every canvas widget and neither can be
+             composited with them. -->
+        <div id="dom-overlay"></div>
     </div>
     <div id="status">connecting…</div>
     <script src="/compositor.js"></script>

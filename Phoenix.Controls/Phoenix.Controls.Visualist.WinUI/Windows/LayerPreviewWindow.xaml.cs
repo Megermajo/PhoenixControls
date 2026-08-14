@@ -4,6 +4,7 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Visualist.WinUI.Controls;
 using Windows.Graphics;
@@ -61,7 +62,13 @@ public sealed partial class LayerPreviewWindow : Window
         _widgetId = widgetId;
         bool isWidgetMode = !string.IsNullOrEmpty(widgetId);
 
-        Title = isWidgetMode ? $"Preview — {title} (widget)" : $"Preview — {title}";
+        Title = isWidgetMode
+            ? string.Format(
+                Localizer.T("visualist.window.layer_preview.caption.widget", "Preview — {0} (widget)"),
+                title)
+            : string.Format(
+                Localizer.T("visualist.window.layer_preview.caption", "Preview — {0}"),
+                title);
 
         if (isWidgetMode)
         {

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Phoenix.Controls.Architect.WinUI.Canvas;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 
 namespace Phoenix.Controls.Architect.WinUI.ViewModels;
@@ -15,7 +16,7 @@ namespace Phoenix.Controls.Architect.WinUI.ViewModels;
 public sealed class LogicInspectorViewModel : ObservableObject
 {
     private string _displayTitle = string.Empty;
-    private string _eyebrow      = "Inspector";
+    private string _eyebrow      = Localizer.T("architect.main.inspector.eyebrow", "Inspector");
     private string _description  = string.Empty;
     private bool   _hasSelection;
 
@@ -85,13 +86,17 @@ public sealed class LogicInspectorViewModel : ObservableObject
         if (node is null)
         {
             DisplayTitle = string.Empty;
-            Eyebrow      = "Inspector";
+            Eyebrow      = Localizer.T("architect.main.inspector.eyebrow", "Inspector");
             Description  = string.Empty;
             return;
         }
 
         DisplayTitle = node.Title ?? string.Empty;
-        Eyebrow      = string.IsNullOrEmpty(node.Category) ? "Inspector" : node.Category!;
+        // Node categories stay English by decision — only the neutral fallback
+        // eyebrow is translated.
+        Eyebrow      = string.IsNullOrEmpty(node.Category)
+            ? Localizer.T("architect.main.inspector.eyebrow", "Inspector")
+            : node.Category!;
 
         // Resolved description — instance override wins, fall back to the
         // NodeRegistry template description, fall back to a polite placeholder
@@ -107,7 +112,8 @@ public sealed class LogicInspectorViewModel : ObservableObject
             var fromTemplate = (template?.Description ?? string.Empty).Trim();
             Description = fromTemplate.Length > 0
                 ? fromTemplate
-                : "No description provided for this node.";
+                : Localizer.T("architect.main.inspector.no_description",
+                    "No description provided for this node.");
         }
     }
 
@@ -121,20 +127,21 @@ public sealed class LogicInspectorViewModel : ObservableObject
         if (nodes is null || nodes.Count == 0)
         {
             DisplayTitle = string.Empty;
-            Eyebrow      = "Inspector";
+            Eyebrow      = Localizer.T("architect.main.inspector.eyebrow", "Inspector");
             Description  = string.Empty;
             return;
         }
 
-        DisplayTitle = $"{nodes.Count} nodes";
-        Eyebrow      = "Multi-selection";
+        DisplayTitle = string.Format(
+            Localizer.T("architect.main.inspector.multi_count_format", "{0} nodes"), nodes.Count);
+        Eyebrow      = Localizer.T("architect.main.inspector.eyebrow_multi", "Multi-selection");
 
         // Reuse the cached counts dictionary instead of allocating a
         // new one per multi-selection event.
         _multiCounts.Clear();
         foreach (var n in nodes)
         {
-            string title = n.Title ?? "(untitled)";
+            string title = n.Title ?? Localizer.T("architect.main.inspector.untitled", "(untitled)");
             _multiCounts[title] = _multiCounts.TryGetValue(title, out var c) ? c + 1 : 1;
         }
         var sb = new System.Text.StringBuilder();
@@ -167,7 +174,7 @@ public sealed class LogicInspectorViewModel : ObservableObject
         if (link is null)
         {
             DisplayTitle = string.Empty;
-            Eyebrow      = "Inspector";
+            Eyebrow      = Localizer.T("architect.main.inspector.eyebrow", "Inspector");
             Description  = string.Empty;
             return;
         }
@@ -179,16 +186,20 @@ public sealed class LogicInspectorViewModel : ObservableObject
         var toSocket   = graph.FindSocketById(link.ToSocketId);
 
         DisplayTitle = $"{fromNode?.Title ?? "?"} → {toNode?.Title ?? "?"}";
-        Eyebrow      = "Wire";
+        Eyebrow      = Localizer.T("architect.main.inspector.eyebrow_wire", "Wire");
 
         var kind = (fromSocket?.DataType ?? SocketDataType.Any).ToString();
         // Null-coalesce every endpoint so a wire whose node / socket
         // was deleted mid-inspection renders "?.?" instead of a bare "."
         // (string interpolation of two nulls). Mirrors DisplayTitle's "? → ?"
         // fallback on the line above.
-        Description =
-            $"From  {fromNode?.Title ?? "?"}.{fromSocket?.Name ?? "?"}\n" +
-            $"To    {toNode?.Title ?? "?"}.{toSocket?.Name ?? "?"}\n" +
-            $"Kind  {kind}";
+        // Node titles, socket names and the SocketDataType stay English by
+        // decision; only the three row labels are translatable.
+        Description = string.Format(
+            Localizer.T("architect.main.inspector.link_details_format",
+                "From  {0}.{1}\nTo    {2}.{3}\nKind  {4}"),
+            fromNode?.Title ?? "?", fromSocket?.Name ?? "?",
+            toNode?.Title ?? "?", toSocket?.Name ?? "?",
+            kind);
     }
 }

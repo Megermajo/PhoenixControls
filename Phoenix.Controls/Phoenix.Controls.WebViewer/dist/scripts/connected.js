@@ -3,11 +3,13 @@
 // every interactive control is rendered disabled.
 
 import { apiBase } from "./app.js";
-import { topbarMarkup, el, escapeHtml } from "./pair.js";
+import { topbarMarkup, el } from "./pair.js";
 
 const MAX_FEED = 200;
 const MAX_CHAT = 200;
 const MAX_LOG  = 500;
+
+const CLOCK_FMT = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
 
 // WS reconnect policy — mirrors compositor.js (1.5× backoff, capped at 30s).
 // The flat 2s retry that lived here before flooded a recovering Hub or a
@@ -95,7 +97,7 @@ export function renderConnected(root, ctx) {
   try { activeWs?.close(); } catch { /* already closed */ }
   root.innerHTML = "";
   root.appendChild(el("div", "viewer-watermark"));
-  const topbar = topbarMarkup(ctx.channel, "lan", null);
+  const topbar = topbarMarkup(ctx.channel, null);
   root.appendChild(topbar);
 
   const strip = el("div", "viewer-statusstrip");
@@ -661,6 +663,6 @@ function formatClock(ts) {
   try {
     const d = new Date(ts);
     if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    return d.toLocaleTimeString([], CLOCK_FMT);
   } catch { return ""; }
 }

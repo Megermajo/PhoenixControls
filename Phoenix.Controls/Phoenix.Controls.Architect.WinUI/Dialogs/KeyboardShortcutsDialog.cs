@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Phoenix.Controls.Architect.WinUI.Canvas;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Architect.WinUI.Dialogs;
@@ -101,10 +102,10 @@ public sealed class KeyboardShortcutsDialog : ContentDialog
 
     public KeyboardShortcutsDialog()
     {
-        Title = "Keyboard Shortcuts";
+        Title = Localizer.T("architect.dialog.shortcuts.title", "Keyboard Shortcuts");
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        CloseButtonText = "Close";
+        CloseButtonText = Localizer.T("common.button.close", "Close");
         DefaultButton = ContentDialogButton.Close;
 
         // The four keyed TextBlock styles that lived in
@@ -144,11 +145,14 @@ public sealed class KeyboardShortcutsDialog : ContentDialog
         // Eyebrow header — matches the chrome's wordmark band so the dialog
         // reads as a continuation of the same shell.
         var header = new StackPanel { Spacing = 2, Margin = new Thickness(0, 0, 0, 8) };
+        // "ARCHITECT" is the pillar's own product name — kept English by the
+        // same rule that leaves Hub / Visualist / OBS / Twitch untranslated.
         ArchitectEyebrow = new TextBlock { Text = "ARCHITECT", Style = eyebrowStyle };
         SubtitleText = new TextBlock
         {
             FontSize = 13,
-            Text = "Canvas chords on the left, Chrome chords on the right.",
+            Text = Localizer.T("architect.dialog.shortcuts.subtitle",
+                "Canvas chords on the left, Chrome chords on the right."),
         };
         header.Children.Add(ArchitectEyebrow);
         header.Children.Add(SubtitleText);
@@ -175,7 +179,11 @@ public sealed class KeyboardShortcutsDialog : ContentDialog
             Padding = new Thickness(0, 0, 12, 0),
         };
         CanvasColumn = new StackPanel { Spacing = 2 };
-        CanvasEyebrow = new TextBlock { Style = eyebrowStyle, Text = "CANVAS" };
+        CanvasEyebrow = new TextBlock
+        {
+            Style = eyebrowStyle,
+            Text = Localizer.T("architect.dialog.shortcuts.column.canvas", "CANVAS"),
+        };
         CanvasColumn.Children.Add(CanvasEyebrow);
         canvasScroll.Content = CanvasColumn;
         Grid.SetColumn(canvasScroll, 0);
@@ -198,7 +206,11 @@ public sealed class KeyboardShortcutsDialog : ContentDialog
             Padding = new Thickness(12, 0, 0, 0),
         };
         ChromeColumn = new StackPanel { Spacing = 2 };
-        ChromeEyebrow = new TextBlock { Style = eyebrowStyle, Text = "CHROME" };
+        ChromeEyebrow = new TextBlock
+        {
+            Style = eyebrowStyle,
+            Text = Localizer.T("architect.dialog.shortcuts.column.chrome", "CHROME"),
+        };
         ChromeColumn.Children.Add(ChromeEyebrow);
         chromeScroll.Content = ChromeColumn;
         Grid.SetColumn(chromeScroll, 2);

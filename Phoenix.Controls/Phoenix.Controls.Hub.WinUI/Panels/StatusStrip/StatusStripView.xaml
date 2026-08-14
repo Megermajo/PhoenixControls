@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.StatusStrip"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     HorizontalContentAlignment="Stretch">
 
@@ -40,11 +41,15 @@
                                  Clicked="OnStreamerBotDotClicked" />
                 <local:StatusDot x:Name="HudOverlayDot"
                                  Label="HUD Overlay"
+                                 loc:Localize.Key="panel.statusstrip.dot.hud_overlay.label"
+                                 loc:Localize.Property="Label"
                                  Sub="{x:Bind ViewModel.HudOverlaySub, Mode=OneWay}"
                                  State="{x:Bind ViewModel.HudOverlay, Mode=OneWay}"
                                  Clicked="OnHudOverlayDotClicked" />
                 <local:StatusDot x:Name="IpcBusDot"
                                  Label="IPC Bus"
+                                 loc:Localize.Key="panel.statusstrip.dot.ipc_bus.label"
+                                 loc:Localize.Property="Label"
                                  Sub="{x:Bind ViewModel.IpcBusSub, Mode=OneWay}"
                                  State="{x:Bind ViewModel.IpcBus, Mode=OneWay}"
                                  Clicked="OnIpcBusDotClicked" />

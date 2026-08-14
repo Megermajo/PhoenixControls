@@ -11,9 +11,9 @@ namespace Phoenix.Controls.Shared.Services
         {
             if (min >= max) return min;
 
-            byte[] data = new byte[4];
+            Span<byte> data = stackalloc byte[4];
             _rng.GetBytes(data);
-            uint value = BitConverter.ToUInt32(data, 0);
+            uint value = BitConverter.ToUInt32(data);
 
             // Normalize to [0, 1) then scale. Divide by 2^32 (one past uint.MaxValue)
             // so the result is strictly < 1.0 — dividing by uint.MaxValue would let
@@ -41,9 +41,9 @@ namespace Phoenix.Controls.Shared.Services
         {
             if (percentage <= 0)   return false;
             if (percentage >= 100) return true;
-            byte[] data = new byte[4];
+            Span<byte> data = stackalloc byte[4];
             _rng.GetBytes(data);
-            uint value = BitConverter.ToUInt32(data, 0);
+            uint value = BitConverter.ToUInt32(data);
             // Divide by 2^32 (one past uint.MaxValue) so the upper bound is
             // strictly < 1.0 — see note on Next() for rationale.
             double normalized = value / 4294967296.0; // [0, 1)

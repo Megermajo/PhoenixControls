@@ -110,24 +110,32 @@ namespace Phoenix.Controls.Shared.Services
                    (SELECT MAX(t.LastEntry)    FROM GiveawayTickets t WHERE t.GiveawayId = g.Id) AS LastEntry
             FROM Giveaways g";
 
+        // OPEN table since the 2026-08 unlock: db.set_cell binds every value as
+        // TEXT, so an INTEGER/REAL-affinity column here can legitimately hold
+        // "free" or "" once a streamer edits it. Every numeric read therefore
+        // goes through CoerceBalance / CoerceReal instead of a bare GetInt64 /
+        // GetDouble — the DB.Quotes.ReadEntry posture. This one matters more
+        // than most: ReadGiveaway is reached from the Architect canvas UI thread
+        // (NodeView's giveaway-picker flyout) with no catch above it, so a throw
+        // here would take a window down rather than just abort a script.
         private static Giveaway ReadGiveaway(SqliteDataReader r) => new()
         {
-            Id                    = r.GetInt64(0),
-            Key                   = r.IsDBNull(1) ? "" : r.GetString(1),
-            Title                 = r.IsDBNull(2) ? "" : r.GetString(2),
-            Status                = r.IsDBNull(3) ? "open" : r.GetString(3),
-            OpenedAt              = r.IsDBNull(4) ? "" : r.GetString(4),
-            ClosedAt              = r.IsDBNull(5) ? null : r.GetString(5),
-            OpenedBy              = r.IsDBNull(6) ? "" : r.GetString(6),
-            IsDefault             = !r.IsDBNull(7) && r.GetInt64(7) != 0,
-            SubscriberBonusFactor = r.IsDBNull(8) ? 1.0 : r.GetDouble(8),
-            ModBonusFactor        = r.IsDBNull(9) ? 1.0 : r.GetDouble(9),
-            CapPerUser            = r.IsDBNull(10) ? 0 : (int)r.GetInt64(10),
-            TicketPrice           = r.IsDBNull(11) ? 0 : (int)r.GetInt64(11),
-            Winners               = r.IsDBNull(12) ? "" : r.GetString(12),
-            Entrants              = r.IsDBNull(13) ? 0 : (int)r.GetInt64(13),
-            Tickets               = r.IsDBNull(14) ? 0 : (int)r.GetInt64(14),
-            LastEntry             = r.IsDBNull(15) ? "" : r.GetString(15),
+            Id                    = CoerceBalance(r.IsDBNull(0) ? null : r.GetValue(0)),
+            Key                   = CellText(r, 1),
+            Title                 = CellText(r, 2),
+            Status                = r.IsDBNull(3) ? "open" : CellText(r, 3),
+            OpenedAt              = CellText(r, 4),
+            ClosedAt              = r.IsDBNull(5) ? null : CellText(r, 5),
+            OpenedBy              = CellText(r, 6),
+            IsDefault             = !r.IsDBNull(7) && CoerceBalance(r.GetValue(7)) != 0,
+            SubscriberBonusFactor = r.IsDBNull(8) ? 1.0 : CoerceReal(r.GetValue(8), 1.0),
+            ModBonusFactor        = r.IsDBNull(9) ? 1.0 : CoerceReal(r.GetValue(9), 1.0),
+            CapPerUser            = CoerceCount(r, 10),
+            TicketPrice           = CoerceCount(r, 11),
+            Winners               = CellText(r, 12),
+            Entrants              = CoerceCount(r, 13),
+            Tickets               = CoerceCount(r, 14),
+            LastEntry             = CellText(r, 15),
         };
 
         /// <summary>Inserts a new open giveaway and returns its row id.</summary>
@@ -280,13 +288,16 @@ namespace Phoenix.Controls.Shared.Services
                 // Microsoft.Data.Sqlite executes the batch statement-by-statement
                 // as the reader advances: result set 1 = previous count, the
                 // INSERT produces no result set, result set 2 = new total.
+                // Coerced, not GetInt64: GiveawayTickets is an open table and this
+                // is the !enter hot path — a streamer who hand-set a Tickets cell
+                // to "10 " or "ten" must not blow up the next chat entry.
                 int previous = 0, newTotal = 0;
                 using var r = (SqliteDataReader)await cmd.ExecuteReaderAsync().ConfigureAwait(false);
                 if (await r.ReadAsync().ConfigureAwait(false))
-                    previous = r.IsDBNull(0) ? 0 : (int)r.GetInt64(0);
+                    previous = CoerceCount(r, 0);
                 if (await r.NextResultAsync().ConfigureAwait(false) &&
                     await r.ReadAsync().ConfigureAwait(false))
-                    newTotal = r.IsDBNull(0) ? 0 : (int)r.GetInt64(0);
+                    newTotal = CoerceCount(r, 0);
 
                 // Clamped ⇔ the increment did not land in full: covers both
                 // "already at/over cap" (newTotal == previous) and a partial
@@ -323,7 +334,7 @@ namespace Phoenix.Controls.Shared.Services
             int price, string currencyTable, bool isAll, string lastEntryIso, bool isMod = false)
         {
             bool priced = price > 0;
-            if (priced && (!IsValidIdentifier(currencyTable) || IsSystemTable(currencyTable)))
+            if (priced && (!IsValidIdentifier(currencyTable) || IsAppOwnedTable(currencyTable)))
                 return new GiveawayPurchaseResult(
                     await GetTicketsForUserAsync(giveawayId, username).ConfigureAwait(false),
                     0, 0, -1, Capped: false, NoFunds: false, TableMissing: true);
@@ -355,13 +366,22 @@ namespace Phoenix.Controls.Shared.Services
                     // DB failure and must surface as one — the outer catch
                     // rolls back and rethrows — never masquerade as a config
                     // problem the streamer would chase in the wrong place.
+                    //
+                    // COLLATE NOCASE on the name match (here AND on the payment
+                    // UPDATE below) because this is a DELIBERATELY SHARED table:
+                    // the Loyalty tool's default BalanceTable is the same
+                    // "ChannelPoints" the giveaway charges, and every Loyalty
+                    // read/write matches case-insensitively (DB.Loyalty.cs). A
+                    // BINARY match here would miss an off-case row, so a viewer
+                    // whose points Loyalty credited under a different casing
+                    // would read as broke and could never spend them.
                     long balance = -1;
                     if (priced)
                     {
                         try
                         {
                             using var bal = new SqliteCommand(
-                                $"SELECT [currency] FROM [{currencyTable}] WHERE [name] = @u LIMIT 1",
+                                $"SELECT [currency] FROM [{currencyTable}] WHERE [name] = @u COLLATE NOCASE LIMIT 1",
                                 _connection, tx);
                             bal.CommandTimeout = CommandTimeoutSeconds;
                             bal.Parameters.AddWithValue("@u", username);
@@ -434,10 +454,12 @@ namespace Phoenix.Controls.Shared.Services
                     if (cost > 0)
                     {
                         // rowid-scoped so duplicate name rows (user-authored
-                        // table) never get charged more than once.
+                        // table) never get charged more than once. Same NOCASE
+                        // match as the balance read above — anything else could
+                        // charge a different row than the one we priced.
                         using var pay = new SqliteCommand(
                             $"UPDATE [{currencyTable}] SET [currency] = [currency] - @cost " +
-                            $"WHERE rowid = (SELECT rowid FROM [{currencyTable}] WHERE [name] = @u LIMIT 1)",
+                            $"WHERE rowid = (SELECT rowid FROM [{currencyTable}] WHERE [name] = @u COLLATE NOCASE LIMIT 1)",
                             _connection, tx);
                         pay.CommandTimeout = CommandTimeoutSeconds;
                         pay.Parameters.AddWithValue("@cost", cost);
@@ -515,6 +537,47 @@ namespace Phoenix.Controls.Shared.Services
             return 0;
         }
 
+        // ── Open-table read helpers (2026-08 unlock) ───────────────────────
+        // Companions to CoerceBalance, added when the giveaway / timer /
+        // user-management tables were opened to db.* writes. Same contract:
+        // a hand-edited cell of ANY storage class degrades to a sensible
+        // default, never throws. Shared across the DB partials.
+
+        /// <summary>CoerceBalance for a fractional column (bonus factors, rates).
+        /// Unreadable cells fall back to <paramref name="fallback"/> rather than 0,
+        /// because a multiplier of 0 would silently void every entry.</summary>
+        private static double CoerceReal(object? v, double fallback)
+        {
+            switch (v)
+            {
+                case null or DBNull: return fallback;
+                case double d: return double.IsFinite(d) ? d : fallback;
+                case float f2: return float.IsFinite(f2) ? f2 : fallback;
+                case long l: return l;
+            }
+            string? s;
+            try { s = Convert.ToString(v, CultureInfo.InvariantCulture); }
+            catch { return fallback; }
+            s = s?.Trim();
+            if (string.IsNullOrEmpty(s)) return fallback;
+            return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d2)
+                && double.IsFinite(d2) ? d2 : fallback;
+        }
+
+        /// <summary>CoerceBalance narrowed to <see cref="int"/> for a count column.
+        /// CLAMPS rather than wraps — a past-int-range cell must read back as the
+        /// ceiling, not as some unrelated number (the DB.Quotes.ReadEntry rule).</summary>
+        private static int CoerceCount(SqliteDataReader r, int ordinal) =>
+            r.IsDBNull(ordinal)
+                ? 0
+                : (int)Math.Clamp(CoerceBalance(r.GetValue(ordinal)), int.MinValue, int.MaxValue);
+
+        /// <summary>Storage-class-proof text read. A TEXT-affinity column can still
+        /// hold a BLOB or a number if something else wrote it, and GetString throws
+        /// on both.</summary>
+        private static string CellText(SqliteDataReader r, int ordinal) =>
+            r.IsDBNull(ordinal) ? "" : (r.GetValue(ordinal)?.ToString() ?? "");
+
         /// <summary>Sets the per-user ticket cap (0 = unlimited). Existing ticket
         /// counts above a newly lowered cap are left untouched — the cap gates
         /// future increments only (the growth-only MAX/MIN clamp in
@@ -579,16 +642,23 @@ namespace Phoenix.Controls.Shared.Services
             {
                 EnsureConnected();
                 using var tx = _connection!.BeginTransaction();
-                foreach (var kv in roleByUser)
+                // Hoist the command + parameters out of the loop and reassign values
+                // per row (same statements/order/txn) — avoids N command allocations
+                // and N SQL re-parses. Mirrors the LogEventsBatchAsync batch pattern.
+                using (var cmd = new SqliteCommand(
+                    "UPDATE GiveawayTickets SET Role = @r WHERE GiveawayId = @gid AND Username = @u",
+                    _connection, tx))
                 {
-                    using var cmd = new SqliteCommand(
-                        "UPDATE GiveawayTickets SET Role = @r WHERE GiveawayId = @gid AND Username = @u",
-                        _connection, tx);
                     cmd.CommandTimeout = CommandTimeoutSeconds;
-                    cmd.Parameters.AddWithValue("@r", kv.Value);
-                    cmd.Parameters.AddWithValue("@gid", giveawayId);
-                    cmd.Parameters.AddWithValue("@u", kv.Key);
-                    await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    var pRole = cmd.Parameters.AddWithValue("@r", string.Empty);
+                    cmd.Parameters.AddWithValue("@gid", giveawayId);   // constant across the loop
+                    var pUser = cmd.Parameters.AddWithValue("@u", string.Empty);
+                    foreach (var kv in roleByUser)
+                    {
+                        pRole.Value = kv.Value;
+                        pUser.Value = kv.Key;
+                        await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
+                    }
                 }
                 tx.Commit();
             }
@@ -623,8 +693,11 @@ namespace Phoenix.Controls.Shared.Services
                 using var r = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
                 if (await r.ReadAsync().ConfigureAwait(false))
                 {
-                    total    = r.IsDBNull(0) ? 0 : (int)r.GetInt64(0);
-                    entrants = r.IsDBNull(1) ? 0 : (int)r.GetInt64(1);
+                    // SUM() over an open column returns REAL as soon as one cell
+                    // holds "12.5", and TEXT-summing rules make other shapes
+                    // possible too — coerce rather than assume INTEGER.
+                    total    = CoerceCount((SqliteDataReader)r, 0);
+                    entrants = CoerceCount((SqliteDataReader)r, 1);
                 }
             }
             finally { ReleaseLock(taken); }
@@ -647,13 +720,14 @@ namespace Phoenix.Controls.Shared.Services
                 using var r = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
                 while (await r.ReadAsync().ConfigureAwait(false))
                 {
+                    var row = (SqliteDataReader)r;
                     list.Add(new GiveawayEntrant
                     {
-                        Username  = r.IsDBNull(0) ? "" : r.GetString(0),
-                        Role      = r.IsDBNull(1) ? "viewer" : r.GetString(1),
-                        Tickets   = r.IsDBNull(2) ? 0 : (int)r.GetInt64(2),
-                        LastEntry = r.IsDBNull(3) ? "" : r.GetString(3),
-                        IsMod     = !r.IsDBNull(4) && r.GetInt64(4) != 0,
+                        Username  = CellText(row, 0),
+                        Role      = row.IsDBNull(1) ? "viewer" : CellText(row, 1),
+                        Tickets   = CoerceCount(row, 2),
+                        LastEntry = CellText(row, 3),
+                        IsMod     = !row.IsDBNull(4) && CoerceBalance(row.GetValue(4)) != 0,
                     });
                 }
             }

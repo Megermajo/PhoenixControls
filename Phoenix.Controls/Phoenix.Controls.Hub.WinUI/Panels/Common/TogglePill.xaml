@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.TogglePill"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        House toggle pill — the hand-rolled boolean visual the Timer page draws
+        for its DEFAULT / "pause when offline" switches (TimerView.xaml:293-307),
+        promoted to a control so the rebuilt tool pages can replace stock
+        ToggleSwitch / CheckBox with a one-line OneWay binding instead of a
+        repaint method plus two PropertyChanged cases per pill.
+
+        Geometry is the reference verbatim: a 26x14 track at literal CornerRadius
+        8 (a pill radius, NOT the Radius1Corner=2 token the cards use) holding a
+        10x10 knob that jumps left/right. No hover, no transition, no disabled
+        visual — the reference has none of the three.
+
+        DISPLAY ONLY. This control has no Click, no IsChecked and no toggle
+        behaviour: the host Button owns the Click, the AutomationProperties.Name
+        and the IsEnabled gate, exactly as TimerView's chip hosts do. That split
+        is what keeps IsEnabled off a Panel (IsEnabled is declared on Control,
+        not UIElement as in WPF) — the host is always a Button, which is a
+        Control.
+
+        Layout is a two-column Auto Grid rather than a StackPanel with Spacing so
+        that a blank Label contributes no phantom gap: the label carries its own
+        left Margin and collapses when empty.
+    -->
+    <Grid VerticalAlignment="Center">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Track fill and knob fill/placement are painted from code-behind
+             (ApplyToggle) because they alternate with IsOn; the border never
+             changes and is declared here. -->
+        <Border x:Name="Track"
+                Grid.Column="0"
+                Width="26"
+                Height="14"
+                CornerRadius="8"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="1"
+                VerticalAlignment="Center">
+            <Ellipse x:Name="Knob"
+                     Width="10"
+                     Height="10"
+                     HorizontalAlignment="Left"
+                     VerticalAlignment="Center"
+                     Margin="1,0,0,0" />
+        </Border>
+
+        <TextBlock x:Name="LabelText"
+                   Grid.Column="1"
+                   Margin="10,0,0,0"
+                   Visibility="Collapsed"
+                   FontFamily="{StaticResource SansFont}"
+                   FontSize="11"
+                   FontWeight="Bold"
+                   CharacterSpacing="100"
+                   VerticalAlignment="Center" />
+    </Grid>
+</UserControl>

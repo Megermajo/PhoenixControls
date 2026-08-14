@@ -25,11 +25,7 @@ internal static class Program
             Console.Error.WriteLine($"Phoenix.Controls.Updater: {error}");
             Console.Error.WriteLine(
                 "Usage:\n" +
-                "  Update mode (preferred):\n" +
-                "    Phoenix.Controls.Updater --update <archivePath> [--target <suiteRoot>]\n" +
-                "                              [--archive-sha256 <hex>] [--release-tag <tag>]\n" +
-                "                              [--no-relaunch]\n" +
-                "  Releases mode (legacy URL-based):\n" +
+                "  Releases mode (the only shipped update path):\n" +
                 "    Phoenix.Controls.Updater --install-root <path> --hub-pid <pid>\n" +
                 "                              --asset-url <url> --asset-sha256 <hex>\n" +
                 "                              [--release-tag <tag>] [--launch-script <path>]\n" +

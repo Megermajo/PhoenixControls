@@ -26,9 +26,15 @@ namespace Phoenix.Controls.Hub.Core
     ///
     /// SSRF defense + MIME / magic-byte / size validation. Pre-fetch we reject non-HTTP(S)
     /// schemes and any host that resolves to a loopback / link-local / private / ULA address
-    /// (incl. cloud metadata 169.254.169.254). Post-fetch we verify Content-Type against an
-    /// allowlist, sniff the first bytes for a matching magic header, and cap body size at
-    /// AppConfig.MaxAssetSizeBytes (default 5 MiB).
+    /// (incl. cloud metadata 169.254.169.254). Redirects are followed MANUALLY with the same
+    /// validator re-run on every <c>Location</c> and a 5-hop cap, because auto-redirect would
+    /// walk a single 302 straight past the pre-fetch check. Post-fetch we verify Content-Type
+    /// against an allowlist, sniff the first bytes for a matching magic header, and cap body
+    /// size at AppConfig.MaxAssetSizeBytes (default 5 MiB).
+    ///
+    /// The cache filename's extension is the canonical one for the MIME the guard ACCEPTED —
+    /// never one guessed from the remote URL's path — because <c>HUDServer</c>'s
+    /// <c>/asset/url</c> response Content-Type is derived from it.
     /// </summary>
     public sealed class UrlImageCache : IDisposable
     {
@@ -91,8 +97,17 @@ namespace Phoenix.Controls.Hub.Core
         // SSRF reject) used to re-hit the origin on every subsequent /asset/url
         // request, amplifying any client-side retry storm into a DDoS against
         // the origin. Cache the failure for a short TTL so the next attempts
-        // get the cached null without re-fetching. Keyed by sha256(url) for
-        // stability across querystring ordering / case differences.
+        // skip the origin. Keyed by sha256(url) for stability across
+        // querystring ordering / case differences.
+        //
+        // It suppresses the FETCH, never the SERVE. The entry is shared by every
+        // caller of a URL — including sibling Image.LoadUrl nodes that pass no
+        // freshness token — so a stamp laid down by one failed forced
+        // revalidation must not blank a widget whose TTL-fresh, already-validated
+        // file is still sitting in the cache directory. Every read path therefore
+        // falls back to TryServeUsableCachedPath before returning null, no stamp
+        // is laid down while such a file exists, and a successful fetch clears
+        // any stamp a racing failure left behind.
         private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromSeconds(60);
         private readonly ConcurrentDictionary<string, DateTime> _negativeCache = new();
 
@@ -103,6 +118,74 @@ namespace Phoenix.Controls.Hub.Core
         // that over mtime when present; fall back to mtime for files we don't
         // have an access stamp for (e.g. on first run after process restart).
         private readonly ConcurrentDictionary<string, DateTime> _lastAccessUtc = new();
+
+        // Client-supplied freshness token, keyed by sha256(url).
+        // compositor.js appends a cache-busting `_ts` bucket to /asset/url for
+        // WebSource nodes with RefreshSeconds > 0; the bucket flips value once
+        // per refresh window. The route used to drop it entirely, so every
+        // WebSource was pinned to the global 24h Ttl and a live scoreboard
+        // painted exactly one frame per stream. We treat the token as opaque:
+        // a value we have not fetched under yet means "revalidate against the
+        // origin now". Storing the instant of the last forced refetch alongside
+        // it lets us rate-limit, so a page spinning the token can't turn the
+        // proxy into an origin-hammering relay.
+        private readonly ConcurrentDictionary<string, (string Token, DateTime ForcedAtUtc)> _freshnessTokens = new();
+        private static readonly TimeSpan MinForcedRefetchInterval = TimeSpan.FromSeconds(1);
+        private const int MaxFreshnessTokenLength = 64;
+
+        // Absolute per-map cap on the three per-URL bookkeeping maps above
+        // (_negativeCache, _lastAccessUtc, _freshnessTokens). The disk LRU
+        // sweep reclaims FILES, not these maps — before this cap a WebSource
+        // or script feeding rotating URLs (per-stream query strings, signed
+        // CDN links) grew each map by one entry per distinct URL for the
+        // process lifetime; only ClearCache / Dispose ever emptied them. On
+        // breach the oldest entries by the map's own timestamp semantics are
+        // dropped down to a lower watermark (7/8 of the cap) so a saturated
+        // map pays the snapshot + sort once per batch of inserts rather than
+        // once per insert.
+        //
+        // Evicting a bookkeeping row is always SAFE, never a wrong answer:
+        //   - a swept negative-cache stamp just means the next request for
+        //     that URL re-validates against the origin instead of being
+        //     suppressed — one extra origin attempt, then it re-stamps on
+        //     failure;
+        //   - a swept freshness token means the next `_ts` bucket counts as
+        //     unseen and forces exactly one refetch (unthrottled once,
+        //     because the rate-limit stamp lives in the same entry), after
+        //     which the re-created entry restores both dedupe and throttle;
+        //   - a swept last-access stamp makes the disk LRU fall back to the
+        //     file's mtime, exactly as it already does for files fetched by
+        //     a previous process run.
+        // 4096 entries is a few hundred KiB worst-case across all three maps
+        // while comfortably exceeding the distinct-URL count of any realistic
+        // overlay session between process restarts. Settable like
+        // MaxCacheBytes so tests can exercise the bound without minting
+        // thousands of URLs; <= 0 disables the cap (mirrors MaxCacheBytes).
+        public int MaxBookkeepingEntries { get; set; } = 4096;
+
+        // Single-in-flight gates for the per-map trims, mirroring
+        // _sweepRunning: the breacher that wins the CAS pays the trim and
+        // concurrent inserts skip rather than stack snapshot+sort passes.
+        private int _negativeCacheTrimRunning;
+        private int _lastAccessTrimRunning;
+        private int _freshnessTokenTrimRunning;
+
+        // Test / diagnostics seams: entry counts for the bookkeeping maps so
+        // the MaxBookkeepingEntries bound is observable without reflection.
+        public int NegativeCacheEntryCount => _negativeCache.Count;
+        public int LastAccessEntryCount => _lastAccessUtc.Count;
+        public int FreshnessTokenEntryCount => _freshnessTokens.Count;
+
+        // Redirect hop cap for the manual follower. Matches
+        // ScriptManager.MaxRedirectHops so both outbound paths behave alike.
+        private const int MaxRedirectHops = 5;
+
+        // Canonical on-disk extension per accepted MIME. The cache filename
+        // must describe the CONTENT the guard validated, never the
+        // attacker-supplied URL path: /asset/url re-derives its response
+        // Content-Type from this extension, so a URL ending in `.html` used to
+        // make a validated PNG go back out as text/html on the overlay origin.
+        private static readonly string[] CanonicalExtensions = { ".png", ".jpg", ".gif", ".webp" };
 
         // Test-only escape hatch: the SSRF guard rejects loopback addresses in
         // production, but UrlImageCacheTests run an in-process HttpListener on
@@ -122,7 +205,15 @@ namespace Phoenix.Controls.Hub.Core
             _cacheDir = cacheDir ?? DefaultCacheDir();
             if (http is null)
             {
-                _http = new HttpClient();
+                // AllowAutoRedirect stays OFF — DoFetchAsync follows 3xx hops
+                // itself so ValidateUrlForOutboundAsync re-runs on every
+                // Location. With the framework default (true, up to 50 hops) a
+                // single 302 from an attacker-controlled origin walked straight
+                // past the pre-fetch SSRF guard into loopback / RFC1918 /
+                // 169.254.169.254, which is precisely what
+                // ScriptManager.SendWithManualRedirectAsync exists to prevent on
+                // the script HTTP path.
+                _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
                 _ownsHttp = true;
             }
             else
@@ -154,6 +245,7 @@ namespace Phoenix.Controls.Hub.Core
             _fetchLocks.Clear();
             _negativeCache.Clear();
             _lastAccessUtc.Clear();
+            _freshnessTokens.Clear();
         }
 
         public string CacheDirectory => _cacheDir;
@@ -163,23 +255,43 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>
         /// Resolve a URL to a local cached file path. Fetches if missing or expired.
-        /// Returns null on validation or fetch failure; callers should fall back gracefully.
+        /// Returns null on validation or fetch failure <em>only when nothing usable is
+        /// cached</em>; callers should fall back gracefully.
+        /// <para>
+        /// <paramref name="freshnessToken"/> is an opaque client-supplied cache-busting
+        /// value (compositor.js's <c>_ts</c> bucket, which flips once per
+        /// WebSource.RefreshSeconds window). A token value this cache has not fetched
+        /// under yet forces a revalidation against the origin instead of honoring
+        /// <see cref="Ttl"/>; passing null keeps the plain TTL behavior.
+        /// </para>
+        /// <para>
+        /// Stale-while-error: a failed revalidation degrades to the plain-<see cref="Ttl"/>
+        /// copy rather than to null (see <see cref="TryServeUsableCachedPath"/>), so a
+        /// down origin costs the overlay its updates, never its picture.
+        /// </para>
         /// </summary>
-        public async Task<string?> GetCachedPathAsync(string url, CancellationToken ct = default)
+        public async Task<string?> GetCachedPathAsync(string url, CancellationToken ct = default, string? freshnessToken = null)
         {
             if (string.IsNullOrWhiteSpace(url)) return null;
 
             string sha = Sha256Hex(url);
 
             // Negative-cache short-circuit. If the previous fetch for
-            // this URL failed (any reason) within NegativeCacheTtl, return null
-            // immediately without re-validating, re-resolving DNS, or hitting
-            // the origin. Cleanup is implicit: TryFetchAsync overwrites the
-            // entry on a fresh attempt, and the stamp is checked relative to
-            // NegativeCacheTtl on every read so expired entries are ignored.
+            // this URL failed (any reason) within NegativeCacheTtl, skip the
+            // origin entirely — no re-validating, no re-resolving DNS. Cleanup
+            // is implicit: a successful fetch drops the entry, and the stamp is
+            // checked relative to NegativeCacheTtl on every read so expired
+            // entries are ignored.
+            //
+            // Suppressing the fetch is not the same as suppressing the answer:
+            // a TTL-fresh file already validated by an earlier fetch is still
+            // perfectly servable, and returning null for it is what turned a
+            // transient origin hiccup into a blank on-air widget for a full
+            // NegativeCacheTtl (the stamp is shared with callers that pass no
+            // freshness token at all).
             if (_negativeCache.TryGetValue(sha, out var negStamp))
             {
-                if (DateTime.UtcNow - negStamp < NegativeCacheTtl) return null;
+                if (DateTime.UtcNow - negStamp < NegativeCacheTtl) return TryServeUsableCachedPath(sha);
                 _negativeCache.TryRemove(sha, out _);
             }
 
@@ -188,24 +300,35 @@ namespace Phoenix.Controls.Hub.Core
             if (!preOk)
             {
                 GlobalLogger.Log($"UrlImageCache: rejected fetch '{url}' — {preReason}", "UrlImageCache", LogLevel.CriticalError);
-                _negativeCache[sha] = DateTime.UtcNow;
+                // A transient DNS failure reaches this arm too, so serve the
+                // already-validated copy when there is one — reading a local
+                // file the guard previously accepted issues no outbound request
+                // and so gives up none of the SSRF posture. Only stamp when
+                // there is nothing to serve; stamping while a usable file exists
+                // would suppress every later read of that file, not just the
+                // fetch we are declining.
+                string? servable = TryServeUsableCachedPath(sha);
+                if (servable is not null) return servable;
+                StampNegativeCache(sha);
                 return null;
             }
 
-            string ext = GuessExtension(url);
-            string path = Path.Combine(_cacheDir, $"{sha}{ext}");
+            // Honor the client's cache-busting token before consulting disk.
+            // Returns the instant a cached file must be newer than to still
+            // count as fresh, or null for the plain Ttl comparison.
+            DateTime? forceCutoffUtc = ResolveForcedRefetchCutoff(sha, freshnessToken);
 
             // Bump last-access on hot reads so the LRU sweep favors
             // recently-used assets. Done outside the fetch lock because the
             // existence check is a cheap stat that doesn't need serialization.
-            if (File.Exists(path))
+            // The filename extension is whichever canonical form the last
+            // successful fetch's validated MIME produced, so the lookup probes
+            // the canonical set rather than computing one from the URL.
+            string? hit = TryGetCachedPath(sha, forceCutoffUtc);
+            if (hit is not null)
             {
-                var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
-                if (age < Ttl)
-                {
-                    _lastAccessUtc[path] = DateTime.UtcNow;
-                    return path;
-                }
+                TouchLastAccess(hit);
+                return hit;
             }
 
             // Serialize concurrent fetches of the same URL onto one
@@ -223,31 +346,44 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     // Re-check after acquiring the lock — another waiter may have
                     // already populated the cache file while we waited.
-                    if (File.Exists(path))
+                    hit = TryGetCachedPath(sha, forceCutoffUtc);
+                    if (hit is not null)
                     {
-                        var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
-                        if (age < Ttl)
-                        {
-                            _lastAccessUtc[path] = DateTime.UtcNow;
-                            return path;
-                        }
+                        TouchLastAccess(hit);
+                        return hit;
                     }
                     // Negative cache may also have been populated by the prior
-                    // holder of this lock — honor it on the inner re-check too.
+                    // holder of this lock — honor it on the inner re-check too,
+                    // with the same serve-what-we-have fallback as the outer one.
                     if (_negativeCache.TryGetValue(sha, out var innerNeg)
                         && DateTime.UtcNow - innerNeg < NegativeCacheTtl)
                     {
-                        return null;
+                        return TryServeUsableCachedPath(sha);
                     }
 
-                    string? result = await DoFetchAsync(url, sha, path, ct).ConfigureAwait(false);
+                    string? result = await DoFetchAsync(url, sha, ct).ConfigureAwait(false);
                     if (result is null)
                     {
-                        _negativeCache[sha] = DateTime.UtcNow;
+                        // Stale-while-error. A forced revalidation rejects the
+                        // on-disk copy on the way in (mtime < forceCutoffUtc), so
+                        // reaching here does NOT mean the cache is empty — it
+                        // means the origin would not confirm the copy we hold.
+                        // Fall back to the plain-Ttl probe: the widget keeps the
+                        // frame it had, which is exactly the pre-token behavior,
+                        // instead of going blank until the origin recovers.
+                        string? servable = TryServeUsableCachedPath(sha);
+                        if (servable is not null) return servable;
+                        StampNegativeCache(sha);
                     }
                     else
                     {
-                        _lastAccessUtc[result] = DateTime.UtcNow;
+                        TouchLastAccess(result);
+                        // A success invalidates any stamp a racing failure left
+                        // behind. Without this, a caller that entered before the
+                        // failed attempt stamped could publish a good file and
+                        // still leave every reader inside the window looking at
+                        // a null for a URL that is now cached and healthy.
+                        _negativeCache.TryRemove(sha, out _);
                     }
                     return result;
                 }
@@ -287,7 +423,7 @@ namespace Phoenix.Controls.Hub.Core
         /// success or null on any failure; the caller is responsible for stamping
         /// the negative cache.
         /// </summary>
-        private async Task<string?> DoFetchAsync(string url, string sha, string path, CancellationToken ct)
+        private async Task<string?> DoFetchAsync(string url, string sha, CancellationToken ct)
         {
             // Disambiguate the temp filename per-fetch. The previous
             // `path + ".tmp"` formula meant every concurrent fetch of the same
@@ -302,7 +438,10 @@ namespace Phoenix.Controls.Hub.Core
             // ANY future change that might allow concurrent writes (e.g. a
             // future per-extension fanout) and to crashed leftovers from a
             // prior process.
-            string tmp = $"{path}.{System.Diagnostics.Process.GetCurrentProcess().Id}.{Guid.NewGuid():N}.tmp";
+            //
+            // Rooted at the sha rather than the final path because the final
+            // path is not known until the response's MIME has been validated.
+            string tmp = Path.Combine(_cacheDir, $"{sha}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp");
             int maxBytes = ConfigManager.Current.MaxAssetSizeBytes > 0
                 ? ConfigManager.Current.MaxAssetSizeBytes
                 : 5 * 1024 * 1024;
@@ -319,7 +458,11 @@ namespace Phoenix.Controls.Hub.Core
 
             try
             {
-                using var resp = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, fetchCt).ConfigureAwait(false);
+                // Manual redirect follow — every hop re-validated. A null
+                // return means a hop was rejected or the chain overran the hop
+                // cap; the helper has already logged the reason.
+                using var resp = await SendFollowingValidatedRedirectsAsync(url, fetchCt).ConfigureAwait(false);
+                if (resp is null) return null;
                 resp.EnsureSuccessStatusCode();
 
                 // Content-Length pre-check — bail before allocating the response stream
@@ -337,6 +480,15 @@ namespace Phoenix.Controls.Hub.Core
                     GlobalLogger.Log($"UrlImageCache: rejected '{url}' — disallowed Content-Type '{mediaType}'", "UrlImageCache", LogLevel.CriticalError);
                     return null;
                 }
+
+                // Final on-disk name is decided HERE, from the MIME the
+                // allowlist just accepted — not from the URL path. HUDServer
+                // labels the /asset/url response by reading this extension back,
+                // so deriving it from the remote URL let a `…/evil.html` URL
+                // serving a valid PNG come back as text/html on the overlay
+                // origin (and an extensionless-but-`.svg`-suffixed CDN URL come
+                // back as image/svg+xml, which silently renders nothing).
+                string path = Path.Combine(_cacheDir, sha + CanonicalExtensionForMime(mediaType));
 
                 await using var src = await resp.Content.ReadAsStreamAsync(fetchCt).ConfigureAwait(false);
 
@@ -372,6 +524,11 @@ namespace Phoenix.Controls.Hub.Core
                 }
 
                 File.Move(tmp, path, overwrite: true);
+                // Drop any entry for this same URL under a different canonical
+                // extension — reachable when an origin changes the format it
+                // serves. Without it the superseded file lingers until the LRU
+                // sweep and counts against MaxCacheBytes.
+                PruneStaleSiblings(sha, path);
                 // Opportunistic LRU sweep after a successful fetch. The
                 // sweep runs off-thread (background Task) so the caller doesn't
                 // pay the directory-walk latency on the hot fetch path. Single-
@@ -400,6 +557,76 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
+        /// <summary>
+        /// Issues the GET and follows 3xx responses manually, re-running
+        /// <see cref="ValidateUrlForOutboundAsync"/> on every <c>Location</c> before
+        /// the next hop and capping the chain at <see cref="MaxRedirectHops"/>.
+        /// Mirrors <c>ScriptManager.SendWithManualRedirectAsync</c>; the asset proxy
+        /// keeps its own copy because it streams the body
+        /// (<see cref="HttpCompletionOption.ResponseHeadersRead"/>) and carries no
+        /// request headers worth stripping on a cross-host hop.
+        /// Returns null when a hop is rejected or the cap is exceeded — the reason is
+        /// logged here and the caller treats null as a fetch failure.
+        /// </summary>
+        private async Task<HttpResponseMessage?> SendFollowingValidatedRedirectsAsync(string url, CancellationToken ct)
+        {
+            string current = url;
+            for (int hop = 0; ; hop++)
+            {
+                HttpResponseMessage resp;
+                var req = new HttpRequestMessage(HttpMethod.Get, current);
+                try
+                {
+                    resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    req.Dispose();
+                }
+
+                if (!IsRedirectStatus(resp.StatusCode) || resp.Headers.Location is null)
+                    return resp;
+
+                if (hop >= MaxRedirectHops)
+                {
+                    GlobalLogger.Log(
+                        $"UrlImageCache: rejected '{url}' — redirect chain exceeded {MaxRedirectHops} hops",
+                        "UrlImageCache", LogLevel.CriticalError);
+                    resp.Dispose();
+                    return null;
+                }
+
+                Uri target = resp.Headers.Location.IsAbsoluteUri
+                    ? resp.Headers.Location
+                    : new Uri(new Uri(current), resp.Headers.Location);
+                resp.Dispose();
+
+                // The whole point of the manual loop: a 30x pointing at
+                // 127.0.0.1 / 10.0.0.0/8 / 169.254.169.254 must be refused
+                // exactly the way the initial URL would have been.
+                var (hopOk, hopReason) = await ValidateUrlForOutboundAsync(target.AbsoluteUri, ct).ConfigureAwait(false);
+                if (!hopOk)
+                {
+                    GlobalLogger.Log(
+                        $"UrlImageCache: rejected redirect '{current}' → '{target}' — {hopReason}",
+                        "UrlImageCache", LogLevel.CriticalError);
+                    return null;
+                }
+
+                current = target.AbsoluteUri;
+            }
+        }
+
+        private static bool IsRedirectStatus(HttpStatusCode code) => code switch
+        {
+            HttpStatusCode.MovedPermanently  => true, // 301
+            HttpStatusCode.Found             => true, // 302
+            HttpStatusCode.SeeOther          => true, // 303
+            HttpStatusCode.TemporaryRedirect => true, // 307
+            HttpStatusCode.PermanentRedirect => true, // 308
+            _ => false
+        };
+
         public long ClearCache()
         {
             long total = 0;
@@ -416,6 +643,10 @@ namespace Phoenix.Controls.Hub.Core
             // user-initiated "forget everything" entry point, and a stuck
             // negative entry would defeat the point.
             _negativeCache.Clear();
+            // Same reasoning for the freshness tokens: with the files gone
+            // there is nothing left for a remembered token to keep fresh, and a
+            // stale entry would suppress the next forced revalidation.
+            _freshnessTokens.Clear();
             return total;
         }
 
@@ -507,6 +738,19 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     File.Delete(entry.Path);
                     _lastAccessUtc.TryRemove(entry.Path, out _);
+                    // The file IS the referent of the sha-keyed bookkeeping:
+                    // with it gone the freshness token has nothing left to
+                    // keep fresh (the next `_ts` bucket takes the cold path
+                    // and refetches anyway) and a negative stamp no longer
+                    // guards a stale-while-error fallback (worst case the
+                    // next request costs one origin attempt and re-stamps).
+                    // Dropping both here keeps the maps shrinking with the
+                    // disk instead of outliving every file they described.
+                    // Cache filenames are `<sha><canonical ext>`, so the
+                    // name sans extension is exactly the map key.
+                    string sha = Path.GetFileNameWithoutExtension(entry.Path);
+                    _freshnessTokens.TryRemove(sha, out _);
+                    _negativeCache.TryRemove(sha, out _);
                     total -= entry.Length;
                     freed += entry.Length;
                 }
@@ -727,26 +971,247 @@ namespace Phoenix.Controls.Hub.Core
 
         private static string Sha256Hex(string input)
         {
-            using var sha = SHA256.Create();
-            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(input));
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
             var sb = new StringBuilder(bytes.Length * 2);
             foreach (var b in bytes) sb.Append(b.ToString("x2"));
             return sb.ToString();
         }
 
-        private static string GuessExtension(string url)
+        /// <summary>
+        /// Canonical cache-file extension for an accepted image MIME. Replaces the
+        /// old URL-path-derived guess: the extension is the only record of what the
+        /// guard validated, and <c>/asset/url</c> turns it back into the response
+        /// Content-Type.
+        /// </summary>
+        private static string CanonicalExtensionForMime(string? media) => media switch
         {
+            "image/png"  => ".png",
+            "image/jpeg" => ".jpg",
+            "image/gif"  => ".gif",
+            "image/webp" => ".webp",
+            // Unreachable — IsAllowedImageMime gates every caller. Kept total so a
+            // future allowlist entry added without a matching arm here fails closed
+            // on the MimeForCachedFile lookup instead of inheriting a wrong type.
+            _            => ".bin",
+        };
+
+        /// <summary>
+        /// The validated image MIME for a file this cache produced, or null when the
+        /// path is not one of the canonical forms. <c>HUDServer.ServeCachedUrlAsync</c>
+        /// labels the proxied body with this instead of re-deriving a type from the
+        /// remote URL's path extension.
+        /// </summary>
+        public static string? MimeForCachedFile(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png"  => "image/png",
+            ".jpg"  => "image/jpeg",
+            ".gif"  => "image/gif",
+            ".webp" => "image/webp",
+            _       => null,
+        };
+
+        /// <summary>
+        /// Probe the canonical-extension set for a usable cache entry for
+        /// <paramref name="sha"/>. With <paramref name="mustBeNewerThanUtc"/> null the
+        /// entry counts as fresh while its age is under <see cref="Ttl"/>; with a value
+        /// (a forced revalidation) only a file written since that instant counts, so a
+        /// concurrent caller that already refetched still produces a hit.
+        /// </summary>
+        private string? TryGetCachedPath(string sha, DateTime? mustBeNewerThanUtc)
+        {
+            foreach (var ext in CanonicalExtensions)
+            {
+                string p = Path.Combine(_cacheDir, sha + ext);
+                if (!File.Exists(p)) continue;
+                DateTime mtime;
+                try { mtime = File.GetLastWriteTimeUtc(p); }
+                catch { continue; }
+
+                if (mustBeNewerThanUtc is DateTime cutoff)
+                {
+                    if (mtime >= cutoff) return p;
+                    continue;
+                }
+                if (DateTime.UtcNow - mtime < Ttl) return p;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Stale-while-error probe: the plain-<see cref="Ttl"/> cache entry for
+        /// <paramref name="sha"/>, or null when there is none. Touches the LRU
+        /// access stamp exactly like an ordinary hit, because serving it is one.
+        /// <para>
+        /// Enforces the invariant every failure arm of <see cref="GetCachedPathAsync"/>
+        /// leans on: while a TTL-fresh file the guard already validated sits in the
+        /// cache directory, this class does not answer null. A failed forced
+        /// revalidation degrades to that file — i.e. to the behavior the cache had
+        /// before it honored the <c>_ts</c> token — rather than to nothing.
+        /// <c>HUDServer</c> renders a null as a 502 and <c>compositor.js</c> renders
+        /// that as an empty widget, so on an on-air overlay "stopped updating" is
+        /// the strictly cheaper failure mode against a flaky origin.
+        /// </para>
+        /// </summary>
+        private string? TryServeUsableCachedPath(string sha)
+        {
+            string? hit = TryGetCachedPath(sha, null);
+            if (hit is not null) TouchLastAccess(hit);
+            return hit;
+        }
+
+        /// <summary>
+        /// Delete cache entries for the same URL under a different canonical
+        /// extension, keeping <paramref name="keep"/>.
+        /// </summary>
+        private void PruneStaleSiblings(string sha, string keep)
+        {
+            foreach (var ext in CanonicalExtensions)
+            {
+                string p = Path.Combine(_cacheDir, sha + ext);
+                if (string.Equals(p, keep, StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    if (File.Exists(p))
+                    {
+                        File.Delete(p);
+                        _lastAccessUtc.TryRemove(p, out _);
+                    }
+                }
+                catch
+                {
+                    // Concurrent read / Windows file lock — the LRU sweep will
+                    // reclaim it later.
+                }
+            }
+        }
+
+        /// <summary>
+        /// Decide whether a client-supplied cache-busting token demands a fresh
+        /// origin fetch. Returns the cutoff instant a cached file must be newer than,
+        /// or null to fall back on the plain <see cref="Ttl"/> comparison.
+        /// A token value not seen before (including the first one for a URL) forces;
+        /// an unchanged token never does; and a changed token is ignored when the
+        /// previous forced refetch was under <see cref="MinForcedRefetchInterval"/>
+        /// ago, so a page spinning the token cannot relay a request flood at the
+        /// origin.
+        /// </summary>
+        private DateTime? ResolveForcedRefetchCutoff(string sha, string? freshnessToken)
+        {
+            if (string.IsNullOrEmpty(freshnessToken)) return null;
+            // Bound what we are willing to remember per URL — the token comes
+            // straight off the query string.
+            if (freshnessToken.Length > MaxFreshnessTokenLength) return null;
+
+            DateTime now = DateTime.UtcNow;
+            if (_freshnessTokens.TryGetValue(sha, out var prev))
+            {
+                if (string.Equals(prev.Token, freshnessToken, StringComparison.Ordinal)) return null;
+                if (now - prev.ForcedAtUtc < MinForcedRefetchInterval)
+                {
+                    // Record the new token but keep the old forced-at stamp, so the
+                    // rate limit is measured from the last actual origin hit.
+                    StoreFreshnessToken(sha, freshnessToken, prev.ForcedAtUtc);
+                    return null;
+                }
+            }
+            StoreFreshnessToken(sha, freshnessToken, now);
+            return now;
+        }
+
+        // ── Bookkeeping bounds ────────────────────────────────────────────────
+        // The three per-URL maps GAIN entries only through the helpers below,
+        // so every insert path shares the MaxBookkeepingEntries enforcement
+        // (removals — the LRU sweep, ClearCache, Dispose — stay where they
+        // are). See the property's comment block for why eviction is always
+        // safe for each map.
+
+        /// <summary>
+        /// Record a hot-read access stamp and keep the map under
+        /// <see cref="MaxBookkeepingEntries"/>. Losing a stamp to the trim is
+        /// benign: <see cref="RunLruSweep"/> already falls back to file mtime
+        /// for any path it has no stamp for.
+        /// </summary>
+        private void TouchLastAccess(string path)
+        {
+            _lastAccessUtc[path] = DateTime.UtcNow;
+            EnforceBookkeepingCap(_lastAccessUtc, static stamp => stamp, ref _lastAccessTrimRunning);
+        }
+
+        /// <summary>
+        /// Lay down a negative stamp and keep the map under
+        /// <see cref="MaxBookkeepingEntries"/>. Oldest-stamp-first eviction
+        /// takes already-expired entries before live ones; evicting a live
+        /// stamp only means the next request for that URL re-validates against
+        /// the origin (and re-stamps on failure) instead of being suppressed —
+        /// one extra origin attempt, never a wrong answer.
+        /// </summary>
+        private void StampNegativeCache(string sha)
+        {
+            _negativeCache[sha] = DateTime.UtcNow;
+            EnforceBookkeepingCap(_negativeCache, static stamp => stamp, ref _negativeCacheTrimRunning);
+        }
+
+        /// <summary>
+        /// Remember the client's freshness token and keep the map under
+        /// <see cref="MaxBookkeepingEntries"/>. An evicted entry makes the next
+        /// token for that URL count as unseen — exactly one forced refetch,
+        /// after which the re-created entry restores both the token dedupe and
+        /// the <see cref="MinForcedRefetchInterval"/> throttle that live in it.
+        /// </summary>
+        private void StoreFreshnessToken(string sha, string token, DateTime forcedAtUtc)
+        {
+            _freshnessTokens[sha] = (token, forcedAtUtc);
+            EnforceBookkeepingCap(_freshnessTokens, static v => v.ForcedAtUtc, ref _freshnessTokenTrimRunning);
+        }
+
+        /// <summary>
+        /// Bound one bookkeeping map to <see cref="MaxBookkeepingEntries"/>,
+        /// evicting oldest-by-<paramref name="stampOf"/> first down to a 7/8
+        /// watermark. Runs inline on the inserting caller — a snapshot + sort
+        /// over a few thousand entries is microseconds, cheaper than the file
+        /// stat the hot path just paid — and is gated by an Interlocked flag
+        /// per map (the <c>_sweepRunning</c> pattern) so concurrent breachers
+        /// don't stack passes: the CAS winner trims, losers skip. The maps stay
+        /// ConcurrentDictionary, so reads everywhere remain lock-free and no
+        /// lock ordering is introduced anywhere on the fetch path.
+        /// </summary>
+        private void EnforceBookkeepingCap<TValue>(
+            ConcurrentDictionary<string, TValue> map,
+            Func<TValue, DateTime> stampOf,
+            ref int trimRunning)
+        {
+            int cap = MaxBookkeepingEntries;
+            if (cap <= 0) return;
+            if (map.Count <= cap) return;
+            if (Interlocked.CompareExchange(ref trimRunning, 1, 0) != 0) return;
             try
             {
-                var uri = new Uri(url);
-                string ext = Path.GetExtension(uri.AbsolutePath);
-                if (!string.IsNullOrEmpty(ext) && ext.Length <= 6) return ext.ToLowerInvariant();
+                // Re-check under the gate — the previous holder may already
+                // have brought the map back under the cap.
+                if (map.Count <= cap) return;
+
+                // Trim to a lower watermark (cap - cap/8) so a map saturated
+                // by rotating URLs re-pays the snapshot once per ~cap/8
+                // inserts instead of on every single one.
+                int target = cap - Math.Max(1, cap / 8);
+                var snapshot = new List<KeyValuePair<string, TValue>>(map.Count);
+                foreach (var kv in map) snapshot.Add(kv);
+                snapshot.Sort((a, b) => stampOf(a.Value).CompareTo(stampOf(b.Value)));
+
+                int toRemove = snapshot.Count - target;
+                for (int i = 0; i < snapshot.Count && toRemove > 0; i++)
+                {
+                    // KeyValuePair overload: removes only while the value still
+                    // matches the snapshot, so an entry a concurrent caller
+                    // refreshed mid-trim keeps its newer stamp instead of
+                    // being evicted out from under that caller.
+                    if (map.TryRemove(snapshot[i])) toRemove--;
+                }
             }
-            catch { }
-            // Extensionless URLs (CDNs, query-string-keyed images) are common.
-            // .png is a safer default than .bin: browsers will at least try to render
-            // the cached file as an image; .bin would force a Save-As prompt.
-            return ".png";
+            finally
+            {
+                Interlocked.Exchange(ref trimRunning, 0);
+            }
         }
     }
 }

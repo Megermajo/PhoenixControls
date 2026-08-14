@@ -12,6 +12,7 @@ using Phoenix.Controls.Architect.Core;
 using Phoenix.Controls.Architect.WinUI.Canvas;
 using Phoenix.Controls.Architect.WinUI.Dialogs;
 using Phoenix.Controls.Architect.WinUI.ViewModels;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.System;
@@ -122,6 +123,7 @@ public sealed partial class LeftRail : UserControl
         VariablesSection.Items = new ObservableCollection<RailItemViewModel>();
         ProcessesSection.Items = new ObservableCollection<RailItemViewModel>();
         MacrosSection.Items    = new ObservableCollection<RailItemViewModel>();
+        LocalizeSectionHints();
         BuildButtonStrips();
 
         // Selection plumbing — each section raises ItemSelected on tap;
@@ -175,6 +177,19 @@ public sealed partial class LeftRail : UserControl
         // Unhook the bus handler when the control leaves the tree so a torn-
         // down rail doesn't keep the singleton's invocation list alive.
         Unloaded += OnLeftRailUnloaded;
+    }
+
+    /// <summary>
+    /// RailSection carries two text slots (Title + Hint) and the
+    /// <c>loc:Localize</c> attached property can only drive one of them, so
+    /// the XAML attribute takes Title and the hints are resolved here. The
+    /// English literals stay authored in LeftRail.xaml — these fallbacks
+    /// repeat them so a missing bundle entry still renders the same words.
+    /// </summary>
+    private void LocalizeSectionHints()
+    {
+        ProcessesSection.Hint = Localizer.T("architect.rail.processes.hint", "long-running · async");
+        MacrosSection.Hint    = Localizer.T("architect.rail.macros.hint",    "reusable subgraphs");
     }
 
     private void OnLeftRailUnloaded(object sender, RoutedEventArgs e)
@@ -416,10 +431,14 @@ public sealed partial class LeftRail : UserControl
             {
                 ChevronToggleButton.Content = collapsed ? "" : "";
                 ToolTipService.SetToolTip(ChevronToggleButton,
-                    collapsed ? "Expand rail (chevron)" : "Collapse rail (chevron)");
+                    collapsed
+                        ? Localizer.T("architect.rail.expand.tip",   "Expand rail (chevron)")
+                        : Localizer.T("architect.rail.collapse.tip", "Collapse rail (chevron)"));
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
                     ChevronToggleButton,
-                    collapsed ? "Expand rail" : "Collapse rail");
+                    collapsed
+                        ? Localizer.T("architect.rail.expand.a11y",   "Expand rail")
+                        : Localizer.T("architect.rail.collapse.a11y", "Collapse rail"));
             }
             // Title + inspector button hide when collapsed — at 32 px the
             // rail strip can't comfortably host wide chrome; the chevron
@@ -545,7 +564,10 @@ public sealed partial class LeftRail : UserControl
                 procs.Add(new RailItemViewModel
                 {
                     Name  = p.Name,
-                    Type  = "process",
+                    // Type is the row's right-hand display tag only — nothing
+                    // keys off it, so it translates. (Kind, just below, is the
+                    // dispatch identifier and stays English.)
+                    Type  = Localizer.T("architect.rail.tag.process", "process"),
                     // 0.10.0 theme P2: sage green resolved from OkBrush.
                     Color = ResolveHex("OkBrush", "#6FA46B"),
                     Kind  = "process",
@@ -572,7 +594,9 @@ public sealed partial class LeftRail : UserControl
                 macros.Add(new RailItemViewModel
                 {
                     Name  = isGlobal ? $"[G] {m.Name}" : m.Name,
-                    Type  = isGlobal ? "GLOBAL" : "local",
+                    Type  = isGlobal
+                        ? Localizer.T("architect.rail.tag.global", "GLOBAL")
+                        : Localizer.T("architect.rail.tag.local",  "local"),
                     // 0.10.0 theme P2: brass identity for macros.
                     Color = ResolveHex("EmberPrimaryBrush", "#E5A24E"),
                     Kind  = "macro",
@@ -915,25 +939,27 @@ public sealed partial class LeftRail : UserControl
 
     private void BuildButtonStrips()
     {
-        AddButton(VariablesSection, "+",  Resource("OkBrush"),  "Add variable",     "add",    requiresSelection: false, () => AddVariableAsync());
-        AddButton(VariablesSection, "−",  Resource("ErrBrush"), "Remove variable",  "remove", requiresSelection: true,  () => RemoveSelectedVariableAsync());
-        AddButton(VariablesSection, "Aa", null,                 "Rename variable",  "rename", requiresSelection: true,  () => RenameSelectedVariableAsync());
+        // The tooltip argument is the button's only user-facing text (the
+        // glyphs are symbols); actionName stays English — it is a log token.
+        AddButton(VariablesSection, "+",  Resource("OkBrush"),  Localizer.T("architect.rail.button.add_variable.tip",    "Add variable"),    "add",    requiresSelection: false, () => AddVariableAsync());
+        AddButton(VariablesSection, "−",  Resource("ErrBrush"), Localizer.T("architect.rail.button.remove_variable.tip", "Remove variable"), "remove", requiresSelection: true,  () => RemoveSelectedVariableAsync());
+        AddButton(VariablesSection, "Aa", null,                 Localizer.T("architect.rail.button.rename_variable.tip", "Rename variable"), "rename", requiresSelection: true,  () => RenameSelectedVariableAsync());
 
-        AddButton(ProcessesSection, "+",  Resource("OkBrush"),  "New process",      "add",    requiresSelection: false, () => AddProcessAsync());
+        AddButton(ProcessesSection, "+",  Resource("OkBrush"),  Localizer.T("architect.rail.button.new_process.tip",     "New process"),     "add",    requiresSelection: false, () => AddProcessAsync());
         // "↗" (navigate / open editor) not "✎" (edit-in-place):
         // the rail opens a SubGraphWindow, it does not inline-edit the process.
-        AddButton(ProcessesSection, "↗",  null,                 "Edit process",     "edit",   requiresSelection: true,  () => { OpenSelectedProcess(); return System.Threading.Tasks.Task.CompletedTask; });
-        AddButton(ProcessesSection, "Aa", null,                 "Rename process",   "rename", requiresSelection: true,  () => RenameSelectedProcessAsync());
-        AddButton(ProcessesSection, "×",  Resource("ErrBrush"), "Delete process",   "delete", requiresSelection: true,  () => DeleteSelectedProcessAsync());
+        AddButton(ProcessesSection, "↗",  null,                 Localizer.T("architect.rail.button.edit_process.tip",   "Edit process"),   "edit",   requiresSelection: true,  () => { OpenSelectedProcess(); return System.Threading.Tasks.Task.CompletedTask; });
+        AddButton(ProcessesSection, "Aa", null,                 Localizer.T("architect.rail.button.rename_process.tip", "Rename process"), "rename", requiresSelection: true,  () => RenameSelectedProcessAsync());
+        AddButton(ProcessesSection, "×",  Resource("ErrBrush"), Localizer.T("architect.rail.button.delete_process.tip", "Delete process"), "delete", requiresSelection: true,  () => DeleteSelectedProcessAsync());
 
-        AddButton(MacrosSection, "+",  Resource("OkBrush"),           "New macro",       "add",     requiresSelection: false, () => AddMacroAsync());
+        AddButton(MacrosSection, "+",  Resource("OkBrush"),           Localizer.T("architect.rail.button.new_macro.tip", "New macro"), "add",     requiresSelection: false, () => AddMacroAsync());
         // "↗" navigate glyph (opens the macro's SubGraphWindow),
         // matching the baseline editMacroBtn affordance; "✎" wrongly implied
         // inline editing.
-        AddButton(MacrosSection, "↗",  null,                          "Edit macro",      "edit",    requiresSelection: true,  () => { OpenSelectedMacro(); return System.Threading.Tasks.Task.CompletedTask; });
-        AddButton(MacrosSection, "Aa", null,                          "Rename macro",    "rename",  requiresSelection: true,  () => RenameSelectedMacroAsync());
-        AddButton(MacrosSection, "×",  Resource("ErrBrush"),          "Delete macro",    "delete",  requiresSelection: true,  () => DeleteSelectedMacroAsync());
-        AddButton(MacrosSection, "+G", Resource("EmberPrimaryBrush"), "Publish globally", "publish", requiresSelection: true,  () => { PublishSelectedMacroGlobally(); return System.Threading.Tasks.Task.CompletedTask; });
+        AddButton(MacrosSection, "↗",  null,                          Localizer.T("architect.rail.button.edit_macro.tip",    "Edit macro"),       "edit",    requiresSelection: true,  () => { OpenSelectedMacro(); return System.Threading.Tasks.Task.CompletedTask; });
+        AddButton(MacrosSection, "Aa", null,                          Localizer.T("architect.rail.button.rename_macro.tip",  "Rename macro"),     "rename",  requiresSelection: true,  () => RenameSelectedMacroAsync());
+        AddButton(MacrosSection, "×",  Resource("ErrBrush"),          Localizer.T("architect.rail.button.delete_macro.tip",  "Delete macro"),     "delete",  requiresSelection: true,  () => DeleteSelectedMacroAsync());
+        AddButton(MacrosSection, "+G", Resource("EmberPrimaryBrush"), Localizer.T("architect.rail.button.publish_macro.tip", "Publish globally"), "publish", requiresSelection: true,  () => { PublishSelectedMacroGlobally(); return System.Threading.Tasks.Task.CompletedTask; });
 
         // Wire one SelectionChanged listener per section that re-evaluates
         // every gated button under it; previously each button had no way to
@@ -1167,20 +1193,20 @@ public sealed partial class LeftRail : UserControl
         switch (item.Kind)
         {
             case "variable":
-                f.Items.Add(NewItem("Rename…",  "", async () => await RenameVariableAsync(item.Id)));
-                f.Items.Add(NewItem("Delete",   "", async () => await DeleteVariableAsync(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.variable.rename", "Rename…"), "", async () => await RenameVariableAsync(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.variable.delete", "Delete"), "", async () => await DeleteVariableAsync(item.Id)));
                 break;
             case "macro":
-                f.Items.Add(NewItem("Edit…",            "", () => OpenMacroById(item.Id)));
-                f.Items.Add(NewItem("Find references",  "", () => FindMacroReferences(item.Id)));
-                f.Items.Add(NewItem("Rename…",          "", async () => await RenameMacroAsync(item.Id)));
-                f.Items.Add(NewItem("Publish globally", "", () => PublishMacroGloballyById(item.Id)));
-                f.Items.Add(NewItem("Delete",           "", async () => await DeleteMacroAsync(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.macro.edit", "Edit…"), "", () => OpenMacroById(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.macro.find_references", "Find references"), "", () => FindMacroReferences(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.macro.rename", "Rename…"), "", async () => await RenameMacroAsync(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.macro.publish", "Publish globally"), "", () => PublishMacroGloballyById(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.macro.delete", "Delete"), "", async () => await DeleteMacroAsync(item.Id)));
                 break;
             case "process":
-                f.Items.Add(NewItem("Edit…",   "", () => OpenProcessById(item.Id)));
-                f.Items.Add(NewItem("Rename…", "", async () => await RenameProcessAsync(item.Id)));
-                f.Items.Add(NewItem("Delete",  "", async () => await DeleteProcessAsync(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.process.edit", "Edit…"), "", () => OpenProcessById(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.process.rename", "Rename…"), "", async () => await RenameProcessAsync(item.Id)));
+                f.Items.Add(NewItem(Localizer.T("architect.rail.context.process.delete", "Delete"), "", async () => await DeleteProcessAsync(item.Id)));
                 break;
         }
         return f;
@@ -1229,7 +1255,8 @@ public sealed partial class LeftRail : UserControl
         if (_vm is null) return;
         var xr = ResolveCrudXamlRoot("add-variable");
         if (xr is null) return;
-        var dlg = NameTypeDialog.ForVariable(xr, "New variable");
+        var dlg = NameTypeDialog.ForVariable(xr,
+            Localizer.T("architect.rail.dialog.add_variable.title", "New variable"));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         // Duplicate-name guard previously returned silently — the rule is
         // no modal, but also no silent rejection. Log via GlobalLogger at System tier so the
@@ -1308,9 +1335,13 @@ public sealed partial class LeftRail : UserControl
         if (xr is null) return;
         // 0.10.0 UX P2: ForDanger flips warning header on, defaults the
         // close (safer) button, and labels the primary button "Delete".
-        var dlg = ConfirmDialog.ForDanger(xr, "Delete variable",
-            $"Remove variable '{name}' from this graph?",
-            destructiveVerb: "Delete");
+        var dlg = ConfirmDialog.ForDanger(xr,
+            Localizer.T("architect.rail.dialog.delete_variable.title", "Delete variable"),
+            string.Format(
+                Localizer.T("architect.rail.dialog.delete_variable.body",
+                    "Remove variable '{0}' from this graph?"),
+                name),
+            destructiveVerb: Localizer.T("architect.rail.dialog.delete_variable.verb", "Delete"));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         _vm.Graph.Variables.RemoveAll(v => v.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         Refresh();
@@ -1324,7 +1355,8 @@ public sealed partial class LeftRail : UserControl
         var existing = _vm.Graph.Variables.FirstOrDefault(v =>
             v.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase));
         if (existing is null) return;
-        var dlg = NameTypeDialog.ForVariable(xr, "Rename variable",
+        var dlg = NameTypeDialog.ForVariable(xr,
+            Localizer.T("architect.rail.dialog.rename_variable.title", "Rename variable"),
             existing.Name, existing.Type, existing.DefaultValue,
             existingNames: _vm.Graph.Variables
                 .Where(v => !v.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase))
@@ -1371,7 +1403,9 @@ public sealed partial class LeftRail : UserControl
         if (_vm is null) return;
         var xr = ResolveCrudXamlRoot("add-macro");
         if (xr is null) return;
-        var dlg = NameTypeDialog.ForName(xr, "New macro", "MACRO");
+        var dlg = NameTypeDialog.ForName(xr,
+            Localizer.T("architect.rail.dialog.add_macro.title", "New macro"),
+            Localizer.T("architect.rail.dialog.macro_eyebrow", "MACRO"));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var name = UniquifyMacroName(dlg.EnteredName);
         var macro = new Macro { Name = name };
@@ -1455,7 +1489,9 @@ public sealed partial class LeftRail : UserControl
         if (xr is null) return;
         var m = _vm.Graph.Macros.FirstOrDefault(x => x.MacroId == id);
         if (m is null) return;
-        var dlg = NameTypeDialog.ForName(xr, "Rename macro", "MACRO", m.Name,
+        var dlg = NameTypeDialog.ForName(xr,
+            Localizer.T("architect.rail.dialog.rename_macro.title", "Rename macro"),
+            Localizer.T("architect.rail.dialog.macro_eyebrow", "MACRO"), m.Name,
             existingNames: _vm.Graph.Macros
                 .Where(x => x.MacroId != id)
                 .Select(x => x.Name));
@@ -1518,9 +1554,13 @@ public sealed partial class LeftRail : UserControl
         if (xr is null) return;
         var m = _vm.Graph.Macros.FirstOrDefault(x => x.MacroId == id);
         if (m is null) return;
-        var dlg = ConfirmDialog.ForDanger(xr, "Delete macro",
-            $"Remove macro '{m.Name}'? Macro.Call sites will be detached but kept on the canvas.",
-            destructiveVerb: "Delete");
+        var dlg = ConfirmDialog.ForDanger(xr,
+            Localizer.T("architect.rail.dialog.delete_macro.title", "Delete macro"),
+            string.Format(
+                Localizer.T("architect.rail.dialog.delete_macro.body",
+                    "Remove macro '{0}'? Macro.Call sites will be detached but kept on the canvas."),
+                m.Name),
+            destructiveVerb: Localizer.T("architect.rail.dialog.delete_macro.verb", "Delete"));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         MacroOps.DeleteMacro(_vm.Graph, id);
         Refresh();
@@ -1580,7 +1620,9 @@ public sealed partial class LeftRail : UserControl
         if (_vm is null) return;
         var xr = ResolveCrudXamlRoot("add-process");
         if (xr is null) return;
-        var dlg = NameTypeDialog.ForName(xr, "New process", "PROCESS");
+        var dlg = NameTypeDialog.ForName(xr,
+            Localizer.T("architect.rail.dialog.add_process.title", "New process"),
+            Localizer.T("architect.rail.dialog.process_eyebrow", "PROCESS"));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         var taken = new HashSet<string>(_vm.Graph.Processes.Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
         var name = dlg.EnteredName;
@@ -1661,7 +1703,9 @@ public sealed partial class LeftRail : UserControl
         if (xr is null) return;
         var p = _vm.Graph.Processes.FirstOrDefault(x => x.ProcessId == id);
         if (p is null) return;
-        var dlg = NameTypeDialog.ForName(xr, "Rename process", "PROCESS", p.Name,
+        var dlg = NameTypeDialog.ForName(xr,
+            Localizer.T("architect.rail.dialog.rename_process.title", "Rename process"),
+            Localizer.T("architect.rail.dialog.process_eyebrow", "PROCESS"), p.Name,
             existingNames: _vm.Graph.Processes
                 .Where(x => x.ProcessId != id)
                 .Select(x => x.Name));
@@ -1718,9 +1762,13 @@ public sealed partial class LeftRail : UserControl
         if (xr is null) return;
         var p = _vm.Graph.Processes.FirstOrDefault(x => x.ProcessId == id);
         if (p is null) return;
-        var dlg = ConfirmDialog.ForDanger(xr, "Delete process",
-            $"Remove process '{p.Name}'? Process.Spawn sites will be detached but kept on the canvas.",
-            destructiveVerb: "Delete");
+        var dlg = ConfirmDialog.ForDanger(xr,
+            Localizer.T("architect.rail.dialog.delete_process.title", "Delete process"),
+            string.Format(
+                Localizer.T("architect.rail.dialog.delete_process.body",
+                    "Remove process '{0}'? Process.Spawn sites will be detached but kept on the canvas."),
+                p.Name),
+            destructiveVerb: Localizer.T("architect.rail.dialog.delete_process.verb", "Delete"));
         if (await dlg.ShowAsync() != ContentDialogResult.Primary) return;
         _vm.Graph.Processes.RemoveAll(x => x.ProcessId == id);
         // Mirror MacroOps.DeleteMacro shape — strip ProcessId + non-Flow non-placeholder

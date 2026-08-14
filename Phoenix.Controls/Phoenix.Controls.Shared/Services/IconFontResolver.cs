@@ -9,11 +9,11 @@ namespace Phoenix.Controls.Shared.Services
 {
     /// <summary>
     /// Detects which Microsoft icon font is installed on the host and exposes the
-    /// chosen family name for <c>IconCache</c> to draw glyphs with. Phoenix
-    /// Controls' <c>Glyphs</c> codepoints come from Segoe Fluent Icons
-    /// (Windows 10 build 19041+) which is PUA-compatible with Segoe MDL2 Assets
-    /// on older builds — the same string renders the same shape on either font,
-    /// so falling back to MDL2 Assets covers every Windows install since 8.1.
+    /// chosen family name for glyph rendering. Phoenix Controls' icon codepoints
+    /// come from Segoe Fluent Icons (Windows 10 build 19041+) which is
+    /// PUA-compatible with Segoe MDL2 Assets on older builds — the same string
+    /// renders the same shape on either font, so falling back to MDL2 Assets
+    /// covers every Windows install since 8.1.
     ///
     /// The resolver is single-shot and lock-free: <c>Init</c> is idempotent and
     /// the field is published via volatile-write ordering on the first call.

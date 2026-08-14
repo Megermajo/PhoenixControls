@@ -1,4 +1,4 @@
-# Phoenix Controls — Streamer.bot Action Pack
+﻿# Phoenix Controls — Streamer.bot Action Pack
 
 Twitch action nodes in Architect (Shoutout, Ban, Timeout, VIP, Announcement,
 Polls, Rewards, …) run **through Streamer.bot**. They do **not** send Twitch
@@ -26,8 +26,12 @@ native sub-action's fields.
 > **The shipped `PhoenixActionPack.sb` includes the YouTube and Kick sets plus a
 > custom-C# (Execute-Code) set added 2026-07-22 for the actions Streamer.bot's
 > native sub-actions can't do** — reward cost/enable, fulfill/reject redemption,
-> delete message (Twitch + Kick), whisper, sub-only mode, create poll, and resolve
-> prediction. Importing the pack creates all **56** `Phoenix: …` actions in one go.
+> delete message (Twitch + Kick), whisper, sub-only mode, create poll, resolve
+> prediction, and — added 2026-08-09 — **`Phoenix: Get Stream Status`**, which asks
+> Twitch's Helix API directly for live state, viewer count and stream start time.
+> Importing the pack creates all **57** actions in one go: **56** named
+> `Phoenix: …` plus `PhoenixControlsChat`, the chat-send action Hub uses for
+> `send_chat`.
 > Only three documented actions are **deliberately not** in the pack because
 > Streamer.bot 1.0.x can't back them at all — `Phoenix: YT Get User`, `Phoenix:
 > Kick Set Reward Cost`, `Phoenix: Kick Set Reward Enabled`. Their Architect nodes
@@ -40,9 +44,10 @@ native sub-action's fields.
 **Option A — import the pack (recommended).**
 The pack ships with the app at **`data/streamerbot/PhoenixActionPack.sb`** (next
 to this file). Open it, copy its **entire** contents, then in Streamer.bot:
-**Import** → paste → review → **Import**. All **56** `Phoenix: …` actions
-(Twitch, OBS, YouTube, and Kick) are created with the correct names, field
-bindings, and the data-action / custom-C# wiring — nothing to build by hand.
+**Import** → paste → review → **Import**. All **57** actions — **56** named
+`Phoenix: …` (Twitch, OBS, YouTube, and Kick) plus `PhoenixControlsChat` — are
+created with the correct names, field bindings, and the data-action / custom-C#
+wiring — nothing to build by hand.
 (Three documented actions Streamer.bot 1.0.x can't back are omitted on purpose —
 `Phoenix: YT Get User`, `Phoenix: Kick Set Reward Cost`, `Phoenix: Kick Set
 Reward Enabled`; their nodes are hidden in Architect.)
@@ -71,7 +76,7 @@ found — and names any that are missing.
 | `Phoenix: Unmod` | `user` | Twitch → Remove Moderator | User = `%user%` |
 | `Phoenix: VIP` | `user` | Twitch → Add VIP | User = `%user%` |
 | `Phoenix: Unvip` | `user` | Twitch → Remove VIP | User = `%user%` |
-| `Phoenix: Delete Message` | `messageId` | Twitch → Delete Message | Message Id = `%messageId%` |
+| `Phoenix: Delete Message` — **not in the pack** | `messageId` | Twitch → Delete Message | Message Id = `%messageId%`. Node hidden. **Building this does not enable the Automod Delete rung** — Hub also needs the chat message id, which no part of this build supplies (see the Automod note above) |
 | `Phoenix: Reply` | `messageId`, `message` | Twitch → Send Chat Message (reply) | Message = `%message%`, Reply-To Message Id = `%messageId%` |
 | `Phoenix: Slow Mode` | `seconds` (0 = off) | Twitch → Chat Modes → Slow Mode | Duration = `%seconds%` (0 ⇒ set State = Off) |
 | `Phoenix: Follower Mode` | `minutes` (-1 = off) | Twitch → Chat Modes → Follow Mode | Duration = `%minutes%` (-1 ⇒ set State = Off) |
@@ -139,10 +144,33 @@ And **`phx_req` must be the LAST sub-action**, its value exactly `%req%`.
 | `Phoenix: Get User` | `user`, `req` | Twitch → **Get User Info for Target** (`%user%`) | `phx_user_id`=`%targetUserId%`, `phx_user_login`=`%targetUserName%`, `phx_user_display`=`%targetUser%`, `phx_user_avatar`=`%targetUserProfileImageUrl%`, `phx_user_created`=`%createdAt%`, `phx_user_game`=`%game%`, `phx_user_title`=`%targetChannelTitle%`, `phx_user_mod`=`%targetIsModerator%`, `phx_user_sub`=`%targetIsSubscribed%`, `phx_user_vip`=`%targetIsVip%`, then `phx_req`=`%req%` |
 | `Phoenix: Get Follow Age` | `user`, `req` | Twitch → **Get Follow Age Info for Target** (`%user%`) | `phx_follow_days`=`%followAgeDays%`, `phx_follow_date`=`%followDate%`, `phx_follow_is`=`%isFollowing%`, then `phx_req`=`%req%` |
 | `Phoenix: Create Clip` | `duration`, `title`, `req` | **C# (Execute Code)** — `CPH.CreateClip(title, duration)` | `phx_clip_url`=clip URL, `phx_clip_ok`=`1`/`0`, then `phx_req`=`req` (written last) |
+| `Phoenix: Get Stream Status` | `user`, `req` | **C# (Execute Code)** — `GET https://api.twitch.tv/helix/streams` with `CPH.TwitchOAuthToken` + `CPH.TwitchClientId` (blank `user` ⇒ `CPH.TwitchGetBroadcaster()`) | `phx_stream_known`=`1`/`0`, `phx_stream_live`=`1`/`0`, `phx_stream_login`, `phx_stream_viewers` (invariant integer), `phx_stream_started` (Twitch `started_at`, RFC3339 UTC; `""` offline), `phx_stream_title`, `phx_stream_game`, `phx_stream_err`, then `phx_req`=`req` (written last) |
 
-`Phoenix: Get User` is reused by `check_role` (mod/sub/vip flags) and `get_stream`
-(last game/title). The Create Clip C# snippet ships in the Hub System Log message
-and in the project docs.
+`Phoenix: Get User` is reused by `check_role` (mod/sub/vip flags), and by
+`get_stream` / `is_online` as their fallback when the status action is absent.
+The Create Clip C# snippet ships in the Hub System Log message and in the project
+docs.
+
+**`Phoenix: Get Stream Status` is the only action that talks to Twitch's API
+directly**, and it exists because Streamer.bot exposes no stream-liveness surface
+at all — there is no CPH stream-info method, and `GetBroadcaster` / `GetInfo` /
+`GetActiveViewers` are identity and chat-tracking requests (`GetActiveViewers` is
+non-zero while offline, so it is not a liveness proxy). `%isLive%` exists only as
+a *trigger* argument. Helix `/streams` needs **no scope** — an app or user token
+both work — so Streamer.bot's own credentials are enough. It needs a
+**broadcaster account connected in Streamer.bot**; with only a bot account the
+token is unavailable and the action reports `phx_stream_known=0`.
+
+`phx_stream_known` is load-bearing: `0` means *"we could not ask"*, which Hub must
+never render as *"you are offline with no viewers"* — a failed call would
+otherwise switch the live-gated tools off mid-stream. Every Hub caller falls back
+to its previous behaviour on `0` instead of publishing the zeroed fields.
+
+Hub dispatches it on Streamer.bot connect and then about once a minute for the
+configured broadcaster, which is what lets `{stream.uptime}` and the live-gated
+tools recover after starting or restarting Hub **mid-stream** (the go-live event
+has already happened by then, so nothing else can arm them). One call per refresh
+while live, up to three while offline — far inside Helix's ~800 points/minute.
 
 ---
 
@@ -250,13 +278,16 @@ and bind each `phx_kick_*` global to the matching one.
   fire the poll/prediction but expose no id (`DoAction` can't return one), so those
   nodes have no `PollId` / `PredictionId` output. `End Poll` acts on the active
   poll; `Resolve Prediction` acts on the last prediction by winning-outcome index.
-- **Stream live-metrics are broadcaster-only.** Streamer.bot exposes no way to
-  read `is_live` / viewer count / uptime for an **arbitrary** channel.
-  `get_user` / `get_stream` return the channel's last **game** and **title**
-  (offline-capable — this is the "last game played" data), but `is_online` and
-  `get_stream.is_live` answer truthfully only for **your own** channel (Hub
-  tracks it from the StreamOnline/StreamOffline events). Arbitrary channels
-  report not-live. Viewer count for your own channel isn't wired yet (`0`).
+- **Stream live-metrics need `Phoenix: Get Stream Status`.** With that action
+  imported, `is_online` and `get_stream` report real `is_live` / **viewer count**
+  / **uptime** for **any** channel, not just your own, and `{stream.uptime}` is
+  anchored to Twitch's own `started_at`. Without it, Streamer.bot has no
+  liveness path at all: `get_user` / `get_stream` still return the channel's last
+  **game** and **title** (offline-capable — the "last game played" data), but
+  `is_live` answers truthfully only for **your own** channel (from the
+  StreamOnline/StreamOffline events) and arbitrary channels report not-live. In
+  that fallback the viewer count is reported as **empty, not `0`** — "we could
+  not ask" is not the same claim as "you have no viewers".
 - **Create Prediction empty outcomes.** The node sends up to five outcomes
   (`%outcomeA%`…`%outcomeE%`); unused ones are empty. Twitch rejects empty
   outcomes, so the action must add **only the non-empty** ones (e.g. gate each
@@ -278,8 +309,9 @@ and bind each `phx_kick_*` global to the matching one.
 ## Status
 
 The action pack **ships with the app** at
-`data/streamerbot/PhoenixActionPack.sb` and creates **56 `Phoenix: …` actions**
-on import — the full Twitch, OBS, YouTube, and Kick surface that has a working
+`data/streamerbot/PhoenixActionPack.sb` and creates **57 actions** on import
+(**56** named `Phoenix: …` plus `PhoenixControlsChat`) — the full Twitch, OBS,
+YouTube, and Kick surface that has a working
 Streamer.bot 1.0.x path (native sub-actions + custom C# where the natives fall
 short) — exported from and verified against a live Streamer.bot (exported from
 1.0.4; minimum Streamer.bot 1.0.0 for Twitch/OBS, 1.0 for YouTube, 1.0.2 for Kick).

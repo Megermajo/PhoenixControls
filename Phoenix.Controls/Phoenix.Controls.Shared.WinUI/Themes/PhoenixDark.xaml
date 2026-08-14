@@ -87,6 +87,81 @@
             <SolidColorBrush x:Key="ScrollBarButtonBorderBrushDisabled"    Color="Transparent" />
 
             <SolidColorBrush x:Key="ScrollBarForeground" Color="#9C8A72" />
+
+            <!-- ============================================================
+                 ContentDialog — 2026-08-14
+
+                 Majo: "all pop-ups like 'last used phxg' and 'would you like
+                 to save before exit' are still default windows style instead
+                 of our custom styling."
+
+                 He was right, and completely: a repo-wide search for a
+                 ContentDialog style or a ContentDialog* theme key returned
+                 ZERO hits. All 37 `new ContentDialog` sites across 18 files
+                 (Architect 20, Visualist 11, Hub 6) rendered in stock Fluent
+                 — grey backplate, Segoe UI, Windows accent-blue default
+                 button — inside an app that is otherwise coal and ember.
+                 Nothing about them had ever been themed.
+
+                 WHY THIS IS AN OVERRIDE BLOCK AND NOT A STYLE. The obvious
+                 fix is an implicit `Style TargetType="ContentDialog"`, and it
+                 is the one to avoid: an implicit Expander style is what
+                 hard-crashed the app on first tab realization (documented in
+                 ToolControlStyles.xaml), because an implicit style with a
+                 template materializes lazily at first use. These are plain
+                 BRUSH VALUE overrides — the framework's own template reads
+                 them by key, no template is replaced, and nothing is
+                 materialized early. Same mechanism as the ScrollBar block
+                 above, which has shipped safely since 0.10.
+                 It also needs no call-site change, so all 37 sites are themed
+                 without touching a single dialog.
+
+                 The keys below are WinUI 3's own ContentDialog theme
+                 resources. Names are framework contract — do not rename them
+                 to match house tokens; the hex values are the house tokens.
+                 ============================================================ -->
+
+            <!-- Dialog surface: the raised coal card the rest of the app uses
+                 for floating surfaces, not Fluent's grey. -->
+            <SolidColorBrush x:Key="ContentDialogBackground"       Color="#14110D" />
+            <SolidColorBrush x:Key="ContentDialogForeground"       Color="#E6DDD0" />
+            <SolidColorBrush x:Key="ContentDialogBorderBrush"      Color="#3A3127" />
+
+            <!-- The title/content divider and the command-area backplate.
+                 TopOverlay is the strip the buttons sit on; keeping it a
+                 shade darker than the body is what makes the dialog read as
+                 the same object as a pop-out window. -->
+            <SolidColorBrush x:Key="ContentDialogTopOverlay"              Color="#0B0907" />
+            <SolidColorBrush x:Key="ContentDialogSeparatorBorderBrush"    Color="#221C16" />
+
+            <!-- The scrim behind a modal. Fluent's default is a light-ish
+                 wash that reads wrong over coal. -->
+            <SolidColorBrush x:Key="ContentDialogSmokeFill"        Color="#C70B0907" />
+
+            <!-- The default (primary) button. This is the single most visible
+                 half of the complaint: WinUI paints it with the SYSTEM accent,
+                 so every Save / Restore / OK button in the suite was Windows
+                 blue. Ember instead, with the coal-on-brass inversion the
+                 house brass CTA already uses.
+
+                 Scope note: these AccentButton* keys are app-wide, so this
+                 also re-colours any other accent-styled button in the process.
+                 That is intended — there is no surface in this app where
+                 system blue is correct — but it is the one broad consequence
+                 of this block and worth knowing before adding an accent
+                 button somewhere new. -->
+            <SolidColorBrush x:Key="AccentButtonBackground"             Color="#E5A24E" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver"  Color="#F2C77F" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundPressed"      Color="#A6661A" />
+            <SolidColorBrush x:Key="AccentButtonBackgroundDisabled"     Color="#2C251D" />
+            <SolidColorBrush x:Key="AccentButtonForeground"             Color="#0B0907" />
+            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver"  Color="#0B0907" />
+            <SolidColorBrush x:Key="AccentButtonForegroundPressed"      Color="#0B0907" />
+            <SolidColorBrush x:Key="AccentButtonForegroundDisabled"     Color="#9C8A72" />
+            <SolidColorBrush x:Key="AccentButtonBorderBrush"            Color="#7A4710" />
+            <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="#7A4710" />
+            <SolidColorBrush x:Key="AccentButtonBorderBrushPressed"     Color="#7A4710" />
+            <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled"    Color="#2C251D" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
@@ -166,6 +241,50 @@
          Routed by SystemLogRowVm, LiveFeedRowVm, ScriptRowVm fallback
          paths (HUB-UX P2 — token-coverage audit). -->
     <SolidColorBrush x:Key="CoalFallbackBrush" Color="#3A3127" />
+
+    <!-- ============================================================
+         Ember / Coal — raw <Color> siblings of the brush tokens above.
+
+         WinUI's lightweight-styling contract types its overridable control
+         keys as `<SolidColorBrush x:Key="…" Color="…"/>`: a dictionary that
+         re-skins a stock Fluent control has to *redeclare the brush* under
+         the framework's key, so what it needs at that call site is a Color
+         value, not a Brush. With only the *Brush tokens above to work from,
+         the only way to hit those keys was to hand-copy the hex — which is
+         what ToolControlStyles.xaml did for 104 literals, silently
+         detaching every re-skinned tool control from this palette.
+
+         Same values as the matching *Brush tokens, exposed in the one shape
+         a lightweight-styling override can consume. The brushes stay the
+         canonical tokens for ordinary Foreground / Background / BorderBrush
+         bindings — reach for a Color ONLY where the target property is
+         genuinely a Color (framework brush-key overrides, GradientStop,
+         Composition colors). The two forms are one token in two shapes: an
+         edit here MUST be mirrored in the matching *Brush and vice versa,
+         or a re-skinned stock control drifts off the house surface it sits
+         next to. (The pre-existing *ShadowColor tokens further down are
+         separate — those have no brush counterpart.)
+         ============================================================ -->
+    <Color x:Key="EmberPrimaryColor">#E5A24E</Color>
+    <Color x:Key="EmberDeepColor">#C8822B</Color>
+    <Color x:Key="EmberShadowColor">#A6661A</Color>
+
+    <Color x:Key="CoalShellColor">#0B0907</Color>
+    <Color x:Key="CoalSurfaceColor">#14110D</Color>
+    <Color x:Key="CoalRaisedColor">#1B1713</Color>
+    <Color x:Key="CoalCardColor">#221C16</Color>
+    <Color x:Key="CoalHoverColor">#2C251D</Color>
+    <Color x:Key="CoalDividerColor">#3A3127</Color>
+    <!-- 8-digit ARGB — the 0x66 alpha IS the token (soft warm hairline; see
+         CoalDividerSubtleBrush above). Collapsing it to 6 digits would paint
+         an opaque coal-card edge instead of a translucent seam. -->
+    <Color x:Key="CoalDividerSubtleColor">#66221C16</Color>
+
+    <Color x:Key="CoalMutedTextColor">#9E968B</Color>
+    <Color x:Key="CoalSecondaryTextColor">#9C8A72</Color>
+    <Color x:Key="CoalBodyTextColor">#A89683</Color>
+    <Color x:Key="CoalPrimaryTextColor">#E6DDD0</Color>
+    <Color x:Key="CoalPaperColor">#F5EFE3</Color>
 
     <!-- SplashGradientBrush — vertical coal wash behind the splash window
          (top→bottom darkening). Composed of CoalRaisedBrush (#1B1713) →

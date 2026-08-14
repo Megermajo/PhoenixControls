@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Architect.Core;
 using Phoenix.Controls.Architect.WinUI.Hosting;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.Foundation;
@@ -562,7 +563,7 @@ public sealed partial class LogicCanvasView
     private void BuildRecentNodesSection(MenuFlyout flyout, Point hostPoint)
     {
         if (_recentNodeTitles.Count == 0) return;
-        AddEyebrowHeader(flyout, "RECENT");
+        AddEyebrowHeader(flyout, Localizer.T("architect.canvas.menu.spawn.recent.eyebrow", "RECENT"));
         foreach (var title in _recentNodeTitles)
         {
             string captured = title;
@@ -607,7 +608,7 @@ public sealed partial class LogicCanvasView
 
         var capturedPoint = hostPoint;
 
-        var flyout = NewStyledMenuFlyout("SPAWN NODE");
+        var flyout = NewStyledMenuFlyout(Localizer.T("architect.canvas.menu.spawn.eyebrow", "SPAWN NODE"));
 
         // Recent-nodes section first (when non-empty) so frequently-
         // spawned templates are one click away ahead of the category cascade.
@@ -620,13 +621,13 @@ public sealed partial class LogicCanvasView
         BuildSpawnCategoryCascade(flyout, capturedPoint);
         flyout.Items.Add(new MenuFlyoutSeparator());
 
-        flyout.Items.Add(NewMenuItem("Spawn Node… (search)", GlyphSearch, () => ShowSpawnPalette(capturedPoint), "Space"));
-        flyout.Items.Add(NewMenuItem("Find Node…",  GlyphSearch, () => ShowNodeFinderFlyout(),         "Ctrl+F"));
+        flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.spawn.search", "Spawn Node… (search)"), GlyphSearch, () => ShowSpawnPalette(capturedPoint), "Space"));
+        flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.spawn.find_node", "Find Node…"),  GlyphSearch, () => ShowNodeFinderFlyout(),         "Ctrl+F"));
 
         flyout.Items.Add(new MenuFlyoutSeparator());
 
         // Frames = gold (semantic glance color, per pre-T15 ForeColor).
-        flyout.Items.Add(NewMenuItem("Add Comment Frame", GlyphNew, () =>
+        flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.spawn.add_comment_frame", "Add Comment Frame"), GlyphNew, () =>
         {
             var canvas = HostToCanvas(capturedPoint);
             AddFrame(canvas.X, canvas.Y, 240, 160, "Comment", ArchitectCanvasPalette.CommentFrameDefault);
@@ -639,7 +640,7 @@ public sealed partial class LogicCanvasView
         if (HasSubGraphOnClipboard())
         {
             flyout.Items.Add(new MenuFlyoutSeparator());
-            flyout.Items.Add(NewMenuItem("Paste here", GlyphPaste, () => Paste(), "Ctrl+V"));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.spawn.paste_here", "Paste here"), GlyphPaste, () => Paste(), "Ctrl+V"));
         }
 
         flyout.ShowAt(HostRoot, hostPoint);
@@ -668,7 +669,9 @@ public sealed partial class LogicCanvasView
 
     private void ShowFrameMenu(FrameViewModel frame, Point hostPoint)
     {
-        var flyout = NewStyledMenuFlyout(frame.IsPlaceholder ? "PLACEHOLDER FRAME" : "COMMENT FRAME");
+        var flyout = NewStyledMenuFlyout(frame.IsPlaceholder
+            ? Localizer.T("architect.canvas.menu.frame.eyebrow.placeholder", "PLACEHOLDER FRAME")
+            : Localizer.T("architect.canvas.menu.frame.eyebrow.comment",     "COMMENT FRAME"));
 
         // Rename + Convert are per-frame
         // affordances; hide on multi. Delete options stay but the
@@ -680,9 +683,11 @@ public sealed partial class LogicCanvasView
 
         if (!multi)
         {
-            flyout.Items.Add(NewMenuItem("Rename…", GlyphEdit, () => ShowFrameRenameFlyout(frame, hostPoint)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.frame.rename", "Rename…"), GlyphEdit, () => ShowFrameRenameFlyout(frame, hostPoint)));
             flyout.Items.Add(NewMenuItem(
-                frame.IsPlaceholder ? "Convert to Comment Frame" : "Convert to Placeholder Frame",
+                frame.IsPlaceholder
+                    ? Localizer.T("architect.canvas.menu.frame.convert_to_comment",     "Convert to Comment Frame")
+                    : Localizer.T("architect.canvas.menu.frame.convert_to_placeholder", "Convert to Placeholder Frame"),
                 GlyphRefresh,
                 () => ToggleFramePlaceholder(frame)));
 
@@ -694,7 +699,7 @@ public sealed partial class LogicCanvasView
             // commits the user's pick with one undo entry. Palette swatches
             // come from PhoenixDark.xaml; the picker UI
             // lives entirely inside Architect — no Shared/UI lift.
-            flyout.Items.Add(NewMenuItem("Color…", GlyphEdit, () => ShowFrameColorPicker(frame, hostPoint)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.frame.color", "Color…"), GlyphEdit, () => ShowFrameColorPicker(frame, hostPoint)));
 
             // Bring to Front / Send to Back. Mutates
             // Frame.ZOrder; the FrameLayer applies Canvas.ZIndex on the
@@ -702,21 +707,23 @@ public sealed partial class LogicCanvasView
             // rebuild. "Front" / "Back" reckon against the OTHER frames'
             // current ZOrder values rather than a fixed +/- delta so
             // repeated clicks keep promoting / demoting predictably.
-            flyout.Items.Add(NewMenuItem("Bring to Front", GlyphNew,    () => BringFrameToFront(frame)));
-            flyout.Items.Add(NewMenuItem("Send to Back",   GlyphRefresh, () => SendFrameToBack(frame)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.frame.bring_to_front", "Bring to Front"), GlyphNew,    () => BringFrameToFront(frame)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.frame.send_to_back",   "Send to Back"),   GlyphRefresh, () => SendFrameToBack(frame)));
 
             flyout.Items.Add(new MenuFlyoutSeparator());
         }
 
         if (multi)
         {
-            flyout.Items.Add(NewMenuItem($"Delete {total} item(s)", GlyphDelete,
+            flyout.Items.Add(NewMenuItem(
+                string.Format(Localizer.T("architect.canvas.menu.frame.delete_items", "Delete {0} item(s)"), total),
+                GlyphDelete,
                 () => DeleteSelection(), "Del"));
         }
         else
         {
-            flyout.Items.Add(NewMenuItem("Delete frame and contents", GlyphDelete, () => DeleteFrameWithContents(frame)));
-            flyout.Items.Add(NewMenuItem("Delete frame only",         GlyphCross,  () => RemoveFrame(frame)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.frame.delete_with_contents", "Delete frame and contents"), GlyphDelete, () => DeleteFrameWithContents(frame)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.frame.delete_only",          "Delete frame only"),         GlyphCross,  () => RemoveFrame(frame)));
         }
 
         flyout.ShowAt(HostRoot, hostPoint);
@@ -943,8 +950,8 @@ public sealed partial class LogicCanvasView
         // was opened on without scanning the items.
         bool multiNodeEyebrow = _vm is not null && _vm.SelectedNodes.Count >= 2 && _vm.SelectedNodes.Contains(node);
         string eyebrow = multiNodeEyebrow
-            ? $"SELECTION · {(_vm?.SelectedNodes.Count ?? 0)}"
-            : (string.IsNullOrEmpty(node.Title) ? "NODE" : node.Title.ToUpperInvariant());
+            ? string.Format(Localizer.T("architect.canvas.menu.node.eyebrow.selection", "SELECTION · {0}"), _vm?.SelectedNodes.Count ?? 0)
+            : (string.IsNullOrEmpty(node.Title) ? Localizer.T("architect.canvas.menu.node.eyebrow.node", "NODE") : node.Title.ToUpperInvariant());
         if (eyebrow.Length > 24) eyebrow = eyebrow[..23] + "…";
         var flyout = NewStyledMenuFlyout(eyebrow);
 
@@ -968,7 +975,9 @@ public sealed partial class LogicCanvasView
         // "open docs for which?" is ambiguous).
         if (!multiNode)
         {
-            var docTitle = string.IsNullOrEmpty(node.Title) ? "Documentation" : $"{node.Title} documentation";
+            var docTitle = string.IsNullOrEmpty(node.Title)
+                ? Localizer.T("architect.canvas.menu.node.documentation", "Documentation")
+                : string.Format(Localizer.T("architect.canvas.menu.node.documentation_for", "{0} documentation"), node.Title);
             // Docs = ember (semantic glance color, per pre-T15 ForeColor).
             flyout.Items.Add(NewMenuItem(docTitle, GlyphDocs, () => OpenNodeDocumentationFor(node.Title),
                 foregroundBrushKey: "Ember200Brush"));
@@ -982,12 +991,14 @@ public sealed partial class LogicCanvasView
         // in NodeView.xaml.cs are the same machinery either way).
         if (!multiNode)
         {
-            flyout.Items.Add(NewMenuItem("Rename", GlyphEdit, () => node.BeginTitleEdit(), "F2"));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.node.rename", "Rename"), GlyphEdit, () => node.BeginTitleEdit(), "F2"));
         }
 
         // Duplicate — label scales with the selection size; the handler
         // iterates every selected node when multi.
-        var dupText = multiNode ? $"Duplicate {selCount} nodes" : "Duplicate";
+        var dupText = multiNode
+            ? string.Format(Localizer.T("architect.canvas.menu.node.duplicate_many", "Duplicate {0} nodes"), selCount)
+            : Localizer.T("architect.canvas.menu.node.duplicate", "Duplicate");
         flyout.Items.Add(NewMenuItem(dupText, GlyphNew, () =>
         {
             if (multiNode && _vm is not null)
@@ -1010,14 +1021,17 @@ public sealed partial class LogicCanvasView
         // set so the WinUI canvas matches the pre-T15 six-option submenu.
         if (multiNode)
         {
-            var alignSub = new MenuFlyoutSubItem { Text = $"Align {selCount} nodes" };
+            var alignSub = new MenuFlyoutSubItem
+            {
+                Text = string.Format(Localizer.T("architect.canvas.menu.node.align", "Align {0} nodes"), selCount),
+            };
             void AddAlign(string label, Action action) => alignSub.Items.Add(NewMenuItem(label, string.Empty, action));
-            AddAlign("Left",   () => AlignSelected(AlignAxis.Left));
-            AddAlign("Center", () => AlignSelected(AlignAxis.Center));
-            AddAlign("Right",  () => AlignSelected(AlignAxis.Right));
-            AddAlign("Top",    () => AlignSelected(AlignAxis.Top));
-            AddAlign("Middle", () => AlignSelected(AlignAxis.Middle));
-            AddAlign("Bottom", () => AlignSelected(AlignAxis.Bottom));
+            AddAlign(Localizer.T("architect.canvas.menu.node.align.left",   "Left"),   () => AlignSelected(AlignAxis.Left));
+            AddAlign(Localizer.T("architect.canvas.menu.node.align.center", "Center"), () => AlignSelected(AlignAxis.Center));
+            AddAlign(Localizer.T("architect.canvas.menu.node.align.right",  "Right"),  () => AlignSelected(AlignAxis.Right));
+            AddAlign(Localizer.T("architect.canvas.menu.node.align.top",    "Top"),    () => AlignSelected(AlignAxis.Top));
+            AddAlign(Localizer.T("architect.canvas.menu.node.align.middle", "Middle"), () => AlignSelected(AlignAxis.Middle));
+            AddAlign(Localizer.T("architect.canvas.menu.node.align.bottom", "Bottom"), () => AlignSelected(AlignAxis.Bottom));
             flyout.Items.Add(alignSub);
 
             // Distribute Horizontally / Vertically. Only
@@ -1025,10 +1039,13 @@ public sealed partial class LogicCanvasView
             // between the endpoints); hide the submenu when selCount < 3.
             if (selCount >= 3)
             {
-                var distSub = new MenuFlyoutSubItem { Text = $"Distribute {selCount} nodes" };
+                var distSub = new MenuFlyoutSubItem
+                {
+                    Text = string.Format(Localizer.T("architect.canvas.menu.node.distribute", "Distribute {0} nodes"), selCount),
+                };
                 void AddDist(string label, Action action) => distSub.Items.Add(NewMenuItem(label, string.Empty, action));
-                AddDist("Horizontally", () => DistributeSelected(DistributeAxis.Horizontal));
-                AddDist("Vertically",   () => DistributeSelected(DistributeAxis.Vertical));
+                AddDist(Localizer.T("architect.canvas.menu.node.distribute.horizontally", "Horizontally"), () => DistributeSelected(DistributeAxis.Horizontal));
+                AddDist(Localizer.T("architect.canvas.menu.node.distribute.vertically",   "Vertically"),   () => DistributeSelected(DistributeAxis.Vertical));
                 flyout.Items.Add(distSub);
             }
         }
@@ -1037,9 +1054,11 @@ public sealed partial class LogicCanvasView
 
         if (multiNode)
         {
-            flyout.Items.Add(NewMenuItem($"Group {selCount} nodes (Collapse to Macro)",
+            flyout.Items.Add(NewMenuItem(
+                string.Format(Localizer.T("architect.canvas.menu.node.group_macro", "Group {0} nodes (Collapse to Macro)"), selCount),
                 GlyphNew, () => CollapseSelectionToMacro(), "Ctrl+G"));
-            flyout.Items.Add(NewMenuItem($"Wrap {selCount} nodes in Frame",
+            flyout.Items.Add(NewMenuItem(
+                string.Format(Localizer.T("architect.canvas.menu.node.wrap_frame", "Wrap {0} nodes in Frame"), selCount),
                 GlyphNew, () => WrapSelectionInFrame()));
             flyout.Items.Add(new MenuFlyoutSeparator());
         }
@@ -1053,7 +1072,9 @@ public sealed partial class LogicCanvasView
                 bool isCompact = node.Model.Attributes.TryGetValue("Compact", out var cv)
                               && string.Equals(cv, "true", StringComparison.OrdinalIgnoreCase);
                 flyout.Items.Add(NewMenuItem(
-                    isCompact ? "Convert to Full" : "Convert to Compact",
+                    isCompact
+                        ? Localizer.T("architect.canvas.menu.node.convert_to_full",    "Convert to Full")
+                        : Localizer.T("architect.canvas.menu.node.convert_to_compact", "Convert to Compact"),
                     GlyphRefresh,
                     () => ToggleCompactMode(node)));
             }
@@ -1064,7 +1085,9 @@ public sealed partial class LogicCanvasView
             {
                 bool disabled = node.Model.Attributes.TryGetValue("DisableConnectionWarnings", out var dv)
                              && string.Equals(dv, "true", StringComparison.OrdinalIgnoreCase);
-                flyout.Items.Add(NewToggleItem("Disable Connection Warnings", GlyphWarning, disabled,
+                flyout.Items.Add(NewToggleItem(
+                    Localizer.T("architect.canvas.menu.node.disable_connection_warnings", "Disable Connection Warnings"),
+                    GlyphWarning, disabled,
                     () => ToggleDisableConnectionWarnings(node)));
             }
         }
@@ -1086,12 +1109,14 @@ public sealed partial class LogicCanvasView
             if (multiNode)
             {
                 disableText = currentlyDisabled
-                    ? $"Enable {selCount} nodes"
-                    : $"Disable {selCount} nodes";
+                    ? string.Format(Localizer.T("architect.canvas.menu.node.enable_many",  "Enable {0} nodes"),  selCount)
+                    : string.Format(Localizer.T("architect.canvas.menu.node.disable_many", "Disable {0} nodes"), selCount);
             }
             else
             {
-                disableText = currentlyDisabled ? "Enable Node" : "Disable Node";
+                disableText = currentlyDisabled
+                    ? Localizer.T("architect.canvas.menu.node.enable",  "Enable Node")
+                    : Localizer.T("architect.canvas.menu.node.disable", "Disable Node");
             }
             flyout.Items.Add(NewMenuItem(disableText, GlyphWarning,
                 () => ToggleNodeDisabled(node, multiNode)));
@@ -1106,8 +1131,8 @@ public sealed partial class LogicCanvasView
                   + (_vm?.SelectedLinks.Count ?? 0)
                   + (_vm?.SelectedFrames.Count ?? 0);
         string delText = total > 1
-            ? $"Delete {total} item(s)"
-            : "Delete";
+            ? string.Format(Localizer.T("architect.canvas.menu.node.delete_items", "Delete {0} item(s)"), total)
+            : Localizer.T("architect.canvas.menu.node.delete", "Delete");
         // Delete = red (semantic glance color, per pre-T15 ForeColor).
         flyout.Items.Add(NewMenuItem(delText, GlyphDelete, () =>
         {
@@ -1127,7 +1152,7 @@ public sealed partial class LogicCanvasView
         if (_vm is null) return false;
         if (node.Title == "Macro.Call")
         {
-            flyout.Items.Add(NewMenuItem("Edit macro graph", GlyphEdit, () =>
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.node.edit_macro_graph", "Edit macro graph"), GlyphEdit, () =>
             {
                 if (!node.Model.Attributes.TryGetValue("MacroId", out var mid) || string.IsNullOrEmpty(mid)) return;
                 var macro = _vm.Graph.Macros.FirstOrDefault(m => m.MacroId == mid);
@@ -1138,7 +1163,7 @@ public sealed partial class LogicCanvasView
             // Find References — discovers every Macro.Call carrying the
             // same MacroId, selects + flashes them, and frames them into view.
             // Restores the pre-T15 HighlightMacroCallSites right-click action.
-            flyout.Items.Add(NewMenuItem("Find references", GlyphSearch, () =>
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.node.find_references", "Find references"), GlyphSearch, () =>
             {
                 if (node.Model.Attributes.TryGetValue("MacroId", out var mid) && !string.IsNullOrEmpty(mid))
                     HighlightMacroCallSites(mid);
@@ -1147,7 +1172,7 @@ public sealed partial class LogicCanvasView
         }
         if (node.Title == "Process.Start")
         {
-            flyout.Items.Add(NewMenuItem("Edit process graph", GlyphEdit, () =>
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.node.edit_process_graph", "Edit process graph"), GlyphEdit, () =>
             {
                 if (!node.Model.Attributes.TryGetValue("ProcessId", out var pid) || string.IsNullOrEmpty(pid)) return;
                 var proc = _vm.Graph.Processes.FirstOrDefault(p => p.ProcessId == pid);
@@ -1606,7 +1631,7 @@ public sealed partial class LogicCanvasView
 
     private void ShowLinkMenu(LinkViewModel link, Point hostPoint)
     {
-        var flyout = NewStyledMenuFlyout("WIRE");
+        var flyout = NewStyledMenuFlyout(Localizer.T("architect.canvas.menu.wire.eyebrow", "WIRE"));
 
         // Multi-aware. Insert / Straighten are
         // per-wire affordances and only make sense single-selected; hide on
@@ -1616,7 +1641,9 @@ public sealed partial class LogicCanvasView
                   + (_vm?.SelectedLinks.Count ?? 0)
                   + (_vm?.SelectedFrames.Count ?? 0);
         bool multi = total > 1;
-        string delText = multi ? $"Delete {total} item(s)" : "Delete wire";
+        string delText = multi
+            ? string.Format(Localizer.T("architect.canvas.menu.wire.delete_items", "Delete {0} item(s)"), total)
+            : Localizer.T("architect.canvas.menu.wire.delete", "Delete wire");
         flyout.Items.Add(NewMenuItem(delText, GlyphDelete, () =>
         {
             if (multi) DeleteSelection();
@@ -1630,8 +1657,8 @@ public sealed partial class LogicCanvasView
             // reroute lands under the cursor instead of at the geometric
             // midpoint between the two endpoint nodes.
             var capturedHostPoint = hostPoint;
-            flyout.Items.Add(NewMenuItem("Insert Reroute",        GlyphNew,     () => InsertReroute(link, capturedHostPoint)));
-            flyout.Items.Add(NewMenuItem("Straighten Connection", GlyphRefresh, () => StraightenLink(link)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.wire.insert_reroute", "Insert Reroute"),             GlyphNew,     () => InsertReroute(link, capturedHostPoint)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.wire.straighten",     "Straighten Connection"),      GlyphRefresh, () => StraightenLink(link)));
         }
 
         flyout.ShowAt(HostRoot, hostPoint);
@@ -1738,18 +1765,20 @@ public sealed partial class LogicCanvasView
     private void ShowPillMenu(SocketViewModel sock, Point hostPoint)
     {
         if (_vm is null) return;
-        string pillLabel = string.IsNullOrEmpty(sock.Label) ? "VALUE" : $"VALUE · {sock.Label.ToUpperInvariant()}";
+        string pillLabel = string.IsNullOrEmpty(sock.Label)
+            ? Localizer.T("architect.canvas.menu.pill.eyebrow", "VALUE")
+            : string.Format(Localizer.T("architect.canvas.menu.pill.eyebrow_named", "VALUE · {0}"), sock.Label.ToUpperInvariant());
         if (pillLabel.Length > 24) pillLabel = pillLabel[..23] + "…";
         var flyout = NewStyledMenuFlyout(pillLabel);
 
-        flyout.Items.Add(NewMenuItem("Promote to Local Variable", GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: false, hostPoint)));
-        flyout.Items.Add(NewMenuItem("Promote to Graph Variable", GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: true,  hostPoint)));
+        flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.pill.promote_local", "Promote to Local Variable"), GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: false, hostPoint)));
+        flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.pill.promote_graph", "Promote to Graph Variable"), GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: true,  hostPoint)));
 
         if (TryGetPillVarToken(sock, out var varName))
         {
             flyout.Items.Add(new MenuFlyoutSeparator());
-            flyout.Items.Add(NewMenuItem("Trace Variable…",       GlyphSearch, () => TraceVariable(varName!)));
-            flyout.Items.Add(NewMenuItem("Pin Variable to Canvas", GlyphPin,   () => PinVariableToCanvas(varName!)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.pill.trace_variable", "Trace Variable…"),        GlyphSearch, () => TraceVariable(varName!)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.pill.pin_variable",   "Pin Variable to Canvas"), GlyphPin,    () => PinVariableToCanvas(varName!)));
         }
 
         flyout.ShowAt(HostRoot, hostPoint);
@@ -1913,16 +1942,12 @@ public sealed partial class LogicCanvasView
 
     // ─── Socket menu ───────────────────────────────────────────────────
 
-    private static bool IsDynamicEventNode(string title)
-        => title is "Event.Trigger" or "Event.Executor" or "Event.Return"
-                or "Macro.Entry"   or "Macro.Exit"
-                or "Process.Entry" or "Process.Exit"
-                or "Visual.Trigger";
-
     private void ShowSocketMenu(NodeViewModel node, SocketViewModel sock, Point hostPoint)
     {
         if (_vm is null) return;
-        string socketEyebrow = string.IsNullOrEmpty(sock.Label) ? "SOCKET" : $"SOCKET · {sock.Label.ToUpperInvariant()}";
+        string socketEyebrow = string.IsNullOrEmpty(sock.Label)
+            ? Localizer.T("architect.canvas.menu.socket.eyebrow", "SOCKET")
+            : string.Format(Localizer.T("architect.canvas.menu.socket.eyebrow_named", "SOCKET · {0}"), sock.Label.ToUpperInvariant());
         if (socketEyebrow.Length > 24) socketEyebrow = socketEyebrow[..23] + "…";
         var flyout = NewStyledMenuFlyout(socketEyebrow);
 
@@ -1932,9 +1957,9 @@ public sealed partial class LogicCanvasView
             .ToArray();
         var breakLabel = touching.Length switch
         {
-            0 => "Break link",
-            1 => "Break link",
-            _ => $"Break {touching.Length} links",
+            0 => Localizer.T("architect.canvas.menu.socket.break_link", "Break link"),
+            1 => Localizer.T("architect.canvas.menu.socket.break_link", "Break link"),
+            _ => string.Format(Localizer.T("architect.canvas.menu.socket.break_links", "Break {0} links"), touching.Length),
         };
         var breakItem = NewMenuItem(breakLabel, GlyphCross, () =>
         {
@@ -1947,7 +1972,7 @@ public sealed partial class LogicCanvasView
 
         if (sock.Direction == SocketType.Input && sock.HasValuePill)
         {
-            flyout.Items.Add(NewMenuItem("Reset value", GlyphRefresh, () =>
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.socket.reset_value", "Reset value"), GlyphRefresh, () =>
             {
                 PushUndo();
                 sock.ValuePill = null;
@@ -1960,8 +1985,8 @@ public sealed partial class LogicCanvasView
             && !sock.ValuePill!.TrimStart().StartsWith("{"))
         {
             flyout.Items.Add(new MenuFlyoutSeparator());
-            flyout.Items.Add(NewMenuItem("Promote to local variable", GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: false, hostPoint)));
-            flyout.Items.Add(NewMenuItem("Promote to graph variable", GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: true,  hostPoint)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.socket.promote_local", "Promote to local variable"), GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: false, hostPoint)));
+            flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.socket.promote_graph", "Promote to graph variable"), GlyphNew, () => PromotePillToVariable(sock, addToGraphPanel: true,  hostPoint)));
         }
 
         // Set Type + Remove Socket are universal socket actions — the
@@ -1976,18 +2001,18 @@ public sealed partial class LogicCanvasView
 
         var setType = new MenuFlyoutSubItem
         {
-            Text = "Set Type",
+            Text = Localizer.T("architect.canvas.menu.socket.set_type", "Set Type"),
             Icon = new FontIcon { Glyph = GlyphRefresh, FontFamily = new FontFamily(IconFontFamily) },
         };
-        AddType("String", SocketDataType.String);
-        AddType("Number", SocketDataType.Int);
-        AddType("Float",  SocketDataType.Float);
-        AddType("Bool",   SocketDataType.Bool);
-        AddType("Array",  SocketDataType.Collection);
-        AddType("Any",    SocketDataType.Any);
+        AddType(Localizer.T("architect.canvas.menu.socket.type.string", "String"), SocketDataType.String);
+        AddType(Localizer.T("architect.canvas.menu.socket.type.number", "Number"), SocketDataType.Int);
+        AddType(Localizer.T("architect.canvas.menu.socket.type.float",  "Float"),  SocketDataType.Float);
+        AddType(Localizer.T("architect.canvas.menu.socket.type.bool",   "Bool"),   SocketDataType.Bool);
+        AddType(Localizer.T("architect.canvas.menu.socket.type.array",  "Array"),  SocketDataType.Collection);
+        AddType(Localizer.T("architect.canvas.menu.socket.type.any",    "Any"),    SocketDataType.Any);
         flyout.Items.Add(setType);
 
-        flyout.Items.Add(NewMenuItem("Remove Socket", GlyphDelete, () => RemoveDynamicSocket(node, sock),
+        flyout.Items.Add(NewMenuItem(Localizer.T("architect.canvas.menu.socket.remove", "Remove Socket"), GlyphDelete, () => RemoveDynamicSocket(node, sock),
             foregroundBrushKey: "StatusRedBrush"));
 
         // Disable Connection Warnings — stays conditional on the event-pair
@@ -1997,7 +2022,9 @@ public sealed partial class LogicCanvasView
             flyout.Items.Add(new MenuFlyoutSeparator());
             bool disabled = node.Model.Attributes.TryGetValue("DisableConnectionWarnings", out var dv)
                          && string.Equals(dv, "true", StringComparison.OrdinalIgnoreCase);
-            flyout.Items.Add(NewToggleItem("Disable Connection Warnings", GlyphWarning, disabled,
+            flyout.Items.Add(NewToggleItem(
+                Localizer.T("architect.canvas.menu.socket.disable_connection_warnings", "Disable Connection Warnings"),
+                GlyphWarning, disabled,
                 () => ToggleDisableConnectionWarnings(node)));
         }
 
@@ -2204,7 +2231,7 @@ public sealed partial class LogicCanvasView
 
         var box = new AutoSuggestBox
         {
-            PlaceholderText  = "Find node by title…",
+            PlaceholderText  = Localizer.T("architect.canvas.finder.placeholder", "Find node by title…"),
             QueryIcon        = new SymbolIcon(Symbol.Find),
             Width            = 320,
             TextMemberPath   = "Label",

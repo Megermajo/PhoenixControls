@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Input;
 using Phoenix.Controls.Architect.Core;
 using Phoenix.Controls.Architect.WinUI.Services;
 using Phoenix.Controls.Architect.WinUI.ViewModels;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using WinRT.Interop;
@@ -83,12 +84,16 @@ public sealed partial class SubGraphWindow : Window
     // 0.11.x polish — per-window LogicInspector wired to the inner
     // canvas's selection. Replaces the floating-singleton InspectorWindow
     // for sub-graph editors so each open macro/process gets its own
-    // inspector card embedded in the InspectorColumn the XAML now hosts.
+    // inspector card, floating over its canvas (see the XAML).
     private LogicInspectorViewModel? _logicInspectorVm;
     private bool _inspectorExpanded = true;
-    private const double InspectorDockedDefaultWidth = 320.0;
-    private const double InspectorDockedMinWidth     = 240.0;
-    private const double InspectorRolledUpWidth      = 32.0;
+    // ★ 2026-08-14 — floating card, not a column. The persisted-width read
+    // (and its 240 floor, which disagreed with MainView's 200) went with it.
+    private const double InspectorCardWidth      = 320.0;
+    private const double InspectorCardMaxHeight  = 420.0;
+    private const double InspectorCardMinHeight  = 160.0;
+    private const double MiniMapReservedHeight   = 164.0;
+    private const double InspectorRolledUpWidth  = 32.0;
 
     // PERF: cached so OnClosed can unsubscribe
     // the AppWindow.Closing handler. Pre-cache, the subscription was wired in
@@ -125,6 +130,10 @@ public sealed partial class SubGraphWindow : Window
     public SubGraphWindow()
     {
         InitializeComponent();
+        // InfoBar.Message has no attached-property slot (Localize.Key writes
+        // Title), so the second string on this control resolves here.
+        DirtyInfoBar.Message = Localizer.T(
+            "architect.canvas.subgraph.dirty_bar.message", DirtyInfoBar.Message);
         Closed += OnClosed;
         // Bind the custom chrome to this window once we have an HWND.
         // ExtendsContentIntoTitleBar + SetTitleBar both need the AppWindow
@@ -148,7 +157,7 @@ public sealed partial class SubGraphWindow : Window
     }
 
     /// <summary>
-    /// Reveal call-site — find the Macro.Call / Process.Spawn nodes in the
+    /// Reveal call-site — find the Macro.Call / Process.Start nodes in the
     /// parent canvas that reference this sub-graph's id, select the first
     /// match on the parent canvas, frame it, and pulse the flash highlight.
     /// Drives the parent's <see cref="LogicCanvasView"/> through the
@@ -203,7 +212,7 @@ public sealed partial class SubGraphWindow : Window
     }
 
     /// <summary>
-    /// Scan the parent graph for the first Macro.Call / Process.Spawn node
+    /// Scan the parent graph for the first Macro.Call / Process.Start node
     /// referencing this sub-graph's id. Returns the node id, or empty when
     /// no call site exists. Multi-site reveal (frame all callers, not just
     /// the first) is captured as a follow-up; one-by-one cycling needs an
@@ -290,7 +299,7 @@ public sealed partial class SubGraphWindow : Window
         // Entry/Exit sockets on the macro / process; the inner VM mutated the
         // SAME macro.Graph / process.Graph reference that lives on the parent
         // graph, so the canonical signature is already in place — we just have
-        // to push it out to the Macro.Call / Process.Spawn nodes so their
+        // to push it out to the Macro.Call / Process.Start nodes so their
         // socket displays, names, and types match (external wires preserved by
         // socket name; sockets that no longer exist are dropped). The baseline
         // WinForms Canvas.Macros.cs wired this as the OpenMacroEditor /
@@ -369,7 +378,7 @@ public sealed partial class SubGraphWindow : Window
             int hitCount = 0;
             foreach (var n in _innerVm.Graph.Nodes)
             {
-                // Macro.Call → MacroId attribute. Process.Spawn → ProcessId.
+                // Macro.Call → MacroId attribute. Process.Start → ProcessId.
                 string? targetId = null;
                 if (n.Title == "Macro.Call"
                     && n.Attributes != null
@@ -424,8 +433,10 @@ public sealed partial class SubGraphWindow : Window
                     DirtyMarker.Visibility = Visibility.Visible;
                     DirtyMarker.Fill = (Microsoft.UI.Xaml.Media.Brush?)Application.Current.Resources["ErrBrush"]
                                        ?? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xC9, 0x53, 0x3C));
-                    Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(DirtyMarker,
-                        $"Cycle detected: {hitCount} call site(s) reference this editor or an ancestor.");
+                    Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(DirtyMarker, string.Format(
+                        Localizer.T("architect.canvas.subgraph.cycle.tip",
+                            "Cycle detected: {0} call site(s) reference this editor or an ancestor."),
+                        hitCount));
                 }
                 else
                 {
@@ -479,9 +490,10 @@ public sealed partial class SubGraphWindow : Window
         // empty state file, losing the user's careful window placement).
         // Guid is stable across renames + filesystem-safe by construction.
         win._stateKey     = "macro-" + macro.MacroId;
-        win._baseWindowTitle   = $"Architect — Macro: {macro.Name}";
+        win._baseWindowTitle   = string.Format(
+            Localizer.T("architect.canvas.subgraph.window_title.macro", "Architect — Macro: {0}"), macro.Name);
         win.Title              = win._baseWindowTitle;
-        win.EyebrowText.Text   = "MACRO EDITOR";
+        win.EyebrowText.Text   = Localizer.T("architect.canvas.subgraph.eyebrow.macro", "MACRO EDITOR");
         win.TitleDisplay.Text  = macro.Name ?? string.Empty;
         win.UpdateBreadcrumbFromParent();
 
@@ -545,9 +557,10 @@ public sealed partial class SubGraphWindow : Window
         win.OriginCanvas  = originCanvas;
         // Guid-keyed state per 0.10.0 task spec — see OpenMacroEditor comment.
         win._stateKey     = "process-" + process.ProcessId;
-        win._baseWindowTitle   = $"Architect — Process: {process.Name}";
+        win._baseWindowTitle   = string.Format(
+            Localizer.T("architect.canvas.subgraph.window_title.process", "Architect — Process: {0}"), process.Name);
         win.Title              = win._baseWindowTitle;
-        win.EyebrowText.Text   = "PROCESS EDITOR";
+        win.EyebrowText.Text   = Localizer.T("architect.canvas.subgraph.eyebrow.process", "PROCESS EDITOR");
         win.TitleDisplay.Text  = process.Name ?? string.Empty;
         win.UpdateBreadcrumbFromParent();
 
@@ -630,110 +643,86 @@ public sealed partial class SubGraphWindow : Window
         }
     }
 
-    // ─── short panel open/close width animation ───────────────────
-    // Per-window copy (chrome helpers stay per-window so each pillar owns
-    // its own chrome). Width-only tween of
-    // the inspector column over ~170 ms (ease-out cubic).
-    private const double PanelAnimMs = 170.0;
-    private Microsoft.UI.Xaml.DispatcherTimer? _inspectorWidthTween;
-
-    private static Microsoft.UI.Xaml.DispatcherTimer? AnimatePanelColumnWidth(
-        Microsoft.UI.Xaml.Controls.ColumnDefinition? col,
-        double toPx,
-        Microsoft.UI.Xaml.DispatcherTimer? cancel,
-        System.Action? onComplete = null)
-    {
-        cancel?.Stop();
-        if (col is null) { onComplete?.Invoke(); return null; }
-        double from = col.ActualWidth > 0 ? col.ActualWidth : col.Width.Value;
-        if (System.Math.Abs(from - toPx) < 0.5)
-        {
-            col.Width = new GridLength(toPx, GridUnitType.Pixel);
-            onComplete?.Invoke();
-            return null;
-        }
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var timer = new Microsoft.UI.Xaml.DispatcherTimer
-        {
-            Interval = System.TimeSpan.FromMilliseconds(15),
-        };
-        timer.Tick += (_, _) =>
-        {
-            try
-            {
-                double t = System.Math.Clamp(sw.Elapsed.TotalMilliseconds / PanelAnimMs, 0.0, 1.0);
-                double eased = 1.0 - System.Math.Pow(1.0 - t, 3); // ease-out cubic
-                col.Width = new GridLength(from + (toPx - from) * eased, GridUnitType.Pixel);
-                if (t >= 1.0)
-                {
-                    timer.Stop();
-                    col.Width = new GridLength(toPx, GridUnitType.Pixel);
-                    onComplete?.Invoke();
-                }
-            }
-            catch
-            {
-                // The column / window was torn down mid-animation — stop the
-                // timer so it can't keep firing into a disposed visual tree.
-                timer.Stop();
-            }
-        };
-        timer.Start();
-        return timer;
-    }
+    // ─── panel open/close width animation — REMOVED 2026-08-14 ─────────
+    // PanelAnimMs / _inspectorWidthTween / AnimatePanelColumnWidth lived
+    // here to tween the inspector COLUMN's GridLength. This window has no
+    // other tweened column (unlike MainView / ArchitectSiblingWindow, which
+    // still tween the LeftRail), so retiring the column left the whole
+    // helper without a caller.
 
     private void ApplyInspectorVisibleToColumn(bool visible, bool animate = true)
     {
-        if (InspectorColumn is null) return;
+        if (InspectorHost is null) return;
         _inspectorExpanded = visible;
-        double target;
-        if (visible)
-        {
-            var cfg = Phoenix.Controls.Shared.Services.ConfigManager.Current;
-            double w = cfg.ArchitectInspectorColumnWidth > 0
-                ? cfg.ArchitectInspectorColumnWidth
-                : InspectorDockedDefaultWidth;
-            double maxW = double.IsInfinity(InspectorColumn.MaxWidth) ? 9999.0 : InspectorColumn.MaxWidth;
-            target = Math.Clamp(w, InspectorDockedMinWidth, maxW);
-        }
-        else
-        {
-            target = InspectorRolledUpWidth;
-        }
+        _ = animate;   // no width tween any more — two markup widths.
+
+        InspectorHost.Width = visible ? InspectorCardWidth : InspectorRolledUpWidth;
+
+        if (InspectorTitleText is not null)
+            InspectorTitleText.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (InspectorHeaderBorder is not null)
+            InspectorHeaderBorder.Padding = visible
+                ? new Thickness(6, 5, 6, 5)
+                : new Thickness(0);
+
+        if (InspectorRegion is not null)
+            InspectorRegion.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
         UpdateInspectorChevronGlyph(visible);
-        if (visible)
+        PublishInspectorViewportInset();
+    }
+
+    /// <summary>Declare the card's footprint to the canvas — see
+    /// LogicCanvasView.ViewportInsetRight.</summary>
+    private void PublishInspectorViewportInset()
+    {
+        try
         {
-            if (InspectorRegion is not null)
-                InspectorRegion.Visibility = Visibility.Visible;
-            if (animate)
-                _inspectorWidthTween = AnimatePanelColumnWidth(InspectorColumn, target, _inspectorWidthTween);
-            else
-            {
-                _inspectorWidthTween?.Stop();
-                InspectorColumn.Width = new GridLength(target, GridUnitType.Pixel);
-            }
+            if (Canvas is null) return;
+            double w = InspectorHost is not null && !double.IsNaN(InspectorHost.Width)
+                ? InspectorHost.Width
+                : InspectorCardWidth;
+            Canvas.ViewportInsetRight = w + 12.0;
         }
-        else
+        catch (Exception ex)
         {
-            if (animate)
-            {
-                _inspectorWidthTween = AnimatePanelColumnWidth(
-                    InspectorColumn, target, _inspectorWidthTween,
-                    () =>
-                    {
-                        if (InspectorRegion is not null)
-                            InspectorRegion.Visibility = Visibility.Collapsed;
-                    });
-            }
-            else
-            {
-                _inspectorWidthTween?.Stop();
-                InspectorColumn.Width = new GridLength(target, GridUnitType.Pixel);
-                if (InspectorRegion is not null)
-                    InspectorRegion.Visibility = Visibility.Collapsed;
-            }
+            Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                "Architect.SubGraphWindow", "PublishInspectorViewportInset", ex);
         }
     }
+
+    private void ApplyInspectorCardHeightCap(double paneHeight)
+    {
+        if (InspectorCardRoot is null || paneHeight <= 0) return;
+        double avail = paneHeight - 12.0 - MiniMapReservedHeight;
+        InspectorCardRoot.MaxHeight = Math.Clamp(
+            Math.Min(InspectorCardMaxHeight, avail),
+            InspectorCardMinHeight,
+            InspectorCardMaxHeight);
+    }
+
+    // Clip the floating host to its own box so the 32 px rolled-up tab cannot
+    // bleed its header onto the canvas (a Border does not clip children).
+    private Microsoft.UI.Xaml.Media.RectangleGeometry? _inspectorHostClip;
+    private void OnInspectorHostSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe) return;
+        var rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+        if (_inspectorHostClip is null)
+        {
+            _inspectorHostClip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = rect };
+            fe.Clip = _inspectorHostClip;
+        }
+        else
+        {
+            _inspectorHostClip.Rect = rect;
+        }
+    }
+
+    // The card's cap tracks the BODY's height — the host is top-aligned and
+    // content-sized, so its own SizeChanged never sees a window resize.
+    private void OnBodyGridSizeChanged(object sender, SizeChangedEventArgs e)
+        => ApplyInspectorCardHeightCap(e.NewSize.Height);
 
     private void UpdateInspectorChevronGlyph(bool expanded)
     {
@@ -742,10 +731,14 @@ public sealed partial class SubGraphWindow : Window
         {
             InspectorChevronButton.Content = expanded ? "" : "";
             ToolTipService.SetToolTip(InspectorChevronButton,
-                expanded ? "Roll up Inspector" : "Show Inspector");
+                expanded
+                    ? Localizer.T("architect.canvas.subgraph.inspector.rollup.tip", "Roll up Inspector")
+                    : Localizer.T("architect.canvas.subgraph.inspector.show.tip",   "Show Inspector"));
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
                 InspectorChevronButton,
-                expanded ? "Roll up Inspector" : "Show Inspector");
+                expanded
+                    ? Localizer.T("architect.canvas.subgraph.inspector.rollup.a11y", "Roll up Inspector")
+                    : Localizer.T("architect.canvas.subgraph.inspector.show.a11y",   "Show Inspector"));
         }
         catch (Exception ex)
         {
@@ -916,14 +909,14 @@ public sealed partial class SubGraphWindow : Window
     {
         if (!_isMacro) return;
         if (!string.Equals(macroId, _macroId, StringComparison.Ordinal)) return;
-        ApplyRenameToTitle("Macro", newName, "macro");
+        ApplyRenameToTitle(Localizer.T("architect.canvas.subgraph.kind.macro_title", "Macro"), newName, "macro");
     }
 
     private void OnProcessRenamed(string processId, string newName)
     {
         if (_isMacro) return;
         if (!string.Equals(processId, _processId, StringComparison.Ordinal)) return;
-        ApplyRenameToTitle("Process", newName, "process");
+        ApplyRenameToTitle(Localizer.T("architect.canvas.subgraph.kind.process_title", "Process"), newName, "process");
     }
 
     // ── Cross-window undo rebind ───────────────────────────────────────
@@ -1003,7 +996,9 @@ public sealed partial class SubGraphWindow : Window
         {
             try
             {
-                _baseWindowTitle   = $"Architect — {label}: {newName}";
+                _baseWindowTitle   = string.Format(
+                    Localizer.T("architect.canvas.subgraph.window_title.renamed", "Architect — {0}: {1}"),
+                    label, newName);
                 RefreshWindowTitleDirty(); // keep the bullet on rename
                 TitleDisplay.Text  = newName ?? string.Empty;
             }
@@ -1033,7 +1028,7 @@ public sealed partial class SubGraphWindow : Window
         {
             string? parentPath = _architectVm?.LoadedFilePath;
             BreadcrumbParent.Text = string.IsNullOrEmpty(parentPath)
-                ? "(unsaved)"
+                ? Localizer.T("architect.canvas.subgraph.breadcrumb.unsaved", "(unsaved)")
                 : System.IO.Path.GetFileName(parentPath);
         }
         catch
@@ -1158,17 +1153,24 @@ public sealed partial class SubGraphWindow : Window
             return DirtyChoice.Keep;
         }
 
-        var label = _isMacro ? "macro" : "process";
+        var label = _isMacro
+            ? Localizer.T("architect.canvas.subgraph.kind.macro",   "macro")
+            : Localizer.T("architect.canvas.subgraph.kind.process", "process");
         var dlg = new ContentDialog
         {
             XamlRoot              = root.XamlRoot,
-            Title                 = $"Unsaved {label} edits",
-            Content               = $"You have edits in this {label} editor. " +
-                                    "Keep them on the parent graph (save in main window), " +
-                                    "discard them, or cancel and stay here?",
-            PrimaryButtonText     = "Keep changes",
-            SecondaryButtonText   = "Discard changes",
-            CloseButtonText       = "Cancel",
+            Title                 = string.Format(
+                                        Localizer.T("architect.canvas.subgraph.dirty.title", "Unsaved {0} edits"),
+                                        label),
+            Content               = string.Format(
+                                        Localizer.T("architect.canvas.subgraph.dirty.body",
+                                            "You have edits in this {0} editor. " +
+                                            "Keep them on the parent graph (save in main window), " +
+                                            "discard them, or cancel and stay here?"),
+                                        label),
+            PrimaryButtonText     = Localizer.T("architect.canvas.subgraph.dirty.keep",    "Keep changes"),
+            SecondaryButtonText   = Localizer.T("architect.canvas.subgraph.dirty.discard", "Discard changes"),
+            CloseButtonText       = Localizer.T("architect.canvas.subgraph.dirty.cancel",  "Cancel"),
             DefaultButton         = ContentDialogButton.Primary,
         };
 

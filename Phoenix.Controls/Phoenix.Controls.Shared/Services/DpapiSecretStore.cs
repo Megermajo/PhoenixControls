@@ -9,10 +9,15 @@ using Phoenix.Controls.Shared.Models;
 namespace Phoenix.Controls.Shared.Services
 {
     /// <summary>
-    /// DPAPI-based at-rest protection for the nine secret fields on
-    /// <see cref="AppConfig"/> (Streamer.bot password, OpenAI / Anthropic /
-    /// Cerebras API keys, Discord bot token, webhook secret, translation API
-    /// key, WebSocket server token, remote pairing TLS cert path).
+    /// DPAPI-based at-rest protection for the ten secret fields on
+    /// <see cref="AppConfig"/>, which are — in declaration order —
+    /// <c>DiscordBotToken</c>, <c>OpenAIApiKey</c>, <c>AnthropicKey</c>,
+    /// <c>CerebrasApiKey</c>, <c>TranslationApiKey</c>, <c>WebhookSecret</c>,
+    /// <c>StreamerBotPassword</c>, <c>WebSocketServerToken</c>,
+    /// <c>ObsWebSocketPassword</c> and <c>YouTubeDataApiKey</c>. The list is an
+    /// enumerated inventory and goes stale silently — a new
+    /// <c>[JsonConverter(typeof(DpapiProtectedStringConverter))]</c> on AppConfig
+    /// belongs here too.
     ///
     /// <para>
     /// Why DPAPI: Majo's <c>%AppData%</c> lives inside a OneDrive-synced folder.

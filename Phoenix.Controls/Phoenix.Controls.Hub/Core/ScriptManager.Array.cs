@@ -84,7 +84,7 @@ namespace Phoenix.Controls.Hub.Core
                 bool ignoreCase = !string.IsNullOrEmpty(ignoreFlag) && IsIgnoreCaseFlag(ignoreFlag);
                 var cmp = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
                 bool found = list.Split(',').Any(x => string.Equals(x.Trim(), needle, cmp));
-                return found.ToString().ToLowerInvariant();
+                return (found ? "true" : "false");
             });
             // array.push(list, value) — returns updated list
             _engine.RegisterCommand("array.push", async (args) => {

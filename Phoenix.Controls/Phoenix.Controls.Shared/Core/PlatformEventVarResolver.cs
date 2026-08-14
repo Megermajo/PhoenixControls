@@ -17,6 +17,11 @@ namespace Phoenix.Controls.Shared.Core
     /// </summary>
     public static class PlatformEventVarResolver
     {
+        // Hoisted so each call to FirstObjectName / the recipient fallback doesn't
+        // re-allocate the probe-key array. Order is significant — first-present wins.
+        private static readonly string[] ObjectNameKeys = { "name", "userName", "login", "user", "displayName" };
+        private static readonly string[] RecipientKeys = { "recipients", "recipient" };
+
         /// <summary>
         /// Resolves every declared var of <paramref name="def"/> into
         /// <paramref name="vars"/>, plus <c>event.payload</c> (raw JSON of the
@@ -39,7 +44,7 @@ namespace Phoenix.Controls.Shared.Core
             if (!vars.ContainsKey("user.count") &&
                 def.Title.Equals("Kick.MassGiftSubscription", StringComparison.OrdinalIgnoreCase))
             {
-                foreach (var key in new[] { "recipients", "recipient" })
+                foreach (var key in RecipientKeys)
                 {
                     if (data.ValueKind == JsonValueKind.Object &&
                         data.TryGetProperty(key, out var arr) &&
@@ -171,7 +176,7 @@ namespace Phoenix.Controls.Shared.Core
 
         private static string FirstObjectName(JsonElement obj)
         {
-            foreach (var key in new[] { "name", "userName", "login", "user", "displayName" })
+            foreach (var key in ObjectNameKeys)
             {
                 if (obj.TryGetProperty(key, out var el) &&
                     el.ValueKind == JsonValueKind.String &&

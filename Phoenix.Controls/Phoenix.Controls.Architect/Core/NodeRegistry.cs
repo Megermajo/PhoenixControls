@@ -202,6 +202,7 @@ namespace Phoenix.Controls.Architect.Core
             _                         => ColObject
         };
 
+        // Test-only since D9 (sole production caller GraphSerializer.ApplyColumnTypesAsync deleted; NodeRegistryTests covers it) — kept as the palette's SQL-type→socket-colour mapping reference.
         public static Color ColumnTypeToSocketColor(string sqlType) => sqlType switch
         {
             "INTEGER" or "REAL" => ColNumber,
@@ -209,6 +210,7 @@ namespace Phoenix.Controls.Architect.Core
             _                   => ColString
         };
 
+        // Test-only since D9 (sole production caller GraphSerializer.ApplyColumnTypesAsync deleted; NodeRegistryTests + Step4FixesTests cover it) — kept as the palette's SQL-type→socket-colour mapping reference.
         public static void ApplyColumnTypeToNode(Node node, Color valueColor)
         {
             SocketDataType dt = DataTypeFromColor(valueColor);
@@ -466,10 +468,14 @@ namespace Phoenix.Controls.Architect.Core
             "Process.Terminate",
             // Unified outbound chat — the per-platform send nodes are superseded
             // by Chat.Send (checkmarks + runtime Platforms override), mirroring
-            // the Chat.Message trigger unification. Kept REGISTERED (the exporter
-            // test corpus leans on Twitch.SendChat as its generic sink, and
-            // mid-migration graphs still load/export); MigrateNodes retitles
-            // placed nodes onto Chat.Send with only their own platform checked.
+            // the Chat.Message trigger unification. What keeps legacy graphs
+            // loading is NOT this registration but GraphSerializer.MigrateNodes:
+            // on load it retitles placed nodes onto Chat.Send with only their
+            // own platform checked, so no live graph ever reaches the canvas
+            // still carrying these titles. The templates stay REGISTERED anyway
+            // because they are ALSO the exporter test corpus's generic sink —
+            // 34 test files build fixtures on Twitch.SendChat, so pulling the
+            // registration breaks the suite, not production graphs.
             "Twitch.SendChat",
             "YouTube.SendChat",
             "Kick.SendChat",
@@ -636,6 +642,27 @@ namespace Phoenix.Controls.Architect.Core
                     Offset      = new Point(nodeWidth - 14, headerH + 6 + idx * socketSpacing),
                     Description = t.SocketDescriptions.TryGetValue(name, out var desc) ? desc : ""
                 });
+            }
+
+            // User.GetGroups: seed the Groups attribute from the cached Hub group
+            // store (post-T15 the Architect pillar shares the Hub process, so
+            // DB.Instance is the live databank) and synthesize the per-custom-group
+            // Bool outputs before the node view ever mounts. Every spawn path
+            // (right-click, palette, wire-drop, paste-from-template) funnels
+            // through CreateNode, so this single hook covers them all. The kicked
+            // refresh keeps the NEXT spawn/load current; the attribute stays
+            // hand-editable as the fallback.
+            if (title == "User.GetGroups")
+            {
+                string? cachedCsv = UserGroupCatalog.CachedCsv;
+                if (!string.IsNullOrWhiteSpace(cachedCsv))
+                {
+                    node.Attributes["Groups"] = UserGroupCatalog.MergeCsv(
+                        node.Attributes.TryGetValue("Groups", out var existingCsv) ? existingCsv : "",
+                        cachedCsv);
+                }
+                UserGroupCatalog.BeginRefresh();
+                EnsureUserGroupSockets(node);
             }
 
             return node;

@@ -3,6 +3,7 @@ using Phoenix.Controls.Hub.WinUI.Dialogs;
 using Phoenix.Controls.Hub.WinUI.Panels;
 using Phoenix.Controls.Hub.WinUI.Services;
 using Phoenix.Controls.Hub.WinUI.Windows;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI;
@@ -163,7 +164,9 @@ public partial class App : Application
             try
             {
                 if (_splash is not null)
-                    _splash.ShowError($"Hub startup failed: {fatal.Message}");
+                    _splash.ShowError(string.Format(
+                        Localizer.T("splash.error.startup_failed", "Hub startup failed: {0}"),
+                        fatal.Message));
             }
             catch { /* best-effort */ }
         }
@@ -360,7 +363,9 @@ public partial class App : Application
         // no diagnostic.
         if (_services is null)
         {
-            string detail = bootFailure?.Message ?? "Hub services were not initialised.";
+            string detail = bootFailure?.Message
+                            ?? Localizer.T("splash.error.services_not_initialised",
+                                           "Hub services were not initialised.");
             _splash.ShowError(detail);
             // Splash stays open until the user clicks Close (which calls
             // Application.Exit). Don't activate MainWindow.
@@ -462,7 +467,12 @@ public partial class App : Application
         catch (Exception ex)
         {
             GlobalLogger.Error("App", "MainWindow/SetPanels/Activate failed", ex);
-            try { _splash?.ShowError($"Hub UI bring-up failed: {ex.Message}"); }
+            try
+            {
+                _splash?.ShowError(string.Format(
+                    Localizer.T("splash.error.ui_bringup_failed", "Hub UI bring-up failed: {0}"),
+                    ex.Message));
+            }
             catch { /* splash may already be torn down */ }
             // Re-throw so the outer OnLaunched gate keeps the splash in error
             // mode and the process doesn't continue with a half-initialised
@@ -505,7 +515,10 @@ public partial class App : Application
                         : $" — v{prev.NewSha}";
                     DocViewerWindow.OpenOrFocus(new DocViewRequest(
                         "changelog.html",
-                        Title: $"Phoenix Controls — What's new{versionTail}"));
+                        Title: string.Format(
+                            Localizer.T("hub.mainwindow.docviewer.whats_new.title_format",
+                                        "Phoenix Controls — What's new{0}"),
+                            versionTail)));
                 }
             }
         }

@@ -121,7 +121,8 @@
         </Grid>
 
         <!-- Footer -->
-        <TextBlock Grid.Row="3"
+        <TextBlock x:Name="FooterTagline"
+                   Grid.Row="3"
                    Text="FORGED FOR STREAMERS · 2026"
                    FontSize="10"
                    FontFamily="{StaticResource MonoFont}"

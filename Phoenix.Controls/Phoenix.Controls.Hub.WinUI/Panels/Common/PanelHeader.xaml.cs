@@ -4,13 +4,15 @@ using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Hub.WinUI.Panels.Common;
 
+// When Localizer gains a LanguageChanged event (live-switch milestone per
+// Localizer.cs), subscribe on Loaded / unsubscribe on Unloaded so Title
+// refreshes on the fly.
 public sealed partial class PanelHeader : UserControl
 {
     public PanelHeader()
     {
         InitializeComponent();
         Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
 
     /// <summary>
@@ -57,6 +59,27 @@ public sealed partial class PanelHeader : UserControl
         DependencyProperty.Register(nameof(Eyebrow), typeof(string), typeof(PanelHeader),
             new PropertyMetadata(string.Empty));
 
+    /// <summary>
+    /// Localizer key for <see cref="Eyebrow"/>, resolved at Loaded exactly like
+    /// <see cref="TitleKey"/> and with <see cref="Eyebrow"/> as the English
+    /// fallback.
+    ///
+    /// <para>Added by the localization retrofit. Until then the header had a
+    /// <see cref="TitleKey"/> and no counterpart for the strap above it, so
+    /// every "LIVE" / "ENTRANTS" / "PRE-BUILD TOOL" eyebrow sat above a
+    /// translated title as permanent English — not an oversight at the call
+    /// sites, simply not expressible.</para>
+    /// </summary>
+    public string EyebrowKey
+    {
+        get => (string)GetValue(EyebrowKeyProperty);
+        set => SetValue(EyebrowKeyProperty, value);
+    }
+
+    public static readonly DependencyProperty EyebrowKeyProperty =
+        DependencyProperty.Register(nameof(EyebrowKey), typeof(string), typeof(PanelHeader),
+            new PropertyMetadata(string.Empty));
+
     public object? RightContent
     {
         get => GetValue(RightContentProperty);
@@ -78,13 +101,10 @@ public sealed partial class PanelHeader : UserControl
         {
             Title = Localizer.T(TitleKey, string.IsNullOrEmpty(Title) ? TitleKey : Title);
         }
-    }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e)
-    {
-        // No active subscriptions today — Localizer doesn't yet expose a
-        // LanguageChanged event (planned for the live-switch milestone per
-        // Localizer.cs). When that lands, hook here and Title gets refreshed
-        // on the fly.
+        if (!string.IsNullOrEmpty(EyebrowKey))
+        {
+            Eyebrow = Localizer.T(EyebrowKey, string.IsNullOrEmpty(Eyebrow) ? EyebrowKey : Eyebrow);
+        }
     }
 }

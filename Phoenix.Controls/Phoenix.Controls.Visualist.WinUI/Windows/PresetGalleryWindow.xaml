@@ -15,7 +15,8 @@
 <Window
     x:Class="Phoenix.Controls.Visualist.WinUI.Hosting.PresetGalleryWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization">
 
     <Grid Background="{StaticResource CoalShellBrush}">
         <Grid.RowDefinitions>
@@ -36,7 +37,8 @@
                            FontSize="14"
                            FontWeight="SemiBold"
                            Foreground="{StaticResource CoalPaperBrush}"
-                           Text="Preset Gallery" />
+                           Text="Preset Gallery"
+                           loc:Localize.Key="visualist.window.preset_gallery.title" />
                 <TextBlock x:Name="HeaderSubtitle"
                            FontFamily="{StaticResource MonoFont}"
                            FontSize="10"
@@ -140,7 +142,8 @@
                 <Button Grid.Column="1"
                         Content="Close"
                         Click="OnCloseClicked"
-                        MinWidth="80" />
+                        MinWidth="80"
+                        loc:Localize.Key="common.button.close" />
             </Grid>
         </Border>
     </Grid>

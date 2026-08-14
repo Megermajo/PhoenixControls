@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Phoenix.Controls.Hub.WinUI.Panels.Common;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 
 namespace Phoenix.Controls.Hub.WinUI.Panels.ScriptPanel;
@@ -77,7 +78,9 @@ public sealed class ScriptViewModel : ObservableObject, IDisposable
         foreach (var row in Rows.ToList()) row.RefreshBrushes();
     }
 
-    public string SummaryText => $"{Rows.Count} loaded · {_erroredCount} errored";
+    public string SummaryText => string.Format(
+        Localizer.T("panel.scripts.summary_format", "{0} loaded · {1} errored"),
+        Rows.Count, _erroredCount);
 
     public Task ToggleEnabledAsync(ScriptRowVm row)
         => _monitor.SetEnabledAsync(row.Status.Name, !row.Status.Enabled);

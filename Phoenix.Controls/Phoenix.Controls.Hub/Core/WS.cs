@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -86,12 +86,10 @@ namespace Phoenix.Controls.Hub.Core
         private const int ScriptQueueCapacity = 1_000;
         private BlockingCollection<ChatMessage> _scriptQueue = new BlockingCollection<ChatMessage>(ScriptQueueCapacity);
 
-        // Diagnostics surface for queue overflow. Counter is monotonic for the
-        // process lifetime; consumers (Diagnostics window) display it as
-        // "messages dropped since startup".
+        // Queue-overflow drop counter. Monotonic for the process lifetime; feeds
+        // the throttled "script queue full" CriticalError log line (every 50th
+        // drop) so overflow stays visible without saturating the log.
         private long _droppedQueueMessages;
-        public long DroppedQueueMessages => System.Threading.Interlocked.Read(ref _droppedQueueMessages);
-        public event Action<long>? OnQueueOverflow;
 
         // Recent-chat ring buffer feeding Chat.PeekRecent. Independent of _scriptQueue
         // (which is a single-consumer queue drained by ProcessScriptQueueAsync) so the
@@ -141,10 +139,13 @@ namespace Phoenix.Controls.Hub.Core
                 });
 
         // SB authentication state. When the configured Streamer.bot password
-        // is non-empty we send the v0.2 Authenticate handshake on first connect.
-        // If auth fails (server rejects), we suppress further reconnect attempts
-        // rather than spinning forever against bad creds (the silent-infinite-
-        // reconnect symptom this fix targets).
+        // is non-empty we run the v0.2 Authenticate handshake on each connect.
+        // The handshake is DRIVEN OFF THE SERVER'S Hello FRAME, not off
+        // ReconnectionHappened: the Authenticate envelope carries a digest of
+        // the password over the server-issued salt + challenge, and both only
+        // arrive in Hello. If auth fails (server rejects), we suppress further
+        // reconnect attempts rather than spinning forever against bad creds
+        // (the silent-infinite-reconnect symptom this fix targets).
         private const string AuthRequestId = "phoenix-authenticate";
         // Volatile because the value is set on the WS message-receive thread (auth response)
         // and read on the disconnection-event thread; without it the disconnect handler
@@ -155,6 +156,63 @@ namespace Phoenix.Controls.Hub.Core
         // state is what turns the StreamerBot channel Errored instead of a
         // plain Disconnected.
         public bool AuthFailedFatal => _authFailedFatal;
+
+        // Per-connection one-shot gate on SubscribeToEvents. The subscribe is
+        // now reachable from three places (no-password reconnect, the
+        // Hello/Authenticate success path, and the handshake watchdog
+        // fallback), so the gate keeps a connection to exactly ONE
+        // UnSubscribe/Subscribe/GetEvents round-trip. Reset on disconnect and
+        // on Initialize — NOT on connect: the server's Hello can be parsed on
+        // the receive thread before ReconnectionHappened is raised, and
+        // resetting there would let that race re-open the gate.
+        //
+        // ONE further reset point: the Authenticate-accepted arm re-opens the
+        // gate immediately before it subscribes. That path is authoritative —
+        // if the 15s watchdog fallback already burned the gate on an
+        // UNAUTHENTICATED subscribe (which an auth-enforcing Streamer.bot
+        // refuses, silently: the sub/unsub ids are not correlated by the
+        // response dispatcher), swallowing the post-handshake subscribe would
+        // leave the Hub authenticated, connected and subscribed to nothing —
+        // exactly the state the gate exists to prevent.
+        //
+        // ★ AND one reset point on FAILURE: the gate may only stay burned when
+        // the round-trip was actually HANDED to the running client. Send() has
+        // real drop paths (client not yet IsRunning, disposed mid-send), and
+        // Websocket.Client starts its receive loop BEFORE it sets IsRunning —
+        // so over loopback, Streamer.bot's instant Hello frame can drive the
+        // no-auth SubscribeToEvents on the receive thread while IsRunning is
+        // still false. Pre-fix that burned the gate on three dropped sends and
+        // NOTHING retried: the Hub sat connected — action probe green, outbound
+        // fine — subscribed to nothing for the whole process lifetime (zero
+        // chat, zero events; the 1.1.5–1.1.8 total-silence bug). Now a failed
+        // hand-off re-opens the gate and arms the bounded retry below.
+        private int _subscribeSent;
+
+        // Single-flight gate + bounds for the subscribe-hand-off retry. The
+        // retry exists ONLY for the failed-hand-off case above; a successful
+        // hand-off never arms it. Bounded so a permanently-dead client can't
+        // host an immortal loop — after the window, the next reconnect's
+        // normal subscribe path takes over.
+        private const int SubscribeRetryMaxAttempts = 40;
+        private const int SubscribeRetryDelayMs = 250;
+        private int _subscribeRetryPending;
+
+        // Transient (non-credential) Authenticate-failure retry state.
+        // _authRetryPending gates ONE delayed retry in flight at a time;
+        // _consecutiveAuthRetries drives the escalating backoff and resets on
+        // an accepted handshake (and on Initialize) so a one-off schema blip
+        // doesn't leave a long delay armed for the next outage.
+        private int _authRetryPending;
+        private int _consecutiveAuthRetries;
+
+        // Bounded watchdog for the auth handshake. Armed on connect whenever a
+        // password is configured, cancelled the moment the handshake resolves
+        // (Hello without a challenge, or a correlated Authenticate response).
+        // If it ever fires, the Hub is connected with no subscription in
+        // flight — the "connected but subscribed to nothing, forever" state —
+        // so it logs loudly and subscribes anyway.
+        private const int AuthHandshakeTimeoutSeconds = 15;
+        private CancellationTokenSource? _authWatchdogCts;
 
         // Rx subscription handles — disposed and replaced each Initialize() call so
         // reconnect attempts don't accumulate duplicate event handlers.
@@ -188,6 +246,24 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly Random _backoffJitter = new();
         private const double BackoffBaseSeconds = 5.0;
         private const double BackoffMaxSeconds = 60.0;
+
+        // The one backoff curve, shared by the disconnection handler (which
+        // hands it to the library as ErrorReconnectTimeout) and by the
+        // transient-auth retry (which sleeps it itself). Exponential —
+        // Base × 2^(n-1), doubling capped at the 5th attempt and the whole
+        // value capped at BackoffMaxSeconds — plus up to +25% jitter so a
+        // fleet of retries doesn't thunder in lockstep. n is 1-based; values
+        // below 1 are clamped so a caller counting from 0 can't shorten the
+        // first delay below the base.
+        private static TimeSpan ComputeBackoffDelay(int n)
+        {
+            double baseSeconds = Math.Min(
+                BackoffBaseSeconds * Math.Pow(2.0, Math.Min(Math.Max(n, 1) - 1, 4)),
+                BackoffMaxSeconds);
+            double jitterPct;
+            lock (_backoffJitter) jitterPct = _backoffJitter.NextDouble() * 0.5 - 0.25;
+            return TimeSpan.FromSeconds(Math.Max(baseSeconds, baseSeconds * (1.0 + jitterPct)));
+        }
 
         private WS()
         {
@@ -240,6 +316,22 @@ namespace Phoenix.Controls.Hub.Core
             // The Twitch probe outcome is connection-scoped — reset alongside
             // the auth latch so the fresh round-trip starts from "unknown".
             Volatile.Write(ref _twitchEventsProbe, -1);
+            // Same for the subscribe gate + handshake watchdog: a Stop()-then-
+            // Initialize() cycle installs a brand-new client below, and the old
+            // connection's gate must not suppress the new connection's Subscribe.
+            Interlocked.Exchange(ref _subscribeSent, 0);
+            // The transient-auth retry is scoped to the client we are about to
+            // replace: clear its escalation counter, and clear the in-flight
+            // gate so the fresh round-trip can schedule its own retry. Any task
+            // still sleeping out the old backoff bails on the client-identity
+            // check before it touches the new client.
+            Interlocked.Exchange(ref _consecutiveAuthRetries, 0);
+            Interlocked.Exchange(ref _authRetryPending, 0);
+            // The hand-off retry is scoped to the client being replaced; a
+            // stale loop bails on its own state checks, and clearing the
+            // single-flight gate lets the fresh connection arm its own.
+            Interlocked.Exchange(ref _subscribeRetryPending, 0);
+            CancelAuthWatchdog();
 
             // Dispose any previous client before overwriting the field. Without this
             // its background subscriptions remained alive and competed with the new
@@ -299,16 +391,19 @@ namespace Phoenix.Controls.Hub.Core
                 // without buying it on every chat line.
                 EmitRoleTagMapDiagnosticOnce();
 
-                // Fire the SB auth handshake BEFORE any subscriptions if a
-                // password is configured. SB v0.2 Authenticate is a simple
-                // {request:"Authenticate", id, authentication} envelope; on failure
-                // SB returns an error response we correlate by id (see ParseBotMessage).
-                // If no password is configured (NIE check), behavior is unchanged
-                // and we go straight to SubscribeToEvents.
+                // Arm the SB auth handshake BEFORE any subscriptions if a
+                // password is configured. The Authenticate envelope can only be
+                // built once the server's Hello frame has delivered the salt +
+                // challenge, so this only arms the wait (plus its watchdog) —
+                // TryHandleStreamerBotHello does the sending. On failure SB
+                // returns an error response we correlate by id (see
+                // ParseBotMessage). If no password is configured (NIE check),
+                // behavior is unchanged and we go straight to SubscribeToEvents.
                 if (TryBeginStreamerBotAuth())
                 {
-                    // Subscriptions will fire from the auth-success path; in the
-                    // unauthenticated branch SubscribeToEvents has been called below.
+                    // Subscriptions will fire from the auth-success path (or from
+                    // the watchdog fallback); in the unauthenticated branch
+                    // SubscribeToEvents has been called below.
                     return;
                 }
                 SubscribeToEvents();
@@ -326,6 +421,11 @@ namespace Phoenix.Controls.Hub.Core
                 // Invalidate the connection-scoped Twitch probe outcome; the
                 // GetEvents round-trip re-runs after the next SubscribeToEvents.
                 Volatile.Write(ref _twitchEventsProbe, -1);
+                // Re-open the per-connection subscribe gate and disarm any
+                // handshake watchdog left over from the dead connection — the
+                // next connect runs its own Hello/Authenticate/Subscribe cycle.
+                Interlocked.Exchange(ref _subscribeSent, 0);
+                CancelAuthWatchdog();
 
                 // Exponential backoff + ±25% jitter. Without this, a constant 5s retry
                 // hammers SB during auth-loops and produces a thundering-herd retry on
@@ -345,11 +445,7 @@ namespace Phoenix.Controls.Hub.Core
                     GlobalLogger.Log("WebSocket Disconnected — attempting reconnect.", "WS", LogLevel.Communication);
                 }
                 OnConnectionStatusChanged?.Invoke(false);
-                double baseSeconds = Math.Min(BackoffBaseSeconds * Math.Pow(2.0, Math.Min(n - 1, 4)), BackoffMaxSeconds);
-                double jitterPct;
-                lock (_backoffJitter) jitterPct = _backoffJitter.NextDouble() * 0.5 - 0.25;
-                double delay = Math.Max(baseSeconds, baseSeconds * (1.0 + jitterPct));
-                try { _client.ErrorReconnectTimeout = TimeSpan.FromSeconds(delay); } catch { }
+                try { _client.ErrorReconnectTimeout = ComputeBackoffDelay(n); } catch { }
 
                 // If auth has been declared fatally rejected, stop the
                 // reconnect loop. Without this the Websocket.Client's automatic
@@ -491,10 +587,16 @@ namespace Phoenix.Controls.Hub.Core
         // wrappers drops the per-chat-line property-name allocation + switch and
         // lets the JIT inline the property reads.
 
-        // Kicks off the SB Authenticate handshake when (and only when) a
-        // non-empty password is configured. Returns true if the handshake was
-        // dispatched (so the reconnect callback should NOT also invoke
+        // Arms the SB Authenticate handshake when (and only when) a non-empty
+        // password is configured. Returns true if the connection is now WAITING
+        // on the handshake (so the reconnect callback must NOT also invoke
         // SubscribeToEvents — that runs from the auth-success path instead).
+        //
+        // Nothing is sent from here: the Authenticate envelope carries a digest
+        // over the server-issued salt + challenge, which only arrive in the
+        // server's Hello frame (see TryHandleStreamerBotHello). All this does is
+        // hold the subscribe back and arm the watchdog that guarantees we can
+        // never sit connected-with-no-subscription forever.
         // Direct AppConfig property read (was reflection-via-helper).
         private bool TryBeginStreamerBotAuth()
         {
@@ -502,19 +604,134 @@ namespace Phoenix.Controls.Hub.Core
             if (string.IsNullOrEmpty(password))
                 return false;
 
-            // Let JsonSerializer handle escaping. The hand-rolled
-            // `\\` and `\"` replacements missed every other JSON control
-            // character (newline, tab, lone backslash sequences, U+0000..U+001F,
-            // unpaired surrogates), so a password with such a code point used
-            // to produce malformed JSON that SB rejected silently with no
-            // operator-visible reason. Anonymous object → JsonSerializer.Serialize
-            // produces a spec-compliant payload regardless of password contents.
-            string payload = System.Text.Json.JsonSerializer.Serialize(new
+            ArmAuthHandshakeWatchdog();
+            GlobalLogger.Log(
+                "L64 — Streamer.bot password configured; holding subscriptions until the server's Hello challenge arrives.",
+                "WS", LogLevel.Communication);
+            return true;
+        }
+
+        // Streamer.bot's WebSocket server 0.2 greets every new connection with
+        // an unsolicited Hello frame:
+        //   { "request":"Hello", "id":"...", "info":{...},
+        //     "authentication": { "salt":"...", "challenge":"..." } }
+        // The authentication block is present ONLY when the server has
+        // authentication enabled. Returns true when the frame was recognised as
+        // a Hello and consumed (so ParseBotMessage stops processing it — a Hello
+        // is neither an event nor a correlated response to one of our requests).
+        //
+        // Recognition is deliberately two-pronged: the `request == "Hello"`
+        // marker of the current schema, OR the presence of a salt+challenge pair
+        // (which no other SB frame carries), so a wire-name change can't silently
+        // reinstate the "connected but never authenticated" dead end.
+        internal static bool TryParseStreamerBotHello(
+            System.Text.Json.JsonElement root, out string salt, out string challenge)
+        {
+            salt = string.Empty;
+            challenge = string.Empty;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+
+            bool isHello = root.TryGetProperty("request", out var reqEl)
+                           && reqEl.ValueKind == System.Text.Json.JsonValueKind.String
+                           && string.Equals(reqEl.GetString(), "Hello", StringComparison.OrdinalIgnoreCase);
+
+            if (root.TryGetProperty("authentication", out var authEl)
+                && authEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                salt      = JsonStringField(authEl, "salt");
+                challenge = JsonStringField(authEl, "challenge");
+            }
+
+            return isHello || (salt.Length > 0 && challenge.Length > 0);
+        }
+
+        // Consumes the Hello frame and decides what the connection does next.
+        // Returns true when the frame was a Hello (handled here, not an event).
+        private bool TryHandleStreamerBotHello(System.Text.Json.JsonElement root)
+        {
+            if (!TryParseStreamerBotHello(root, out string salt, out string challenge))
+                return false;
+
+            string password = ConfigManager.Current?.StreamerBotPassword ?? string.Empty;
+            bool serverWantsAuth = salt.Length > 0 && challenge.Length > 0;
+
+            if (!serverWantsAuth)
+            {
+                // No challenge ⇒ the server is not enforcing authentication.
+                // Sending Authenticate anyway earns an error reply, so go
+                // straight to the subscriptions — including when a password IS
+                // configured, which is exactly the operator who turned SB's WS
+                // auth back off and would otherwise never subscribe to anything.
+                CancelAuthWatchdog();
+                if (!string.IsNullOrEmpty(password))
+                {
+                    GlobalLogger.Log(
+                        "L64 — Streamer.bot Hello carried no authentication challenge (WS auth is disabled server-side); continuing without the handshake.",
+                        "WS", LogLevel.Communication);
+                }
+                SubscribeToEvents();
+                return true;
+            }
+
+            if (string.IsNullOrEmpty(password))
+            {
+                // Server demands auth, operator configured none. Subscribe
+                // anyway so the refusal is visible on the wire (and in the log)
+                // instead of the link idling silently.
+                CancelAuthWatchdog();
+                GlobalLogger.Log(
+                    "L64 — Streamer.bot requires WebSocket authentication but no password is configured (Settings → Streamer.bot Password). Events will not be delivered until one is set.",
+                    "WS", LogLevel.CriticalError);
+                SubscribeToEvents();
+                return true;
+            }
+
+            SendStreamerBotAuthenticate(password, salt, challenge);
+            return true;
+        }
+
+        // Streamer.bot WS server 0.2 auth-response formula — identical to the
+        // OBS WS v5 dance ObsWebSocketClient.ComputeAuthResponse implements:
+        //   secret         = base64(SHA256(password + salt))
+        //   authentication = base64(SHA256(secret + challenge))
+        // Both SHA256 inputs are UTF-8 byte sequences of the concatenated
+        // strings. Sending the RAW password here (which is what this file used
+        // to do) is rejected by every SB build with auth enabled.
+        // Internal so the test project can pin the formula against a known
+        // vector via the csproj InternalsVisibleTo grant.
+        internal static string ComputeStreamerBotAuthResponse(string password, string salt, string challenge)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            byte[] step1 = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password + salt));
+            string secret = Convert.ToBase64String(step1);
+            byte[] step2 = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(secret + challenge));
+            return Convert.ToBase64String(step2);
+        }
+
+        // Let JsonSerializer handle escaping. The hand-rolled
+        // `\\` and `\"` replacements missed every other JSON control
+        // character (newline, tab, lone backslash sequences, U+0000..U+001F,
+        // unpaired surrogates), so a password with such a code point used
+        // to produce malformed JSON that SB rejected silently with no
+        // operator-visible reason. Anonymous object → JsonSerializer.Serialize
+        // produces a spec-compliant payload regardless of password contents.
+        // (The derived digest is base64 and needs no escaping, but the
+        // serializer stays: it is the shape of the envelope that matters and a
+        // future field may not be base64.)
+        // Internal so the envelope shape can be asserted without a socket.
+        internal static string BuildAuthenticatePayload(string password, string salt, string challenge)
+        {
+            return System.Text.Json.JsonSerializer.Serialize(new
             {
                 request        = "Authenticate",
                 id             = AuthRequestId,
-                authentication = password,
+                authentication = ComputeStreamerBotAuthResponse(password, salt, challenge),
             });
+        }
+
+        private void SendStreamerBotAuthenticate(string password, string salt, string challenge)
+        {
+            string payload = BuildAuthenticatePayload(password, salt, challenge);
             try
             {
                 _client.Send(payload);
@@ -523,9 +740,59 @@ namespace Phoenix.Controls.Hub.Core
             catch (Exception ex)
             {
                 GlobalLogger.Error("WS", "L64 — Streamer.bot auth send failed", ex);
-                return false;
+                // The watchdog stays armed: a failed send is exactly the case
+                // where no Authenticate response will ever arrive, and it is the
+                // only thing standing between that and a permanently silent link.
             }
-            return true;
+        }
+
+        // Arms (or re-arms) the bounded handshake watchdog. Without it, a
+        // Streamer.bot that never sends Hello, never answers Authenticate, or
+        // answers with an id we don't correlate leaves the socket up, IsConnected
+        // true and ZERO subscriptions in flight — no chat, no alerts, nothing —
+        // for the rest of the process lifetime, because idle-reconnect is
+        // disabled (ReconnectTimeout = null) and nothing tears the socket down.
+        private void ArmAuthHandshakeWatchdog()
+        {
+            var cts = new CancellationTokenSource();
+            var previous = Interlocked.Exchange(ref _authWatchdogCts, cts);
+            if (previous is not null)
+            {
+                try { previous.Cancel(); } catch { }
+                try { previous.Dispose(); } catch { }
+            }
+
+            var token = cts.Token;
+            _ = AsyncErrorBoundary.SafeRunAsync(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(AuthHandshakeTimeoutSeconds), token).ConfigureAwait(false);
+                if (token.IsCancellationRequested) return;
+                if (!IsConnected || _authFailedFatal || Volatile.Read(ref _stopped) != 0) return;
+                // Already subscribed on this connection (the Hello can be
+                // parsed on the receive thread before ReconnectionHappened arms
+                // this watchdog) — nothing is stuck, so stay quiet.
+                if (Volatile.Read(ref _subscribeSent) != 0) return;
+
+                // This subscribe is PROVISIONAL: it goes out unauthenticated,
+                // and an auth-enforcing Streamer.bot refuses it silently (the
+                // sub/unsub ids are not correlated by the response dispatcher,
+                // so there is no reply to observe and the socket does NOT drop).
+                // A late-but-successful Authenticate response therefore re-opens
+                // the subscribe gate and re-issues the round-trip — see the ok
+                // arm of HandleAuthenticateResponse.
+                GlobalLogger.Log(
+                    $"L64 — no Streamer.bot Hello/Authenticate response within {AuthHandshakeTimeoutSeconds}s. Subscribing anyway so the link can't sit connected with nothing subscribed; if the server enforces authentication it will refuse this subscription silently, and a later successful handshake re-issues it.",
+                    "WS", LogLevel.CriticalError);
+                SubscribeToEvents();
+            }, "WS", "auth handshake watchdog", token);
+        }
+
+        private void CancelAuthWatchdog()
+        {
+            var cts = Interlocked.Exchange(ref _authWatchdogCts, null);
+            if (cts is null) return;
+            try { cts.Cancel(); } catch { }
+            try { cts.Dispose(); } catch { }
         }
 
         // Resolves the Authenticate response. SB returns either
@@ -543,14 +810,34 @@ namespace Phoenix.Controls.Hub.Core
         // otherwise wedge reconnect forever even when the configured
         // password is correct. The hard-rejection signature is the SB
         // error envelope explicitly naming a credential failure;
-        // anything else stays transient and the existing reconnect
-        // backoff handles it.
+        // anything else stays transient and is retried by
+        // ScheduleTransientAuthRetry (the library's own reconnect loop cannot
+        // do it for us — it never re-runs a handshake we didn't tear down and
+        // restart ourselves).
         private void HandleAuthenticateResponse(System.Text.Json.JsonElement root)
         {
+            // The handshake produced a correlated answer either way — disarm the
+            // watchdog before branching so it can't fire on top of the outcome.
+            CancelAuthWatchdog();
+
             string status = root.TryGetProperty("status", out var s) ? (s.GetString() ?? "") : "";
             if (string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase))
             {
                 GlobalLogger.Log("L64 — Streamer.bot authentication accepted.", "WS", LogLevel.Communication);
+                // Handshake accepted — the escalating retry backoff starts
+                // fresh for the next connection.
+                Interlocked.Exchange(ref _consecutiveAuthRetries, 0);
+                // Re-open the per-connection subscribe gate before subscribing.
+                // The 15s watchdog fallback may already have consumed it with an
+                // UNAUTHENTICATED subscribe — which an auth-enforcing
+                // Streamer.bot refuses silently (the "phoenix-hub-sub" /
+                // "phoenix-hub-unsub" ids are not correlated by the response
+                // dispatcher, so a refusal produces no log and no retry). This
+                // arm is the authoritative one: now that the handshake is
+                // accepted, the UnSubscribe/Subscribe/GetEvents round-trip MUST
+                // actually go out instead of being swallowed by a gate the
+                // fallback already burned.
+                Interlocked.Exchange(ref _subscribeSent, 0);
                 SubscribeToEvents();
                 return;
             }
@@ -576,13 +863,91 @@ namespace Phoenix.Controls.Hub.Core
             else
             {
                 // Non-credential failure (malformed envelope / parse-only
-                // error / transient SB fault). Don't latch fatal; the existing
-                // disconnect backoff retries the handshake on the next reconnect.
+                // error / transient SB fault). Don't latch fatal — the configured
+                // password may well be correct — but the handshake MUST be run
+                // again. SubscribeToEvents is reachable only from the ok arm
+                // above and from the watchdog, and the library's idle-reconnect
+                // is disabled (ReconnectTimeout = null), so simply logging here
+                // parked the Hub connected, healthy-looking and subscribed to
+                // NOTHING for the rest of the process lifetime.
+                //
+                // The retry is OURS to drive — see ScheduleTransientAuthRetry
+                // for why a bare Stop() is not a reconnect trigger.
                 GlobalLogger.Log(
                     $"L64 — Streamer.bot Authenticate replied non-ok ('{status}' err='{err}') but no credential-rejection signature was found. " +
-                    "Treating as transient; reconnect backoff will retry the handshake.",
-                    "WS", LogLevel.Communication);
+                    "Treating as transient; the handshake will be re-run on a backoff.",
+                    "WS", LogLevel.CriticalError);
+                ScheduleTransientAuthRetry();
             }
+        }
+
+        // Re-runs the whole Streamer.bot handshake after a transient
+        // (non-credential) Authenticate failure.
+        //
+        // A bare Stop() is NOT a reconnect trigger, which is why this method
+        // exists instead of a one-line fire-and-forget: Websocket.Client's
+        // Stop "mark[s] client as closed" (IsStarted = false) and its
+        // reconnector then short-circuits — the shipped 5.3.0 assembly carries
+        // the literal "Client not started, ignoring reconnection.." for exactly
+        // that path. Nothing else in this process re-starts the link either:
+        // WS.StartAsync is called once, from HubBootstrapper. So a Stop with no
+        // Start behind it leaves the SB link permanently dead — no events AND
+        // no outbound requests (DoAction, SendAndWaitJsonAsync, chat send all
+        // degrade to "WS→SB DROPPED (not connected)") until Hub is restarted.
+        // That is strictly worse than the silent-subscription bug it was meant
+        // to fix, so the Stop is paired with an explicit Start here.
+        //
+        // The backoff is slept BEFORE the teardown, so the socket stays up and
+        // fully usable for outbound traffic while we wait, and a server that
+        // keeps answering non-ok can't be turned into a tight
+        // connect/authenticate/drop loop. The hard-rejection arm above keeps
+        // using a bare Stop() precisely because there it WANTS the link to stay
+        // down.
+        private void ScheduleTransientAuthRetry()
+        {
+            // One delayed retry in flight at a time.
+            if (Interlocked.Exchange(ref _authRetryPending, 1) != 0) return;
+
+            WebsocketClient scheduledOn;
+            lock (_clientLock) scheduledOn = _client;
+
+            int attempt = Interlocked.Increment(ref _consecutiveAuthRetries);
+            TimeSpan delay = ComputeBackoffDelay(attempt);
+            GlobalLogger.Log(
+                $"L64 — re-running the Streamer.bot handshake in {delay.TotalSeconds:F0}s (attempt {attempt}); the socket stays up for outbound requests until then.",
+                "WS", LogLevel.Communication);
+
+            _ = AsyncErrorBoundary.SafeRunAsync(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delay).ConfigureAwait(false);
+
+                    // Shutdown, or a hard credential rejection that landed while
+                    // we slept — both own the socket now.
+                    if (Volatile.Read(ref _stopped) != 0 || _authFailedFatal) return;
+                    if (scheduledOn is null) return;
+                    lock (_clientLock)
+                    {
+                        // Initialize() installed a different client while we
+                        // waited; that cycle drives its own handshake.
+                        if (!ReferenceEquals(_client, scheduledOn)) return;
+                    }
+
+                    await scheduledOn.Stop(WebSocketCloseStatus.NormalClosure, "auth response not ok").ConfigureAwait(false);
+                    // The Start is the load-bearing half: Stop() marked the
+                    // client closed, so the library's reconnector will not come
+                    // back on its own. Start() re-arms it and produces a fresh
+                    // Hello → Authenticate → Subscribe cycle.
+                    await scheduledOn.Start().ConfigureAwait(false);
+                }
+                finally
+                {
+                    // Released even on the early-return paths so a later
+                    // failure on a later connection can schedule its own retry.
+                    Interlocked.Exchange(ref _authRetryPending, 0);
+                }
+            }, "WS", "auth transient client stop + restart");
         }
 
         // Recognise the credential-rejection wire signatures. SB uses a
@@ -616,6 +981,13 @@ namespace Phoenix.Controls.Hub.Core
                 using (var doc = System.Text.Json.JsonDocument.Parse(json))
                 {
                     var root = doc.RootElement;
+                    // Hello FIRST. Streamer.bot's greeting carries an `id` of its
+                    // own but correlates to no request of ours, so it would fall
+                    // through the response dispatcher below and be dropped —
+                    // taking the salt + challenge the Authenticate handshake needs
+                    // with it.
+                    if (TryHandleStreamerBotHello(root))
+                        return;
                     if (root.TryGetProperty("event", out var ev) &&
                         ev.TryGetProperty("source", out var src) &&
                         ev.TryGetProperty("type", out var type))
@@ -656,11 +1028,19 @@ namespace Phoenix.Controls.Hub.Core
                         // heartbeats are excluded for the same DB-load reason — they fire
                         // on a timer, carry no user action, and would grow EventLog by
                         // one full-payload row per tick 24/7.
+                        // Twitch joins the list with the PresentViewers subscription added
+                        // to TwitchEvents — it ticks every 1-10 minutes forever, so without
+                        // this it would be the single largest writer in the whole EventLog.
                         bool isHeartbeatEvent =
+                            (eventSource == "Twitch"  && (eventType == "PresentViewers" || eventType == "ViewerCountUpdate")) ||
                             (eventSource == "YouTube" && (eventType == "StatisticsUpdated" || eventType == "PresentViewers")) ||
                             (eventSource == "Kick"    && (eventType == "ViewerCountUpdate" || eventType == "PresentViewers"));
                         if (chatPlatform is null && !isHeartbeatEvent)
                         {
+                            // Two independent redactions guard this one enqueue, and they
+                            // compose: the whisper branch (from the Dev merge) and the
+                            // donation-PII branch (this line) each strip a different class
+                            // of payload before it reaches SQLite.
                             if (isWhisper)
                             {
                                 // Privacy (Majo): never persist the whisper BODY. Store
@@ -677,7 +1057,19 @@ namespace Phoenix.Controls.Hub.Core
                             }
                             else
                             {
-                                EnqueueAuditEvent(eventSource, eventType, "System", json);
+                                // Donation payloads are the one event class that carries
+                                // real PII — donor email (Fourthwall / Shopify / Patreon),
+                                // legal name, and on Patreon an entire social-connections
+                                // block (Discord/Twitter/Reddit/… ids) plus a private
+                                // creator note. EventLog persists its payload verbatim to
+                                // SQLite and that databank ships in support uploads, so a
+                                // raw write here would export a supporter list. Audit the
+                                // fact of the donation, not the donor's identity — the
+                                // same call the chat exclusion two lines up makes.
+                                // BuildAuditPayload returns rawJson untouched for every
+                                // non-money event, so this also covers Dev's plain-json case.
+                                EnqueueAuditEvent(eventSource, eventType, "System",
+                                    BuildAuditPayload(fullEventType, json, root));
                             }
                         }
 
@@ -772,11 +1164,7 @@ namespace Phoenix.Controls.Hub.Core
                                 // is always the lowercase ASCII handle. Comparing only displayName
                                 // missed every non-ASCII bot account; the guard checks all
                                 // three identifiers against the configured BotUsername list.
-                                chatLogin = data.TryGetProperty("login", out var loginEl) && loginEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                    ? (loginEl.GetString() ?? "")
-                                    : (data.TryGetProperty("userLogin", out var ulEl) && ulEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                        ? (ulEl.GetString() ?? "")
-                                        : "");
+                                chatLogin = ExtractTwitchChatLogin(data);
                                 chatUserId = data.TryGetProperty("userId", out var uidEl) && uidEl.ValueKind == System.Text.Json.JsonValueKind.String
                                     ? (uidEl.GetString() ?? "")
                                     : (data.TryGetProperty("user_id", out var uid2El) && uid2El.ValueKind == System.Text.Json.JsonValueKind.String
@@ -803,6 +1191,11 @@ namespace Phoenix.Controls.Hub.Core
                                     return;
                                 }
                             }
+
+                            // Carry the extracted login on the message itself — the
+                            // User-Management overlay/welcoming key group members by
+                            // login, and Username is the DISPLAY name on Twitch.
+                            msg.Login = chatLogin;
 
                             // Bot self-trigger guard runs BEFORE OnChatMessage fires so
                             // the Chat panel doesn't render the bot's own line. The name
@@ -865,17 +1258,15 @@ namespace Phoenix.Controls.Hub.Core
                             RecordRecentChat(msg);
 
                             // Queue for logic execution to ensure persistence safety.
-                            // Bump dropped-message counter visibly so the Diagnostics window
-                            // (and the configurable ScriptQueueOverflow event) can surface it.
-                            // Drops are still rate-limited via the bounded BlockingCollection.
+                            // Drops are rate-limited via the bounded BlockingCollection.
                             //
                             // Rate-limit the drop log. Under
                             // sustained chat flood the prior code emitted one CriticalError
                             // GlobalLogger.Log per drop, amplifying back-pressure (each Log
                             // call took the GlobalLogger _historyLock + formatted a string,
                             // costing the receive thread budget). Log every 50th drop only;
-                            // the dropped-count is still incremented for OnQueueOverflow
-                            // subscribers and the counter accessor surfaces the real total.
+                            // the dropped-count still increments per drop so the throttled
+                            // log line reports the real running total.
                             // Shutdown-teardown guard — a chat message can race StopAsync's
                             // CompleteAdding()/Dispose on this receive thread. Without the gate
                             // the TryAdd throws InvalidOperationException ("collection marked as
@@ -896,7 +1287,6 @@ namespace Phoenix.Controls.Hub.Core
                                                 $"WS: script queue full ({ScriptQueueCapacity}) — dropping chat message (total drops={dropped})",
                                                 "WS", LogLevel.CriticalError);
                                         }
-                                        OnQueueOverflow?.Invoke(dropped);
                                     }
                                 }
                                 catch (Exception qEx) when (qEx is InvalidOperationException or ObjectDisposedException)
@@ -1010,8 +1400,11 @@ namespace Phoenix.Controls.Hub.Core
                                 return;
                             }
 
-                            // Map Streamer.bot event names to Phoenix event types
-                            string phoenixEvent = $"{eventSource}.{eventType}";
+                            // Map Streamer.bot event names to Phoenix event types.
+                            // Reuse fullEventType (computed at L633 from the same
+                            // eventSource/eventType, neither reassigned since) instead
+                            // of a second identical interpolation.
+                            string phoenixEvent = fullEventType;
 
                             // Raid-viewer spoof warning. Twitch IRC USERNOTICE
                             // / EventSub forward the raider-supplied viewer count
@@ -1035,7 +1428,23 @@ namespace Phoenix.Controls.Hub.Core
                                 "WS", $"{phoenixEvent} script");
                             string actor = TryExtractActor(eventData);
                             string feedMsg = string.IsNullOrEmpty(actor) ? eventType : $"{eventType} by {actor}";
-                            GlobalLogger.Log(feedMsg, eventSource, LogLevel.StreamEvent);
+                            // Heartbeat ticks are demoted to Debug — reusing the exact
+                            // classification the audit gate above already applies
+                            // (Twitch.PresentViewers + the YouTube/Kick viewer-count
+                            // pulses), so the two gates can't drift apart. A tick that
+                            // recurs every 1-10 minutes for the whole stream is cadence,
+                            // not a stream event: at StreamEvent it painted a recurring
+                            // "PresentViewers" row into the headline LiveFeed panel all
+                            // stream, every stream (LiveFeedSource surfaces StreamEvent
+                            // rows; its only other log ingress is the ViewModel's
+                            // CriticalError error-row path — Debug reaches neither).
+                            // The ExecuteGenericEventAsync dispatch above is deliberately
+                            // untouched: scripts explicitly subscribing to the heartbeat
+                            // keep firing, and U1's future viewer-count consumer reads
+                            // the event PAYLOAD, not this log line. At Debug the tick
+                            // stays observable in the System Log at debug verbosity.
+                            GlobalLogger.Log(feedMsg, eventSource,
+                                isHeartbeatEvent ? LogLevel.Debug : LogLevel.StreamEvent);
                         }
                         else
                         {
@@ -1260,6 +1669,29 @@ namespace Phoenix.Controls.Hub.Core
             string color = FirstNonEmpty(JsonStringField(body, "color"), JsonStringField(data, "color"));
             if (color.Length > 0) msg.ColorHex = color;
             return true;
+        }
+
+        /// <summary>
+        /// Twitch chat login (the lowercase ASCII handle) out of SB's
+        /// <c>data.message</c> object. Streamer.bot spells it <c>username</c> —
+        /// the same object this mapper already reads <c>msgId</c> /
+        /// <c>displayName</c> / <c>role</c> from — and the probe used to look
+        /// only at <c>login</c>/<c>userLogin</c>, so Login came back empty on
+        /// EVERY Twitch line. That silently downgraded the bot self-trigger guard
+        /// to its weak displayName tier and made <c>{event.user_login}</c> fall
+        /// back to lowercase(displayName), mis-keying every login-keyed consumer
+        /// for stylized / non-ASCII display names. The probe order now mirrors
+        /// ScriptManager.ActorLoginFlatKeys and the Kick mapper.
+        /// Internal static so the extraction can be pinned without a socket.
+        /// </summary>
+        internal static string ExtractTwitchChatLogin(System.Text.Json.JsonElement data)
+        {
+            return FirstNonEmpty(
+                JsonStringField(data, "login"),
+                JsonStringField(data, "userLogin"),
+                JsonStringField(data, "user_login"),
+                JsonStringField(data, "username"),
+                JsonStringField(data, "userName"));
         }
 
         private static string JsonStringField(System.Text.Json.JsonElement obj, string name)
@@ -1623,9 +2055,22 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     try
                     {
-                        if (msg.Message.StartsWith("!"))
+                        // ★ ORDINAL, via the shared ChatVerb helper. This test used to be
+                        // the `StartsWith("!")` STRING overload with a note telling the
+                        // next reader to KEEP it, on the reasoning that dropping
+                        // culture-ignorable leading code points (a soft hyphen, a
+                        // zero-width space) would "drop commands". It does the opposite:
+                        // all eleven built-in tool parsers use the ordinal
+                        // `text[0] != '!'` test, so such a line raised THIS feed row —
+                        // and `{user.command}` in BuildChatVars — for a command no
+                        // provider could ever match. Majo's call 2026-08-13: both halves
+                        // agree on ordinal. The note is rewritten rather than deleted so
+                        // this does not get reverted back to the culture overload.
+                        if (ChatVerb.LooksLikeCommand(msg.Message))
                         {
-                            string cmdName = msg.Message.Split(' ')[0].Substring(1).ToLower();
+                            // First token only — avoid allocating the full Split array.
+                            int __sp = msg.Message.IndexOf(' ');
+                            string cmdName = (__sp < 0 ? msg.Message : msg.Message.Substring(0, __sp)).Substring(1).ToLower();
                             if (!string.IsNullOrWhiteSpace(cmdName))
                             {
                                 // Session.* / SessionManager retired: spawning a Process via
@@ -1638,7 +2083,13 @@ namespace Phoenix.Controls.Hub.Core
                                 // chat-command surface for the curated feed.
                                 // Demoting to Debug to silence the SystemLog
                                 // killed the LiveFeed for chat commands.
-                                GlobalLogger.Log($"!{cmdName} by {msg.Username}", "Chat", LogLevel.StreamEvent);
+                                // Built through ChatCommandFeedLine so this format and
+                                // LiveFeedSource's parser cannot drift apart — they used
+                                // to live in different projects with nothing tying them
+                                // together, and a mismatch is silent (the row just starts
+                                // classifying as whatever its verb happens to spell).
+                                GlobalLogger.Log(ChatCommandFeedLine.Format(cmdName, msg.Username),
+                                                 "Chat", LogLevel.StreamEvent);
                             }
                         }
 
@@ -1914,6 +2365,9 @@ namespace Phoenix.Controls.Hub.Core
             IsConnected = false;
             // Connection-scoped probe outcome dies with the connection.
             Volatile.Write(ref _twitchEventsProbe, -1);
+            // Disarm the handshake watchdog so a shutdown that lands mid-
+            // handshake can't wake up later and Send() on a disposed client.
+            CancelAuthWatchdog();
 
             // Offload the potentially blocking Dispose calls so the caller's
             // SyncContext (UI thread) is unblocked while the library joins its
@@ -2035,7 +2489,16 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        public void Send(string message)
+        public void Send(string message) { TrySend(message); }
+
+        // The bool-returning core of Send: TRUE only when the payload was
+        // actually handed to the RUNNING client. Every drop path returns
+        // false. Fire-and-forget callers keep the void Send above; the
+        // subscribe round-trip branches on this so a dropped hand-off can
+        // never masquerade as a live subscription (the gate-burn bug — see
+        // the _subscribeSent comment block). Internal so the contract is
+        // pinnable from Phoenix.Controls.Tests.
+        internal bool TrySend(string message)
         {
             // Lock against concurrent Initialize/Stop so the client can't be Dispose()d
             // between our IsRunning check and Send call. Without this, ObjectDisposedException
@@ -2051,21 +2514,20 @@ namespace Phoenix.Controls.Hub.Core
                     GlobalLogger.Log(
                         $"WS→SB DROPPED (not initialized): {message}",
                         "WS", LogLevel.CriticalError);
-                    return;
+                    return false;
                 }
                 if (_client.IsRunning)
                 {
-                    try { _client.Send(message); }
+                    try { _client.Send(message); return true; }
                     catch (ObjectDisposedException)
                     {
                         // Race window: Stop completed between IsRunning and Send. Treat as drop.
                         GlobalLogger.Log($"WS→SB DROPPED (client disposed mid-send): {message}", "WS", LogLevel.CriticalError);
+                        return false;
                     }
                 }
-                else
-                {
-                    GlobalLogger.Log($"WS→SB DROPPED (not connected): {message}", "WS", LogLevel.CriticalError);
-                }
+                GlobalLogger.Log($"WS→SB DROPPED (not connected): {message}", "WS", LogLevel.CriticalError);
+                return false;
             }
         }
 
@@ -2150,11 +2612,12 @@ namespace Phoenix.Controls.Hub.Core
         /// the old behavior). Logs a one-time Debug warning if all three are missing
         /// on an event that's expected to carry the field (sub-gift family).
         /// </summary>
+        // Priority order: current SB → older SB → snake_case fork. Hoisted static
+        // so a fresh array isn't allocated on every Twitch chat line.
+        private static readonly string[] SubMonthsFieldNames = { "cumMonths", "cumulativeMonths", "cumulative_months" };
         private static int ResolveSubMonths(System.Text.Json.JsonElement data, string eventType)
         {
-            // Each candidate is tried in declared priority order: current SB → older SB → snake_case fork.
-            string[] candidates = { "cumMonths", "cumulativeMonths", "cumulative_months" };
-            foreach (var key in candidates)
+            foreach (var key in SubMonthsFieldNames)
             {
                 if (data.TryGetProperty(key, out var el) && el.TryGetInt32(out int months))
                     return months;
@@ -2184,7 +2647,11 @@ namespace Phoenix.Controls.Hub.Core
         // (a drift here used to leak subscriptions on the Streamer.bot side
         // every Hub restart).
         //
-        //   Twitch:  the well-documented v0.2-era subset (unchanged).
+        //   Twitch:  the well-documented v0.2-era subset, plus StreamUpdate /
+        //            StreamUpdateGameOnConnect (title/category changes — the
+        //            ambient StreamInfoTracker feed; docs.streamer.bot names
+        //            verified 2026-08-01: payload = status/oldStatus + game
+        //            object with Id/Name).
         //   YouTube: the full Streamer.bot 1.0.x event source (31 names;
         //            UserTimedout + JewelsGifted need SB ≥ 1.0.5).
         //   Kick:    the full Streamer.bot 1.0.x event source (21 names;
@@ -2198,24 +2665,98 @@ namespace Phoenix.Controls.Hub.Core
         // GetEvents probe (HandleGetEventsResponse) reports what the connected
         // build actually offers so missing platforms are loudly visible.
         //
-        // Twitch per-reward redemptions, Charity, Goals, Shoutouts, Bans,
-        // Timeouts, and Channel.Update are intentionally NOT added here — the
-        // exact-event-name ambiguity kept them out of this pass.
+        // ★ The former "Charity / Goals / Shoutouts / Bans / Timeouts are
+        // intentionally NOT added — exact-event-name ambiguity" exclusion is
+        // RESOLVED. Every name in this array was read from a LIVE `GetEvents`
+        // against Streamer.bot 1.0.4 on 2026-08-01, which is the only way to be
+        // sure: SB's documentation lists DISPLAY names, Phoenix subscribes by WIRE
+        // name, and a wrong string is a subscription that never fires and never
+        // errors. That capture also repaired two names that had been wrong since
+        // they were written (see below) and proved two more do not exist at all.
         //
-        // "Whisper" = a private DM sent TO the bot account (SB source "Twitch",
-        // type "Whisper"; requires the bot account connected in Streamer.bot
-        // with whisper-read authorized). Routed through a dedicated redacting
-        // branch in ParseBotMessage — the whisper BODY is shown live in the
-        // LiveFeed and handed to on_event(Twitch.Whisper) scripts, but is NEVER
-        // persisted to the EventLog audit (only "who whispered" is stored).
+        // Deliberately still ABSENT, with reasons:
+        //   * CommunityGoalContribution / CommunityGoalEnded — present in the
+        //     GetEvents roster but REMOVED in Streamer.bot 1.0.0 (they rode
+        //     Twitch's retired PubSub API). The roster enumerates the enum, not
+        //     live capability, so the capture alone would not have caught this.
+        //     They can never fire; subscribing would be dead config.
+        //   * HypeChat / HypeChatLevel — Twitch deprecated Hype Chat in 2023.
+        //     Vestigial SB names for a product that no longer exists.
+        //   * The SharedChat* mirror family — every one duplicates an event we
+        //     already handle, and subscribing both would double-fire alerts and
+        //     payouts for a single action.
+        //
+        // "Whisper" (from the Dev merge) = a private DM sent TO the bot account
+        // (SB source "Twitch", type "Whisper"; requires the bot account connected
+        // in Streamer.bot with whisper-read authorized). Routed through a
+        // dedicated redacting branch in ParseBotMessage — the whisper BODY is
+        // shown live in the LiveFeed and handed to on_event(Twitch.Whisper)
+        // scripts, but is NEVER persisted to the EventLog audit (only "who
+        // whispered" is stored).
         private static readonly string[] TwitchEvents = new[]
         {
-            "ChatMessage", "Cheer", "Sub", "Resub", "GiftSub", "GiftBomb",
+            // ★ "ReSub" — capital S. It was "Resub" here, which is not the wire
+            // name SB uses. Every downstream matcher is OrdinalIgnoreCase (and
+            // AlertsService already carried both spellings defensively), so this
+            // is safe in both directions: if SB's subscribe matching is
+            // case-sensitive this repairs resubs that never arrived, and if it is
+            // case-insensitive nothing changes.
+            "ChatMessage", "Cheer", "Sub", "ReSub", "GiftSub", "GiftBomb",
             "Follow", "RewardRedemption", "Raid",
             "PollCreated", "PollUpdated", "PollCompleted",
-            "PredictionCreated", "PredictionUpdated", "PredictionLocked", "PredictionEnded",
-            "HypeTrainStart", "HypeTrainUpdate", "HypeTrainEnd",
-            "AdRun", "StreamOnline", "StreamOffline", "Whisper",
+            // ★ "PredictionEnded" did not exist on SB at all — not a casing
+            // variant, simply not an event. It has been a no-op subscription for
+            // its whole life. The real terminal events are Completed and Canceled.
+            "PredictionCreated", "PredictionUpdated", "PredictionLocked",
+            "PredictionCompleted", "PredictionCanceled",
+            // ★ HypeTrainLevelUp is a FOURTH Hype Train event nobody knew about —
+            // it is not in any of the planning docs and was not subscribed.
+            "HypeTrainStart", "HypeTrainUpdate", "HypeTrainLevelUp", "HypeTrainEnd",
+            "AdRun", "StreamOnline", "StreamOffline",
+            "StreamUpdate", "StreamUpdateGameOnConnect",
+            // ★ PresentViewers — the self-healing live heartbeat, and the one name
+            // both sibling arrays already had while Twitch did not (YouTube and Kick
+            // subscribe to it below).
+            //
+            // Every live gate in the suite — {uptime}, the Timer / Scheduling /
+            // Loyalty / User-Management SetStreamLive fan-outs — is driven purely by
+            // the StreamOnline EDGE. Start Hub while ALREADY live and that edge has
+            // already happened, so nothing ever arms and the tools sit gated off for
+            // the entire stream. LivePlatformEdgeTracker documents this openly: "A
+            // restart leaves those gates offline until then." Anything that restarts
+            // Hub mid-stream lands in it, including the freeze auto-recovery.
+            //
+            // PresentViewers fires every 1-10 minutes REGARDLESS of any edge, and
+            // carries an isLive flag, so subscribing gives a state signal to recover
+            // from rather than only a transition to miss.
+            //
+            // ⚠️ The WS payload schema for this event is NOT published (SB's docs say
+            // "No Schema Available" and its TS client types it as UnknownEventData).
+            // The consumer therefore probes defensively and logs the real field names
+            // once if the probe misses — the same pattern that settled the MessageId
+            // extraction. Subscribing is safe regardless: an unconsumed heartbeat is
+            // already filtered out of EventLog as isHeartbeatEvent.
+            "PresentViewers",
+
+            // ── The event-surface completion ─────────────────────────────────
+            // Charity (money — normalised through the same canonical path as
+            // third-party tips), channel goals, shoutouts, the four moderation
+            // roots SB splits out of Twitch's single channel.ban event, and the
+            // chat-notification family members that matter to a streamer.
+            "CharityDonation", "CharityStarted", "CharityProgress", "CharityCompleted",
+            "GoalBegin", "GoalProgress", "GoalEnd",
+            "ShoutoutCreated", "ShoutoutReceived",
+            "UserBanned", "UserTimedOut", "UserUnbanned", "UserUntimedOut",
+            "WatchStreak", "Announcement", "AutomaticRewardRedemption",
+            "ChatCleared", "ChatMessageDeleted",
+            "ModeratorAdded", "ModeratorRemoved", "VipAdded", "VipRemoved",
+
+            // ── From the Dev merge ───────────────────────────────────────────
+            // Dev's copy of this array is the pre-C20 one, so only the name it
+            // adds is carried over. Its "PredictionEnded" is deliberately NOT
+            // taken: the live GetEvents capture above proved that event does not
+            // exist on SB, and its 3-name HypeTrain list is missing LevelUp.
+            "Whisper",
         };
         private static readonly string[] YouTubeEvents = new[]
         {
@@ -2243,6 +2784,41 @@ namespace Phoenix.Controls.Hub.Core
         private static readonly string[] GeneralEvents = new[] { "Custom" };
         private static readonly string[] ObsEvents     = new[] { "SceneChanged" };
 
+        // ── Third-party donation / tip brokers ───────────────────────────────
+        // Phoenix subscribed NO money source before this: the Timer's
+        // TipPerUnitSeconds, the Loyalty tip earn and the Alerts tip family were
+        // all armed and unfed. Streamer.bot already brokers these as first-class
+        // integrations, so ingestion is a subscription, not a new connection —
+        // Hub stays the sole external bridge and no OAuth is involved.
+        //
+        // ★ EVERY NAME BELOW WAS READ FROM A LIVE `GetEvents` ON SB 1.0.4
+        // (2026-08-01), never from documentation. Three corrections that only a
+        // live capture could have produced:
+        //   * the source is "Kofi", NOT "Ko-Fi"     (every doc/report said Ko-Fi)
+        //   * the source is "Pallygg", NOT "Pally.gg", and its tip event is
+        //     "CampaignTip" — not "Donation" like its siblings
+        //   * "Throne" and "StreamLoots" DO NOT EXIST on SB 1.0.4's event
+        //     surface. Both were on the planned list; both would have been
+        //     permanently silent subscriptions with no error.
+        // A name this build does not know is simply never delivered (see the
+        // GetEvents probe below), so the risk of listing one is nil — the risk of
+        // MIS-SPELLING one is a feature that never fires and never complains.
+        //
+        // Money-bearing events only. The Connected/Disconnected/Authenticated
+        // housekeeping events every one of these sources also exposes are
+        // deliberately left out: they carry no user action and would add audit
+        // rows and Live-Feed noise for nothing.
+        private static readonly string[] StreamlabsEvents     = new[] { "Donation", "Merchandise", "CharityDonation" };
+        private static readonly string[] StreamElementsEvents = new[] { "Tip", "Merch" };
+        private static readonly string[] KofiEvents           = new[] { "Donation", "Subscription", "Resubscription", "ShopOrder", "Commission" };
+        private static readonly string[] PatreonEvents        = new[] { "PledgeCreated", "PledgeUpdated", "PledgeDeleted" };
+        private static readonly string[] TipeeeStreamEvents   = new[] { "Donation" };
+        private static readonly string[] TreatStreamEvents    = new[] { "Treat" };
+        private static readonly string[] DonorDriveEvents     = new[] { "Donation", "Incentive" };
+        private static readonly string[] FourthwallEvents     = new[] { "Donation", "OrderPlaced", "GiftPurchase", "SubscriptionPurchased" };
+        private static readonly string[] PallyggEvents        = new[] { "CampaignTip" };
+        private static readonly string[] ShopifyEvents        = new[] { "OrderCreated", "OrderPaid" };
+
         private const string GetEventsRequestId = "phoenix-getevents";
 
         private static string BuildSubscriptionEnvelope(string request, string requestId)
@@ -2261,6 +2837,24 @@ namespace Phoenix.Controls.Hub.Core
                     Kick    = KickEvents,
                     General = GeneralEvents,
                     OBS     = ObsEvents,
+                    // Donation / tip brokers. These stay members of the anonymous
+                    // object rather than moving to a Dictionary<string,string[]>
+                    // precisely because every real Streamer.bot source name turns
+                    // out to be a legal C# identifier — so a typo in a bucket key
+                    // stays a BUILD error instead of becoming a silently-dead
+                    // subscription. (It was the docs' punctuated spellings —
+                    // "Ko-Fi", "Pally.gg" — that would have forced the dictionary;
+                    // the live names need no such escape.)
+                    Streamlabs     = StreamlabsEvents,
+                    StreamElements = StreamElementsEvents,
+                    Kofi           = KofiEvents,
+                    Patreon        = PatreonEvents,
+                    TipeeeStream   = TipeeeStreamEvents,
+                    TreatStream    = TreatStreamEvents,
+                    DonorDrive     = DonorDriveEvents,
+                    Fourthwall     = FourthwallEvents,
+                    Pallygg        = PallyggEvents,
+                    Shopify        = ShopifyEvents,
                 },
             };
             return System.Text.Json.JsonSerializer.Serialize(payload);
@@ -2268,15 +2862,109 @@ namespace Phoenix.Controls.Hub.Core
 
         private void SubscribeToEvents()
         {
+            // One subscribe round-trip per connection. Three paths can reach
+            // here now (no-password reconnect, Hello/Authenticate resolution,
+            // and the handshake watchdog fallback) and they can legitimately
+            // overlap — e.g. a Hello parsed on the receive thread before
+            // ReconnectionHappened is raised. The gate makes the extra call a
+            // no-op instead of a second UnSubscribe/Subscribe/GetEvents pair.
+            // Reset in DisconnectionHappened + Initialize, deliberately
+            // re-opened by the Authenticate-accepted arm so a watchdog fallback
+            // that already burned the gate on an unauthenticated (refused)
+            // subscribe can't swallow the authoritative post-handshake one —
+            // and re-opened HERE when the hand-off to the socket fails, so a
+            // dropped send can never latch the gate over a dead subscription
+            // (the loopback Hello-before-IsRunning race; see _subscribeSent).
+            if (Interlocked.Exchange(ref _subscribeSent, 1) != 0) return;
+
             // Unsubscribe first to clear any stacked subscriptions from a prior session
             // that Streamer.bot hasn't cleaned up yet. Safe to call even when not subscribed.
-            Send(BuildSubscriptionEnvelope("UnSubscribe", "phoenix-hub-unsub"));
-            Send(BuildSubscriptionEnvelope("Subscribe",   "phoenix-hub-sub"));
-            // Feature probe: ask the connected build what it can actually deliver,
-            // so a too-old Streamer.bot (no Kick, partial YouTube) is loudly
-            // visible in the log instead of silently never firing nodes.
-            Send(System.Text.Json.JsonSerializer.Serialize(new { request = "GetEvents", id = GetEventsRequestId }));
+            // Short-circuit on the first failed hand-off: if UnSubscribe can't
+            // reach the socket the two behind it can't either, and the retry
+            // re-issues the WHOLE trio (it is re-runnable by design — the
+            // Authenticate-accepted arm already re-runs it deliberately).
+            bool handedOff =
+                TrySend(BuildSubscriptionEnvelope("UnSubscribe", "phoenix-hub-unsub"))
+                && TrySend(BuildSubscriptionEnvelope("Subscribe",   "phoenix-hub-sub"))
+                // Feature probe: ask the connected build what it can actually deliver,
+                // so a too-old Streamer.bot (no Kick, partial YouTube) is loudly
+                // visible in the log instead of silently never firing nodes.
+                && TrySend(System.Text.Json.JsonSerializer.Serialize(new { request = "GetEvents", id = GetEventsRequestId }));
+
+            if (!handedOff)
+            {
+                // Re-open the gate and self-heal. Without this, three dropped
+                // sends left the Hub connected-but-subscribed-to-nothing for
+                // the rest of the process lifetime — no chat, no events, while
+                // the action probe and all outbound traffic stayed green.
+                Interlocked.Exchange(ref _subscribeSent, 0);
+                GlobalLogger.Log(
+                    "Subscribe round-trip could not be handed to the socket yet (connection still coming up) — re-armed; retrying shortly.",
+                    "WS", LogLevel.Communication);
+                ScheduleSubscribeRetry();
+                return;
+            }
             GlobalLogger.Log($"Subscriptions requested for Twitch/YouTube/Kick/OBS events to {_url}", "WS", LogLevel.Communication);
+        }
+
+        // Bounded self-heal for a subscribe round-trip whose hand-off to the
+        // socket failed (see SubscribeToEvents). Single-flight; each attempt
+        // re-enters SubscribeToEvents, which re-burns the gate only on a
+        // successful hand-off. Bails as soon as the gate is burned by ANY
+        // path (this loop, a reconnect, the Authenticate-accepted arm), on
+        // Stop(), on a fatal auth rejection, or when no client exists at all.
+        // After the window (~10 s) it goes loud: at that point only the next
+        // disconnect/reconnect cycle re-opens the gate, and the operator
+        // should know the link is up but deaf.
+        private void ScheduleSubscribeRetry()
+        {
+            if (Interlocked.Exchange(ref _subscribeRetryPending, 1) != 0) return;
+            _ = AsyncErrorBoundary.SafeRunAsync(async () =>
+            {
+                try
+                {
+                    for (int attempt = 0; attempt < SubscribeRetryMaxAttempts; attempt++)
+                    {
+                        if (Volatile.Read(ref _stopped) != 0) return;
+                        if (_authFailedFatal) return;
+                        if (Volatile.Read(ref _subscribeSent) != 0) return; // subscribed via any path — done
+                        bool sendable;
+                        bool hasClient;
+                        lock (_clientLock)
+                        {
+                            hasClient = _client != null;
+                            sendable = _client != null && _client.IsRunning;
+                        }
+                        if (!hasClient) return; // never initialized — nothing to wait for
+                        if (sendable)
+                        {
+                            SubscribeToEvents();
+                            if (Volatile.Read(ref _subscribeSent) != 0) return;
+                        }
+                        await Task.Delay(SubscribeRetryDelayMs).ConfigureAwait(false);
+                    }
+                    GlobalLogger.Log(
+                        $"Subscribe hand-off still failing after {SubscribeRetryMaxAttempts * SubscribeRetryDelayMs / 1000}s — the Streamer.bot link is connected but has NO event subscription. It will re-subscribe on the next reconnect.",
+                        "WS", LogLevel.CriticalError);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _subscribeRetryPending, 0);
+                }
+            }, "WS", "subscribe hand-off retry");
+        }
+
+        // ── Test hooks (InternalsVisibleTo: Phoenix.Controls.Tests) ─────────
+        // The gate contract is unreachable headlessly otherwise: pinning
+        // "a failed hand-off must NOT latch the gate" needs to drive the
+        // private SubscribeToEvents against the uninitialized (droppable)
+        // client without a socket. No production caller.
+        internal void SubscribeToEventsForTest() => SubscribeToEvents();
+        internal int SubscribeGateForTest => Volatile.Read(ref _subscribeSent);
+        internal void ResetSubscribeStateForTest()
+        {
+            Interlocked.Exchange(ref _subscribeSent, 0);
+            Interlocked.Exchange(ref _subscribeRetryPending, 0);
         }
 
         // GetEvents response: { id, events: { Twitch: [...], YouTube: [...], ... } }.
@@ -2303,6 +2991,19 @@ namespace Phoenix.Controls.Hub.Core
                 WarnIfPlatformEventsMissing(events, "Kick", KickEvents,
                     "Kick events/nodes will not fire — Streamer.bot ≥ 1.0.2 with the Kick platform connected (app login + streamer.bot website account link) is required.");
 
+                // Donation brokers are OPTIONAL by nature: a streamer connects the
+                // one or two they actually use, so the other eight being absent is
+                // the normal case, not a fault. At Communication level that would
+                // be ten "not available" lines on every single connect — pure
+                // noise. Debug keeps them discoverable when someone is actually
+                // diagnosing why a tip did not arrive.
+                foreach (var (src, names) in DonationBuckets)
+                {
+                    WarnIfPlatformEventsMissing(events, src, names,
+                        $"{src} tips/donations will not arrive — connect {src} in Streamer.bot if you use it.",
+                        LogLevel.Debug);
+                }
+
                 // Re-announce the (unchanged) connection bool now that the
                 // probe outcome is known. The event is an idempotent "is the
                 // socket up" pulse — subscribers re-read the richer state
@@ -2318,10 +3019,84 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
+        // ── Audit projection ─────────────────────────────────────────────────
+        // Every non-chat event is persisted to the EventLog table with its FULL
+        // raw frame. That is fine for platform events (a follow carries a public
+        // username) but wrong for money events, whose payloads carry donor email,
+        // real name, shipping-adjacent order data and — on Patreon — a social
+        // account block. Those get a REDACTED projection instead: the fact, the
+        // amount, and nothing that identifies a private person.
+        //
+        // Field-name allow-list, not a deny-list: an unknown field is dropped
+        // rather than kept, so a broker adding a new PII field cannot silently
+        // start leaking it into the databank.
+        private static readonly string[] AuditKeepFields =
+        {
+            "amount", "value", "valueMinor", "currency", "currencyCode",
+            "donationAmount", "donationCurrency", "tipAmount", "tipCurrency",
+            "donorAmount", "merchAmount", "charityDonationAmount",
+            "tipNetAmount", "tipNetAmountInCents", "isTest", "createdAt", "timestamp",
+        };
+
+        private static string BuildAuditPayload(string fullEventType, string rawJson, System.Text.Json.JsonElement root)
+        {
+            if (!DonationIngest.IsMoneyEvent(fullEventType)) return rawJson;
+            try
+            {
+                if (!root.TryGetProperty("event", out var evEl) ||
+                    !root.TryGetProperty("data", out var dataEl) ||
+                    dataEl.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    return $"{{\"event\":\"{fullEventType}\",\"redacted\":true}}";
+
+                var sb = new System.Text.StringBuilder(256);
+                sb.Append("{\"event\":\"").Append(fullEventType).Append("\",\"redacted\":true,\"data\":{");
+                bool first = true;
+                foreach (var keep in AuditKeepFields)
+                {
+                    if (!dataEl.TryGetProperty(keep, out var v)) continue;
+                    if (v.ValueKind == System.Text.Json.JsonValueKind.Object ||
+                        v.ValueKind == System.Text.Json.JsonValueKind.Array) continue;
+                    if (!first) sb.Append(',');
+                    first = false;
+                    sb.Append('"').Append(keep).Append("\":").Append(v.GetRawText());
+                }
+                sb.Append("}}");
+                _ = evEl; // envelope presence checked above; body intentionally unused
+                return sb.ToString();
+            }
+            catch
+            {
+                // Never let a redaction fault write the raw payload as a fallback —
+                // failing closed is the whole point.
+                return $"{{\"event\":\"{fullEventType}\",\"redacted\":true,\"error\":\"projection failed\"}}";
+            }
+        }
+
+        // The donation buckets, paired with the source key used in the
+        // subscription envelope. Single list so the envelope and the probe can
+        // never disagree about a source name (the two are independent literals —
+        // nothing else cross-checks them).
+        private static readonly (string Source, string[] Names)[] DonationBuckets =
+        {
+            ("Streamlabs",     StreamlabsEvents),
+            ("StreamElements", StreamElementsEvents),
+            ("Kofi",           KofiEvents),
+            ("Patreon",        PatreonEvents),
+            ("TipeeeStream",   TipeeeStreamEvents),
+            ("TreatStream",    TreatStreamEvents),
+            ("DonorDrive",     DonorDriveEvents),
+            ("Fourthwall",     FourthwallEvents),
+            ("Pallygg",        PallyggEvents),
+            ("Shopify",        ShopifyEvents),
+        };
+
         // Logs when a platform bucket is missing entirely or lacks wanted
         // names. Returns true when the connected build exposes at least one
         // event for the platform — the probe outcome callers may record.
-        private static bool WarnIfPlatformEventsMissing(System.Text.Json.JsonElement events, string source, string[] wanted, string hint)
+        // `level` lets optional sources (the donation brokers) report at Debug so
+        // an unconfigured broker doesn't spam the log on every connect.
+        private static bool WarnIfPlatformEventsMissing(System.Text.Json.JsonElement events, string source, string[] wanted, string hint,
+                                                       LogLevel level = LogLevel.Communication)
         {
             var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             // Case-insensitive property scan — TryGetProperty is case-SENSITIVE
@@ -2341,7 +3116,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 GlobalLogger.Log(
                     $"Connected Streamer.bot exposes NO {source} events — {hint}",
-                    "WS", LogLevel.Communication);
+                    "WS", level);
                 return false;
             }
 
@@ -2352,7 +3127,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 GlobalLogger.Log(
                     $"Connected Streamer.bot lacks {missing.Count} {source} event(s): {string.Join(", ", missing)} — those nodes will not fire (older SB build?).",
-                    "WS", LogLevel.Communication);
+                    "WS", level);
             }
             return true;
         }

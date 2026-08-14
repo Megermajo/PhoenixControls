@@ -46,16 +46,7 @@ namespace Phoenix.Controls.Shared.Core
         /// <summary>Current bridge, or null when Hub hasn't registered yet.</summary>
         public static IInProcBusBridge? Instance => _instance;
 
-        /// <summary>True iff a Hub bridge is registered.</summary>
-        public static bool IsRegistered => _instance is not null;
-
         /// <summary>Hub-side hook. Replaces any prior registration.</summary>
         public static void Register(IInProcBusBridge bridge) => _instance = bridge;
-
-        /// <summary>Test / shutdown hook. Clears the slot.</summary>
-        public static void Unregister(IInProcBusBridge bridge)
-        {
-            if (ReferenceEquals(_instance, bridge)) _instance = null;
-        }
     }
 }

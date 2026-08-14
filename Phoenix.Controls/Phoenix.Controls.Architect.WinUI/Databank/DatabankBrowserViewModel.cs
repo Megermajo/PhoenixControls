@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Phoenix.Controls.Architect.WinUI.Canvas;
 using Phoenix.Controls.Architect.WinUI.Databank.Contracts;
 using Phoenix.Controls.Architect.WinUI.ViewModels;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Architect.WinUI.Databank;
@@ -207,6 +208,8 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(IsEmptyState));
                 OnPropertyChanged(nameof(IsSystemTableSelected));
                 OnPropertyChanged(nameof(CanMutateSelectedTable));
+                OnPropertyChanged(nameof(IsAppOwnedTableSelected));
+                OnPropertyChanged(nameof(CanMutateSelectedTableSchema));
                 OnPropertyChanged(nameof(PageIndex));
                 OnPropertyChanged(nameof(SortColumn));
                 OnPropertyChanged(nameof(SortDescending));
@@ -217,7 +220,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     public string SelectedTableHeader =>
         _selectedTable is null
             ? string.Empty
-            : $"· {_selectedTable.RowCount} rows · {_selectedTable.ColumnCount} columns · sqlite";
+            : string.Format(
+                Localizer.T("architect.databank.header.aggregate_format",
+                    "· {0} rows · {1} columns · sqlite"),
+                _selectedTable.RowCount, _selectedTable.ColumnCount);
 
     /// <summary>True when a table is selected — drives the toolbar Add Row /
     /// Add Column / Delete Row enable state.</summary>
@@ -227,15 +233,71 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     /// placeholder in the centre pane.</summary>
     public bool IsEmptyState => _selectedTable is null;
 
-    /// <summary>True when the selected table is one of the protected Hub-managed
-    /// tables (Vars / EventLog / SystemHistory / Viewer remote-bridge tables).
-    /// The destructive toolbar buttons disable on this; the persistence layer
-    /// guards in depth.</summary>
+    // ── The two protection gates ────────────────────────────────────────
+    //
+    // DB.cs keeps TWO registries and the browser needs BOTH, because they
+    // answer different questions and cover different sets:
+    //
+    //   write lock (2 tables)  → may anyone change the DATA?
+    //   app-owned  (25 tables) → does a tool own the table's SHAPE?
+    //
+    // Gating every affordance on the write lock alone is how the column
+    // context menu and the drop-table button ended up enabled over the 23
+    // tables whose rows the unlock opened but whose DDL the persistence
+    // layer still refuses — an enabled control that no-ops. Data affordances
+    // (cell edit, + Row, Delete Row) take CanMutateSelectedTable; schema
+    // affordances (+ Column, rename / retype / drop column, Delete table)
+    // take CanMutateSelectedTableSchema.
+
+    /// <summary>True when the selected table's DATA is write-locked — the two
+    /// security tables (PairedDevices / RemoteAuditLog). Cell editing and the
+    /// row buttons disable on this; the persistence layer guards in depth.</summary>
     public bool IsSystemTableSelected => _selectedTable?.IsSystem == true;
 
-    /// <summary>True when a table is selected AND it isn't protected — the
-    /// composite gate the toolbar destructive buttons actually need.</summary>
+    /// <summary>True when a table is selected AND its data is not write-locked
+    /// — the composite gate the row-level toolbar buttons need.</summary>
     public bool CanMutateSelectedTable => HasSelectedTable && !IsSystemTableSelected;
+
+    /// <summary>True when Phoenix Controls owns the selected table's SCHEMA.
+    /// Its rows and cells stay editable; only DDL is refused.</summary>
+    public bool IsAppOwnedTableSelected => _selectedTable?.IsAppOwned == true;
+
+    /// <summary>True when a table is selected AND its column shape is the
+    /// streamer's to change — the gate for + Column, the column context menu
+    /// and the drop-table affordances.</summary>
+    public bool CanMutateSelectedTableSchema => HasSelectedTable && !IsAppOwnedTableSelected;
+
+    /// <summary>
+    /// The one sentence every schema refusal in the browser uses, so the
+    /// banner, the System Log and the sidebar tooltip all say the same thing
+    /// the DB layer's own refusal log says: the rows are yours, the columns
+    /// are the tool's.
+    /// </summary>
+    public static string SchemaLockMessage(string tableName) =>
+        string.Format(
+            Localizer.T("architect.databank.lock.schema_format",
+                "'{0}' is created and maintained by a Phoenix Controls tool, so its column " +
+                "layout cannot be changed — the tool's own SQL names those columns literally. " +
+                "Its rows and cells stay fully editable."),
+            tableName);
+
+    /// <summary>
+    /// The counterpart for a DATA refusal. The reason text comes verbatim
+    /// from the persistence layer's own registry (<c>DB.GetWriteLockReason</c>)
+    /// so the banner and the System Log line say the same thing instead of
+    /// the UI inventing a second wording. The fallback covers a TableInfo
+    /// stamped by a source other than the live databank.
+    /// </summary>
+    public static string WriteLockMessage(string tableName) =>
+        DB.GetWriteLockReason(tableName) is { } reason
+            ? string.Format(
+                Localizer.T("architect.databank.lock.write_format",
+                    "'{0}' cannot be changed here — {1}"),
+                tableName, reason)
+            : string.Format(
+                Localizer.T("architect.databank.lock.write_fallback_format",
+                    "'{0}' is write-locked; its rows cannot be changed from the browser."),
+                tableName);
 
     /// <summary>Row-grid filter (matches against any cell substring). Renamed
     /// from the original "Filter" so the XAML can distinguish it from
@@ -333,11 +395,18 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         get
         {
             if (_selectedTable is null) return string.Empty;
-            if (_totalRowCount == 0)     return "no rows";
+            if (_totalRowCount == 0)     return Localizer.T("architect.databank.footer.no_rows", "no rows");
             int from = _pageIndex * PageSize + 1;
             int to   = System.Math.Min(_totalRowCount, (_pageIndex + 1) * PageSize);
-            if (_totalRowCount <= PageSize) return $"showing {_totalRowCount} of {_totalRowCount} rows";
-            return $"showing {from}–{to} of {_totalRowCount} rows";
+            if (_totalRowCount <= PageSize)
+                return string.Format(
+                    Localizer.T("architect.databank.footer.all_rows_format",
+                        "showing {0} of {1} rows"),
+                    _totalRowCount, _totalRowCount);
+            return string.Format(
+                Localizer.T("architect.databank.footer.page_range_format",
+                    "showing {0}–{1} of {2} rows"),
+                from, to, _totalRowCount);
         }
     }
 
@@ -428,7 +497,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         => _currentSnapshot is not null && !string.IsNullOrEmpty(_filter) && VisibleRows.Count == 0;
 
     /// <summary>Caption for the no-matches message.</summary>
-    public string NoMatchesText => $"No rows on this page match “{_filter}”";
+    public string NoMatchesText => string.Format(
+        Localizer.T("architect.databank.rows.no_matches_format",
+            "No rows on this page match “{0}”"),
+        _filter);
 
     public event EventHandler? SelectionChanged;
 
@@ -500,7 +572,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to list tables: {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.list_tables_format",
+                        "Failed to list tables: {0}"),
+                    ex.Message),
+                ex);
         }
     }
 
@@ -603,7 +680,11 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             ReportError(
-                $"Failed to load rows for '{selected.Name}': {ex.Message}", ex);
+                string.Format(
+                    Localizer.T("architect.databank.error.load_rows_format",
+                        "Failed to load rows for '{0}': {1}"),
+                    selected.Name, ex.Message),
+                ex);
         }
         finally
         {
@@ -676,7 +757,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to load schema for '{selected.Name}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.load_schema_format",
+                        "Failed to load schema for '{0}': {1}"),
+                    selected.Name, ex.Message),
+                ex);
         }
         await RunOnUiAsync(() => SchemaChanged?.Invoke(this, EventArgs.Empty)).ConfigureAwait(false);
     }
@@ -688,14 +774,14 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     /// defaults per column (<c>0</c> for INTEGER/BOOLEAN, <c>0.0</c> for REAL,
     /// <c>""</c> for TEXT). Pre-fix every default was an empty string, which
     /// caused INTEGER columns to round-trip as the literal "" and fail the
-    /// inline cell editor's parse gate later. System tables are rejected.
+    /// inline cell editor's parse gate later. Write-locked tables are rejected.
     /// </summary>
     public async Task<long> InsertBlankRowAsync()
     {
         if (_selectedTable is null) return 0;
         if (_selectedTable.IsSystem)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(WriteLockMessage(_selectedTable.Name), null);
             return 0;
         }
         var values = BuildSeedDefaultsForCurrentColumns();
@@ -708,7 +794,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to insert row: {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.insert_row_format",
+                        "Failed to insert row: {0}"),
+                    ex.Message),
+                ex);
             return 0;
         }
     }
@@ -726,7 +817,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to insert row: {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.insert_row_explicit_format",
+                        "Failed to insert row: {0}"),
+                    ex.Message),
+                ex);
             return 0;
         }
     }
@@ -737,7 +833,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         if (_selectedTable is null) return;
         if (_selectedTable.IsSystem)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(WriteLockMessage(_selectedTable.Name), null);
             return;
         }
         var row = SelectedRow;
@@ -750,15 +846,20 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to delete row: {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.delete_row_format",
+                        "Failed to delete row: {0}"),
+                    ex.Message),
+                ex);
         }
     }
 
     /// <summary>
     /// Delete a batch of rows by rowid (the multi-select Ctrl/Shift delete in the
     /// Databank Browser), then refresh once. Single-row delete routes here too
-    /// with a one-element list. System tables are rejected at this layer (and
-    /// again in the persistence layer). Against the live DB backing the whole
+    /// with a one-element list. Write-locked tables are rejected at this layer
+    /// (and again in the persistence layer). Against the live DB backing the whole
     /// batch runs as ONE transaction (chunked IN-lists, single commit) — a
     /// failure rolls back atomically. Other <see cref="IRelationalSource"/>
     /// implementations (test fixtures) keep the per-row loop, where a per-row
@@ -774,7 +875,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         if (rowIds is null || rowIds.Count == 0) return;
         if (_selectedTable.IsSystem)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(WriteLockMessage(_selectedTable.Name), null);
             return;
         }
         string table = _selectedTable.Name;
@@ -825,7 +926,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         await ReloadRowsAsync().ConfigureAwait(false);
         if (failed > 0)
             ReportError(
-                $"Failed to delete {failed} of {rowIds.Count} row(s) from '{table}'. See System Log for details.",
+                string.Format(
+                    Localizer.T("architect.databank.error.delete_rows_partial_format",
+                        "Failed to delete {0} of {1} row(s) from '{2}'. See System Log for details."),
+                    failed, rowIds.Count, table),
                 lastEx);
         else
             ClearError();
@@ -868,7 +972,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to update cell {columnName}: {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.update_cell_format",
+                        "Failed to update cell {0}: {1}"),
+                    columnName, ex.Message),
+                ex);
             throw; // Let the caller's catch-and-rollback path see the failure.
         }
 
@@ -937,13 +1046,15 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
             "DatabankBrowserViewModel", $"UndoCellRewrite({tableName}.{columnName})");
     }
 
-    /// <summary>Add a new column (TEXT/INTEGER/REAL/BOOLEAN) to the selected table.</summary>
+    /// <summary>Add a new column (TEXT/INTEGER/REAL/BOOLEAN) to the selected
+    /// table. ADD COLUMN is DDL, so app-owned tables are rejected here and
+    /// again at the persistence layer.</summary>
     public async Task AddColumnAsync(string columnName, string sqlType)
     {
         if (_selectedTable is null) return;
-        if (_selectedTable.IsSystem)
+        if (_selectedTable.IsAppOwned)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(SchemaLockMessage(_selectedTable.Name), null);
             return;
         }
         if (string.IsNullOrWhiteSpace(columnName)) return;
@@ -955,7 +1066,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to add column '{columnName}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.add_column_format",
+                        "Failed to add column '{0}': {1}"),
+                    columnName, ex.Message),
+                ex);
         }
     }
 
@@ -966,7 +1082,7 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     // without callers having to drive a separate refresh.
 
     /// <summary>
-    /// Drop a column from the selected table. Rejected for system
+    /// Drop a column from the selected table. Rejected for app-owned
     /// tables at this layer (with a logged + banner-surfaced reason) and
     /// for primary-key columns at the persistence layer. On success the
     /// row snapshot reloads so the bound column-header strip drops the
@@ -975,9 +1091,9 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     public async Task<bool> DropColumnAsync(string columnName)
     {
         if (_selectedTable is null) return false;
-        if (_selectedTable.IsSystem)
+        if (_selectedTable.IsAppOwned)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(SchemaLockMessage(_selectedTable.Name), null);
             return false;
         }
         if (string.IsNullOrWhiteSpace(columnName)) return false;
@@ -991,7 +1107,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
                 // banner so the user sees the click didn't land; the
                 // detailed reason is in the System Log.
                 ReportError(
-                    $"Could not drop column '{columnName}'. See System Log for details.",
+                    string.Format(
+                        Localizer.T("architect.databank.error.drop_column_refused_format",
+                            "Could not drop column '{0}'. See System Log for details."),
+                        columnName),
                     null);
                 return false;
             }
@@ -1001,7 +1120,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to drop column '{columnName}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.drop_column_format",
+                        "Failed to drop column '{0}': {1}"),
+                    columnName, ex.Message),
+                ex);
             return false;
         }
     }
@@ -1014,9 +1138,9 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     public async Task<bool> RenameColumnAsync(string oldName, string newName)
     {
         if (_selectedTable is null) return false;
-        if (_selectedTable.IsSystem)
+        if (_selectedTable.IsAppOwned)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(SchemaLockMessage(_selectedTable.Name), null);
             return false;
         }
         if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName)) return false;
@@ -1026,7 +1150,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         if (!IsValidColumnIdentifier(newName))
         {
             ReportError(
-                $"'{newName}' is not a valid column name. Use letters, digits, and underscores only (must not start with a digit).",
+                string.Format(
+                    Localizer.T("architect.databank.error.invalid_column_name_format",
+                        "'{0}' is not a valid column name. Use letters, digits, and underscores only (must not start with a digit)."),
+                    newName),
                 null);
             return false;
         }
@@ -1036,7 +1163,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
             if (!ok)
             {
                 ReportError(
-                    $"Could not rename '{oldName}' to '{newName}'. See System Log for details.",
+                    string.Format(
+                        Localizer.T("architect.databank.error.rename_column_refused_format",
+                            "Could not rename '{0}' to '{1}'. See System Log for details."),
+                        oldName, newName),
                     null);
                 return false;
             }
@@ -1046,7 +1176,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to rename column '{oldName}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.rename_column_format",
+                        "Failed to rename column '{0}': {1}"),
+                    oldName, ex.Message),
+                ex);
             return false;
         }
     }
@@ -1061,9 +1196,9 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
     public async Task<bool> ChangeColumnTypeAsync(string columnName, string newAffinityType)
     {
         if (_selectedTable is null) return false;
-        if (_selectedTable.IsSystem)
+        if (_selectedTable.IsAppOwned)
         {
-            ReportError($"'{_selectedTable.Name}' is a system table and cannot be modified.", null);
+            ReportError(SchemaLockMessage(_selectedTable.Name), null);
             return false;
         }
         if (string.IsNullOrWhiteSpace(columnName) || string.IsNullOrWhiteSpace(newAffinityType))
@@ -1075,7 +1210,10 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
             if (!ok)
             {
                 ReportError(
-                    $"Could not change type of '{columnName}' to {newAffinityType}. See System Log for details.",
+                    string.Format(
+                        Localizer.T("architect.databank.error.change_column_type_refused_format",
+                            "Could not change type of '{0}' to {1}. See System Log for details."),
+                        columnName, newAffinityType),
                     null);
                 return false;
             }
@@ -1085,7 +1223,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to change column type for '{columnName}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.change_column_type_format",
+                        "Failed to change column type for '{0}': {1}"),
+                    columnName, ex.Message),
+                ex);
             return false;
         }
     }
@@ -1150,21 +1293,27 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to create table '{tableName}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.create_table_format",
+                        "Failed to create table '{0}': {1}"),
+                    tableName, ex.Message),
+                ex);
         }
     }
 
     /// <summary>
-    /// Drop a user table outright. Rejected for system tables both here and
-    /// at the persistence layer (defense in depth). On success the table list
-    /// reloads and the selection falls through to the next user table.
+    /// Drop a user table outright. DROP TABLE is DDL, so it is rejected for
+    /// every app-owned table both here and at the persistence layer (defense
+    /// in depth) — not just the two whose data is write-locked. On success the
+    /// table list reloads and the selection falls through to the next table.
     /// </summary>
     public async Task DropTableAsync(TableInfo table)
     {
         if (table is null) return;
-        if (table.IsSystem)
+        if (table.IsAppOwned)
         {
-            ReportError($"'{table.Name}' is a system table and cannot be dropped.", null);
+            ReportError(SchemaLockMessage(table.Name), null);
             return;
         }
         try
@@ -1184,7 +1333,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to drop table '{table.Name}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.drop_table_format",
+                        "Failed to drop table '{0}': {1}"),
+                    table.Name, ex.Message),
+                ex);
         }
     }
 
@@ -1211,7 +1365,12 @@ public sealed class DatabankBrowserViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ReportError($"Failed to export '{table.Name}': {ex.Message}", ex);
+            ReportError(
+                string.Format(
+                    Localizer.T("architect.databank.error.export_format",
+                        "Failed to export '{0}': {1}"),
+                    table.Name, ex.Message),
+                ex);
         }
     }
 

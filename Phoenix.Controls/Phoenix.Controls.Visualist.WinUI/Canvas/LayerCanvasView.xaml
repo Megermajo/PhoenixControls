@@ -4,7 +4,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Phoenix.Controls.Visualist.WinUI.Canvas"
-    xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls">
+    xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization">
 
     <Grid Background="{StaticResource CoalShellBrush}">
         <Grid.RowDefinitions>
@@ -21,56 +22,63 @@
         <Border
             Grid.Row="0"
             Background="{StaticResource CoalSurfaceBrush}"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="0,0,0,1"
             Padding="8,5">
             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <Button x:Name="AddWidgetButton"
                         Click="OnAddWidgetCommand"
                         ToolTipService.ToolTip="Add a widget to this layer"
+                        loc:Localize.TooltipKey="visualist.canvas.toolbar.add_widget.tip"
                         Padding="10,4"
                         Background="{StaticResource CoalCardBrush}"
                         BorderThickness="0"
                         Foreground="{StaticResource CoalBodyTextBrush}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                        <TextBlock Text="Add Widget" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="Add Widget" FontSize="12" VerticalAlignment="Center"
+                                   loc:Localize.Key="visualist.canvas.context.add_widget" />
                     </StackPanel>
                 </Button>
 
                 <Button x:Name="PreviewLayerButton"
                         Click="OnPreviewLayerCommand"
                         ToolTipService.ToolTip="Open a popout preview of the whole layer"
+                        loc:Localize.TooltipKey="visualist.canvas.toolbar.preview_layer.tip"
                         Padding="10,4"
                         Background="{StaticResource CoalCardBrush}"
                         BorderThickness="0"
                         Foreground="{StaticResource CoalBodyTextBrush}"
-                        Content="Preview Layer" />
+                        Content="Preview Layer"
+                        loc:Localize.Key="visualist.canvas.toolbar.preview_layer" />
 
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
 
-                <ToggleButton x:Name="CanvasPreviewToggle"
-                              Click="OnCanvasPreviewToggle"
-                              ToolTipService.ToolTip="Render live widget previews on the canvas"
-                              Padding="10,4" MinWidth="0"
-                              Content="Preview" />
-
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <!-- The "Preview" canvas-thumbnail ToggleButton was removed here as an
+                     abandoned affordance. Its setting (VisualistUserConfig
+                     .CanvasWidgetPreviewEnabled, default true) and the WidgetCanvasPreviewer
+                     gate it drives are deliberately KEPT, so on-canvas widget thumbnails
+                     behave exactly as before — only the control is gone. "Preview Layer"
+                     above is the preview DISPLAY, and opening it is what now activates the
+                     layer for design-time Test Runs (see LayerRegistry.IsLayerActive). -->
 
                 <!-- Backdrop swatches — Transparent / Black / Gray / White. -->
                 <TextBlock Text="BG" VerticalAlignment="Center" FontSize="10"
-                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           loc:Localize.Key="visualist.canvas.toolbar.backdrop.label" />
                 <StackPanel x:Name="BackdropSwatches" Orientation="Horizontal" Spacing="3" VerticalAlignment="Center" />
 
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
 
                 <ToggleButton x:Name="AutoSyncToggle"
                               Click="OnAutoSyncToggle"
                               ToolTipService.ToolTip="Auto-save on edit so OBS / previews refresh live (saved layers only)"
+                              loc:Localize.TooltipKey="visualist.canvas.toolbar.autosync.tip"
                               Padding="10,4" MinWidth="0"
-                              Content="Auto-Sync" />
+                              Content="Auto-Sync"
+                              loc:Localize.Key="visualist.canvas.toolbar.autosync" />
 
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
 
                 <!-- P3 — snap-to-grid toggle. Before this the snap state was
                      in-memory only with no UI badge, so the user had no way to
@@ -79,12 +87,62 @@
                 <ToggleButton x:Name="SnapToggle"
                               Click="OnSnapToggle"
                               ToolTipService.ToolTip="Snap widgets to the 8px grid and alignment guides while dragging / resizing (hold Alt to suppress momentarily)"
+                              loc:Localize.TooltipKey="visualist.canvas.toolbar.snap.tip"
                               Padding="10,4" MinWidth="0">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xF0E2;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                        <TextBlock Text="Snap" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="Snap" FontSize="12" VerticalAlignment="Center"
+                                   loc:Localize.Key="visualist.canvas.toolbar.snap" />
                     </StackPanel>
                 </ToggleButton>
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
+
+                <!-- Zoom cluster — zoom-out / Fit / zoom-in / 1:1. Overscan: zoom
+                     out to float the frame in pasteboard space so off-frame
+                     content and scaling are visible while composing (DaVinci
+                     viewer). Readout shows "Fit" at the uniform fit, else the
+                     effective on-screen %. -->
+                <Button x:Name="ZoomOutButton" Click="OnZoomOutCommand"
+                        ToolTipService.ToolTip="Zoom out (float the frame in pasteboard — see beyond the edge)"
+                        loc:Localize.TooltipKey="visualist.canvas.toolbar.zoom_out.tip"
+                        Padding="9,4" MinWidth="0" BorderThickness="0"
+                        Background="{StaticResource CoalCardBrush}"
+                        Foreground="{StaticResource CoalBodyTextBrush}">
+                    <FontIcon Glyph="&#xE71F;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                </Button>
+                <Button x:Name="ZoomFitButton" Click="OnZoomFitCommand"
+                        ToolTipService.ToolTip="Fit the frame to the view"
+                        loc:Localize.TooltipKey="visualist.canvas.toolbar.zoom_fit.tip"
+                        Padding="6,4" MinWidth="52" BorderThickness="0"
+                        Background="{StaticResource CoalCardBrush}"
+                        Foreground="{StaticResource CoalBodyTextBrush}">
+                    <TextBlock x:Name="ZoomReadout" Text="Fit" FontSize="12"
+                               TextAlignment="Center" VerticalAlignment="Center" />
+                </Button>
+                <Button x:Name="ZoomInButton" Click="OnZoomInCommand"
+                        ToolTipService.ToolTip="Zoom in"
+                        loc:Localize.TooltipKey="visualist.canvas.toolbar.zoom_in.tip"
+                        Padding="9,4" MinWidth="0" BorderThickness="0"
+                        Background="{StaticResource CoalCardBrush}"
+                        Foreground="{StaticResource CoalBodyTextBrush}">
+                    <FontIcon Glyph="&#xE8A3;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
+                </Button>
+                <Button x:Name="Zoom100Button" Click="OnZoom100Command"
+                        ToolTipService.ToolTip="Actual size (1:1 pixels)"
+                        loc:Localize.TooltipKey="visualist.canvas.toolbar.zoom_100.tip"
+                        Padding="9,4" MinWidth="0" BorderThickness="0"
+                        Background="{StaticResource CoalCardBrush}"
+                        Foreground="{StaticResource CoalBodyTextBrush}"
+                        Content="1:1" />
+
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
+
+                <ToggleButton x:Name="GuidesToggle" Click="OnGuidesToggle"
+                              ToolTipService.ToolTip="Show composition guides — rule-of-thirds, centre, title/action-safe"
+                              loc:Localize.TooltipKey="visualist.canvas.toolbar.guides.tip"
+                              Padding="10,4" MinWidth="0" Content="Guides"
+                              loc:Localize.Key="visualist.canvas.toolbar.guides" />
             </StackPanel>
         </Border>
 
@@ -129,18 +187,43 @@
                     BorderBrush="{StaticResource CoalDividerBrush}"
                     BorderThickness="1"
                     Background="{StaticResource CoalOverlay50Brush}">
-                    <!-- Background="Transparent" is load-bearing, not cosmetic: a
-                         null-Background Canvas is NOT hit-test-visible in its empty
-                         regions, so every empty-canvas gesture (right-click → Add
-                         Widget, click-to-deselect, marquee/lasso select) silently
-                         died after the WinForms→WinUI rework. Transparent keeps the
-                         surface invisible while restoring hit-testing; widget views
-                         paint on top unaffected. -->
-                    <Canvas
-                        x:Name="WidgetSurface"
-                        Width="1920"
-                        Height="1080"
-                        Background="Transparent" />
+                    <Grid>
+                        <!-- Background="Transparent" is load-bearing, not cosmetic: a
+                             null-Background Canvas is NOT hit-test-visible in its empty
+                             regions, so every empty-canvas gesture (right-click → Add
+                             Widget, click-to-deselect, marquee/lasso select) silently
+                             died after the WinForms→WinUI rework. Transparent keeps the
+                             surface invisible while restoring hit-testing; widget views
+                             paint on top unaffected. -->
+                        <Canvas
+                            x:Name="WidgetSurface"
+                            Width="1920"
+                            Height="1080"
+                            Background="Transparent" />
+
+                        <!-- Composition guides — rule-of-thirds + centre cross +
+                             broadcast title-safe (80%) / action-safe (90%) rects, in
+                             the fixed 1920×1080 frame space so they scale with the
+                             Viewbox. IsHitTestVisible=False = click-through (never
+                             steals a widget gesture). Toggled by the command-bar
+                             "Guides" button. Helps judge cut-outs + scaling. -->
+                        <Canvas x:Name="GuideOverlay"
+                                Width="1920" Height="1080"
+                                IsHitTestVisible="False"
+                                Visibility="Collapsed"
+                                Opacity="0.35">
+                            <Rectangle Canvas.Left="96" Canvas.Top="54" Width="1728" Height="972"
+                                       Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="2" StrokeDashArray="6,6" />
+                            <Rectangle Canvas.Left="192" Canvas.Top="108" Width="1536" Height="864"
+                                       Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="2" StrokeDashArray="6,6" />
+                            <Line X1="640" Y1="0" X2="640" Y2="1080" Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="1" />
+                            <Line X1="1280" Y1="0" X2="1280" Y2="1080" Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="1" />
+                            <Line X1="0" Y1="360" X2="1920" Y2="360" Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="1" />
+                            <Line X1="0" Y1="720" X2="1920" Y2="720" Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="1" />
+                            <Line X1="936" Y1="540" X2="984" Y2="540" Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="2" />
+                            <Line X1="960" Y1="516" X2="960" Y2="564" Stroke="{StaticResource CoalPrimaryTextBrush}" StrokeThickness="2" />
+                        </Canvas>
+                    </Grid>
                 </Border>
             </Viewbox>
 
@@ -167,22 +250,26 @@
                     <TextBlock Text="No layer open"
                                HorizontalAlignment="Center"
                                FontSize="16"
-                               Foreground="{StaticResource CoalBodyTextBrush}" />
+                               Foreground="{StaticResource CoalBodyTextBrush}"
+                               loc:Localize.Key="visualist.canvas.empty.title" />
                     <TextBlock Text="Create a new .phxlayer or open an existing one to start compositing widgets for an OBS browser source."
                                HorizontalAlignment="Center"
                                TextAlignment="Center"
                                TextWrapping="Wrap"
                                FontSize="12"
-                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               loc:Localize.Key="visualist.canvas.empty.body" />
                     <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
                         <Button x:Name="EmptyNewButton"
                                 Click="OnEmptyNewLayer"
                                 Padding="14,6"
-                                Content="New Layer" />
+                                Content="New Layer"
+                                loc:Localize.Key="visualist.rail.new_layer" />
                         <Button x:Name="EmptyOpenButton"
                                 Click="OnEmptyOpenLayer"
                                 Padding="14,6"
-                                Content="Open Layer…" />
+                                Content="Open Layer…"
+                                loc:Localize.Key="visualist.canvas.empty.open" />
                     </StackPanel>
                 </StackPanel>
             </Grid>

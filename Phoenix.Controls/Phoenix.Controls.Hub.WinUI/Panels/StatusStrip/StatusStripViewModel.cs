@@ -424,7 +424,9 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
         get
         {
             int p = ConfigManager.Current?.HUDServerPort ?? 18080;
-            return $"port {p.ToString(CultureInfo.InvariantCulture)}";
+            return string.Format(
+                Localizer.T("panel.statusstrip.dot.port_format", "port {0}"),
+                p.ToString(CultureInfo.InvariantCulture));
         }
     }
     // Bus listen port — Bus.cs hardcodes 18081 (private ctor default) and
@@ -432,7 +434,9 @@ public sealed class StatusStripViewModel : ObservableObject, System.IDisposable
     // to Bus.cs ripple through a single grep, and the status strip never
     // diverges from where the bus actually listens.
     private const int BusListenPort = 18081;
-    public string IpcBusSub      => $"port {BusListenPort.ToString(CultureInfo.InvariantCulture)}";
+    public string IpcBusSub      => string.Format(
+        Localizer.T("panel.statusstrip.dot.port_format", "port {0}"),
+        BusListenPort.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>
     /// Right-zone clock per Design_Orders §4.8 — HH:mm in MonoFont. Updates

@@ -11,7 +11,8 @@
     x:Class="Phoenix.Controls.Architect.WinUI.Databank.DatabankBrowserView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:cv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters">
+    xmlns:cv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <UserControl.Resources>
         <cv:BoolToVisibilityConverter x:Key="BoolVis" />
@@ -45,7 +46,8 @@
                         BorderBrush="{StaticResource CoalCardBrush}"
                         BorderThickness="0,0,0,1">
                     <TextBlock Style="{StaticResource EyebrowTextStyle}"
-                               Text="TABLES" />
+                               Text="TABLES"
+                               loc:Localize.Key="architect.databank.sidebar.eyebrow" />
                 </Border>
 
                 <!-- Table-list filter — narrows BOTH groups by substring on
@@ -59,7 +61,8 @@
                     <TextBox PlaceholderText="filter tables…"
                              Text="{Binding TableListFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              FontFamily="{StaticResource MonoFont}"
-                             FontSize="11" />
+                             FontSize="11"
+                             loc:Localize.PlaceholderKey="architect.databank.sidebar.filter.placeholder" />
                 </Border>
 
                 <ScrollViewer Grid.Row="2"
@@ -75,7 +78,8 @@
                                        FontSize="9"
                                        FontWeight="SemiBold"
                                        CharacterSpacing="180"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       loc:Localize.Key="architect.databank.sidebar.group.system" />
                         </Border>
                         <ListView x:Name="SystemTableList"
                                   Background="Transparent"
@@ -133,7 +137,8 @@
                                        FontSize="9"
                                        FontWeight="SemiBold"
                                        CharacterSpacing="180"
-                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       loc:Localize.Key="architect.databank.sidebar.group.user" />
                         </Border>
                         <ListView x:Name="UserTableList"
                                   Background="Transparent"
@@ -155,15 +160,35 @@
                                 <DataTemplate>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0"
+                                        <!-- Gear glyph (Segoe Fluent Icons U+E713) on tables a
+                                             Phoenix Controls tool maintains. Their ROWS are the
+                                             streamer's to edit — that is the whole point of the
+                                             databank — but the column layout is the tool's, so
+                                             + Column / Delete table / the column right-click menu
+                                             stay off. The marker is the always-visible half of
+                                             that explanation; the tooltip (this icon is enabled,
+                                             so it actually shows) and a System Log line carry the
+                                             wording. -->
+                                        <FontIcon Grid.Column="0"
+                                                  FontFamily="Segoe Fluent Icons"
+                                                  Glyph="&#xE713;"
+                                                  FontSize="11"
+                                                  Margin="0,0,6,0"
+                                                  Opacity="0.7"
+                                                  Visibility="{Binding IsAppOwned, Converter={StaticResource BoolVis}}"
+                                                  Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                                  ToolTipService.ToolTip="Maintained by a Phoenix Controls tool — rows and cells are yours to edit, the column layout is fixed."
+                                                  loc:Localize.TooltipKey="architect.databank.sidebar.app_owned.tip" />
+                                        <TextBlock Grid.Column="1"
                                                    Text="{Binding Name}"
                                                    FontFamily="{StaticResource MonoFont}"
                                                    FontSize="12"
                                                    Foreground="{StaticResource CoalPrimaryTextBrush}" />
-                                        <TextBlock Grid.Column="1"
+                                        <TextBlock Grid.Column="2"
                                                    Text="{Binding RowCount}"
                                                    FontFamily="{StaticResource MonoFont}"
                                                    FontSize="10"
@@ -198,10 +223,12 @@
                                     HorizontalContentAlignment="Center"
                                     Click="OnOpenTableClick"
                                     IsEnabled="{Binding HasSelectedTable}"
-                                    ToolTipService.ToolTip="Focus the selected table in the row grid">
+                                    ToolTipService.ToolTip="Focus the selected table in the row grid"
+                                    loc:Localize.TooltipKey="architect.databank.sidebar.open.tip">
                                 <TextBlock Text="Open"
                                            FontFamily="{StaticResource MonoFont}"
-                                           FontSize="11" />
+                                           FontSize="11"
+                                           loc:Localize.Key="architect.databank.sidebar.open.label" />
                             </Button>
                             <Button x:Name="DeleteTableButton"
                                     Grid.Column="1"
@@ -209,11 +236,13 @@
                                     HorizontalAlignment="Stretch"
                                     HorizontalContentAlignment="Center"
                                     Click="OnDeleteTableClick"
-                                    IsEnabled="{Binding CanMutateSelectedTable}"
-                                    ToolTipService.ToolTip="Drop the selected user table">
+                                    IsEnabled="{Binding CanMutateSelectedTableSchema}"
+                                    ToolTipService.ToolTip="Drop the selected user table (tables a Phoenix Controls tool maintains cannot be dropped)"
+                                    loc:Localize.TooltipKey="architect.databank.sidebar.delete.tip">
                                 <TextBlock Text="Delete"
                                            FontFamily="{StaticResource MonoFont}"
-                                           FontSize="11" />
+                                           FontSize="11"
+                                           loc:Localize.Key="architect.databank.sidebar.delete.label" />
                             </Button>
                             <Button x:Name="ExportTableButton"
                                     Grid.Column="2"
@@ -221,10 +250,12 @@
                                     HorizontalContentAlignment="Center"
                                     Click="OnExportTableClick"
                                     IsEnabled="{Binding HasSelectedTable}"
-                                    ToolTipService.ToolTip="Export the selected table to CSV">
+                                    ToolTipService.ToolTip="Export the selected table to CSV"
+                                    loc:Localize.TooltipKey="architect.databank.sidebar.export.tip">
                                 <TextBlock Text="Export"
                                            FontFamily="{StaticResource MonoFont}"
-                                           FontSize="11" />
+                                           FontSize="11"
+                                           loc:Localize.Key="architect.databank.sidebar.export.label" />
                             </Button>
                         </Grid>
                     </Border>
@@ -235,10 +266,12 @@
                                 HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
                                 Click="OnNewTableClick"
-                                ToolTipService.ToolTip="Create a new user table">
+                                ToolTipService.ToolTip="Create a new user table"
+                                loc:Localize.TooltipKey="architect.databank.sidebar.new_table.tip">
                             <TextBlock Text="+ Table"
                                        FontFamily="{StaticResource MonoFont}"
-                                       FontSize="11" />
+                                       FontSize="11"
+                                       loc:Localize.Key="architect.databank.sidebar.new_table.label" />
                         </Button>
                     </Border>
                 </StackPanel>
@@ -278,13 +311,15 @@
                                FontFamily="{StaticResource DisplayFont}"
                                FontSize="16"
                                HorizontalAlignment="Center"
-                               Foreground="{StaticResource CoalPaperBrush}" />
+                               Foreground="{StaticResource CoalPaperBrush}"
+                               loc:Localize.Key="architect.databank.empty.title" />
                     <TextBlock Text="Pick a table from the sidebar or use + Table."
                                FontFamily="{StaticResource SansFont}"
                                FontSize="11"
                                Opacity="0.65"
                                HorizontalAlignment="Center"
-                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               loc:Localize.Key="architect.databank.empty.body" />
                 </StackPanel>
             </Grid>
 
@@ -320,34 +355,42 @@
                         <Button x:Name="NewRowButton"
                                 Click="OnNewRowClick"
                                 IsEnabled="{Binding CanMutateSelectedTable}"
-                                ToolTipService.ToolTip="Insert a blank row (uses type-aware seed defaults)">
+                                ToolTipService.ToolTip="Insert a blank row (uses type-aware seed defaults)"
+                                loc:Localize.TooltipKey="architect.databank.toolbar.new_row.tip">
                             <TextBlock Text="+ Row"
                                        FontFamily="{StaticResource MonoFont}"
-                                       FontSize="11" />
+                                       FontSize="11"
+                                       loc:Localize.Key="architect.databank.toolbar.new_row.label" />
                         </Button>
                         <Button x:Name="NewColumnButton"
                                 Click="OnNewColumnClick"
-                                IsEnabled="{Binding CanMutateSelectedTable}"
-                                ToolTipService.ToolTip="Add a column to this table">
+                                IsEnabled="{Binding CanMutateSelectedTableSchema}"
+                                ToolTipService.ToolTip="Add a column to this table (the column layout of a tool-maintained table is fixed)"
+                                loc:Localize.TooltipKey="architect.databank.toolbar.new_column.tip">
                             <TextBlock Text="+ Column"
                                        FontFamily="{StaticResource MonoFont}"
-                                       FontSize="11" />
+                                       FontSize="11"
+                                       loc:Localize.Key="architect.databank.toolbar.new_column.label" />
                         </Button>
                         <Button x:Name="DeleteRowButton"
                                 Click="OnDeleteRowClick"
-                                ToolTipService.ToolTip="Delete the selected row(s) — Ctrl/Shift-click to multi-select">
+                                ToolTipService.ToolTip="Delete the selected row(s) — Ctrl/Shift-click to multi-select"
+                                loc:Localize.TooltipKey="architect.databank.toolbar.delete_rows.tip">
                             <TextBlock Text="Delete Row(s)"
                                        FontFamily="{StaticResource MonoFont}"
-                                       FontSize="11" />
+                                       FontSize="11"
+                                       loc:Localize.Key="architect.databank.toolbar.delete_rows.label" />
                         </Button>
                     </StackPanel>
                     <Button Grid.Column="1"
                             x:Name="RefreshButton"
                             Click="OnRefreshClick"
-                            ToolTipService.ToolTip="Re-read the table list and current rows from disk">
+                            ToolTipService.ToolTip="Re-read the table list and current rows from disk"
+                            loc:Localize.TooltipKey="architect.databank.toolbar.refresh.tip">
                         <TextBlock Text="↻ Refresh"
                                    FontFamily="{StaticResource MonoFont}"
-                                   FontSize="11" />
+                                   FontSize="11"
+                                   loc:Localize.Key="architect.databank.toolbar.refresh.label" />
                     </Button>
                 </Grid>
             </Border>
@@ -360,7 +403,8 @@
                 <TextBox PlaceholderText="filter rows…"
                          Text="{Binding Filter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                          FontFamily="{StaticResource MonoFont}"
-                         FontSize="11" />
+                         FontSize="11"
+                         loc:Localize.PlaceholderKey="architect.databank.rows.filter.placeholder" />
             </Border>
 
             <!-- Error banner — collapses to zero height when HasError is false.
@@ -372,7 +416,9 @@
                      IsClosable="True"
                      CloseButtonClick="OnInfoBarCloseClick"
                      Title="Databank error"
-                     Message="{Binding LastErrorMessage}" />
+                     Message="{Binding LastErrorMessage}"
+                     loc:Localize.Key="architect.databank.error.banner.title"
+                     loc:Localize.Property="Title" />
 
             <!-- Column header strip + scrollable row grid -->
             <Grid Grid.Row="4">
@@ -636,7 +682,8 @@
                             MinWidth="0"
                             IsEnabled="{Binding CanPagePrev}"
                             Click="OnPrevPageClick"
-                            ToolTipService.ToolTip="Previous page">
+                            ToolTipService.ToolTip="Previous page"
+                            loc:Localize.TooltipKey="architect.databank.footer.prev.tip">
                         <TextBlock Text="←" FontFamily="{StaticResource MonoFont}" FontSize="11" />
                     </Button>
                     <Button x:Name="NextPageButton"
@@ -646,7 +693,8 @@
                             MinWidth="0"
                             IsEnabled="{Binding CanPageNext}"
                             Click="OnNextPageClick"
-                            ToolTipService.ToolTip="Next page">
+                            ToolTipService.ToolTip="Next page"
+                            loc:Localize.TooltipKey="architect.databank.footer.next.tip">
                         <TextBlock Text="→" FontFamily="{StaticResource MonoFont}" FontSize="11" />
                     </Button>
                     <TextBlock Grid.Column="2"
@@ -668,7 +716,8 @@
                                FontSize="10"
                                Foreground="{StaticResource EmberPrimaryBrush}"
                                Text="loading…"
-                               Visibility="Collapsed" />
+                               Visibility="Collapsed"
+                               loc:Localize.Key="architect.databank.footer.loading" />
                 </Grid>
             </Border>
         </Grid>

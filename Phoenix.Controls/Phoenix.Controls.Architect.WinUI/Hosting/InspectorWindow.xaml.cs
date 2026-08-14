@@ -254,10 +254,11 @@ public sealed partial class InspectorWindow : Window
         if (_viewModel is null) return;
         string? path = _viewModel.LoadedFilePath;
         string fname = string.IsNullOrEmpty(path)
-            ? "(unsaved)"
+            ? Localizer.T("architect.window.inspector.caption.unsaved", "(unsaved)")
             : Path.GetFileName(path) ?? path;
         if (_viewModel.IsDirty) fname = "• " + fname;
         CaptionFileName.Text = fname;
-        Title = $"{fname} — Inspector";
+        Title = string.Format(
+            Localizer.T("architect.window.inspector.window_title_format", "{0} — Inspector"), fname);
     }
 }

@@ -100,8 +100,8 @@ public sealed class MediaPickerDialog : ContentDialog
         Title = "Browse Media";
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "Use Selected";
-        CloseButtonText = "Cancel";
+        PrimaryButtonText = Localizer.T("visualist.dialog.media_picker.use_selected", "Use Selected");
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         IsPrimaryButtonEnabled = false;
         DefaultButton = ContentDialogButton.Primary;
 
@@ -121,7 +121,7 @@ public sealed class MediaPickerDialog : ContentDialog
         // EyebrowLine — keyed Style PickerEyebrow setters applied directly.
         EyebrowLine = new TextBlock
         {
-            Text = "VISUALIST · MEDIA",
+            Text = Localizer.T("visualist.dialog.media_picker.eyebrow", "VISUALIST · MEDIA"),
             FontSize = 10,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             CharacterSpacing = 180,
@@ -139,10 +139,10 @@ public sealed class MediaPickerDialog : ContentDialog
             Margin = new Thickness(0, 0, 0, 6),
         };
         Grid.SetRow(chipPanel, 1);
-        AllChip   = MakeChip("All");
-        ImageChip = MakeChip("Image");
-        VideoChip = MakeChip("Video");
-        AudioChip = MakeChip("Audio");
+        AllChip   = MakeChip(Localizer.T("visualist.dialog.media_picker.filter.all",   "All"));
+        ImageChip = MakeChip(Localizer.T("visualist.dialog.media_picker.filter.image", "Image"));
+        VideoChip = MakeChip(Localizer.T("visualist.dialog.media_picker.filter.video", "Video"));
+        AudioChip = MakeChip(Localizer.T("visualist.dialog.media_picker.filter.audio", "Audio"));
         chipPanel.Children.Add(AllChip);
         chipPanel.Children.Add(ImageChip);
         chipPanel.Children.Add(VideoChip);
@@ -180,7 +180,8 @@ public sealed class MediaPickerDialog : ContentDialog
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 380,
             TextAlignment = TextAlignment.Center,
-            Text = "No media in this category. Use Import to add files to data/media.",
+            Text = Localizer.T("visualist.dialog.media_picker.empty_default",
+                "No media in this category. Use Import to add files to data/media."),
         };
         Grid.SetRow(EmptyHint, 3);
 
@@ -190,7 +191,8 @@ public sealed class MediaPickerDialog : ContentDialog
             Margin = new Thickness(0, 8, 0, 0),
             FontSize = 10,
             TextWrapping = TextWrapping.Wrap,
-            Text = "Select a file, then Use Selected — or double-click a tile.",
+            Text = Localizer.T("visualist.mediapicker.pick_hint",
+                "Select a file, then Use Selected — or double-click a tile."),
         };
         Grid.SetRow(StatusLine, 4);
 
@@ -203,9 +205,15 @@ public sealed class MediaPickerDialog : ContentDialog
             Spacing = 6,
         };
         Grid.SetRow(buttonPanel, 5);
-        ImportButton = new Button { Content = "Import…" };
+        ImportButton = new Button
+        {
+            Content = Localizer.T("visualist.dialog.media_picker.import", "Import…"),
+        };
         ImportButton.Click += OnImportClick;
-        RefreshButton = new Button { Content = "Refresh" };
+        RefreshButton = new Button
+        {
+            Content = Localizer.T("visualist.dialog.media_picker.refresh", "Refresh"),
+        };
         RefreshButton.Click += OnRefreshClick;
         buttonPanel.Children.Add(ImportButton);
         buttonPanel.Children.Add(RefreshButton);

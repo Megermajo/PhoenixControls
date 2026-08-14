@@ -872,7 +872,7 @@ namespace Phoenix.Controls.Hub.Core
                         double s = cat.Value.GetDouble();
                         if (s > topScore) { topScore = s; topCategory = cat.Name; }
                     }
-                    await _engine.SetScriptVarAsync("result.ai_flagged",  flagged.ToString().ToLower());
+                    await _engine.SetScriptVarAsync("result.ai_flagged",  (flagged ? "true" : "false"));
                     await _engine.SetScriptVarAsync("result.ai_category", topCategory);
                     // Clear result.ai_error on the success path so the
                     // node's Error output reads empty after a clean call,

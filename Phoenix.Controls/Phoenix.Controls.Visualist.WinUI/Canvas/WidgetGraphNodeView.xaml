@@ -19,14 +19,46 @@
          feedback_visualist_architect_chrome_independence (copied idiom, not lifted). -->
     <Grid x:Name="NodeRoot">
 
-        <!-- Chrome underlay — rounded background + border + selection frame.
-             Drawn first (lowest z) and carries no child, so it clips nothing. -->
+        <!-- Drop shadow — solid ShadowSoftBrush round-rect offset +2,+3 behind
+             the chrome so the node reads raised, not flat (Design_Orders §4.2).
+             Drawn first (lowest z); NodeChrome's opaque fill overwrites the
+             overlap, leaving the offset sliver as the shadow. Mirrors Architect
+             NodeView's layered-shadow idiom, duplicated locally per the
+             per-pillar paint rule (feedback_visualist_architect_chrome_independence). -->
+        <Border
+            x:Name="NodeShadow"
+            Background="{StaticResource ShadowSoftBrush}"
+            CornerRadius="6"
+            IsHitTestVisible="False">
+            <Border.RenderTransform>
+                <TranslateTransform X="2" Y="3" />
+            </Border.RenderTransform>
+        </Border>
+
+        <!-- Chrome underlay — rounded background + 1px divider border. Drawn
+             above the shadow and carries no child, so it clips nothing. The
+             border stays a constant 1px CoalDividerBrush; selection is painted
+             by the dedicated 2px gold AccentRing below (not by thickening this
+             border), so a selected node reads clearly at canvas zoom. -->
         <Border
             x:Name="NodeChrome"
             Background="{StaticResource CoalRaisedBrush}"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="1"
             CornerRadius="6" />
+
+        <!-- Selection accent ring — 2px gold (§2 SelectionBrush) frame, shown
+             only when the node is selected (ApplySelectionVisual). Mirrors
+             Architect NodeView's AccentRing: a dedicated overlay so selection
+             is obvious without re-measuring the body. Layered BELOW the content
+             so the overhanging pins still paint above the frame. -->
+        <Border
+            x:Name="AccentRing"
+            BorderBrush="{StaticResource SelectionBrush}"
+            BorderThickness="2"
+            CornerRadius="6"
+            IsHitTestVisible="False"
+            Visibility="Collapsed" />
 
         <!-- Content layer — header / preview / body pin-rows, ON TOP of the
              underlay so the overhanging pins are never clipped and render above
@@ -44,34 +76,63 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Title bar — UE-Blueprints style header strip. -->
+            <!-- Title bar — UE-Blueprints style header strip. Background is a
+                 NEUTRAL engraved gradient (lighter top / darker bottom, warm
+                 coal), NOT the reserved-chrome ember band — ember is the chrome
+                 accent, not a per-node fill. ApplyHeaderColor overwrites this at
+                 render time (per-category tint → engraved gradient, else this
+                 neutral). Mirrors Architect's HeaderGradientBrush idiom
+                 (Design_Orders §4.3), duplicated locally per the per-pillar rule. -->
             <Border
                 x:Name="TitleBar"
                 Grid.Row="0"
-                Background="{StaticResource EmberShadowBrush}"
-                CornerRadius="6,6,0,0"
-                Padding="8,4,8,4">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <!-- TextTrimming + MaxWidth so a long template name (e.g.
-                         "Image.LoadFromUrlWithCachedFallback") doesn't bleed
-                         past the node frame. -->
-                    <TextBlock
-                        x:Name="TitleText"
-                        FontFamily="{StaticResource MonoFont}"
-                        FontSize="11"
-                        FontWeight="SemiBold"
-                        MaxWidth="180"
-                        TextTrimming="CharacterEllipsis"
-                        Foreground="{StaticResource CoalPaperBrush}" />
-                    <TextBlock
-                        x:Name="CategoryText"
-                        FontFamily="{StaticResource MonoFont}"
-                        FontSize="9"
-                        TextTrimming="CharacterEllipsis"
-                        MaxWidth="120"
-                        Foreground="{StaticResource CoalSecondaryTextBrush}"
-                        VerticalAlignment="Center" />
-                </StackPanel>
+                CornerRadius="6,6,0,0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0.0" Color="#332B22" />
+                        <GradientStop Offset="1.0" Color="#1E1915" />
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Grid>
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="8,4,8,4">
+                        <!-- TextTrimming + MaxWidth so a long template name (e.g.
+                             "Image.LoadFromUrlWithCachedFallback") doesn't bleed
+                             past the node frame. Sans Bold 13pt — a title is chrome
+                             text, not a code value; matches Architect's node title. -->
+                        <TextBlock
+                            x:Name="TitleText"
+                            FontFamily="{StaticResource SansFont}"
+                            FontSize="13"
+                            FontWeight="Bold"
+                            MaxWidth="180"
+                            TextTrimming="CharacterEllipsis"
+                            Foreground="{StaticResource CoalPaperBrush}" />
+                        <TextBlock
+                            x:Name="CategoryText"
+                            FontFamily="{StaticResource SansFont}"
+                            FontSize="10"
+                            TextTrimming="CharacterEllipsis"
+                            MaxWidth="120"
+                            Foreground="{StaticResource CoalSecondaryTextBrush}"
+                            VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Engraved header edge — a 1px highlight line stacked above a
+                         1px shadow line at the header's bottom (Design_Orders §4.4),
+                         so the header reads "engraved" rather than painted-on.
+                         Edge-to-edge (bottom corners are square). -->
+                    <Rectangle
+                        VerticalAlignment="Bottom"
+                        Height="1"
+                        Margin="0,0,0,1"
+                        Fill="{StaticResource HeaderHighlightBrush}"
+                        IsHitTestVisible="False" />
+                    <Rectangle
+                        VerticalAlignment="Bottom"
+                        Height="1"
+                        Fill="{StaticResource HeaderShadowBrush}"
+                        IsHitTestVisible="False" />
+                </Grid>
             </Border>
 
             <!-- Sprint A — live preview strip wrapper. ThumbnailHost owns the

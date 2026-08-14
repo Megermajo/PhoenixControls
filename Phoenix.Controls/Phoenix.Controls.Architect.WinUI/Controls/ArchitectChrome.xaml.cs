@@ -153,6 +153,25 @@ public sealed partial class ArchitectChrome : UserControl
 
         Loaded   += (_, _) => _menuAccelGate.Attach(ChromeMenuBar);
         Unloaded += (_, _) => _menuAccelGate.Detach();
+
+        // Drop LeftRail's STATIC theme-hex cache whenever the effective theme
+        // changes under this chrome.
+        //
+        // ★ Why here as well as in ArchitectWindowChrome. The rail caches resolved
+        // theme colours in a static field, so it has to be told when the resource
+        // dictionary underneath it changes. That invalidation was wired into
+        // ArchitectWindowChrome's high-contrast fallback — but ArchitectWindowChrome
+        // is the SIBLING/INSPECTOR window chrome. The main Architect surface, the one
+        // embedded in Hub, is this class, and it had no invalidation at all: with no
+        // pop-out window open, nothing in the process ever dropped the cache, and the
+        // main canvas kept painting pre-toggle swatches. The bug the other hook exists
+        // to prevent survived exactly where the user spends their time.
+        //
+        // ActualThemeChanged rather than a high-contrast watcher: it fires for the HC
+        // toggle AND for an ordinary light/dark switch, and this chrome — unlike the
+        // window one — has no title-bar geometry to rebuild, so the cache drop is the
+        // whole job.
+        ActualThemeChanged += (_, _) => LeftRail.InvalidateThemeColorCache();
     }
 
     // Routes every menu item / menu name through Localizer.T after
@@ -178,6 +197,12 @@ public sealed partial class ArchitectChrome : UserControl
         MenuFileExport.Text = Localizer.T("chrome.architect.file.exportPhx",   "Export to .phx");
         MenuFileRestore.Text = Localizer.T("chrome.architect.file.restoreBackup", "Restore previous version…");
         MenuFileWelcome.Text = Localizer.T("chrome.architect.file.welcome",    "Welcome");
+        // The MRU submenu carries its own key: the sibling
+        // chrome.architect.file.openRecent (used by HubChrome's mirrored
+        // Architect menu) reads "Open Recent..." with an ellipsis, and this
+        // parent submenu label has never had one. Two English strings, two
+        // keys — reusing the sibling would silently change the visible label.
+        MenuFileOpenRecent.Text = Localizer.T("chrome.architect.file.openRecentSubmenu", "Open Recent");
 
         MenuEditUndo.Text         = Localizer.T("chrome.architect.edit.undo",        "Undo");
         MenuEditRedo.Text         = Localizer.T("chrome.architect.edit.redo",        "Redo");
@@ -195,8 +220,11 @@ public sealed partial class ArchitectChrome : UserControl
         LiveDebugToggle.Text  = Localizer.T("chrome.architect.view.liveDebug",      "Live Debug Trace");
         // Toggle Inspector.
         MenuViewToggleInspector.Text = Localizer.T("chrome.architect.view.toggleInspector", "Toggle Inspector");
+        MenuViewBookmarks.Text       = Localizer.T("chrome.architect.view.bookmarks",       "Bookmarks legend…");
+        MenuViewRefreshScript.Text   = Localizer.T("chrome.architect.view.refreshScript",   "Refresh Script Preview");
 
         MenuHelpNodeRef.Text = Localizer.T("chrome.architect.help.nodeReference", "Node Reference");
+        MenuHelpDiagnoseFreeze.Text = Localizer.T("chrome.architect.help.diagnoseFreeze", "Diagnose freeze…");
         // Script menu + Help → Keyboard Shortcuts…
         // localization. Pre-T15 keys: "architect.mainform.menu.script.sync_event_peers"
         // and "architect.mainform.menu.help.shortcuts".

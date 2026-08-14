@@ -15,8 +15,8 @@ namespace Phoenix.Controls.Architect.Core
 
         // Insertion-order companion to _visitedNodes, kept in lock-step (adds go
         // through MarkVisited; the per-event reset clears both). Traversal only
-        // ever ADDS to the visited set (handlers never remove through
-        // CtxVisited), so EmitBranch can capture a branch arm's visited-delta as
+        // ever ADDS to the visited set (nothing outside EmitBranch ever removes
+        // entries), so EmitBranch can capture a branch arm's visited-delta as
         // a list segment and undo exactly those entries — O(delta) instead of
         // snapshotting the whole set per conditional. EmitBranch is the sole
         // remover and keeps both containers in sync.
@@ -577,14 +577,24 @@ namespace Phoenix.Controls.Architect.Core
 
         // Schedule.Recurring header builder. Emits on_interval(seconds) — with an
         // optional SECOND arg (min chat lines that must have arrived since the last
-        // fire) ONLY when MinChatLines > 0. The `> 0` guard is load-bearing: the
-        // default "0" MUST keep the single-arg form so every existing on_interval
+        // fire) ONLY when MinChatLines > 0, and an optional THIRD arg (max number of
+        // fires) ONLY when MaxCount > 0. Both `> 0` guards are load-bearing: the
+        // defaults "0" MUST keep the shorter form so every existing on_interval
         // golden / hand-authored .phx stays byte-identical.
+        //
+        // The args are positional, so a MaxCount with no MinChatLines has to fill the
+        // middle slot with an explicit 0 — SchedulerService reads a 0 there as "no
+        // chat-activity gate", which is exactly the two-arg-absent behaviour.
         private static string BuildOnIntervalTrigger(Node node)
         {
             string sec = node.GetAttr("IntervalSeconds", "60");
             string min = node.GetAttr("MinChatLines", "0");
-            return (int.TryParse(min, out var mv) && mv > 0)
+            string max = node.GetAttr("MaxCount", "0");
+            bool hasMin = int.TryParse(min, out var mv) && mv > 0;
+            bool hasMax = int.TryParse(max, out var xv) && xv > 0;
+            if (hasMax)
+                return $"on_interval({sec}, {(hasMin ? min : "0")}, {max})";
+            return hasMin
                 ? $"on_interval({sec}, {min})"
                 : $"on_interval({sec})";
         }
@@ -601,7 +611,13 @@ namespace Phoenix.Controls.Architect.Core
             _nodeResultVars.Clear();
             _varNameCounters.Clear();
 
-            string evType = node.GetAttr("EventType", "VISUAL_COMPLETE");
+            // Must match the template default in NodeRegistry.Templates.Events.cs.
+            // D0a moved that default off VISUAL_COMPLETE precisely because Hub-origin
+            // broadcasts now reach on_bus for real, so a node left at the default would
+            // fire on EVERY visual completion — but this fallback (used when the
+            // attribute key is absent entirely, e.g. a graph predating the attribute)
+            // was left behind, which re-introduced the same hazard through the back door.
+            string evType = node.GetAttr("EventType", "MY_EVENT");
             string source = node.GetAttr("Source", "*");
             string target = node.GetAttr("Target", "*");
 
@@ -666,7 +682,16 @@ namespace Phoenix.Controls.Architect.Core
             if (!string.IsNullOrWhiteSpace(cmdsRaw))
             {
                 var cmds = cmdsRaw.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToList();
-                string condition = string.Join(" or ", cmds.Select(c => $"{{user.command}} == \"{c.TrimStart('!')}\""));
+                // The command word is author-edited free text, so it goes through
+                // EscapeStringLiteral exactly like the structural siblings in
+                // ProcessBusEventNode above — a value carrying a `"` (or a control
+                // character) would otherwise close the literal early and emit a
+                // malformed guard line into the generated .phx. Nothing validates
+                // this attribute anywhere, so the escape is the only defence.
+                // Leading `!` is stripped BEFORE escaping: {user.command} is the
+                // bare verb, and the strip must not be able to eat an escape byte.
+                string condition = string.Join(" or ", cmds.Select(c =>
+                    $"{{user.command}} == \"{EscapeStringLiteral(c.TrimStart('!'))}\""));
                 Emit($"    if {condition}:");
                 FollowNamedOutput(node, "Flow", 2);
             }
@@ -1089,21 +1114,41 @@ namespace Phoenix.Controls.Architect.Core
                 var trimmed = inline.Trim();
                 bool alreadyQuoted = trimmed.Length >= 2 && trimmed[0] == '"' && trimmed[^1] == '"';
                 if (!alreadyQuoted)
-                    return $"\"{EscapeStringLiteral(inline)}\"";
+                    return $"\"{QuoteSafeLiteralBody(EscapeStringLiteral(inline))}\"";
             }
             return raw;
         }
 
+        // Mirror of ScriptEngine.CallShapeRegex — the classifier the ENGINE uses to
+        // decide "this argument is itself a command call, execute it". It is LOOSER
+        // than the exporter's own CallableRegex (which is lowercase-anchored and
+        // requires the paren to follow the identifier immediately), so a literal the
+        // exporter classifies as DATA can still be classified as CODE downstream.
+        // Everything in that gap must be emitted quoted — see ArgLiteralNeedsQuoting.
+        private static readonly Regex EngineCallShapeRegex =
+            new(@"^[\w\.]+\s*\(.*\)$", RegexOptions.Compiled | RegexOptions.Singleline);
+
         // True when a bare emission of this literal would break the engine's command-
         // arg parse: a comma splits the arg, a double-quote toggles its quote state,
         // and a newline / CR would split the .phx line itself. EscapeStringLiteral
-        // neutralises all three inside a "..." literal.
+        // neutralises the comma and the line breaks inside a "..." literal; the quote
+        // needs QuoteSafeLiteralBody on top, because SplitArgs is escape-blind and a
+        // plain `\"` in the body would just move the parity break rather than remove it.
+        //
+        // Also true for a literal the ENGINE would mistake for a nested command call.
+        // An inline pill like `Welcome (say hi in chat)` contains none of the four
+        // break characters, so it used to emit bare —
+        // `twitch.send_chat(Welcome (say hi in chat))` — and ScriptEngine's looser
+        // CallShapeRegex then recursed on it, found no command named `welcome`, and
+        // substituted the EMPTY STRING, so the message was never sent. Callers gate
+        // this helper behind their own IsCallableExpression check, so a deliberate
+        // call-shaped pill (`math.add(1, 2)`) never reaches here and still emits bare.
         private static bool ArgLiteralNeedsQuoting(string s)
         {
             foreach (char c in s)
                 if (c == ',' || c == '"' || c == '\n' || c == '\r')
                     return true;
-            return false;
+            return EngineCallShapeRegex.IsMatch(s.Trim());
         }
 
         /// <summary>
@@ -1127,6 +1172,56 @@ namespace Phoenix.Controls.Architect.Core
                 return $"{{{preVar}}}";
             }
             return val;
+        }
+
+        /// <summary>
+        /// True when <paramref name="expr"/> is a name the engine can actually address
+        /// as a static <c>{state.NAME}</c> token — i.e. a compile-time literal whose
+        /// characters all survive <c>ScriptEngine.VarRefRegex</c> (<c>\{([\$\w\.]+)\}</c>).
+        /// Surrounding quotes are peeled first, so the auto-quoted pill <c>"phase"</c>
+        /// and the bare attribute <c>phase</c> both qualify. A <c>{var.x}</c> reference,
+        /// an inline call, or a name carrying spaces/punctuation does NOT — those need
+        /// the runtime probe in <see cref="HoistDynamicStateRead"/>.
+        /// </summary>
+        internal static bool TryStaticStateName(string expr, out string name)
+        {
+            name = string.Empty;
+            if (string.IsNullOrWhiteSpace(expr)) return false;
+            string t = expr.Trim();
+            if (IsSingleQuotedLiteral(t)) t = t[1..^1];
+            if (t.Length == 0) return false;
+            foreach (char c in t)
+                if (!char.IsLetterOrDigit(c) && c != '_' && c != '.' && c != '$')
+                    return false;
+            name = t;
+            return true;
+        }
+
+        /// <summary>
+        /// Emit a runtime state read for a state NAME that is only known at runtime
+        /// (a wired Var.Get / Text.* / Math.* source), and return the token that holds
+        /// the value.
+        /// </summary>
+        /// <remarks>
+        /// There is no <c>{state.{expr}}</c> indirection in the engine — SubstituteVars
+        /// is single-pass — and <c>state.get</c> cannot be inlined as a value expression
+        /// either, because the Hub handler returns null and publishes the value on
+        /// <c>result.state_value</c>. So the read has to be hoisted as two real lines
+        /// ahead of the consumer, exactly like <see cref="MaterializeInput"/> hoists a
+        /// call expression. The result is cached per node id so a second consumer of the
+        /// same State.Get reuses the probe instead of re-reading.
+        /// </remarks>
+        private string HoistDynamicStateRead(Node src, string nameExpr)
+        {
+            if (_nodeResultVars.TryGetValue(src.Id, out var cached)) return cached;
+
+            string probeVar = $"global._stateget_{IdPrefix(src, 6)}";
+            string indentSp = Indent(_currentIndent);
+            Emit($"{indentSp}state.get({nameExpr})");
+            Emit($"{indentSp}{probeVar} = {{result.state_value}}");
+            string token = $"{{{probeVar}}}";
+            _nodeResultVars[src.Id] = token;
+            return token;
         }
 
         // Inline-or-hoist resolver for the pure-data inline pattern shared by
@@ -1175,6 +1270,18 @@ namespace Phoenix.Controls.Architect.Core
             foreach (char c in socketName)
                 if (char.IsLetterOrDigit(c)) sb.Append(char.ToLowerInvariant(c));
             return sb.ToString();
+        }
+
+        /// <summary>Per-node result-var base for the multi-output hoisted reads
+        /// (Song.Current / Song.UpNext / Poll.Status / DB.Top). One hoisted read backs
+        /// every output socket, so each node needs its own private base — mirroring
+        /// GiveawayResultBase's "_gw_&lt;id6&gt;" scheme so two nodes in one script can't
+        /// clobber each other's outputs — and the prefix identifies which node it came
+        /// from when reading the emitted .phx.</summary>
+        internal static string SongReadResultBase(Node n, string prefix)
+        {
+            string compact = n.Id.Replace("-", "");
+            return prefix + (compact.Length >= 6 ? compact[..6] : compact);
         }
 
         private string ResolveOutputFromNode(Node src, Socket srcSocket)
@@ -1269,6 +1376,9 @@ namespace Phoenix.Controls.Architect.Core
                     if (srcSocket.Name == "IsSub")         return "{user.is_sub}";
                     if (srcSocket.Name == "IsBroadcaster") return "{user.is_broadcaster}";
                     if (srcSocket.Name == "IsVip")         return "{user.is_vip}";
+                    // IsRegular → {user.is_regular} (User-Management Regular-group
+                    // membership; BuildChatVars binds it beside the role flags).
+                    if (srcSocket.Name == "IsRegular")     return "{user.is_regular}";
                     if (srcSocket.Name == "SubMonths")     return "{user.sub_months}";
                     if (srcSocket.Name == "ColorHex")      return "{user.color_hex}";
                     if (srcSocket.Name == "User")
@@ -1339,11 +1449,257 @@ namespace Phoenix.Controls.Architect.Core
                         case "NewValue": return "{state.new_value}";
                     }
                 }
+                // Counter.OnChanged's Counter / Count outputs map to the event.*
+                // tokens CountersService raises (event.counter / event.count).
+                // Without this guard "Count" would hit the generic switch below and
+                // collapse to {user.count} — which nothing binds on a counter-change
+                // run — instead of {event.count}. (Counter alone would fall through
+                // to {event.counter} correctly, but map both here for clarity.)
+                if (src.Title == "Counter.OnChanged")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Counter": return "{event.counter}";
+                        case "Count":   return "{event.count}";
+                    }
+                }
+                // Automod.OnViolation's outputs map to the event.* tokens AutomodService
+                // raises. User / Message MUST be mapped here or they'd hit the generic
+                // switch below and collapse to {user.name} / {user.message} — which
+                // nothing binds on a violation run — instead of {event.user} /
+                // {event.message}. Rule/Action/Reason would fall through to
+                // {event.<name>} correctly, but map all five here for clarity.
+                if (src.Title == "Automod.OnViolation")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "User":    return "{event.user}";
+                        case "Rule":    return "{event.rule}";
+                        case "Action":  return "{event.action}";
+                        case "Reason":  return "{event.reason}";
+                        case "Message": return "{event.message}";
+                    }
+                }
+                // Quote.OnAdded's outputs map to the event.* tokens QuotesService raises
+                // (event.number / event.text / event.name). These would each fall through
+                // to the generic {event.<name>} form below correctly today, but map them
+                // explicitly (like Counter.OnChanged) so a future generic-switch addition
+                // for "Name"/"Text"/"Number" can't silently redirect them.
+                if (src.Title == "Quote.OnAdded")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Number": return "{event.number}";
+                        case "Text":   return "{event.text}";
+                        case "Name":   return "{event.name}";
+                    }
+                }
+                // Command.OnCustom's outputs map to the event.* tokens CustomCommandsService
+                // raises (event.command / event.user / event.args). "User" MUST be mapped
+                // here or it'd hit the generic switch below and collapse to {user.name} —
+                // which nothing binds on a custom-command run — instead of {event.user}.
+                // Command / Args would fall through to {event.<name>} correctly, but map all
+                // three here for clarity.
+                if (src.Title == "Command.OnCustom")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Command": return "{event.command}";
+                        case "User":    return "{event.user}";
+                        case "Args":    return "{event.args}";
+                    }
+                }
+                // Song.On*'s outputs map to the event.* tokens SongRequestService raises.
+                // The arm is MANDATORY, not decorative: VideoId / DurationSeconds /
+                // SkippedBy would each hit the generic switch below and emit
+                // {event.videoid} / {event.durationseconds} / {event.skippedby} — the
+                // lower-cased socket name — while the runtime binds event.video_id /
+                // event.duration_seconds / event.skipped_by. That is the multi-word-token
+                // collapse the catalog comment further down describes, and the symptom is
+                // a wired pin bound to nothing with no error anywhere. Title / Requester /
+                // Position are mapped alongside them for the same immunity
+                // Counter.OnChanged documents. All three roots share one arm because they
+                // share the base token set.
+                if (src.Title is "Song.OnQueued" or "Song.OnPlay" or "Song.OnSkip")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Title":           return "{event.title}";
+                        case "Requester":       return "{event.requester}";
+                        case "VideoId":         return "{event.video_id}";
+                        case "Position":        return "{event.position}";
+                        case "DurationSeconds": return "{event.duration_seconds}";
+                        case "SkippedBy":       return "{event.skipped_by}";
+                    }
+                }
+                // Poll.On*'s outputs map to the event.* tokens PollsService raises. The arm
+                // is MANDATORY for the same reason Song.On*'s is: TotalVotes / WinnerVotes /
+                // WinnerCount / DurationSeconds would each hit the generic switch below and
+                // emit {event.totalvotes} / {event.winnervotes} / {event.winnercount} /
+                // {event.durationseconds} — the lower-cased socket name — while the runtime
+                // binds event.total_votes / event.winner_votes / event.winner_count /
+                // event.duration_seconds. Title / Winner / Options / Outcome / Pot /
+                // Winners / Betting / Currency are mapped alongside them for the same
+                // immunity Counter.OnChanged documents. All three roots share one arm
+                // because they share the base token set.
+                if (src.Title is "Poll.OnOpened" or "Poll.OnClosed" or "Poll.OnSettled")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Title":           return "{event.title}";
+                        case "Options":         return "{event.options}";
+                        case "DurationSeconds": return "{event.duration_seconds}";
+                        case "Betting":         return "{event.betting}";
+                        case "Winner":          return "{event.winner}";
+                        case "WinnerVotes":     return "{event.winner_votes}";
+                        case "TotalVotes":      return "{event.total_votes}";
+                        case "Outcome":         return "{event.outcome}";
+                        case "Pot":             return "{event.pot}";
+                        case "Winners":         return "{event.winners}";
+                        case "WinnerCount":     return "{event.winner_count}";
+                        case "Currency":        return "{event.currency}";
+                    }
+                }
+                // Rank.OnRankUp's outputs map to the event.* tokens RanksService raises.
+                // The arm is MANDATORY for TWO of them: "User" would hit the generic switch
+                // below and collapse to {user.name} — which nothing binds on a rank-up run —
+                // and "RankName" would lower-case to {event.rankname}, which is in fact what
+                // the runtime binds, but only because the raise site was written to match
+                // this arm rather than the other way round. Value / Next are mapped
+                // alongside for the same immunity Counter.OnChanged documents: a future
+                // addition to the generic override list must not be able to silently
+                // redirect them.
+                //
+                // ★ There is deliberately no socket called "Rank" or "Level". "Rank" means
+                // leaderboard POSITION in five other places in this product, and "Level" is
+                // already {event.level} on the four hype-train events — an output by either
+                // name would read as a different thing on the same canvas.
+                //
+                // Login is a REAL output socket rather than a token a graph author has to
+                // know to type: User is the display name, every store this band touches is
+                // keyed on the login, and "there is a hidden var for that" is not a design
+                // — it is a trap that only fires for viewers whose two spellings differ.
+                if (src.Title == "Rank.OnRankUp")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "User":     return "{event.user}";
+                        case "Login":    return "{event.login}";
+                        case "RankName": return "{event.rankname}";
+                        case "Value":    return "{event.value}";
+                        case "Next":     return "{event.next}";
+                    }
+                }
+                // Soundboard.OnPlay's outputs map to the event.* tokens
+                // SoundboardService.RaisePlayed raises. The arm is MANDATORY for "User":
+                // the generic switch below rewrites that name to {user.name}, which nothing
+                // binds on a soundboard run, so the pin would export empty forever. Command
+                // and Clip are mapped alongside for the immunity Counter.OnChanged
+                // documents — neither collides today, and neither should be able to start
+                // colliding because someone widened the generic list.
+                if (src.Title == "Soundboard.OnPlay")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Command": return "{event.command}";
+                        case "User":    return "{event.user}";
+                        case "Clip":    return "{event.clip}";
+                    }
+                }
+                // Queue.OnChanged's outputs map to the event.* tokens NamedQueueService
+                // raises (event.queue / event.entry / event.action / event.length). The
+                // arm is MANDATORY for "Length": the generic switch below has no "Length"
+                // override today, but "Count" and friends prove how easily one gets added,
+                // and Queue / Entry / Action are mapped alongside it for the same
+                // immunity Counter.OnChanged documents.
+                if (src.Title == "Queue.OnChanged")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "Queue":  return "{event.queue}";
+                        case "Entry":  return "{event.entry}";
+                        case "Action": return "{event.action}";
+                        case "Length": return "{event.length}";
+                    }
+                }
+                // User.OnFirstMessage's outputs map to the event.* tokens
+                // UserManagementService raises. "User" and "Message" MUST be mapped here
+                // or the generic switch below collapses them to {user.name} / {user.message}
+                // — and on a tool re-raise NOTHING binds those, because the raise ships
+                // presetVars and never the chat-path var block. Platform / FirstEver would
+                // fall through to {event.<name>} correctly; mapped for clarity.
+                if (src.Title == "User.OnFirstMessage")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "User":      return "{event.user}";
+                        case "Message":   return "{event.message}";
+                        case "Platform":  return "{event.platform}";
+                        case "FirstEver": return "{event.first_ever}";
+                    }
+                }
+                // Loyalty.On* event roots map each output socket to the EXACT
+                // {event.*} token the matching RaiseScript(...) call sets in
+                // LoyaltyService (Earn.cs: OnEarn/OnPayout, LoyaltyService.cs:
+                // OnRedeem, Games.cs: OnRaffle). Without this arm several sockets
+                // collapse via the generic switch below: "Reward" → {user.reward}
+                // (the OnRedeem Reward-pin-empty bug — the redeem raise sets
+                // event.reward, never user.reward), "Count" → {user.count}, and
+                // "User" → {user.name}. None of {user.reward}/{user.count} is bound
+                // on a loyalty run, so a wired pin would leak an empty token.
+                if (src.Title is "Loyalty.OnEarn" or "Loyalty.OnPayout"
+                    or "Loyalty.OnRedeem" or "Loyalty.OnRaffle")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "User":     return "{event.user}";
+                        case "Amount":   return "{event.amount}";
+                        case "Reason":   return "{event.reason}";
+                        case "Reward":   return "{event.reward}";
+                        case "Cost":     return "{event.cost}";
+                        case "Count":    return "{event.count}";
+                        case "Total":    return "{event.total}";
+                        case "Currency": return "{event.currency}";
+                        case "Winners":  return "{event.winners}";
+                        case "Pot":      return "{event.pot}";
+                        case "Entrants": return "{event.entrants}";
+                    }
+                }
+
+                // ── Catalog-declared events: the catalog IS the token contract ──
+                // Every PlatformEventCatalog entry already carries an explicit
+                // socket→token mapping, and that same mapping is what ScriptManager
+                // writes into vars at runtime. Reading it here means the exporter
+                // and the runtime share ONE source of truth instead of two that
+                // happen to agree.
+                //
+                // They only *happened* to agree before: the generic switch below
+                // ends in `event.<lowercased socket name>`, which silently
+                // collapses any multi-word token — a socket named AmountCents would
+                // emit {event.amountcents} while the runtime wrote
+                // event.amount_cents, leaving the pin bound to nothing. That is the
+                // same class of bug the Chat.Message MessageId guard above exists
+                // to paper over, one hand-written guard at a time.
+                //
+                // Behaviour-identical for all pre-existing catalog entries: their
+                // socket names resolve to the same token through either path (the
+                // only name appearing in both special-case lists is "Payload", and
+                // both map it to event.payload), so exporter goldens are unchanged.
+                var catalogDef = Phoenix.Controls.Shared.Core.PlatformEventCatalog.Find(src.Title);
+                if (catalogDef is not null)
+                {
+                    foreach (var catSocket in catalogDef.Sockets)
+                        if (string.Equals(catSocket.Name, srcSocket.Name, StringComparison.Ordinal))
+                            return "{" + catSocket.VarToken + "}";
+                }
+
                 // Twitch.InWhisper's UserId output → {user.id} (the whisper
                 // sender's numeric id, set by BuildGenericEventVars from
                 // data.user.id). Without this guard it falls through to the
                 // generic {event.userid} form which nothing binds. User /
                 // Message resolve via the generic switch below.
+                // Sits AFTER the catalog lookup because Twitch.InWhisper has no
+                // PlatformEventCatalog entry, so the two can never both fire.
                 if (src.Title == "Twitch.InWhisper" && srcSocket.Name == "UserId")
                     return "{user.id}";
 
@@ -1428,6 +1784,36 @@ namespace Phoenix.Controls.Architect.Core
             {
                 string rowVar = src.GetAttr("Row", $"global._row_{IdPrefix(src, 6)}");
                 return $"{{{rowVar}.{srcSocket.Name}}}";
+            }
+
+            // DB.Top — multi-output pure-data read (Labels / Values). ONE db.top(...)
+            // call must back BOTH outputs from the SAME snapshot: two separate inline
+            // reads could interleave with a write and return rank-misaligned lists.
+            // Hoist one db.top(<Table>, <ValueColumn>, <LabelColumn>, <Count>, "<base>")
+            // call (the Song.Current result-base pattern) that the Hub
+            // command answers by writing {base}_labels / {base}_values via
+            // SetLocalResultVar; resolve each output socket to its sub-var. Must sit
+            // BEFORE the generic DB.* fallthrough below, which would otherwise swallow
+            // the title into the cached-row-var return path.
+            if (src.Title == "DB.Top")
+            {
+                string baseVar = SongReadResultBase(src, "_dt_");
+                if (!_visitedNodes.Contains(src.Id))
+                {
+                    string table    = ResolveInputValue(src, "TableName",   "\"\"");
+                    string valueCol = ResolveInputValue(src, "ValueColumn", "\"\"");
+                    string labelCol = ResolveInputValue(src, "LabelColumn", "\"\"");
+                    string count    = ResolveInputValue(src, "Count",       "5");
+                    string indentSp = Indent(_currentIndent);
+                    Emit($"{indentSp}# [DB.Top]");
+                    Emit($"{indentSp}db.top({table}, {valueCol}, {labelCol}, {count}, \"{baseVar}\")");
+                    MarkVisited(src.Id);
+                }
+                return srcSocket.Name switch
+                {
+                    "Values" => $"{{{baseVar}_values}}",
+                    _        => $"{{{baseVar}_labels}}",   // Labels (and any unexpected socket)
+                };
             }
 
             if (src.Title.StartsWith("DB.") && src.Title is not "DB.RowCount" and not "DB.GetCell" and not "DB.GetColumn")
@@ -1628,9 +2014,31 @@ namespace Phoenix.Controls.Architect.Core
             // id, so those sockets were pruned and the runtime no longer sets
             // result.poll_id / result.prediction_id (see ScriptManager.Twitch).
 
-            // Async.WaitForEvent Payload data-out maps to the engine's
-            // global._wait_payload (ScriptManager.Wait writes it on resume).
-            if (src.Title == "Async.WaitForEvent" && srcSocket.Name == "Payload")
+            // Async.WaitForEvent / Async.WaitForVisual Payload data-out maps to the
+            // engine's global._wait_payload (ScriptManager.Wait writes it on resume —
+            // ONE var, written by BOTH commands, so both sockets resolve to it). Without
+            // the WaitForVisual half the wired pin fell through every title gate to the
+            // terminal fallback and emitted the dead literal "Async.WaitForVisual.Payload".
+            //
+            // ★ THE SINGLE-SLOT LIMITATION — pre-existing (wait_for_event has always
+            // shipped it), inherited by WaitForVisual because it shares the one var, and
+            // documented here because this arm is where an author's wire becomes that var.
+            //
+            // The payload is a SLOT, not a value carried along the wire. Two consequences,
+            // both invisible on the canvas because a data link expresses no flow order:
+            //
+            //   1. READ IT AFTER ITS OWN WAIT AND BEFORE THE NEXT ONE. A consumer that
+            //      runs BEFORE the wait still emits {global._wait_payload}, so the token
+            //      appears upstream of its own writer. If no Vars row exists yet the
+            //      engine's {global.*} pre-load skips the empty key (ScriptEngine.cs:687
+            //      — IsNullOrEmpty rows are not loaded), SubstituteVars finds nothing to
+            //      substitute, and the RAW braced token reaches the node as text (what a
+            //      chat.send would then say on stream).
+            //   2. TWO WAITS IN ONE SCRIPT SHARE THE ONE SLOT — the second wait's write
+            //      overwrites the first's, whichever node the wires visually point at.
+            //      A value that must outlive the next wait has to be copied into an
+            //      author-owned var (Var.Set) immediately after its own wait resumes.
+            if ((src.Title is "Async.WaitForEvent" or "Async.WaitForVisual") && srcSocket.Name == "Payload")
                 return "{global._wait_payload}";
 
             // StreamerBot.GetUser is a byte-identical alias of
@@ -1683,9 +2091,113 @@ namespace Phoenix.Controls.Architect.Core
                 return $"{{{varName}}}";
             }
 
+            // Song.Current / Song.UpNext — multi-output pure-data reads (the DB.Top
+            // hoisting shape): the queue and the transport state
+            // move under the graph, so five separate inline calls could report a title
+            // from before a skip beside a state from after it. One song.current("<base>")
+            // / song.up_next("<base>") call is hoisted and the Hub command answers it by
+            // writing {base}_title / {base}_requester / {base}_video_id (plus
+            // {base}_state / {base}_volume for Current) via SetLocalResultVar; each output
+            // socket then resolves to its sub-var. "Song Requests" is not a
+            // _pureDataCategory — the Song control nodes must emit flow — so both are
+            // title-routed like the Timer.Get* family.
+            if (src.Title is "Song.Current" or "Song.UpNext")
+            {
+                bool current = src.Title == "Song.Current";
+                string baseVar = SongReadResultBase(src, current ? "_sc_" : "_sn_");
+                if (!_visitedNodes.Contains(src.Id))
+                {
+                    string indentSp = Indent(_currentIndent);
+                    Emit($"{indentSp}# [{src.Title}]");
+                    Emit($"{indentSp}{(current ? "song.current" : "song.up_next")}(\"{baseVar}\")");
+                    MarkVisited(src.Id);
+                }
+                return srcSocket.Name switch
+                {
+                    "Requester" => $"{{{baseVar}_requester}}",
+                    "VideoId"   => $"{{{baseVar}_video_id}}",
+                    "State"     => $"{{{baseVar}_state}}",
+                    "Volume"    => $"{{{baseVar}_volume}}",
+                    _           => $"{{{baseVar}_title}}",   // Title (and any unexpected socket)
+                };
+            }
+
+            // Poll.Status — an eight-output pure-data read, same hoisting shape and same
+            // reason as Song.Current above, and here the reason is sharper than
+            // "tidier": votes and the pot move continuously while a poll is open, so eight
+            // separate inline calls could report a leader from before a vote beside a total
+            // from after it — a graph would branch on a state that never existed. One
+            // poll.status("<base>") call is hoisted and the Hub command answers it by
+            // writing {base}_state / _is_open / _title / _leader / _leader_votes /
+            // _total_votes / _pot / _seconds_left via SetLocalResultVar; each output socket
+            // then resolves to its sub-var. "Polls" is not a _pureDataCategory — the Poll
+            // control nodes must emit flow — so it is title-routed like the rest.
+            if (src.Title == "Poll.Status")
+            {
+                string baseVar = SongReadResultBase(src, "_ps_");
+                if (!_visitedNodes.Contains(src.Id))
+                {
+                    string indentSp = Indent(_currentIndent);
+                    Emit($"{indentSp}# [Poll.Status]");
+                    Emit($"{indentSp}poll.status(\"{baseVar}\")");
+                    MarkVisited(src.Id);
+                }
+                return srcSocket.Name switch
+                {
+                    "IsOpen"      => $"{{{baseVar}_is_open}}",
+                    "Title"       => $"{{{baseVar}_title}}",
+                    "Leader"      => $"{{{baseVar}_leader}}",
+                    "LeaderVotes" => $"{{{baseVar}_leader_votes}}",
+                    "TotalVotes"  => $"{{{baseVar}_total_votes}}",
+                    "Pot"         => $"{{{baseVar}_pot}}",
+                    "SecondsLeft" => $"{{{baseVar}_seconds_left}}",
+                    _             => $"{{{baseVar}_state}}",   // State (and any unexpected socket)
+                };
+            }
+
             // Pure-data nodes that live outside the Math/Text/Logic/Collections/Convert
             // categories but follow the same inline-or-hoist pattern.
-            if (src.Title is "HTTP.ParseJson" or "Queue.Length" or "Chat.MessageCount")
+            // The Timer.Get* value nodes are routed by title (NOT by category —
+            // "Timer" is intentionally not a _pureDataCategory, because the Timer
+            // control nodes must still emit flow). Their call expressions live in
+            // ComputeInlineValue.
+            if (src.Title is "HTTP.ParseJson"
+                // Queue value nodes — no flow, resolved inline. "Queue" is deliberately
+                // NOT a _pureDataCategory: the Push / Pop / Clear / Remove siblings must
+                // still emit flow, so the three read-only members are routed by title
+                // (exactly like the Timer value nodes below).
+                or "Queue.Length" or "Queue.Position" or "Queue.List"
+                // Timer value nodes — the 2026-08 tool-node cut retired GetFormatted /
+                // GetPaused / GetProgress (Overlay.Get covers them via the 1 Hz
+                // timer.<name>.* channel keys); the two survivors need a fresh
+                // read-after-write the channel cannot guarantee.
+                or "Timer.GetRemaining" or "Timer.GetState"
+                // Song Request value nodes — same no-flow inline-title route ("Song
+                // Requests" is not a _pureDataCategory; the Song control nodes must emit
+                // flow). Their call expressions live in ComputeInlineValue. (Song.Current
+                // and Song.UpNext are multi-output and handled by their own hoisting arms
+                // above, not via ComputeInlineValue.)
+                or "Song.QueueLength" or "Song.QueuePosition"
+                // Polls value node — same no-flow inline-title route ("Polls" is not a
+                // _pureDataCategory; the Poll.Open / Close / Cancel / Vote / Bet siblings
+                // must still emit flow). Its call expression lives in ComputeInlineValue.
+                // (Poll.Status is multi-output and handled by its own hoisting arm above,
+                // not via ComputeInlineValue.)
+                or "Poll.GetVotes"
+                // Ranks value node — same no-flow inline-title route ("Ranks" is
+                // deliberately NOT a _pureDataCategory: the Rank.Evaluate sibling must
+                // still emit flow). Rank.Get survives the 2026-08 cut because the
+                // value→rank-name ladder lives in the Ranks config, out of DB.*'s
+                // reach; Rank.Value / Rank.Top were retired (DB.GetCell / DB.Top).
+                or "Rank.Get"
+                // Overlay Live Channel read — same no-flow inline-title route
+                // ("Visuals" is deliberately NOT a _pureDataCategory: Overlay.Publish
+                // and every Visual.* node in that band must still emit flow). Call
+                // expression lives in ComputeInlineValue.
+                or "Overlay.Get"
+                // Chat.MessageCount — arrived with the Dev merge; same no-flow
+                // inline-title route ("Chat" is not a _pureDataCategory).
+                or "Chat.MessageCount")
                 return ResolvePureData(src);
 
             // ── Generic pure-data category handler ──────────────────────────
@@ -1727,9 +2239,26 @@ namespace Phoenix.Controls.Architect.Core
                     // A disabled Name source reads as-if-unwired — fall through
                     // to the static attribute (same rule as ResolveInputValue).
                     if (nameSrc != null && nameSock != null && !IsDisabled(nameSrc))
-                        return $"{{state.{ResolveOutputFromNode(nameSrc, nameSock)}}}";
+                    {
+                        // The wired name was previously pasted straight into the
+                        // braces, which NEVER resolved: a Value.String resolves to a
+                        // QUOTED literal, so the token came out `{state."phase"}` —
+                        // outside VarRefRegex's character class — and a Var.Get
+                        // resolves to `{var.x}`, giving the nested `{state.{var.x}}`
+                        // that SubstituteVars only ever half-expands (it is single-
+                        // pass). Both shapes reached the script as raw text.
+                        string nameExpr = ResolveOutputFromNode(nameSrc, nameSock);
+                        if (TryStaticStateName(nameExpr, out string literalName))
+                            return $"{{state.{literalName}}}";
+                        return HoistDynamicStateRead(src, nameExpr);
+                    }
                 }
-                return $"{{state.{src.GetAttr("Name", "phase")}}}";
+                // Normalize the inline pill the same way: the node editor auto-quotes
+                // a String pill, so a hand-typed `"phase"` used to emit the equally
+                // unresolvable `{state."phase"}`.
+                return TryStaticStateName(src.GetAttr("Name", "phase"), out string attrName)
+                    ? $"{{state.{attrName}}}"
+                    : $"{{state.{src.GetAttr("Name", "phase")}}}";
             }
 
             if (src.Category == "Values")
@@ -1755,6 +2284,27 @@ namespace Phoenix.Controls.Architect.Core
                 return src.Title == "Value.String" ? $"\"{EscapeStringLiteral(v)}\"" : v;
             }
 
+            // "Users" — the User-Management group lookup (User.GetGroups). Standard
+            // groups map to fixed keys; ANY other output socket is a custom-group
+            // bool whose key derives from the socket name via the shared sanitizer —
+            // the exact keys the usermgmt.get_groups handler writes. A socket for a
+            // since-deleted group resolves to the unset var (falsy), never stale.
+            // Returned BRACED (unlike the legacy bare Twitch-Data convention): these
+            // bools feed Logic.Branch/If CONDITIONS, and the engine substitutes
+            // braces-only there — a bare key would be the DoN/DB.Increment
+            // bare-vs-braced emission bug all over again.
+            if (src.Category == "Users")
+            {
+                return srcSocket.Name switch
+                {
+                    "IsModerator"  => "{" + Phoenix.Controls.Shared.Models.UserGroupKeys.ModeratorKey + "}",
+                    "IsVip"        => "{" + Phoenix.Controls.Shared.Models.UserGroupKeys.VipKey + "}",
+                    "IsSubscriber" => "{" + Phoenix.Controls.Shared.Models.UserGroupKeys.SubscriberKey + "}",
+                    "IsRegular"    => "{" + Phoenix.Controls.Shared.Models.UserGroupKeys.RegularKey + "}",
+                    _              => "{" + Phoenix.Controls.Shared.Models.UserGroupKeys.VarKeyFor(srcSocket.Name) + "}",
+                };
+            }
+
             if (src.Category == "Twitch Data")
             {
                 return (src.Title, srcSocket.Name) switch
@@ -1772,9 +2322,16 @@ namespace Phoenix.Controls.Architect.Core
                     ("Twitch.GetUser",      "IsMod")         => "user.is_mod",
                     ("Twitch.GetUser",      "IsSub")         => "user.is_sub",
                     ("Twitch.GetUser",      "IsVip")         => "user.is_vip",
+                    // Regular-group membership (User-Management tool) — the handler
+                    // writes it beside the platform flags in ApplyUserGlobals.
+                    ("Twitch.GetUser",      "IsRegular")     => "user.is_regular",
                     // IsLive shares the same {stream.is_live} the twitch.get_stream
-                    // handler writes (own channel: StreamOnline/Offline flag;
-                    // arbitrary channel: false). Same var Twitch.IsOnline resolves.
+                    // handler writes — now Twitch's real answer for ANY channel,
+                    // via the "Phoenix: Get Stream Status" action. The old shape
+                    // (own channel: StreamOnline/Offline latch; arbitrary channel:
+                    // hardcoded false) survives only as the fallback the handler
+                    // takes when that action can't answer. Same var Twitch.IsOnline
+                    // resolves.
                     ("Twitch.GetStream",    "IsLive")        => "stream.is_live",
                     ("Twitch.GetStream",    "Title")         => "stream.title",
                     // Engine writes stream.game / stream.viewers
@@ -1788,6 +2345,7 @@ namespace Phoenix.Controls.Architect.Core
                     ("Twitch.CheckRole",    "IsSub")         => "role.is_sub",
                     ("Twitch.CheckRole",    "IsVip")         => "role.is_vip",
                     ("Twitch.CheckRole",    "IsBroadcaster") => "role.is_broadcaster",
+                    ("Twitch.CheckRole",    "IsRegular")     => "role.is_regular",
                     ("Twitch.IsOnline",     "IsLive")        => "stream.is_live",
                     ("Twitch.GetFollowAge", "Days")          => "follow.days",
                     ("Twitch.GetFollowAge", "Formatted")     => "follow.formatted",
@@ -2047,19 +2605,237 @@ namespace Phoenix.Controls.Architect.Core
                 case "DB.GetColumn":     return $"db.get_column({ResolveInputValue(src,"TableName","\"\"")}, {ResolveInputValue(src,"Column","\"\"")})";
                 case "HTTP.ParseJson":   return $"http.parse_json({ResolveInputValue(src,"Json","\"\"")}, {ResolveInputValue(src,"Path","\"\"")})";
                 // Flow.Select handled by dedicated branch in ResolveOutputFromNode (engine has no `select` runtime).
-                case "Queue.Length":     return "queue.length()";
+                //
+                // Queue value reads — the optional Name is emitted ONLY when the author
+                // filled it in, the same omit-when-unset rule the Queue.* flow handlers
+                // follow (ExporterRegistry.Handlers2.cs), so an untouched Queue.Length
+                // still emits the bare `queue.length()` it always did and no golden moves.
+                //
+                // queue.length's arg order is (ResultVar, Name), which is why the named
+                // form has to pass an explicit empty ResultVar: the manifest kept ResultVar
+                // first for back-compat with hand-authored .phx that used it, and the
+                // exporter never emits a ResultVar at all — this node's value comes back as
+                // the command's return.
+                case "Queue.Length":
+                {
+                    string qn = ResolveInputValue(src, "Name", "\"\"");
+                    return IsQueueArgSet(qn) ? $"queue.length(\"\", {qn})" : "queue.length()";
+                }
+                case "Queue.Position":
+                {
+                    string qn = ResolveInputValue(src, "Name", "\"\"");
+                    string entry = ResolveInputValue(src, "Entry", "\"\"");
+                    return IsQueueArgSet(qn)
+                        ? $"queue.position({entry}, {qn})"
+                        : $"queue.position({entry})";
+                }
+                case "Queue.List":
+                {
+                    string qn = ResolveInputValue(src, "Name", "\"\"");
+                    return IsQueueArgSet(qn) ? $"queue.list({qn})" : "queue.list()";
+                }
+                // Chat.MessageCount — arrived with the Dev merge. Dev's bare
+                // `case "Queue.Length": return "queue.length()";` is superseded by
+                // the name-aware Queue block above.
                 case "Chat.MessageCount": return "chat.message_count()";
                 case "Giveaway.Id":      return "giveaway.default_id()";
                 // Empty selector → giveaway.is_active() → the engine follows the
                 // app-wide default giveaway; a named selector resolves by
                 // id/key/title exactly like the flow giveaway nodes.
                 case "Giveaway.IsActive": return $"giveaway.is_active({ResolveInputValue(src, "Giveaway", "\"\"")})";
+                // Timer value nodes — resolved inline as timer.get_*(...) call
+                // expressions (routed by title above, since "Timer" is not a
+                // _pureDataCategory). Empty Name → the default timer at runtime.
+                // (GetFormatted / GetPaused / GetProgress were retired in the 2026-08
+                // tool-node cut — Overlay.Get on timer.<name>.* covers them.)
+                case "Timer.GetRemaining": return $"timer.get_remaining({ResolveInputValue(src, "Name", "\"\"")})";
+                case "Timer.GetState":     return $"timer.get_state({ResolveInputValue(src, "Name", "\"\"")})";
+                // Song Request single-output reads — resolved inline (routed by title
+                // above, since "Song Requests" is not a _pureDataCategory). Song.Current
+                // and Song.UpNext are multi-output and hoisted by their own arm in
+                // ResolveOutputFromNode, so they never reach ComputeInlineValue.
+                // song.queue_position's User is emitted even when empty: the Hub handler
+                // reads an empty one as "the triggering chatter", the Loyalty convention.
+                case "Song.QueueLength":   return "song.queue_length()";
+                case "Song.QueuePosition": return $"song.queue_position({ResolveInputValue(src, "User", "\"\"")})";
+                // Polls single-output read — resolved inline (routed by title above, since
+                // "Polls" is not a _pureDataCategory). Poll.Status is multi-output and
+                // hoisted by its own arm in ResolveOutputFromNode, so it never reaches
+                // ComputeInlineValue. The Option arg is emitted even when empty: the Hub
+                // handler reads an empty one as "the whole poll's total", which is what
+                // keeps an unwired node producing a true number instead of failing.
+                case "Poll.GetVotes":      return $"poll.get_votes({ResolveInputValue(src, "Option", "\"\"")})";
+                // Ranks value node — resolved inline (routed by title above, since
+                // "Ranks" is not a _pureDataCategory). An unwired User emits "" and the Hub
+                // resolves it (ResolveRankUser): {event.user_login} — the platform LOGIN —
+                // first, {user.name} only when a non-chat trigger parked no login. Emitting
+                // {user.name} here instead would bake the DISPLAY name into a lookup against
+                // login-keyed stores, which reads correctly for every viewer whose display
+                // name is their login re-cased and silently empty for everyone else. Same
+                // convention as Song.QueuePosition above. (Rank.Value / Rank.Top were
+                // retired in the 2026-08 tool-node cut — DB.GetCell / DB.Top cover them.)
+                case "Rank.Get":           return $"rank.get({ResolveInputValue(src, "User", "\"\"")})";
+                // Overlay Live Channel read — resolved inline as overlay.get(...)
+                // (routed by title above, since "Visuals" is not a _pureDataCategory).
+                // An empty / unknown key reads back as the empty string at runtime, so
+                // an unwired node degrades to "" rather than failing the export.
+                case "Overlay.Get":        return $"overlay.get({ResolveInputValue(src, "Key", "\"\"")})";
                 default:
                     return $"\"{src.Title}.result\"";
             }
         }
 
+        /// <summary>Whether an optional Queue.* socket expression carries a real value.
+        /// The Queue band emits its trailing Name only when set — that omit-when-unset
+        /// rule is what keeps a pre-generalisation graph exporting byte-identically — and
+        /// this is the value-node half of the identical check
+        /// <c>QueueHandlerHelp.IsSet</c> performs for the flow handlers.</summary>
+        private static bool IsQueueArgSet(string v)
+            => !(string.IsNullOrWhiteSpace(v) || v == "\"\"");
+
         private static string StripQuotes(string s) => s.Trim().Trim('"');
+
+        /// <summary>
+        /// Emit-side value for a trailing <c>key=value</c> command argument
+        /// (Visual.Trigger's variable pins and Args list, Async.WaitForVisual's
+        /// EventData pins, Event.Trigger's parameters, Process.Start's start params).
+        /// </summary>
+        /// <remarks>
+        /// These sites used to emit <c>StripQuotes(Resolve(...))</c>, which threw away
+        /// exactly the protection <see cref="InlineLiteralOrFallback"/> had just added:
+        /// a pill containing a literal comma came back out BARE, so
+        /// <c>ScriptEngine.SplitArgs</c> cut the argument at that comma and
+        /// CommandBinder's KvPairs branch discarded everything after it (the remainder
+        /// has no <c>=</c>). `Thanks for the raid, welcome!` reached the overlay as
+        /// `Thanks for the raid`; an `Args` list of `a,b,c` arrived as `Args1` only.
+        /// StripQuotes was also lossy in its own right — <c>Trim('"')</c> on an escaped
+        /// literal such as <c>"He said \"hi\""</c> ate the trailing escape.
+        ///
+        /// So: keep (or add) the quotes whenever dropping them would change what the
+        /// engine parses, and strip them otherwise. The strip case is the overwhelmingly
+        /// common one (plain single-word / no-comma values), which is what keeps every
+        /// existing golden byte-identical. ScriptEngine removes the quotes again — see
+        /// the `key="value"` arm in ExecuteCommandWithResult — and unquoted
+        /// <c>key=value</c> args from older .phx still bind exactly as before.
+        /// </remarks>
+        internal static string KvArgValue(string resolved)
+        {
+            if (string.IsNullOrEmpty(resolved)) return string.Empty;
+            string trimmed = resolved.Trim();
+            if (trimmed.Length == 0) return string.Empty;
+
+            // Already a single well-formed "..." literal: keep the quotes only when the
+            // inner text needs them, otherwise emit bare exactly as StripQuotes did.
+            if (IsSingleQuotedLiteral(trimmed))
+            {
+                string inner = trimmed[1..^1];
+                // Re-encode any `\"` in the body as `"` before re-adding the
+                // transport quotes — SplitArgs is escape-blind, so a `\"` left in place
+                // would flip its quote-state parity and cut the value at its own comma.
+                return KvValueNeedsQuotes(inner) ? $"\"{QuoteSafeLiteralBody(inner)}\"" : inner;
+            }
+
+            // Unquoted: a {var} reference, a number, or a call expression — all of which
+            // MUST stay bare ({var} so it substitutes, a call so the engine executes it;
+            // SplitArgs is paren-aware, so a comma inside a call's own arg list is safe).
+            if (!KvValueNeedsQuotes(trimmed) || IsCallableExpression(trimmed)) return trimmed;
+            return $"\"{QuoteSafeLiteralBody(EscapeStringLiteral(trimmed))}\"";
+        }
+
+        /// <summary>True when <paramref name="s"/> is one <c>"..."</c> literal — i.e. the
+        /// outer quotes actually pair up and no UNESCAPED quote sits between them (so
+        /// <c>"a", "b"</c> is not mistaken for a single literal).</summary>
+        private static bool IsSingleQuotedLiteral(string s)
+        {
+            if (s.Length < 2 || s[0] != '"' || s[^1] != '"') return false;
+            for (int i = 1; i < s.Length - 1; i++)
+            {
+                if (s[i] == '\\') { i++; continue; }
+                if (s[i] == '"') return false;
+            }
+            return true;
+        }
+
+        /// <summary>Characters that must stay inside a <c>"..."</c> literal for a
+        /// <c>key=value</c> argument to survive the engine's parse: a comma would end the
+        /// argument, a newline/CR would split the .phx line, and a backslash only means
+        /// what the author typed once ScriptEngine.UnescapeStringLiteral runs (which it
+        /// only does inside a literal). A double-quote needs the literal too — but note
+        /// the quotes alone do NOT neutralise it: <c>SplitArgs</c> is escape-blind, so a
+        /// <c>\"</c> in the body still toggles its quote state. <see cref="QuoteSafeLiteralBody"/>
+        /// is what actually makes a quote-bearing value safe, and every caller that adds
+        /// the transport quotes must run the body through it.</summary>
+        /// <remarks>
+        /// Also true for a value the ENGINE would mistake for a nested command call —
+        /// the same gap <see cref="ArgLiteralNeedsQuoting"/> covers on the positional
+        /// path. Without this arm, an inline pill like <c>Welcome (say hi in chat)</c>
+        /// was quoted by <see cref="InlineLiteralOrFallback"/> and then stripped bare
+        /// again here, so <c>ExecuteCommandWithResult</c>'s <c>key=func(args)</c> arm
+        /// recursed on it, found no command named <c>welcome</c>, and delivered an EMPTY
+        /// value to the widget. Callers gate on <see cref="IsCallableExpression"/>, so a
+        /// deliberate call-shaped value (<c>text.to_lower({user.message})</c>) still
+        /// emits bare and still executes.
+        /// </remarks>
+        private static bool KvValueNeedsQuotes(string s)
+        {
+            foreach (char c in s)
+                if (c == ',' || c == '"' || c == '\\' || c == '\n' || c == '\r')
+                    return true;
+            return EngineCallShapeRegex.IsMatch(s.Trim());
+        }
+
+        /// <summary>
+        /// Re-encode every double quote inside an ALREADY-escaped string-literal body as
+        /// <c>"</c> so the body contains no raw <c>"</c> character at all.
+        /// </summary>
+        /// <remarks>
+        /// <para>Wrapping a value in transport quotes only protects it if the engine's
+        /// splitter agrees where the literal ends — and <c>ScriptEngine.SplitArgs</c>
+        /// (ScriptEngine.Utilities.cs) toggles its <c>inQuote</c> flag on EVERY <c>"</c>
+        /// with no backslash awareness, as do <c>StripInlineComment</c> /
+        /// <c>IndexOfOutsideQuotes</c>. So the conventional <c>\"</c> escape flips the
+        /// quote-state PARITY: with the opening transport quote plus one <c>\"</c> in the
+        /// body, the splitter is back OUTSIDE quotes when it reaches the value's comma
+        /// and cuts the argument in half. `24" monitor, giveaway!` reached the widget as
+        /// `24\" monitor` — a truncation the bare (unquoted) emission did not have.</para>
+        /// <para><c>"</c> carries the quote with zero raw <c>"</c> characters, so the
+        /// only quotes on the line are the two transport ones and the parity is always
+        /// even. <c>ScriptEngine.UnescapeStringLiteral</c> already decodes 4-hex-digit
+        /// <c>\u</c> escapes, so the value round-trips unchanged.</para>
+        /// <para>This is deliberately a POST-pass over <see cref="EscapeStringLiteral"/>
+        /// rather than a change to it: that helper is also used for literals the engine
+        /// reads through paths where <c>\"</c> is the pinned wire form
+        /// (ScriptStringRoundTripIntegrationTests), and only command-ARGUMENT literals
+        /// meet the escape-blind splitter.</para>
+        /// </remarks>
+        internal static string QuoteSafeLiteralBody(string escapedBody)
+        {
+            if (string.IsNullOrEmpty(escapedBody)) return escapedBody ?? string.Empty;
+            // Fast path: no quote character anywhere means nothing to re-encode, so
+            // every ordinary literal emits byte-for-byte as before.
+            if (escapedBody.IndexOf('"') < 0) return escapedBody;
+
+            var sb = new System.Text.StringBuilder(escapedBody.Length + 8);
+            for (int i = 0; i < escapedBody.Length; i++)
+            {
+                char c = escapedBody[i];
+                if (c == '\\' && i + 1 < escapedBody.Length)
+                {
+                    char next = escapedBody[i + 1];
+                    // `\"` is the sequence we are replacing. Every other escape pair
+                    // (`\\`, `\n`, `\uXXXX`'s leading `\u`, …) is copied verbatim — and
+                    // consuming both chars is what keeps a literal backslash (`\\`) from
+                    // being mistaken for the escape introducer of a following quote.
+                    if (next == '"') sb.Append("\\u0022");
+                    else sb.Append(c).Append(next);
+                    i++;
+                    continue;
+                }
+                if (c == '"') sb.Append("\\u0022");
+                else sb.Append(c);
+            }
+            return sb.ToString();
+        }
 
         /// <summary>
         /// Backslash-escapes characters that would otherwise break a `"..."`
@@ -2163,8 +2939,6 @@ namespace Phoenix.Controls.Architect.Core
             string prefix, int indent, string truePfx, string? elsePfx)
             => EmitBranch(n, trueOut, falseOut, prefix, indent, truePfx, elsePfx);
         internal void CtxProcessNode(Node n, int indent) => ProcessNode(n, indent);
-        internal static string CtxCommandName(string title) => CommandName(title);
-        internal string CtxComputeInlineValue(Node n) => ComputeInlineValue(n);
         internal static string CtxGetDbGetResultVar(Node n) => GetDbGetResultVar(n);
         internal static string CtxStripQuotes(string s) => StripQuotes(s);
         internal static string CtxIdPrefix(Node n, int chars = 12) => IdPrefix(n, chars);
@@ -2249,11 +3023,8 @@ namespace Phoenix.Controls.Architect.Core
                 _macroStackSet.Remove(cycleKey);
             }
         }
-        internal HashSet<string> CtxVisited => _visitedNodes;
-        internal HashSet<string> CtxBlockedForBranch => _blockedForBranch;
         internal Dictionary<string, string> CtxNodeResultVars => _nodeResultVars;
         internal Graph CtxGraph => _graph;
-        internal int CtxCurrentIndent => _currentIndent;
         internal string CtxMacroContextId => _macroContextId;
 
     }
@@ -2889,6 +3660,13 @@ namespace Phoenix.Controls.Architect.Core
                 "System.Hotkey",
                 "System.Clipboard",
                 "OBS.Event",
+                // Timer event roots — output-only, so they're skipped by the
+                // flow-input check below anyway; listed for parity with the other
+                // event roots and to document them as entry points.
+                "Timer.OnZero","Timer.OnMilestone","Timer.OnAdd",
+                // Queue / User-Management / Ranks / Soundboard event roots — same
+                // output-only shape, listed for the same parity reason.
+                "Queue.OnChanged","User.OnFirstMessage","Rank.OnRankUp","Soundboard.OnPlay",
             };
             // Every catalog-declared platform event (YouTube.*, Kick.*) is an
             // event root too — one line instead of 50 hand-listed titles.

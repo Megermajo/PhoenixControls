@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 
 namespace Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel;
@@ -21,9 +22,19 @@ public sealed class GiveawayPickerItemVm
         Title = info.Title;
         IsDefault = info.IsDefault;
         Status = info.Status;
-        StatusText = info.Status.ToString().ToLowerInvariant();
+        // Lower-cased enum name is the English rendering; the switch keeps that
+        // text byte-identical while giving each state a key. Any future status
+        // member falls through to the old ToString() path unchanged.
+        StatusText = info.Status switch
+        {
+            GiveawayStatus.Open   => Localizer.T("panel.giveaway.picker.item.status.open", "open"),
+            GiveawayStatus.Closed => Localizer.T("panel.giveaway.picker.item.status.closed", "closed"),
+            GiveawayStatus.Drawn  => Localizer.T("panel.giveaway.picker.item.status.drawn", "drawn"),
+            _                     => info.Status.ToString().ToLowerInvariant(),
+        };
         EntrantsText = info.Entrants.ToString();
-        TicketsText = info.Tickets + " tickets";
+        TicketsText = string.Format(
+            Localizer.T("panel.giveaway.picker.item.tickets", "{0} tickets"), info.Tickets);
 
         StatusBrush = info.Status switch
         {

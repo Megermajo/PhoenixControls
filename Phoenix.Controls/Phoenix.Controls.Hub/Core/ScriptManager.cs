@@ -103,7 +103,7 @@ namespace Phoenix.Controls.Hub.Core
             var parts = raw.Split(',');
             for (int i = 0; i < parts.Length; i++)
             {
-                string key = $"Args{i + 1}";
+                string key = "Args" + (i + 1);
                 if (!eventData.ContainsKey(key))
                     eventData[key] = parts[i].Trim();
             }
@@ -156,11 +156,17 @@ namespace Phoenix.Controls.Hub.Core
         private readonly ConcurrentDictionary<long, CancellationTokenSource> _activeCts = new();
         private long _executionIdCounter;
 
-        // Hub-wide shutdown token. Until HubBootstrapper is wired to call
-        // SetGlobalShutdownToken at app shutdown, this defaults to CancellationToken.None
-        // (i.e. it never fires). When wired, BeginExecutionTracked links every per-script
-        // CTS to this token so a global Cancel() actually cancels in-flight script runs
-        // instead of relying purely on Stop()/CancelAllScripts being called separately.
+        // Hub-wide shutdown token. HubBootstrapper.BootAsync installs the real one
+        // via SetGlobalShutdownToken before any boot step runs, and cancels it at the
+        // top of ShutdownOptInServicesAsync; BeginExecutionTracked links every
+        // per-script CTS to it, so the app-shutdown Cancel() reaches in-flight script
+        // runs — including ones that start after CancelAllScripts has already walked
+        // the active-CTS map, since those link to an already-cancelled token.
+        // Defence in depth, NOT a replacement for Stop()/CancelAllScripts, which the
+        // MainWindow shutdown coordinator still runs as a sibling step.
+        // The CancellationToken.None default below is the pre-install value and the
+        // documented "never fires" sentinel — it is what a bare test host or a
+        // ScriptManager touched before BootAsync sees, never a shipped Hub.
         // Static so the wiring layer doesn't need to plumb an instance ref.
         private static CancellationToken _globalShutdownToken = CancellationToken.None;
 
@@ -302,15 +308,29 @@ namespace Phoenix.Controls.Hub.Core
 
         // Rate-limiting semaphores — initialised in constructor from config
         private SemaphoreSlim _chatSemaphore;
-        // _webhookSemaphore is shared across on_webhook,
-        // on_hotkey, on_clipboard, and on_websocket fan-out. The AppConfig key
-        // name (MaxConcurrentWebhookScripts) suggests it's webhook-only; in
-        // practice it caps all four. Renaming the config key would break
-        // user config.json files, so the rename + per-flavor split is
-        // deferred (AppConfig schema work). Until then, this
-        // comment is the source of truth.
+        // _webhookSemaphore covers on_webhook and on_websocket fan-out — the two
+        // remote-HTTP flavors — and nothing else. Both draw from the single
+        // AppConfig.MaxConcurrentWebhookScripts cap; on_websocket is additionally
+        // gated further upstream by WebSocketServerService's own
+        // MaxConcurrentWebsocketScripts semaphore before dispatch reaches here.
+        // on_hotkey and on_clipboard used to ride this same semaphore, which let a
+        // held/repeating chord or a fast copy-paste loop starve webhook delivery;
+        // they now have their own caps (see below).
         private SemaphoreSlim _webhookSemaphore;
         private SemaphoreSlim _eventSemaphore;
+        // Local-input dispatch caps, split out of _webhookSemaphore so a repeating
+        // hotkey or a clipboard storm can only exhaust its own pool. Driven by
+        // AppConfig.MaxConcurrentHotkeyScripts / MaxConcurrentClipboardScripts.
+        private SemaphoreSlim _hotkeySemaphore;
+        private SemaphoreSlim _clipboardSemaphore;
+
+        // Rate caps for the two Hub→Architect debug-trace firehoses. Both emit on
+        // hot per-node / per-variable-write paths and are bounded independently so
+        // one flood cannot starve the other panel. See DebugTraceBudget for why the
+        // mechanism is a cap rather than a coalesce, and why it arrived together
+        // with the IsArchitectConnected fix rather than after it.
+        private readonly DebugTraceBudget _nodeExecBudget = new("DEBUG_NODE_EXEC");
+        private readonly DebugTraceBudget _varSetBudget   = new("DEBUG_VAR_SET");
 
         // Re-entry guard for the event semaphore. Each dispatch site sets it
         // around its execution body once AcquireEventSlotAsync admits the run
@@ -502,14 +522,39 @@ namespace Phoenix.Controls.Hub.Core
                 try { kv.Value.Dispose(); } catch { }
             }
             _activeCts.Clear();
+
+            // Stop the live-edge snapshot heartbeat: it owns a 1-minute Timer that
+            // would otherwise outlive logical teardown and keep re-stamping the
+            // cross-restart snapshot from a dead ScriptManager. Note() stays safe
+            // afterwards — an event still arriving inside the drain window gets a
+            // correct edge and still writes the snapshot; disposal only bars the
+            // periodic re-stamp from coming back.
+            try { _liveEdges.Dispose(); } catch { }
+
+            // Same reasoning for the stream-state reconcile timer: a 60s Timer that
+            // outlived teardown would keep firing Streamer.bot round-trips from a
+            // dead ScriptManager and keep re-anchoring {stream.uptime}.
+            //
+            // What this disposal actually delivers, and what it does not: it bars
+            // FUTURE ticks. A callback already inside ReconcileStreamStateAsync
+            // keeps running — Timer.Dispose() does not wait for it, and the fetch it
+            // is awaiting can sit in the data-fetch lane for seconds. That one is
+            // stopped by the _stopped checks the reconcile takes before AND after
+            // its await, which is also what covers the never-unsubscribed
+            // Streamer.bot connect probe (a reconnect arriving after teardown can
+            // still reach the handler).
+            try { _streamReconcileTimer?.Dispose(); } catch { }
+            _streamReconcileTimer = null;
             return true;
         }
 
         private void DisposeRateLimitSemaphores()
         {
-            try { _chatSemaphore.Dispose(); }    catch { }
-            try { _webhookSemaphore.Dispose(); } catch { }
-            try { _eventSemaphore.Dispose();   } catch { }
+            try { _chatSemaphore.Dispose(); }      catch { }
+            try { _webhookSemaphore.Dispose(); }   catch { }
+            try { _eventSemaphore.Dispose();   }   catch { }
+            try { _hotkeySemaphore.Dispose(); }    catch { }
+            try { _clipboardSemaphore.Dispose(); } catch { }
             DisposeSharedConcurrencyPrimitives();
         }
 
@@ -691,8 +736,9 @@ namespace Phoenix.Controls.Hub.Core
         // ── Script Monitor — per-script execution policy ────────────────────
         // The picker in ScriptMonitorWindow writes here; every semaphore-gated
         // dispatch site consults TryAdmit below before its acquire. Queue rides
-        // the existing _chatSemaphore / _webhookSemaphore / _eventSemaphore
-        // waits; Overlap bypasses the wait so concurrent runs of the same
+        // whichever per-flavor semaphore that site owns (_chatSemaphore /
+        // _webhookSemaphore / _eventSemaphore / _hotkeySemaphore /
+        // _clipboardSemaphore); Overlap bypasses the wait so concurrent runs of the same
         // script aren't capped; Discard drops a new trigger while an execution
         // of the script is already in flight (see the Discarded phase comment
         // in ScriptExecutionPhase for the best-effort caveat).
@@ -1063,18 +1109,6 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// Public hook for the catch (Exception) blocks in each script-handler
-        /// path to mark a script execution as faulted for the Script Monitor. The
-        /// existing log message via GlobalLogger.CriticalError still fires; this
-        /// just gives the window a reliable Red ping that doesn't depend on log
-        /// string parsing.
-        /// </summary>
-        public void ReportScriptFault(string scriptName, Exception ex)
-        {
-            FireLifecycle(scriptName, ScriptExecutionPhase.Error);
-        }
-
-        /// <summary>
         /// Handler for <see cref="ScriptRegistry.ScriptContentChanged"/> —
         /// re-arms ALL of the changed (or removed) script's fire-once /
         /// fire-N / alternate state: the engine's in-memory do_n(N): counters
@@ -1185,30 +1219,17 @@ namespace Phoenix.Controls.Hub.Core
             _engine = new ScriptEngine(DB.Instance);
 
             // Process unification — bridge engine-level spawn/terminate events
-            // through to ProcessManager (in-process state) and RemoteBridgeServer
-            // (push to paired Viewers via VIEWER_PROCESS_STATE). The engine owns
-            // the cancellation tokens and Task lifecycles; ProcessManager owns the
-            // observable record + listeners; RemoteBridgeServer pushes the same
-            // transitions out over the bearer-token channel. Three subscribers
-            // for one event-source so each layer keeps its single responsibility.
+            // through to ProcessManager (in-process observable record +
+            // listeners). The engine owns the cancellation tokens and Task
+            // lifecycles; ProcessManager owns the observable record so each
+            // layer keeps its single responsibility.
             _engine.OnProcessSpawned += (instanceId, title) =>
             {
                 ProcessManager.Instance.CreateProcess(instanceId, title);
-                // Wrap the RemoteBridge broadcast so a faulted send (network drop,
-                // closed bearer-token connection) lands in GlobalLogger instead of
-                // surfacing as an unobserved TaskScheduler exception.
-                if (HubHost.RemoteBridge is { } rb)
-                    _ = AsyncErrorBoundary.SafeRunAsync(
-                        () => rb.BroadcastProcessStateAsync(instanceId, "running"),
-                        "ScriptManager", "RemoteBridge.BroadcastProcessState (running)");
             };
             _engine.OnProcessTerminated += (instanceId) =>
             {
                 ProcessManager.Instance.TerminateProcess(instanceId);
-                if (HubHost.RemoteBridge is { } rb)
-                    _ = AsyncErrorBoundary.SafeRunAsync(
-                        () => rb.BroadcastProcessStateAsync(instanceId, "ended"),
-                        "ScriptManager", "RemoteBridge.BroadcastProcessState (ended)");
             };
 
             // Twitch action-pack probe — on every (re)connect, enumerate the
@@ -1218,6 +1239,15 @@ namespace Phoenix.Controls.Hub.Core
             // ctor (process-lifetime) so there's no handler leak.
             HookStreamerBotActionProbe();
 
+            // Slow stream-state refresh — asks "Phoenix: Get Stream Status" for the
+            // configured broadcaster every 60s so uptime, the viewer count and the
+            // live gates stay true for a session that started before the Hub did.
+            // Ticks are cheap no-ops while Streamer.bot is disconnected or no
+            // broadcaster is configured. Disposed from BeginStop. See
+            // ScriptManager.Twitch.cs for the cadence rationale and the ★★ note on
+            // which live-edge consumers a reconcile may arm.
+            StartStreamReconcileTimer();
+
             int chatLimit    = ConfigManager.Current.MaxConcurrentChatScripts    > 0 ? ConfigManager.Current.MaxConcurrentChatScripts    : int.MaxValue;
             int webhookLimit = ConfigManager.Current.MaxConcurrentWebhookScripts > 0 ? ConfigManager.Current.MaxConcurrentWebhookScripts : int.MaxValue;
             // Generic event handlers (Twitch sub/cheer, OBS, YouTube, internal event.trigger,
@@ -1225,9 +1255,16 @@ namespace Phoenix.Controls.Hub.Core
             // Now driven by AppConfig.MaxConcurrentEventScripts (default 8) so a busy channel
             // isn't throttled into the 30s queue-then-drop cycle. 0 = unlimited.
             int eventLimit   = ConfigManager.Current.MaxConcurrentEventScripts   > 0 ? ConfigManager.Current.MaxConcurrentEventScripts   : int.MaxValue;
-            _chatSemaphore    = new SemaphoreSlim(chatLimit,    chatLimit);
-            _webhookSemaphore = new SemaphoreSlim(webhookLimit, webhookLimit);
-            _eventSemaphore   = new SemaphoreSlim(eventLimit,   eventLimit);
+            // Local-input flavors get their own pools rather than sharing the webhook
+            // one — a held hotkey chord or a copy-paste loop must not be able to
+            // consume every webhook slot. Same 0 = unlimited sentinel as the siblings.
+            int hotkeyLimit    = ConfigManager.Current.MaxConcurrentHotkeyScripts    > 0 ? ConfigManager.Current.MaxConcurrentHotkeyScripts    : int.MaxValue;
+            int clipboardLimit = ConfigManager.Current.MaxConcurrentClipboardScripts > 0 ? ConfigManager.Current.MaxConcurrentClipboardScripts : int.MaxValue;
+            _chatSemaphore      = new SemaphoreSlim(chatLimit,      chatLimit);
+            _webhookSemaphore   = new SemaphoreSlim(webhookLimit,   webhookLimit);
+            _eventSemaphore     = new SemaphoreSlim(eventLimit,     eventLimit);
+            _hotkeySemaphore    = new SemaphoreSlim(hotkeyLimit,    hotkeyLimit);
+            _clipboardSemaphore = new SemaphoreSlim(clipboardLimit, clipboardLimit);
 
             string relativeLogic = ConfigManager.Current.LogicDirectory;
             _logicPath = Path.IsPathRooted(relativeLogic)
@@ -1247,9 +1284,18 @@ namespace Phoenix.Controls.Hub.Core
             // (10 msg/s × 5 matching scripts × ~50 nodes each) emitted ~2500 dead
             // broadcasts/sec. The Script Monitor lifecycle ping below is NOT gated —
             // it routes through an in-process event, not the bus.
+            //
+            // ★ That gate was WebSocket-only and therefore permanently false once
+            // Architect moved in-process (T15), so it was suppressing 100% of the
+            // traffic rather than the dead fraction — the node flash has been dead
+            // in every shipping build. Bus.IsArchitectConnected now counts in-proc
+            // subscribers too, which re-admits the ~2500/sec described above to a
+            // hot path no test covers. DebugTraceBudget bounds it: the flash stays
+            // live, the excess is refused, and the drops are logged rather than
+            // silent. See DebugTraceBudget for why a cap and not a coalesce.
             _engine.OnNodeExecuted += (nodeId, scriptFile) =>
             {
-                if (Bus.Instance.IsArchitectConnected)
+                if (Bus.Instance.IsArchitectConnected && _nodeExecBudget.TryAdmit())
                 {
                     _ = AsyncErrorBoundary.SafeRunAsync(
                         () => Bus.Instance.BroadcastAsync(new BusMessage
@@ -1278,10 +1324,14 @@ namespace Phoenix.Controls.Hub.Core
             // local-vars panel. Same SafeRunAsync wrapper as DEBUG_NODE_EXEC: a
             // bus fault must not abort the script's own hot loop.
             // Same Architect-connected gate as DEBUG_NODE_EXEC — DEBUG_VAR_SET fires
-            // per local-scope write in script execution, same firehose shape.
+            // per local-scope write in script execution, same firehose shape, and it
+            // was dead for the same reason. Its own budget rather than a shared one:
+            // a node-exec flood must not be able to starve the variables panel, and
+            // vice versa.
             _engine.OnVariableSet += (varName, value, scriptFile) =>
             {
                 if (!Bus.Instance.IsArchitectConnected) return;
+                if (!_varSetBudget.TryAdmit()) return;
 
                 _ = AsyncErrorBoundary.SafeRunAsync(
                     () => Bus.Instance.BroadcastAsync(new BusMessage
@@ -1381,10 +1431,25 @@ namespace Phoenix.Controls.Hub.Core
             RegisterMathCommands();
 
             // ── visual.* ────────────────────────────────────────────────────
-            // Carved into ScriptManager.Visual.cs. All 5 HUD-broadcasting
-            // handlers (set_text/trigger/trigger_queued/set_visible/set_property)
-            // registered as a single call.
+            // Carved into ScriptManager.Visual.cs — visual.trigger plus its
+            // visual.trigger_queued alias, both routing into the LayerRuntime
+            // queue. The three per-element mutation handlers that used to share
+            // this call (set_text / set_visible / set_property) were retired in
+            // V4 part C; see RegisterRetiredCommands below.
             RegisterVisualCommands();
+
+            // ── overlay.* (Overlay Live Channel author surface) ─────────────
+            // Carved into ScriptManager.Overlay.cs (overlay.publish + overlay.get).
+            RegisterOverlayCommands();
+
+            // ── retired overlay-addressing commands (no-op shims) ───────────
+            // Carved into ScriptManager.RetiredCommands.cs. Five names kept
+            // registered so an unmigrated .phx on disk stays quiet instead of
+            // hitting the engine's CriticalError unknown-command path (which
+            // LiveFeed renders as a red error row). MUST stay registered while
+            // the five names are in CommandManifest — the startup audits in
+            // ScriptManager.ManifestVerify.cs assert the two sides match.
+            RegisterRetiredCommands();
 
             // ── twitch.* chat / channel actions ──────────────────────────────
             // Carved into ScriptManager.Twitch.cs (RegisterTwitchChatCommands).
@@ -1467,8 +1532,10 @@ namespace Phoenix.Controls.Hub.Core
 
             // ── Wait for visual / event (async latent) ──────────────────────
             // Carved into ScriptManager.Wait.cs (wait_for_visual +
-            // wait_for_event). Both surface the outcome through
-            // global._wait_ok; wait_for_event also writes global._wait_payload.
+            // wait_for_event). Both surface the outcome through global._wait_ok,
+            // and since V13 §8.1 BOTH also write global._wait_payload — ONE var,
+            // written by both commands, which is what the exporter's
+            // Async.WaitForEvent/Async.WaitForVisual → Payload pins resolve to.
             RegisterWaitCommands();
 
             // ── Chat awaiters + overlay ─────────────────────────────────────
@@ -1481,6 +1548,125 @@ namespace Phoenix.Controls.Hub.Core
             // RMW lock on push and the length-as-return-value contract are
             // preserved.
             RegisterQueueCommands();
+
+            // ── Timer / subathon ────────────────────────────────────────────
+            // Carved into ScriptManager.Timer.cs (10 control/config + 5 inline
+            // value reads). Drives the shared TimerService.Instance and wires the
+            // service's RaiseScriptEvent / BusEmit seams.
+            RegisterTimerCommands();
+
+            // ── Loyalty / points economy ─────────────────────────────────────
+            // Carved into ScriptManager.Loyalty.cs (4 points.* control + 2 inline
+            // value reads). Drives the shared LoyaltyService.Instance and wires the
+            // service's RaiseScriptEvent / BusEmit / ActiveViewers / BotAccounts /
+            // FireVisualTrigger seams. The overlay readout needs no seam: the service
+            // publishes loyalty.leaderboard / loyalty.currency into the Overlay Live
+            // Channel through its own LiveStore, which defaults to the process-wide
+            // store — nothing to wire, here or in HubBootstrapper.
+            RegisterLoyaltyCommands();
+
+            // ── Counters / named databank-backed counters ────────────────────
+            // Carved into ScriptManager.Counters.cs (3 counter.* control + 1 inline
+            // value read). Drives the shared CountersService.Instance and wires the
+            // service's RaiseScriptEvent seam; the overlay readout publishes
+            // counter.<name>.count into the Overlay Live Channel through the service's
+            // own LiveStore, so it needs no seam either. The built-in chat provider it
+            // exposes is registered below by RegisterBuiltInChatProviders.
+            RegisterCountersCommands();
+
+            // ── Automod / spam filter ────────────────────────────────────────
+            // Carved into ScriptManager.Automod.cs. Adds NO script command (the tool
+            // scans chat and reuses the existing twitch.*/kick.* moderation actions),
+            // only wires the AutomodService.Instance seams (RaiseScriptEvent for the
+            // Automod.OnViolation event node + BotAccountsProvider). Its built-in chat
+            // provider is registered at INDEX 0 below by RegisterBuiltInChatProviders.
+            RegisterAutomodSeams();
+
+            // ── Quotes / databank-backed quote store ─────────────────────────
+            // Carved into ScriptManager.Quotes.cs. Wires the QuotesService.Instance
+            // RaiseScriptEvent seam (Quote.OnAdded) and registers the quote.* script
+            // commands. Its built-in chat provider is registered below (AFTER Counters)
+            // by RegisterBuiltInChatProviders.
+            RegisterQuotesCommands();
+
+            // ── Custom Chat Commands (text/variable-only) ────────────────────
+            // Carved into ScriptManager.CustomCommands.cs. Adds NO script command (a
+            // custom command is just "on !cmd → send templated text"); it only wires the
+            // CustomCommandsService.Instance seams (RaiseScriptEvent for the Command.OnCustom
+            // event node + the {count}/{count.next} CountersService access + the {channel}
+            // resolver). Its built-in chat provider is registered LAST (after Quotes) below
+            // by RegisterBuiltInChatProviders.
+            RegisterCustomCommandsCommands();
+
+            // ── Scheduling (recurring timed chat messages) ───────────────────
+            // Carved into ScriptManager.Scheduling.cs. Adds NO script command and NO
+            // built-in chat provider (the tool only POSTS on a timer, never RESPONDS to
+            // chat); it wires only the SchedulingService.ChatSend seam (token resolution +
+            // the SendTwitchChatCore path). Chat-line counting for the MinChatLines gate is
+            // fed from ExecuteOnChatScriptsAsync (SchedulingService.NoteChatActivity).
+            RegisterSchedulingCommands();
+
+            // ── User-Management (welcoming + groups) ─────────────────────────
+            // Carved into ScriptManager.UserManagement.cs. Wires the per-platform
+            // greeting reply + shoutout seams and registers usermgmt.get_groups (the
+            // User.GetGroups node). Its observe-only welcoming chat provider is
+            // registered below by RegisterBuiltInChatProviders; the group-role
+            // overlay is consulted directly by BuildChatVars + the tool role gates.
+            RegisterUserManagementCommands();
+
+            // ── Alerts (event responses) ─────────────────────────────────────
+            // Carved into ScriptManager.Alerts.cs. Adds NO script command and NO chat
+            // provider (the tool RESPONDS to platform events, not chat); it wires the
+            // AlertsService chat/shoutout/visual seams. The event tap lives in
+            // ExecuteGenericEventAsync's pre-guard region beside Timer/Loyalty.
+            RegisterAlertsCommands();
+
+            // ── Song Request (YouTube request queue) ─────────────────────────
+            // Carved into ScriptManager.SongRequest.cs. Registers the fifteen song.*
+            // script commands and wires the SongRequestService.Instance seams: the
+            // Song.On* RaiseScriptEvent, the YouTube Data API resolver (the only place the
+            // optional API key is read, routed through the SSRF-validated outbound path),
+            // and the Loyalty charge/refund pair backing the optional per-request price.
+            // Its built-in chat provider is registered below AFTER Quotes and BEFORE
+            // CustomCommands by RegisterBuiltInChatProviders.
+            RegisterSongRequestCommands();
+
+            // ── Polls & Betting (chat poll + points side-bet) ────────────────
+            // Carved into ScriptManager.Polls.cs. Registers the seven poll.* script
+            // commands and wires the PollsService.Instance seams: the Poll.On*
+            // RaiseScriptEvent, the Loyalty charge / refund / batch-payout trio backing the
+            // stakes, the currency noun, the unprompted open/result announcement, and the
+            // CAPABILITY-GATED native Twitch poll/prediction mirror — which refuses to open
+            // a native surface it could not later close. Its built-in chat provider is
+            // registered below AFTER SongRequest and BEFORE CustomCommands by
+            // RegisterBuiltInChatProviders.
+            RegisterPollsCommands();
+
+            // ── Ranks (watch-time / points rank ladder) ──────────────────────
+            // Carved into ScriptManager.Ranks.cs. Registers the four rank.* script commands
+            // and wires the RanksService.Instance seams: the Rank.OnRankUp RaiseScriptEvent,
+            // the unprompted promotion announcement, the Loyalty currency noun and balance
+            // table behind the points metric — and, on LOYALTY rather than on Ranks, the
+            // watch-minute accrual pair that gives the suite its first watch-hour store by
+            // riding the existing watch-time tick instead of adding a second loop. Its
+            // built-in chat provider is registered below AFTER Polls and BEFORE
+            // CustomCommands by RegisterBuiltInChatProviders.
+            RegisterRanksCommands();
+
+            // ── Soundboard (chat-triggered clip playback) ────────────────────
+            // Carved into ScriptManager.Soundboard.cs. Registers NO script command and
+            // wires exactly one SoundboardService.Instance seam — the shared (layer,
+            // trigger) visual fan-out — because firing a widget graph with an Args payload
+            // is something Architect's Visual.Trigger node already does. Its built-in chat
+            // provider is registered below AFTER Ranks and immediately BEFORE
+            // CustomCommands by RegisterBuiltInChatProviders.
+            RegisterSoundboardCommands();
+
+            // ── Built-in chat-command provider dispatch ──────────────────────
+            // The single ordered choke point every pre-build tool routes its chat
+            // commands through (see ScriptManager.BuiltInChat.cs). Registered after
+            // the tool command registrars so each provider's service singleton exists.
+            RegisterBuiltInChatProviders();
 
             // ── Twitch moderation / channel control proxies ──────────────────
             // Carved into ScriptManager.Twitch.cs (RegisterTwitchModerationCommands).
@@ -1657,10 +1843,79 @@ namespace Phoenix.Controls.Hub.Core
             // Drop inbound chat cleanly so a late message can't enter a disposed _chatSemaphore
             // and abort the shutdown coordinator with ObjectDisposedException.
             if (System.Threading.Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+
             // Count every inbound (already bot-filtered) chat line for the Chat.MessageCount node.
+            // Arrived with the Dev merge. Dev paired this with a `if
+            // (!Directory.Exists(_logicPath)) return;` bail right here — that line is
+            // deliberately NOT carried over: this line moved the bail BELOW the
+            // built-in chat dispatch (see below) so built-in commands work with zero
+            // authored scripts, and reinstating it here would silence every provider
+            // on an install that has no .phx files.
             ChatActivityCounter.Increment();
-            if (!Directory.Exists(_logicPath)) return;
+
+            // Feed the Scheduling tool's chat-activity counter (drives the per-schedule
+            // MinChatLines dead-chat gate). Every message reaching here is already past the
+            // bot self-trigger guard, so this counts real viewer lines. Cheap Interlocked
+            // increment, counted unconditionally so the gate is warm the instant the tool
+            // is enabled.
+            SchedulingService.Instance.NoteChatActivity();
+
+            // Activity stamp for twitch.last_active. It sits ABOVE the built-in
+            // dispatch AND above the logic-dir bail on purpose: "when did this viewer
+            // last speak" is a fact about the viewer, not about who answered them.
+            // Below the dispatch it would miss every message a provider handles
+            // (Loyalty / Counters / Quotes / SongRequest / CustomCommands all suppress on
+            // handle), i.e. exactly the viewers who use the 1.1 tools; below the bail it
+            // would miss a setup with no authored scripts at all.
             _lastActiveMap[chatData.Username] = DateTime.UtcNow;
+
+            // ── Platform-role cache feed (the PRIMARY role source) ───────────
+            // Every inbound chat line is stamped by the platform with that account's
+            // live moderator / VIP / subscriber standing. It is authoritative, it
+            // costs one dictionary write, and it arrives for everybody who actually
+            // interacts — which is what makes viewer roles reliably populated at all.
+            // The presence sweep adds the lurkers on top of it, and the on-demand
+            // "Phoenix: Get User" lookup covers whoever neither typed nor appeared in
+            // a sweep; this is the source that answers first and answers for free.
+            //
+            // ★ EVERY message, not only commands, and ABOVE the built-in dispatch:
+            // the point is to know a viewer's rank BEFORE they use something that
+            // gates on it. It sits with the other unconditional per-message taps
+            // above (activity counter, dead-chat counter, last-active stamp) and
+            // above the logic-dir bail further down, for the same reason those do —
+            // "what rank is this account" is a fact about the viewer, not about who
+            // ended up answering them.
+            //
+            // ★ Keyed on the LOGIN, with the display name as the second argument.
+            // Twitch fills ChatMessage.Username with the DISPLAY name, and the
+            // suite's identity model is login-first — keying the cache the other way
+            // round would file every Twitch viewer under a name no other surface
+            // looks them up by. The blank-Login fallback to Username is the same rule
+            // BuildChatVars uses for {event.user_login} and the User-Management tool
+            // uses for its welcomed set and queue, so one viewer stays one person
+            // across all of them (the service lowercases and strips a leading '@').
+            //
+            // ★ RAW platform flags — deliberately NOT UserManagementService.Effective.
+            // This cache records what the PLATFORM said. Folding the group overlay in
+            // here would let a hand-assigned "Moderator" group member read back as a
+            // real moderator to every consumer of the cache, including the role checks
+            // that overlay is itself layered on top of.
+            ViewerPresenceService.Instance.NoteChatRoles(
+                !string.IsNullOrWhiteSpace(chatData.Login) ? chatData.Login : chatData.Username,
+                chatData.Username,
+                chatData.IsSub, chatData.IsMod, chatData.IsVip);
+
+            // ── Built-in chat-command providers (ordered choke point) ────────
+            // Automod -> UserManagement -> Loyalty -> Counters -> Quotes -> SongRequest ->
+            // CustomCommands (see ScriptManager.BuiltInChat.cs).
+            // Runs BEFORE the logic-dir bail so built-in commands work with zero
+            // authored scripts. DEFAULT-OFF IS A TOTAL NO-OP (every provider
+            // self-gates on its tool's enabled state). Returns true when a provider
+            // handled the message AND asked to suppress the author on_chat fan-out.
+            if (await DispatchBuiltInChatAsync(chatData).ConfigureAwait(false))
+                return;
+
+            if (!Directory.Exists(_logicPath)) return;
 
             // Read from the registry's cached content (loaded
             // once and invalidated by LogicWatcher's Refresh) instead of enumerating disk
@@ -1842,11 +2097,30 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
+        // Same key set as WS.ResolveSubMonths (+ legacy bare "cumulative") — hoisted
+        // static so a fresh array isn't allocated per sub/gift event dispatch.
+        private static readonly string[] SubMonthKeys = { "cumMonths", "cumulativeMonths", "cumulative_months", "cumulative" };
+
         private static Dictionary<string, string> BuildChatVars(ChatMessage chatData)
         {
             string[] parts = chatData.Message.Split(' ');
-            string cmdPart = parts[0].StartsWith("!") ? parts[0].Substring(1) : parts[0];
-            string argsPart = parts.Length > 1 ? string.Join(" ", parts.Skip(1)) : "";
+            // ★ ORDINAL, via the shared ChatVerb helper — this line used to call the
+            // `StartsWith("!")` STRING overload, which compares under CurrentCulture
+            // and therefore SKIPS culture-ignorable code points. A line beginning
+            // with a soft hyphen (U+00AD) or a zero-width space followed by '!' read
+            // as a command here and in the Live Feed, while all eleven built-in tool
+            // parsers use the ordinal `text[0] != '!'` test and could never see it —
+            // so such a line raised `{user.command}` / `{event.iscommand}` and a feed
+            // row for a command no provider was able to answer.
+            // A prior perf sweep deliberately KEPT the string overload (its comment
+            // said the culture behaviour was worth preserving), because at that time
+            // the divergence had not been identified as a defect. Majo's call
+            // 2026-08-13: the two halves agree on ORDINAL, the tools' semantic, so a
+            // raised command signal now implies some provider can actually match it.
+            // Hoisted so it is computed once, as before.
+            bool isCmd = ChatVerb.LooksLikeCommand(parts[0]);
+            string cmdPart = isCmd ? parts[0].Substring(1) : parts[0];
+            string argsPart = parts.Length > 1 ? string.Join(' ', parts, 1, parts.Length - 1) : "";
             // Twitch chat carries usernames as `displayName` (mixed case) per
             // WS.cs, but scripts use `{user.name}` as a stable identity key —
             // most often as a DB key fragment (e.g. user.{name}.points). A
@@ -1857,26 +2131,43 @@ namespace Phoenix.Controls.Hub.Core
             // chatData.Username verbatim because BuildChatVars is the script-
             // side projection only.
             string userLower = chatData.Username?.ToLowerInvariant() ?? string.Empty;
+            // Role projection (User-Management tool): Moderator / VIP / Subscriber
+            // are PLATFORM-OWNED since the member lists were retired — Effective()
+            // reports exactly what the platform flags say for those three — while
+            // {user.is_regular} resolves from the Regular list plus the watch-hour
+            // rule. When the tool is dormant this is a pure passthrough of the
+            // platform flags.
+            var eff = UserManagementService.Instance.Effective(chatData);
             return new()
             {
                 { "user.name",           userLower },
                 { "user.platform",       chatData.Platform ?? ChatPlatforms.Twitch },
-                { "user.is_mod",         chatData.IsMod.ToString().ToLower() },
-                { "user.is_sub",         chatData.IsSub.ToString().ToLower() },
-                { "user.is_broadcaster", chatData.IsBroadcaster.ToString().ToLower() },
-                { "user.is_vip",         chatData.IsVip.ToString().ToLower() },
+                { "user.is_mod",         eff.IsMod ? "true" : "false" },
+                { "user.is_sub",         eff.IsSub ? "true" : "false" },
+                { "user.is_broadcaster", chatData.IsBroadcaster ? "true" : "false" },
+                { "user.is_vip",         eff.IsVip ? "true" : "false" },
+                { "user.is_regular",     eff.IsRegular ? "true" : "false" },
                 { "user.sub_months",     chatData.SubMonths.ToString() },
                 { "user.color_hex",      chatData.ColorHex },
                 { "user.message",        chatData.Message },
                 { "event.message",       chatData.Message },
                 { "user.command",        cmdPart.ToLower() },
                 { "user.args",           argsPart },
-                { "event.iscommand",     parts[0].StartsWith("!").ToString().ToLower() },
+                { "event.iscommand",     isCmd ? "true" : "false" },
                 // Triggering chat message's id (Twitch/YouTube/Kick), from the
                 // per-platform WS mappers. "" until a platform mapper supplies it;
                 // exposed to scripts as {event.message_id} and mapped from the
                 // Chat.Message node's MessageId output socket. Feeds reply / delete.
                 { "event.message_id",    chatData.MessageId ?? "" },
+                // Triggering chatter's platform LOGIN, from the same WS mappers
+                // (falls back to the lowercased display name when a platform sends
+                // none — the twitch.get_user convention). Deliberately NOT keyed
+                // "user.login": that name belongs to the twitch / kick get_user
+                // RESULT vars, so a script that looked another user up mid-run would
+                // overwrite it. Parked in the immutable event.* trigger context
+                // instead, which is what lets the usermgmt.get_groups handler pair a
+                // login with the display-name {user.name} it is handed.
+                { "event.user_login",    string.IsNullOrWhiteSpace(chatData.Login) ? userLower : chatData.Login.Trim() },
             };
         }
 
@@ -1887,21 +2178,239 @@ namespace Phoenix.Controls.Hub.Core
         /// Scans all .phx files for on_event({eventType}): blocks and executes any that match.
         /// Covers Twitch, OBS, YouTube, and any other Streamer.bot event types.
         /// </summary>
-        public async Task ExecuteGenericEventAsync(string eventType, System.Text.Json.JsonElement data)
+        // presetVars: when non-null, the event carries a caller-supplied var
+        // dictionary and the JsonElement var-builder is skipped. This is how
+        // TimerService re-raises Timer.On{Zero,Milestone,Add} back into the
+        // on_event(...) scripts (wired via TimerService.RaiseScriptEvent) — the
+        // countdown's output sockets arrive as vars directly rather than being
+        // reconstructed from a Streamer.bot JSON payload.
+        // Per-platform live-edge collapse for the single-flag consumers below —
+        // see LivePlatformEdgeTracker for why (multi-platform restreams). Owns a
+        // cross-restart snapshot + its heartbeat timer, so it is disposed from
+        // BeginStop rather than left to the process.
+        private readonly LivePlatformEdgeTracker _liveEdges = new();
+
+        // Applies one always-on tool's live-state flip under the same guard the
+        // ApplyStreamEventAsync feeds get: unwrapped, a single faulting service would
+        // skip every LATER subsystem in the pre-guard region AND the whole .phx event
+        // scan underneath it. edge == 0 (no offline/live transition) is the common
+        // case and does nothing.
+        private static void ApplyToolStreamLive(Action<bool> setLive, int edge, string service, string eventType)
+        {
+            if (edge == 0) return;
+            try { setLive(edge > 0); }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("ScriptManager", $"{service}.SetStreamLive({eventType}) failed", ex);
+            }
+        }
+
+        public async Task ExecuteGenericEventAsync(string eventType, System.Text.Json.JsonElement data,
+            IReadOnlyDictionary<string, string>? presetVars = null)
         {
             // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
 
-            // Track the broadcaster's own live state from the StreamOnline/Offline
-            // events Hub already subscribes to (WS.TwitchEvents). twitch.is_online
-            // and twitch.get_stream answer from this for the broadcaster's own
-            // channel — Streamer.bot exposes no live metric for an arbitrary user.
+            // Track the broadcaster's own live state from the stream-lifecycle
+            // events Hub already subscribes to. twitch.is_online and
+            // twitch.get_stream answer from this for the broadcaster's own channel
+            // (an arbitrary channel goes through "Phoenix: Get Stream Status"
+            // instead, and that same action keeps THIS latch honest on a 60s
+            // reconcile — see ReconcileStreamStateAsync).
             // Runs before the logic-dir guard so tracking works even with no
-            // scripts present.
-            if (eventType.Equals("Twitch.StreamOnline", StringComparison.OrdinalIgnoreCase))
+            // scripts present. The canonical six-event map (StreamLifecycle)
+            // replaces the old Twitch-exact / ".StreamOnline"-suffix matchers:
+            // YouTube's BroadcastStarted/Ended matched NEITHER (a YouTube-only
+            // streamer was invisible to every live gate), and Kick's go-live never
+            // stamped the {uptime} timestamp. The per-platform EDGE tracker keeps
+            // multi-platform restreams sane: only the FIRST platform up / LAST
+            // platform down flips the flags, so ending one restream leg can't
+            // freeze the tools or re-arm the welcomed-set wipe mid-stream.
+            var lifecycle = StreamLifecycle.KindForEvent(eventType);
+            int liveEdge = _liveEdges.Note(lifecycle, StreamLifecycle.PlatformForEvent(eventType));
+            if (liveEdge > 0)
                 MarkBroadcasterLive(true);
-            else if (eventType.Equals("Twitch.StreamOffline", StringComparison.OrdinalIgnoreCase))
+            else if (liveEdge < 0)
                 MarkBroadcasterLive(false);
+            // Record which side owns the current live episode. A +1 here is the
+            // edge that arms the two DESTRUCTIVE per-stream resets (User-Management's
+            // welcomed-set wipe, Loyalty's per-stream dedupe), so while it is open
+            // the 60s stream-state reconcile must not consume the matching offline
+            // edge — it never fans out to those two and would strand them armed.
+            // See ScriptManager.Twitch.cs → DecideOfflineStep.
+            NoteRealLiveEdge(liveEdge);
+
+            // ── Donation ingestion boundary ──────────────────────────────────
+            // Money events get one gate BEFORE anything fans out. It has to live
+            // here rather than inside a tool because this one method feeds FOUR
+            // independent consumers (Timer, Loyalty, Alerts, and the .phx script
+            // scan below), each building its own vars — de-duping in Loyalty alone
+            // would still add subathon seconds twice and fire two alerts for one
+            // donation. Drops duplicates (same broker replaying, or two brokers
+            // relaying one tip) and test donations. presetVars != null is a
+            // synthetic re-raise, never a fresh inbound event, so it is exempt.
+            if (presetVars is null && DonationIngest.ShouldSuppress(eventType, data, out string dropReason))
+            {
+                GlobalLogger.Log($"{eventType} not processed — {dropReason}.", "ScriptManager", LogLevel.Debug);
+                return;
+            }
+
+            // ── Timer / subathon feed ────────────────────────────────────────
+            // Feed real inbound platform events into the countdown BEFORE the
+            // logic-dir guard so a subathon keeps counting with zero scripts
+            // authored. presetVars != null means this call is the timer's own
+            // Timer.On* re-raise coming back through here — it must NOT recurse
+            // into the countdown. Wrapped so a timer fault can't break dispatch.
+            if (presetVars is null)
+            {
+                // ── Ambient stream-info feed ─────────────────────────────────
+                // Cache the current title/game from the pushed platform events
+                // (Twitch.StreamUpdate, Kick.ChannelUpdate, go-live payloads…)
+                // so the tool tokens {game}/{title} and the ambient
+                // {stream.title}/{stream.game} script vars resolve without a
+                // per-script Get-User round-trip. Real events only (the
+                // presetVars guard keeps tool re-raises out). A go-live also
+                // refreshes the cache from "Phoenix: Get User" — StreamUpdate
+                // only fires on CHANGES, so a stream that starts with the right
+                // title would otherwise stay uncached all session.
+                try { StreamInfoTracker.TryApplyEvent(eventType, data); }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("ScriptManager", $"StreamInfoTracker.TryApplyEvent({eventType}) failed", ex);
+                }
+                // Twitch-only: "Phoenix: Get User" answers with the TWITCH channel's
+                // title/game — refreshing it off a Kick/YouTube go-live would race
+                // the fresher payload values those events just delivered. (The seed
+                // writes fill-if-empty, so even this trigger can't clobber.)
+                if (lifecycle == StreamLifecycle.Kind.GoingLive
+                    && StreamLifecycle.PlatformForEvent(eventType) == ChatPlatforms.Twitch)
+                    _ = AsyncErrorBoundary.SafeRunAsync(
+                        SeedStreamInfoAsync, "ScriptManager", "stream-info go-live refresh");
+
+                ApplyToolStreamLive(TimerService.Instance.SetStreamLive, liveEdge, "TimerService", eventType);
+
+                // Scheduling tool live-gate — recurring messages post only while live when
+                // OnlyWhenLive is on. Same always-on, self-gated family as Timer/Loyalty.
+                ApplyToolStreamLive(SchedulingService.Instance.SetStreamLive, liveEdge, "SchedulingService", eventType);
+
+                try
+                {
+                    var timerVars = BuildGenericEventVars(eventType, data);
+                    await TimerService.Instance.ApplyStreamEventAsync(eventType, timerVars).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("ScriptManager", $"TimerService.ApplyStreamEventAsync({eventType}) failed", ex);
+                }
+
+                // ── Loyalty / points economy earn feed ───────────────────────
+                // Same shape as the Timer feed above: real inbound platform events
+                // drive the passive earn map + broadcaster-live state BEFORE the
+                // logic-dir guard so points accrue with zero authored scripts.
+                // presetVars != null means this call is Loyalty's own OnEarn/OnPayout/
+                // OnRedeem re-raise coming back through here — the outer guard keeps it
+                // from recursing into the earn map. Wrapped so a Loyalty fault can't
+                // break event dispatch. Self-gates on Config.Enabled (OFF by default).
+                ApplyToolStreamLive(LoyaltyService.Instance.SetStreamLive, liveEdge, "LoyaltyService", eventType);
+
+                try
+                {
+                    var loyaltyVars = BuildGenericEventVars(eventType, data);
+                    await LoyaltyService.Instance.ApplyStreamEventAsync(eventType, loyaltyVars).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("ScriptManager", $"LoyaltyService.ApplyStreamEventAsync({eventType}) failed", ex);
+                }
+
+                // ── User-Management welcomed-set reset ───────────────────────
+                // The offline→live transition clears the "already welcomed this
+                // stream" set (the per-stream reset). Same always-on, self-gated
+                // family as Timer/Scheduling/Loyalty.
+                ApplyToolStreamLive(UserManagementService.Instance.SetStreamLive, liveEdge, "UserManagementService", eventType);
+
+                // ── Ranks live-gate ──────────────────────────────────────────
+                // The watch-minute accrual is gated on being live when the streamer asked
+                // for it (WatchTimeOnlineOnly, on by default) — time spent in an offline
+                // chat is not watch time. Same always-on, self-gated family as the four
+                // above.
+                ApplyToolStreamLive(RanksService.Instance.SetStreamLive, liveEdge, "RanksService", eventType);
+
+                // ── Viewer-presence live gate ────────────────────────────────
+                // The passive watch-time accrual obeys the same "only while live"
+                // rule as the ladder above (WatchTimeOnlyWhenLive, on by default):
+                // time spent in an offline chat is not watch time. The going-OFFLINE
+                // edge additionally drops the carried sub-minute remainders, so the
+                // first sample of the next stream cannot credit the gap between them.
+                //
+                // ★ This is the HONEST PLATFORM EDGE — first-platform-up /
+                // last-platform-down as measured by _liveEdges over real inbound
+                // lifecycle events — and that is the whole reason the call belongs
+                // here. Both ways of getting it wrong are silent: a gate that never
+                // flips live accrues not one minute on a default install, and a gate
+                // flipped live by something that does not mean "the stream started"
+                // hands an entire offline night to everybody sitting in chat.
+                //
+                // Unlike User-Management and Loyalty, this service's false→true edge
+                // is NOT destructive — it clears nothing and opens no per-stream
+                // window; the sampler simply resumes measuring intervals. That puts it
+                // in the same safe family as Timer / Scheduling / Ranks, which is also
+                // the family the 60 s stream-state reconcile (ScriptManager.Twitch.cs →
+                // ApplyReconciledStreamState) is permitted to drive — and the
+                // reconcile drives it too, in BOTH directions: a Hub brought up
+                // mid-stream (where no go-live event is ever delivered) resumes
+                // accrual within one ~60 s tick, and a stream that ends while
+                // Streamer.bot is down stops accruing instead of handing the
+                // offline night to everybody still sitting in chat.
+                ApplyToolStreamLive(ViewerPresenceService.Instance.SetStreamLive, liveEdge, "ViewerPresenceService", eventType);
+
+                // ── Alerts event feed ────────────────────────────────────────
+                // Same shape as the Timer/Loyalty feeds: real inbound platform events
+                // drive the per-family tiered responses BEFORE the logic-dir guard so
+                // alerts fire with zero authored scripts. Self-gates on Config.Enabled
+                // (OFF by default). Wrapped so an alert fault can't break dispatch.
+                try
+                {
+                    if (AlertsService.Instance.Active)
+                    {
+                        var alertVars = BuildGenericEventVars(eventType, data);
+                        await AlertsService.Instance.ApplyStreamEventAsync(eventType, alertVars).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Error("ScriptManager", $"AlertsService.ApplyStreamEventAsync({eventType}) failed", ex);
+                }
+
+                // ── goal.* Overlay Live Channel feed ─────────────────────────
+                // The V10 goal contract's PRODUCER: Twitch's channel-goal and charity-campaign
+                // events become goal.<kind>.{current,target,progress,label} on the live channel,
+                // which is what a Goal.Progress widget binds. Same always-on, pre-guard family as
+                // the four feeds above — a goal bar must work with zero scripts authored.
+                //
+                // ★ WHY HERE AND NOT INSIDE THE VAR BUILDER. This hook gets the RAW JsonElement.
+                // The charity half needs it: charity.targetAmount is on no normalisation path at
+                // all (NormalizeMoneyVars rewrites only event.amount / event.amount_cents /
+                // event.currency), so reading `current` from the canonicalised var and `target`
+                // from the raw one would produce a 100x ratio error inside a single event —
+                // precisely what a progress bar exists to avoid. Both sides therefore come off the
+                // raw payload through one normalisation. Sitting beside the tool feeds also keeps
+                // it after the donation-ingest gate, which is correct: charity is not a broker
+                // event, so ShouldSuppress never drops it, and the producer SETS absolute values
+                // rather than accumulating — a replay is idempotent.
+                //
+                // SafeRunAsync rather than a bare discard, per the channel's publish rule: the
+                // batch is synchronous and cheap (a handful of dictionary writes behind the
+                // store's lock), so it is awaited, and the boundary routes any fault to
+                // GlobalLogger.Error instead of the caller.
+                if (GoalChannelProducer.Handles(eventType))
+                {
+                    await AsyncErrorBoundary.SafeRunAsync(
+                        () => { GoalChannelProducer.Publish(eventType, data); return Task.CompletedTask; },
+                        "GoalChannelProducer", $"goal.* live-channel publish ({eventType})")
+                        .ConfigureAwait(false);
+                }
+            }
 
             if (!Directory.Exists(_logicPath)) return;
 
@@ -1913,6 +2422,15 @@ namespace Phoenix.Controls.Hub.Core
             // eventType (the var-builder already accepts both names, ~line 1920).
             string matchType = eventType.Equals("Twitch.RewardRedemption", StringComparison.OrdinalIgnoreCase)
                 ? "Twitch.PointRedeem" : eventType;
+
+            // Same shape, second instance: Streamer.bot raises a moderator/broadcaster
+            // announcement as "Twitch.Announcement", but that node title was ALREADY
+            // taken by the outbound send-announcement ACTION node, so the inbound
+            // trigger had to be named Twitch.AnnouncementReceived. Without this alias
+            // the node would exist, its vars would resolve, and no script would ever
+            // be selected for it — the silent-subscription failure one layer up.
+            if (matchType.Equals("Twitch.Announcement", StringComparison.OrdinalIgnoreCase))
+                matchType = "Twitch.AnnouncementReceived";
 
             // A resub IS a subscription. Streamer.bot raises renewals as a distinct
             // "Twitch.Resub", but streamers author a single Twitch.Sub(scription)
@@ -1942,11 +2460,15 @@ namespace Phoenix.Controls.Hub.Core
                     string content = await ScriptRegistry.Instance.GetContentAsync(info.FileName).ConfigureAwait(false);
                     if (string.IsNullOrEmpty(content)) continue;
 
-                    var vars = BuildGenericEventVars(eventType, data);
+                    var vars = presetVars is not null
+                        ? new Dictionary<string, string>(presetVars)
+                        : BuildGenericEventVars(eventType, data);
                     // Stream.GoingLive / Stream.SessionEnd Title + Category pins.
                     // (BuildGenericEventVars already sets user.platform for the
                     // Platform pin, but maps data.title → user.reward, so title /
                     // category are extracted here under their own tokens.)
+                    // Applied AFTER the presetVars branch above so a caller-supplied
+                    // var set still gets the lifecycle pins bound.
                     if (streamKind != StreamLifecycle.Kind.None)
                         ApplyStreamLifecycleVars(eventType, data, vars);
 
@@ -2037,9 +2559,33 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public async Task ExecuteOnBusScriptsAsync(string busEventType, Dictionary<string, string> vars)
         {
+            // Shutdown-teardown guard — mirrors ExecuteOnChatScriptsAsync. Once
+            // BeginStop has run the rate-limit semaphores are being / have been
+            // disposed, and Bus keeps its OWN _stopped flag, so a Hub-origin
+            // broadcast still in flight (a timer tick, a layer teardown) can reach
+            // AcquireEventSlotAsync's WaitAsync on a disposed semaphore and log an
+            // ObjectDisposedException per matching script. Before local delivery
+            // landed this path was reachable only from peer frames, and peers
+            // disconnect earlier in teardown.
+            if (System.Threading.Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+
             // Async init gate — see ExecuteEventScriptAsync.
             await _initTask.ConfigureAwait(false);
             if (!Directory.Exists(_logicPath)) return;
+
+            // Re-admit this dispatch at the rate limiter. Bus invokes us
+            // fire-and-forget, so we inherit the ambient ExecutionContext of
+            // whatever called BroadcastAsync — and when that caller is a SCRIPT
+            // (bus.send / bus.broadcast in a script body) the inherited flow has
+            // _eventSemaphoreHeld = true. AcquireEventSlotAsync would then return
+            // Reentered and skip BOTH brakes: the MaxConcurrentEventScripts ceiling
+            // and TryAdmit, which is where a user's ExecutionPolicy.Discard lives —
+            // the one control reachable from the Script Monitor to stop a runaway
+            // relay. The re-entry flag is for a genuinely NESTED call inside a held
+            // slot (event.trigger); a detached dispatch is a new flow and must
+            // queue like any other. Clearing it here also puts a ceiling on the
+            // AI_CHUNK case, where one streamed response fans one dispatch per token.
+            _eventSemaphoreHeld.Value = false;
 
             foreach (var info in ScriptRegistry.Instance.WhereEnabled(s => s.BusEventTypes.Contains(busEventType)))
             {
@@ -2198,7 +2744,8 @@ namespace Phoenix.Controls.Hub.Core
         /// ClipboardService receives a WM_CLIPBOARDUPDATE. Unlike hotkey /
         /// webhook, clipboard events have no discriminator — the OS doesn't
         /// differentiate by handler — so every subscriber runs in parallel
-        /// (gated only by the webhook rate-limit semaphore + 30s acquire).
+        /// (gated only by the clipboard rate-limit semaphore, cap =
+        /// AppConfig.MaxConcurrentClipboardScripts, + 30s acquire).
         /// Vars: event.text holds the new clipboard text content (empty
         /// string if non-text format); clipboard.text mirrors it.
         /// </summary>
@@ -2230,7 +2777,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 string fn = info.FileName;
                 // Execution-policy gate — see TryAdmit. Overlap skips the
-                // shared webhook semaphore; Discard drops the trigger while
+                // clipboard semaphore; Discard drops the trigger while
                 // an execution of this script is already in flight.
                 if (!TryAdmit(fn, out bool bypassSemaphore))
                     return;
@@ -2238,10 +2785,10 @@ namespace Phoenix.Controls.Hub.Core
                 if (!bypassSemaphore)
                 {
                     EmitQueued(fn);
-                    if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                    if (!await _clipboardSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
                     {
                         GlobalLogger.Log(
-                            $"Clipboard script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
+                            $"Clipboard script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentClipboardScripts}).",
                             "ScriptManager", LogLevel.CriticalError);
                         return;
                     }
@@ -2282,9 +2829,11 @@ namespace Phoenix.Controls.Hub.Core
                 finally
                 {
                     // An Overlap bypass never took a slot — only release when we did.
+                    // ObjectDisposedException: Stop() can dispose the semaphore
+                    // while this script is still in flight.
                     if (slotHeld)
                     {
-                        try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                        try { _clipboardSemaphore.Release(); } catch (ObjectDisposedException) { }
                     }
                 }
             }
@@ -2293,9 +2842,10 @@ namespace Phoenix.Controls.Hub.Core
         /// <summary>
         /// Scans all .phx files for on_hotkey("Ctrl+Shift+P"):
         /// blocks and fires them when HotkeyService receives a WM_HOTKEY
-        /// for the matching keystroke. Same rate-limit semaphore as
-        /// on_webhook / on_websocket — a hotkey held down can't pile up
-        /// unbounded concurrent script executions.
+        /// for the matching keystroke. Rate-limited by its own semaphore
+        /// (cap = AppConfig.MaxConcurrentHotkeyScripts) so a hotkey held down
+        /// can't pile up unbounded concurrent script executions — and can't
+        /// eat the on_webhook / on_websocket pool while doing it.
         /// </summary>
         public async Task ExecuteOnHotkeyScriptsAsync(string combo)
         {
@@ -2323,21 +2873,21 @@ namespace Phoenix.Controls.Hub.Core
             }
 
             string fn = match.FileName;
-            // Execution-policy gate — see TryAdmit. Overlap skips the shared
-            // webhook semaphore; Discard drops the trigger while an execution
+            // Execution-policy gate — see TryAdmit. Overlap skips the hotkey
+            // semaphore; Discard drops the trigger while an execution
             // of this script is already in flight.
             if (!TryAdmit(fn, out bool bypassSemaphore))
                 return;
             bool slotHeld = false;
             if (!bypassSemaphore)
             {
-                if (_webhookSemaphore.CurrentCount == 0)
+                if (_hotkeySemaphore.CurrentCount == 0)
                     GlobalLogger.Log($"Rate limit reached for hotkey scripts — queuing '{fn}'", "ScriptManager", LogLevel.System);
                 EmitQueued(fn);
-                if (!await _webhookSemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                if (!await _hotkeySemaphore.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
                 {
                     GlobalLogger.Log(
-                        $"Hotkey script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentWebhookScripts}).",
+                        $"Hotkey script '{fn}' dropped — semaphore acquire timed out (cap={ConfigManager.Current.MaxConcurrentHotkeyScripts}).",
                         "ScriptManager", LogLevel.CriticalError);
                     return;
                 }
@@ -2379,9 +2929,11 @@ namespace Phoenix.Controls.Hub.Core
             finally
             {
                 // An Overlap bypass never took a slot — only release when we did.
+                // ObjectDisposedException: Stop() can dispose the semaphore
+                // while this script is still in flight.
                 if (slotHeld)
                 {
-                    try { _webhookSemaphore.Release(); } catch (ObjectDisposedException) { }
+                    try { _hotkeySemaphore.Release(); } catch (ObjectDisposedException) { }
                 }
             }
         }
@@ -2680,7 +3232,7 @@ namespace Phoenix.Controls.Hub.Core
                 // gift events the key was never written and {user.sub_months} rendered as
                 // a literal placeholder (milestone messaging silently saw nothing). Probe
                 // all four — same key set as WS.ResolveSubMonths.
-                foreach (var monthsKey in new[] { "cumMonths", "cumulativeMonths", "cumulative_months", "cumulative" })
+                foreach (var monthsKey in SubMonthKeys)
                 {
                     if (data.TryGetProperty(monthsKey, out var months))
                     {
@@ -2826,11 +3378,49 @@ namespace Phoenix.Controls.Hub.Core
                 // The bespoke Twitch probes above stay behavior-frozen; every
                 // event declared in PlatformEventCatalog resolves its vars (and
                 // the raw event.payload fallback) through the shared resolver.
-                var platformDef = PlatformEventCatalog.Find(eventType);
+                // FindForEvent, not Find: this is the RAW WIRE type. For the entries whose
+                // node title had to differ from the event name Streamer.bot sends
+                // (Twitch.Announcement → Twitch.AnnouncementReceived) a title-keyed lookup
+                // returns null and the node's pins stay permanently empty, with nothing
+                // logged anywhere to say so.
+                var platformDef = PlatformEventCatalog.FindForEvent(eventType);
                 if (platformDef is not null)
                     PlatformEventVarResolver.Apply(platformDef, data, vars);
+
+                // Canonical money — LAST, so it wins over whatever raw shape the
+                // catalog resolver or the bespoke probes above left in
+                // event.amount. Rewrites the money vars into one invariant form
+                // (decimal + integer minor units + ISO currency) so every consumer
+                // — subathon seconds, loyalty points, alert text — reads the same
+                // number instead of each re-parsing a broker-specific string.
+                DonationIngest.NormalizeMoneyVars(eventType, data, vars);
             }
             catch { /* Best effort extraction */ }
+
+            // Group overlay (User-Management tool): surface Regular-group membership
+            // on every user-carrying event so event scripts can gate on
+            // {user.is_regular} — the same key Chat.Message-triggered scripts get.
+            // False while the tool is dormant. Resolved LOGIN-first with the display
+            // name as the fallback — the identical pairing the chat overlay applies:
+            // group members are keyed by login, while user.name above is the payload's
+            // DISPLAY name, so a localized display name matched nothing on its own.
+            try
+            {
+                if (vars.TryGetValue("user.name", out var evUser))
+                {
+                    // Resolved once, consumed twice: the overlay below, and the same
+                    // {event.user_login} pairing key BuildChatVars writes on the chat
+                    // path — so a User.GetGroups node in an on_event script gets the
+                    // login treatment too instead of only chat-triggered ones. Left
+                    // unset when the payload carried no login (the handler then falls
+                    // back to the display name it was handed).
+                    string evLogin = ResolveActorLogin(data);
+                    if (evLogin.Length > 0) vars["event.user_login"] = evLogin;
+                    vars["user.is_regular"] =
+                        UserManagementService.Instance.IsRegular(evLogin, evUser) ? "true" : "false";
+                }
+            }
+            catch { /* overlay is best-effort — never break event dispatch */ }
             return vars;
         }
 
@@ -2906,6 +3496,38 @@ namespace Phoenix.Controls.Hub.Core
                 if (!string.IsNullOrEmpty(n)) return n;
             }
             foreach (var k in new[] { "displayName", "userName", "user_name" })
+                if (data.TryGetProperty(k, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    var s = v.GetString();
+                    if (!string.IsNullOrEmpty(s)) return s!;
+                }
+            return "";
+        }
+
+        // Probe order for the acting user's LOGIN, hoisted static for the same reason
+        // SubMonthKeys is: BuildGenericEventVars runs up to three times per platform
+        // event (the Timer / Loyalty / Alerts feeds each build their own copy).
+        private static readonly string[] ActorLoginNestedKeys = { "login", "userLogin", "name" };
+        private static readonly string[] ActorLoginFlatKeys   = { "login", "userLogin", "user_login", "userName" };
+
+        // The login-side twin of ResolveActorName. Group membership (User-Management)
+        // is keyed by LOGIN, and a Twitch display name can be localized and share
+        // nothing with it, so the display name alone is not a usable identity. Probes
+        // the nested user object first (SB carries the login as `name` there), then
+        // the flattened SB / EventSub spellings. "" when the payload has no login —
+        // the caller then falls back to the display name.
+        private static string ResolveActorLogin(System.Text.Json.JsonElement data)
+        {
+            if (data.TryGetProperty("user", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                foreach (var k in ActorLoginNestedKeys)
+                    if (u.TryGetProperty(k, out var nested) && nested.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        var n = nested.GetString();
+                        if (!string.IsNullOrEmpty(n)) return n!;
+                    }
+            }
+            foreach (var k in ActorLoginFlatKeys)
                 if (data.TryGetProperty(k, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String)
                 {
                     var s = v.GetString();

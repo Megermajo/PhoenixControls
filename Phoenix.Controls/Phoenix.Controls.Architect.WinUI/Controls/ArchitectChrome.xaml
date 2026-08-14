@@ -20,7 +20,8 @@
 <UserControl
     x:Class="Phoenix.Controls.Architect.WinUI.Controls.ArchitectChrome"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <UserControl.Resources>
         <!-- Implicit menu-chrome styles — scoped to ArchitectChrome's
@@ -348,7 +349,8 @@
                         <MenuFlyoutItem x:Name="MenuScriptSyncEventPeers"
                                         Text="Sync Event Peers"
                                         Click="OnScriptSyncEventPeersClicked"
-                                        ToolTipService.ToolTip="Propagate Event.Trigger/Executor/Return socket lists to peer .phxg files in the same project." />
+                                        ToolTipService.ToolTip="Propagate Event.Trigger/Executor/Return socket lists to peer .phxg files in the same project."
+                                        loc:Localize.TooltipKey="chrome.architect.script.syncEventPeers.tip" />
                     </MenuBarItem>
                     <MenuBarItem x:Name="MenuHelp" Title="Help">
                         <MenuFlyoutItem x:Name="MenuHelpNodeRef" Text="Node Reference" Click="OnHelpNodeRefClicked"
@@ -376,7 +378,8 @@
                         <MenuFlyoutItem x:Name="MenuHelpDiagnoseFreeze"
                                         Text="Diagnose freeze…"
                                         Click="OnHelpDiagnoseFreezeClicked"
-                                        ToolTipService.ToolTip="Open today's diagnostic log (look for 'UI thread unresponsive' entries)." />
+                                        ToolTipService.ToolTip="Open today's diagnostic log (look for 'UI thread unresponsive' entries)."
+                                        loc:Localize.TooltipKey="chrome.architect.help.diagnoseFreeze.tip" />
                     </MenuBarItem>
                 </MenuBar>
 
@@ -427,6 +430,8 @@
                             Content="&#xE711;"
                             ToolTipService.ToolTip="Close file"
                             AutomationProperties.Name="Close current file"
+                            loc:Localize.TooltipKey="chrome.architect.file.close.tip"
+                            loc:Localize.AutomationKey="chrome.architect.file.close.a11y"
                             Visibility="Collapsed"
                             Click="OnCloseFileClicked" />
                 </StackPanel>
@@ -456,7 +461,9 @@
                     <Button Style="{StaticResource PillarTabStyle}"
                             Click="OnHubTabClicked"
                             ToolTipService.ToolTip="Launch Hub"
-                            AutomationProperties.Name="Launch Hub pillar">
+                            AutomationProperties.Name="Launch Hub pillar"
+                            loc:Localize.TooltipKey="chrome.architect.pillar.hub.tip"
+                            loc:Localize.AutomationKey="chrome.architect.pillar.hub.a11y">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Border Width="18" Height="18" CornerRadius="2"
                                     Background="{StaticResource ChromePillarHubGradient}">
@@ -495,7 +502,9 @@
                     <Button Style="{StaticResource PillarTabStyle}"
                             Click="OnVisualistTabClicked"
                             ToolTipService.ToolTip="Launch Visualist"
-                            AutomationProperties.Name="Launch Visualist pillar">
+                            AutomationProperties.Name="Launch Visualist pillar"
+                            loc:Localize.TooltipKey="chrome.architect.pillar.visualist.tip"
+                            loc:Localize.AutomationKey="chrome.architect.pillar.visualist.a11y">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <Border Width="18" Height="18" CornerRadius="2"
                                     Background="{StaticResource ChromePillarVisualistGradient}">

@@ -1,5 +1,4 @@
 using System;
-using System.ComponentModel;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Shared.Core
@@ -77,16 +76,6 @@ namespace Phoenix.Controls.Shared.Core
             foreach (var d in handlers.GetInvocationList())
             {
                 try { ((EventHandler<TArgs>)d)(sender, args); }
-                catch (Exception ex) { GlobalLogger.Error(source, label, ex); }
-            }
-        }
-
-        public static void RaisePropertyChanged(PropertyChangedEventHandler? handlers, object? sender, PropertyChangedEventArgs args, string source, string label)
-        {
-            if (handlers is null) return;
-            foreach (var d in handlers.GetInvocationList())
-            {
-                try { ((PropertyChangedEventHandler)d)(sender, args); }
                 catch (Exception ex) { GlobalLogger.Error(source, label, ex); }
             }
         }

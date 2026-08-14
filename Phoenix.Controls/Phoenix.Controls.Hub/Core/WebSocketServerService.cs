@@ -17,8 +17,7 @@ namespace Phoenix.Controls.Hub.Core
     /// External WebSocket listener that fires
     /// <c>on_websocket("name")</c> handler blocks when a client posts a message
     /// to <c>/ws/&lt;name&gt;</c>. Sister surface to <see cref="HUDServer"/>
-    /// (overlay browser sources) and <see cref="RemoteBridgeServer"/>
-    /// (Viewer-roadmap remote control), but for raw external WS clients —
+    /// (overlay browser sources), but for raw external WS clients —
     /// streamer-authored panels / dashboards / bridges that don't use the
     /// pairing flow.
     ///
@@ -65,7 +64,6 @@ namespace Phoenix.Controls.Hub.Core
         private HttpListener? _listener;
         private CancellationTokenSource? _cts;
         private Task? _acceptTask;
-        private string? _activePrefix;
 
         private readonly ConcurrentDictionary<Guid, WebSocket> _sessions = new();
 
@@ -90,7 +88,6 @@ namespace Phoenix.Controls.Hub.Core
         private const int DefaultMaxAggregatedFrameBytes = 1024 * 1024;
 
         public bool IsRunning => _listener is { IsListening: true };
-        public string? ActivePrefix => _activePrefix;
 
         // Live status accessors for
         // the Hub StatusStrip badge. IsListening mirrors IsRunning (kept as a
@@ -189,7 +186,6 @@ namespace Phoenix.Controls.Hub.Core
                 _wsScriptSem = null;
                 return Task.CompletedTask;
             }
-            _activePrefix = prefix;
             _acceptTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
             GlobalLogger.Log(
                 $"WebSocketServerService listening on {prefix} (concurrent-script cap={cap}).",
@@ -221,7 +217,6 @@ namespace Phoenix.Controls.Hub.Core
             _cts = null;
             try { _wsScriptSem?.Dispose(); } catch { }
             _wsScriptSem = null;
-            _activePrefix = null;
         }
 
         /// <summary>
@@ -230,8 +225,7 @@ namespace Phoenix.Controls.Hub.Core
         /// per-socket close handshake drain; calling
         /// <c>.GetAwaiter().GetResult()</c> on the UI thread schedules
         /// continuations on the captured SynchronizationContext and deadlocks
-        /// the dispatch loop. Mirrors <see cref="RemoteBridgeServer.DisposeAsync"/>
-        /// and the Bus.Stop pattern.
+        /// the dispatch loop. Mirrors the Bus.Stop pattern.
         /// </summary>
         public async ValueTask DisposeAsync()
         {

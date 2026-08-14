@@ -79,13 +79,16 @@ internal static class WidgetNodeProse
             Description: "<p>A branch barrier. It reads <code>eventData[When]</code> (e.g. <code>When = Args1</code>) and compares it to <code>Equals</code> (inline or wired). On a match the image flows through; on a mismatch the branch goes dark — wire two of these to show different visuals per outcome.</p>",
             Example: "<code>When=Args1</code>, <code>Equals=win</code> &rarr; show the victory burst; a second one for <code>lose</code>."),
         ["Visual.Complete"] = new(
-            Summary: "Signals Hub that the effect has finished — closes the loop on Async.WaitForVisual.",
-            Description: "<p>When evaluation reaches this node the browser sends <code>VISUAL_COMPLETE</code> back to Hub, so an Architect <code>Async.WaitForVisual</code> continues on its <code>Done</code> branch. If you don't place one, Hub falls back to the first <code>Display</code> render.</p>",
-            Example: "End a multi-second entrance animation so the script can post the welcome line after."),
+            Summary: "Signals Hub that the effect has finished — and can hand a string back up to the script.",
+            Description: "<p>When evaluation reaches this node the browser sends <code>VISUAL_COMPLETE</code> back to Hub, so an Architect <code>Async.WaitForVisual</code> continues on its <code>Done</code> branch. If you don't place one, Hub falls back to the first <code>Display</code> render.</p>"
+                       + "<p><b>The two inputs are not the same kind of thing.</b> <code>In</code> is the ordering pin, kept for symmetry with <code>Display</code> — whatever you wire into it is <em>never rendered</em>. <code>Payload</code> is the return channel: wire a <code>String</code> and its value travels up with the completion into the script's <code>global._wait_payload</code>, which <code>Async.WaitForVisual</code> exposes on its own <code>Payload</code> output. Leave <code>Payload</code> unwired and the field is omitted entirely, exactly as before.</p>"
+                       + "<p><b>Fan-out is not deterministic.</b> Every widget that owns the fired trigger on a layer shares <em>one</em> waitId, and the first completion to arrive wins — later ones are dropped and logged once. So with two OBS Browser Sources pointed at the same layer, which widget's <code>Payload</code> reaches the script is unpredictable. Use one source per layer when the payload has to be deterministic.</p>",
+            Example: "End a multi-second entrance animation, and send the winning outcome back as the Payload so the script can post the matching chat line."),
         ["Message.Read"] = new(
-            Summary: "Reads the trigger's message text as a string.",
-            Description: "<p>A convenience source for the message field carried by the firing trigger — wire it straight into <code>Text.Render</code> or a <code>String.*</code> transform.</p>",
-            Example: "Pull the chat message into an on-screen caption."),
+            Summary: "Reads one named field out of the firing trigger's event data, as a string.",
+            Description: "<p>Reads <code>eventData[Key]</code> — <code>Key</code> defaults to <code>Args1</code> — and falls back to <code>MockValue</code> when the field wasn't supplied. Wire it straight into <code>Text.Render</code> or a <code>String.*</code> transform.</p>"
+                       + "<p><b>Prefer <code>Visual.Arg</code> in new graphs.</b> This node's <code>MockValue</code> renders <em>on stream</em>, not just at design time, so a placeholder can reach air. <code>Visual.Arg</code> is the same read with a design-time-only placeholder. This one is kept because it lives in already-authored layers.</p>",
+            Example: "Pull Args1 out of the trigger and render it as an on-screen caption."),
 
         // ═════════════════════════════ INPUTS ═════════════════════════════
         ["Image.Load"] = new(

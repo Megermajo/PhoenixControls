@@ -558,6 +558,7 @@ namespace Phoenix.Controls.Shared.Services
         // bounded channel no longer do.
         private static void DispatchOnLogEntry(Log entry)
         {
+            if (OnLogEntry == null) return;
             if (_isDispatchingOnLogEntry.Value)
             {
                 System.Diagnostics.Debug.WriteLine(

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.ToolDisclosureRow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        38 px fold row — the instrument that makes a dense config page calm.
+
+        A Pre-Build page mixes two kinds of setting: the ones a streamer touches
+        mid-stream (a master switch, a role gate, a cooldown) and the ones set
+        once and forgotten (moderator sub-verbs, sub/VIP priority, reply
+        templates). Showing both at the same weight is most of why these pages
+        read as cluttered.
+
+        ★ NEVER fold a mid-stream setting. The master switch, role gates and
+        cooldowns stay visible. This row is for the set-once half only.
+
+        ★ It is NOT an Expander. An implicit Expander style hard-crashed the app
+        on first tab realization, and even a keyed one materializes a full
+        ControlTemplate lazily. This is a Button plus a Border whose Visibility
+        the host flips — no template, nothing lazy.
+
+        The label names the CONTENTS ("Moderator commands"), never the mechanism,
+        and carries no description line: if the row needs a sentence to explain
+        it, the label is wrong.
+
+        Self-sufficient by design — see the note in ToolPageHeader.xaml.
+    -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <StackPanel>
+        <Button x:Name="HeaderButton"
+                Height="38"
+                Padding="0"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Stretch"
+                Background="Transparent"
+                BorderBrush="{StaticResource CoalCardBrush}"
+                BorderThickness="0,1,0,0"
+                CornerRadius="0"
+                Click="OnHeaderClick">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="LabelText"
+                           Grid.Column="0"
+                           VerticalAlignment="Center"
+                           FontFamily="{StaticResource SansFont}"
+                           FontSize="12"
+                           Foreground="{StaticResource CoalBodyTextBrush}" />
+
+                <TextBlock x:Name="CountText"
+                           Grid.Column="1"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed"
+                           Style="{StaticResource ToolMonoHintTextStyle}" />
+
+                <TextBlock x:Name="Chevron"
+                           Grid.Column="2"
+                           VerticalAlignment="Center"
+                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                           FontSize="11"
+                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                           Text="&#xE70D;" />
+            </Grid>
+        </Button>
+
+        <!-- The host puts the folded content here. Collapsed by default. -->
+        <ContentPresenter x:Name="BodyHost"
+                          Visibility="Collapsed"
+                          Margin="0,8,0,12" />
+    </StackPanel>
+</UserControl>

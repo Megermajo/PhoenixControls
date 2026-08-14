@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace Phoenix.Controls.Architect.WinUI.Hosting;
 
@@ -84,6 +84,14 @@ internal static class NodeProse
             "Reusable subgraphs called like a single node. A macro is inline-expanded into the graph at export time; build once, reuse everywhere. <code>Macro.Entry</code> / <code>Macro.Exit</code> declare its parameters and return values."),
         new CategoryMeta("Giveaway", "#5A2E3A",
             "Run a giveaway straight from a graph — open it, take weighted tickets per viewer, draw a winner. The same engine the Hub Giveaway panel drives, so chat commands and the panel stay in sync."),
+        new CategoryMeta("Timer", "#7A3F2E",
+            "Subathon-style countdowns — start, pause, add or subtract time, read the clock, and react when it crosses a milestone or runs out. The Hub Timer tool owns the clock (it keeps running with no graph open and survives restarts); these nodes drive the same timer the panel and the OBS overlay show. An empty <code>Name</code> targets the default timer — a name is matched by slug or display name, and an unknown one falls back to the default too. Durations take a bare number (seconds) or units: <code>90s</code> / <code>5m</code> / <code>1h30m</code> / <code>2h</code> / <code>1d</code>."),
+        new CategoryMeta("Song Requests", "#6B2E33",
+            "A YouTube song-request queue — viewers ask with <code>!sr &lt;link&gt;</code> and you keep the caps, the price and the moderation. The Hub Song Request tool owns the queue and the transport state (which track is selected, playing or held, at what volume); the audio itself plays in the OBS overlay. A link or a bare video id needs nothing set up; searching by name needs a free YouTube Data API key, entered in Hub under <b>Settings &rarr; Connection</b>, and without one Phoenix asks for a link rather than guessing. The queue is per session — a restart starts an empty line, because a restart cannot resume a half-played track."),
+        new CategoryMeta("Polls", "#4B3A70",
+            "A chat poll with an optional points side-bet — viewers answer with <code>!vote &lt;number&gt;</code> and can stake with <code>!bet &lt;number&gt; &lt;amount&gt;</code>. One poll runs at a time; it closes itself when its time is up, or a node can close it early. Betting rides your Loyalty points: stakes are charged when the bet lands and the winners split the whole pot in proportion to what they risked, so a backer gets their stake back plus a share of the losing side. A tie, an unvoted poll or a cancel returns every stake instead. The live state is published to the overlay under <code>poll.*</code>, and a poll can also mirror onto Twitch's own poll or prediction where your Streamer.bot action pack supports it. The poll is per session — a restart does not resume one, because its countdown cannot be resumed."),
+        new CategoryMeta("Ranks", "#1F5A5E",
+            "A rank ladder over watch time or points — name the rungs, and viewers climb them. The Hub Ranks tool owns the ladder: it counts watched minutes into the OPEN <code>WatchTime</code> databank table on the same tick the Loyalty payout uses, remembers each viewer's last rank in the OPEN <code>Ranks</code> table, answers <code>!rank</code> / <code>!ranks</code> in chat, and publishes the board to the overlay under <code>rank.*</code> — so <code>db.*</code> nodes can read and build on both tables. A rung can also grant a User-Management group, which is how a rank turns into real role rights. The <code>Rank.Get</code> read is pure (it resolves the panel-configured ladder, which no <code>db.*</code> node can reach — the raw numbers themselves are ordinary open-table reads for <code>DB.GetCell</code> / <code>DB.Top</code>); <code>Rank.Evaluate</code> is the one that can fire <code>Rank.OnRankUp</code>, and it exists because a graph that moves points with a Databank node bypasses every automatic check. Two rules run through the whole band: viewers are identified by their <b>login</b>, never their display name, and a viewer with nothing on record is unranked — no rank is minted, announced or granted for a name the tool has never counted, which is also why <code>!rank &lt;someone else&gt;</code> is a look-up and nothing more."),
         new CategoryMeta("System", "#3A4257",
             "Logging and the always-on clock / calendar / uptime. <code>System.Log</code> writes to the Hub System Log; the time probes feed the same values as the <code>{system.*}</code> and <code>{stream.*}</code> tokens."),
         new CategoryMeta("AI", "#5A2E5A",
@@ -108,7 +116,7 @@ internal static class NodeProse
         // ═══════════════════════════════ EVENTS ═══════════════════════════════
         ["Chat.Message"] = new(
             Summary: "Fires when any chatter — including the broadcaster and bots — sends a message on Twitch, YouTube Live or Kick, whichever platforms are ticked on the node.",
-            Description: "<p>The workhorse trigger, now for every platform at once. The three platform checkmarks on the node body choose which chats fire it (new nodes listen to all three), and <code>Platform</code> reports <code>twitch</code>, <code>youtube</code> or <code>kick</code> so one flow can branch per platform with <code>Logic.Switch</code>. <code>Message</code> is the raw line; <code>IsCommand</code> is true whenever it starts with <code>!</code> (the <code>Commands</code> filter separately gates whether the flow fires). <code>Command</code> is the first word lowercased with <code>!</code> stripped (the matched alias inside a filtered flow), and <code>Args</code> is the text after it as one space-separated string — <code>Text.Split</code> it on space before <code>Array.Get</code>/<code>Flow.ForEach</code>. The <code>User</code> output is a packed array — read individual fields with <code>Array.Get</code>/<code>Array.Unpack</code>, or use the broken-out <code>IsMod</code>/<code>IsSub</code>/<code>IsBroadcaster</code>/<code>IsVip</code> pins plus <code>SubMonths</code> and <code>ColorHex</code>. The final <code>MessageId</code> pin carries the triggering message's id (also available as <code>{event.message_id}</code>) — wire it into <code>Twitch.Reply</code> to answer as a threaded reply.</p><p>Role pins bind best-effort off Twitch: YouTube maps owner / moderator / member onto <code>IsBroadcaster</code> / <code>IsMod</code> / <code>IsSub</code>, Kick maps moderator / subscriber onto <code>IsMod</code> / <code>IsSub</code>, and <code>IsVip</code> is Twitch-only. Old <code>Twitch.ChatMessage</code> and <code>YouTube.Message</code> nodes upgrade to this node automatically on load with only their original platform ticked, so existing graphs behave exactly as before. Bots and the broadcaster fire this too — set the Bot Username in Settings if you don't want feedback loops. Chat scripts are capped at a few concurrent runs, so a flood queues rather than piling up. The <code>{user.name}</code> token is always lowercased — a stable identity key you can use for databank lookups.</p>",
+            Description: "<p>The workhorse trigger, now for every platform at once. The three platform checkmarks on the node body choose which chats fire it (new nodes listen to all three), and <code>Platform</code> reports <code>twitch</code>, <code>youtube</code> or <code>kick</code> so one flow can branch per platform with <code>Logic.Switch</code>. <code>Message</code> is the raw line; <code>IsCommand</code> is true whenever it starts with <code>!</code> (the <code>Commands</code> filter separately gates whether the flow fires). <code>Command</code> is the first word lowercased with <code>!</code> stripped (the matched alias inside a filtered flow), and <code>Args</code> is the text after it as one space-separated string — <code>Text.Split</code> it on space before <code>Array.Get</code>/<code>Flow.ForEach</code>. The <code>User</code> output is a packed array — read individual fields with <code>Array.Get</code>/<code>Array.Unpack</code>, or use the broken-out <code>IsMod</code>/<code>IsSub</code>/<code>IsBroadcaster</code>/<code>IsVip</code> pins plus <code>SubMonths</code> and <code>ColorHex</code>. <code>IsRegular</code> reads the User-Management tool's Regular group — a Phoenix community tier with no platform source — and a group-granted Moderator / VIP / Subscriber makes the matching role pin report true without the platform rank. The final <code>MessageId</code> pin carries the triggering message's id (also available as <code>{event.message_id}</code>) — wire it into <code>Twitch.Reply</code> to answer as a threaded reply.</p><p>Role pins bind best-effort off Twitch: YouTube maps owner / moderator / member onto <code>IsBroadcaster</code> / <code>IsMod</code> / <code>IsSub</code>, Kick maps moderator / subscriber onto <code>IsMod</code> / <code>IsSub</code>, and <code>IsVip</code> is Twitch-only. Old <code>Twitch.ChatMessage</code> and <code>YouTube.Message</code> nodes upgrade to this node automatically on load with only their original platform ticked, so existing graphs behave exactly as before. Bots and the broadcaster fire this too — set the Bot Username in Settings if you don't want feedback loops. Chat scripts are capped at a few concurrent runs, so a flood queues rather than piling up. The <code>{user.name}</code> token is always lowercased — a stable identity key you can use for databank lookups.</p>",
             Example: "Set <code>Commands</code> to <b>ping</b> &rarr; reply with <code>Chat.Send</code>, wiring the <code>Platform</code> output into its <code>Platforms</code> override so the answer goes back to whichever platform asked — no per-platform branch needed."),
         ["Twitch.Subscription"] = new(
             Summary: "Fires on a subscription — including resubs, which additively fire this node too. Gift subs have their own dedicated nodes.",
@@ -391,8 +399,8 @@ internal static class NodeProse
             Description: "<p><code>DateTime</code> is ISO-8601. A one-shot timer — it never repeats. Use it for a countdown to a scheduled event.</p>",
             Example: "Fire at <code>2026-01-01T20:00:00</code> &rarr; kick off the New Year overlay."),
         ["Schedule.Recurring"] = new(
-            Summary: "Fires repeatedly on a fixed interval, with a running count and an optional chat-activity gate.",
-            Description: "<p><code>IntervalSeconds</code> sets the cadence; <code>Count</code> starts at 1 and increments each fire. The <code>MaxCount</code> field is <em>not yet wired</em> — the timer currently runs unbounded, so stop it yourself (gate the body on <code>Count</code> and a <code>Process.Stop</code>, or a state flag) when you need a limit.</p><p><code>MinChatLines</code> gates the interval on chat activity: when it's above 0, a scheduled fire is SKIPPED unless at least that many inbound chat lines arrived since the previous fire — so a message-every-N-minutes timer stays quiet while chat is dead and only speaks up once the room is talking. Leave it at 0 (the default) to fire every interval unconditionally. Only the interval counts here; skipped intervals don't advance <code>Count</code>.</p>",
+            Summary: "Fires repeatedly on a fixed interval, with a running count, an optional fire cap and an optional chat-activity gate.",
+            Description: "<p><code>IntervalSeconds</code> sets the cadence; <code>Count</code> starts at 1 and increments each fire. <code>MaxCount</code> caps the total number of fires: <b>0</b> (the default) runs unbounded; any value above it stops the schedule on its own after that many fires (logged as the schedule finishing) — no manual <code>Process.Stop</code> needed. Chat-gated skips don't count toward the cap.</p><p><code>MinChatLines</code> gates the interval on chat activity: when it's above 0, a scheduled fire is SKIPPED unless at least that many inbound chat lines arrived since the previous fire — so a message-every-N-minutes timer stays quiet while chat is dead and only speaks up once the room is talking. Leave it at 0 (the default) to fire every interval unconditionally. Only the interval counts here; skipped intervals don't advance <code>Count</code>.</p>",
             Example: "Every 300s with <code>MinChatLines</code> = 10 &rarr; drop a hype line only when at least 10 people chatted since the last one; otherwise wait out another interval."),
         ["State.OnChange"] = new(
             Summary: "Fires when a named state variable changes value.",
@@ -534,8 +542,8 @@ internal static class NodeProse
             Example: "Ask Visualist to run an interaction, then wait for its result event."),
         ["Async.WaitForVisual"] = new(
             Summary: "Fires a Visualist trigger and waits for it to report complete, or times out.",
-            Description: "<p>The blocking partner to <code>Visual.Trigger</code>: <code>Done</code> fires when the widget animation finishes (the browser sends back a completion), <code>Timeout</code> after <code>TimeoutMS</code>. Drag extra pins to pass event data with the trigger.</p>",
-            Example: "Play a 4s entrance animation, wait for <code>Done</code>, then post the welcome line."),
+            Description: "<p>The blocking partner to <code>Visual.Trigger</code>: <code>Done</code> fires when the widget animation finishes (the browser sends back a completion), <code>Timeout</code> after <code>TimeoutMS</code>. Drag extra pins to pass event data with the trigger.</p><p><code>Payload</code> carries whatever the widget graph wired into its <code>Visual.Complete</code> node's <code>Payload</code> input — the value lands in <code>global._wait_payload</code> (the same var <code>Async.WaitForEvent</code> writes) and is read back on this pin. An unwired widget-side pin means no payload and an empty string here.</p><p><b>Not deterministic under fan-out.</b> Every widget that owns the fired trigger on that layer shares ONE <code>waitId</code>, and the FIRST completion to arrive wins — later ones are dropped and logged once. So with two OBS Browser Sources pointed at the same layer, <em>which</em> widget's payload you get is unpredictable; use one source per layer when the payload has to be exact.</p>",
+            Example: "Play a 4s entrance animation, wait for <code>Done</code>, then post the welcome line — reading <code>Payload</code> for the winner the widget picked."),
         ["Chat.WaitForNext"] = new(
             Summary: "Waits for the next chat message, optionally filtered by user and / or command.",
             Description: "<p><code>Got</code> fires with <code>Username</code> / <code>Message</code> on a match; <code>TimedOut</code> fires after <code>TimeoutMS</code> (default 30s). The basis of \"reply to confirm\" and quick chat mini-games.</p>",
@@ -677,30 +685,79 @@ internal static class NodeProse
         ["DB.DeleteRow"] = new(Summary: "Deletes a row by RowId from a table.", Example: "Remove a quote by its id."),
         ["DB.ClearTable"] = new(Summary: "Removes every row from a User_ table.", Example: "Wipe a per-stream leaderboard at the start of a stream."),
         ["DB.GetColumn"] = new(Summary: "Returns every value in a column as a list. Pure data.", Description: "<p>Wire the result straight into <code>Flow.ForEach</code> or <code>Array.*</code>. Unlike the other databank reads, a missing or mistyped table here (and on <code>DB.FetchRow</code>) <em>throws</em> and aborts the whole script run rather than degrading quietly — make sure the table exists first.</p>", Example: "Pull all entrant names for a giveaway draw."),
+        ["DB.Top"] = new(
+            Summary: "Returns the top-N rows of any open table, ranked by a numeric column. Pure data.",
+            Description: "<p>The generic leaderboard read: pick the <code>TableName</code>, the <code>ValueColumn</code> that defines the ranking (ordered numerically, biggest first — a text cell in it sorts by its numeric value, so a <code>db.*</code>-written <code>\"12.5\"</code> lands between 12 and 13), and the <code>LabelColumn</code> you want back beside it (a name, usually). Rows whose label is empty are skipped.</p>" +
+                         "<p>Both outputs come from ONE read, rank-aligned: <code>Labels</code> is the label column top-down as a comma-separated list, <code>Values</code> the ranking numbers in the same order — <code>Text.Split</code> either for a <code>Flow.ForEach</code>. It replaces the retired per-tool leaderboard nodes: the Loyalty board is <code>DB.Top(&lt;balance table&gt;, currency, name)</code>, the watch-time board is <code>DB.Top(WatchTime, minutes, name)</code>, and any table you build yourself boards the same way. System tables are refused; a missing table or column reads empty.</p>",
+            Example: "<b>!top</b> &rarr; <code>DB.Top(\"ChannelPoints\", \"currency\", \"name\", 3)</code> &rarr; \"Richest: {labels}\"."),
         ["DB.FetchRow"] = new(
             Summary: "Fetches a whole row by RowId; branches Found / NotFound with the Row object.",
             Description: "<p>The <code>Row</code> output is the full record. Set the optional <code>KnownColumns</code> hint to surface <code>&lt;Row&gt;.&lt;column&gt;</code> suggestions in the inline-value autocomplete — a design-time aid only; the live row carries whatever columns it actually has.</p>",
             Example: "Fetch a viewer's row, then read several of its cells inline."),
 
         // ══════════════════════════════ QUEUE ═════════════════════════════════
-        ["Queue.Push"] = new(Summary: "Enqueues an EventID + Payload pair onto a named FIFO queue.", Description: "<p>Backed by a databank variable, so the queue persists and is visible across scripts until consumed.</p>", Example: "Queue up shoutouts so they play one at a time."),
-        ["Queue.Pop"] = new(Summary: "Dequeues the oldest entry; branches to its EventID / Payload or to Empty.", Description: "<p>Atomic — pops one entry and fires <code>Done</code>, or fires <code>Empty</code> when nothing's waiting.</p>", Example: "Pop the next shoutout every 60s until the queue drains."),
-        ["Queue.Length"] = new(Summary: "Returns how many entries are in the queue. Pure data.", Example: "Show \"3 shoutouts pending\" on the overlay."),
-        ["Queue.Clear"] = new(Summary: "Empties a queue.", Example: "Clear the shoutout queue when the stream ends."),
+        // Every node in this band takes an optional Name: empty addresses the single
+        // unnamed queue every script shares, filled addresses a persistent named one in
+        // the open "Queues" databank table. The viewer queue in Pre-Builds → User
+        // Management IS one of those named queues, which is why these nodes — and not a
+        // private set of viewer-queue nodes — are what a graph uses to reach it.
+        ["Queue.Push"] = new(
+            Summary: "Adds an EventID + Payload entry to the back of a queue.",
+            Description: "<p>Leave <code>Name</code> empty for the single unnamed queue every script shares — a databank variable, so it persists and is visible across scripts until consumed. Fill <code>Name</code> in for a persistent queue of its own: one row per entry in the open <code>Queues</code> table, readable with the DB nodes.</p>" +
+                         "<p><code>Priority</code> only orders a NAMED queue — higher moves toward the front, equal numbers keep arrival order. That is how the viewer queue gives subscribers and VIPs a head start, and it is the same pin, so a graph can do it too.</p>",
+            Example: "Queue up shoutouts so they play one at a time — or <code>Queue.Push(login, display, \"viewers\", 5)</code> to put someone in the viewer queue ahead of the plain arrivals."),
+        ["Queue.Pop"] = new(
+            Summary: "Takes the front entry off a queue; branches to its EventID / Payload or to Empty.",
+            Description: "<p>Atomic — removes one entry and fires <code>Done</code>, or fires <code>Empty</code> when nothing was waiting. On a named queue the front is the highest <code>Priority</code>, then whoever arrived first.</p>",
+            Example: "Pop the next shoutout every 60s until the queue drains, or pop the viewer queue to call up who is next."),
+        ["Queue.Length"] = new(
+            Summary: "Returns how many entries are in a queue. Pure data.",
+            Description: "<p>Reads the unnamed queue when <code>Name</code> is empty, that named queue otherwise. An unknown name reads 0 rather than failing — a queue nobody has pushed to yet is genuinely empty.</p>",
+            Example: "Show \"3 shoutouts pending\" on the overlay."),
+        ["Queue.Clear"] = new(
+            Summary: "Empties a queue.",
+            Description: "<p>Drops every waiting entry from the addressed queue and fires <code>Queue.OnChanged</code> with an <code>Action</code> of <code>clear</code>.</p>",
+            Example: "Clear the shoutout queue when the stream ends."),
+        ["Queue.Position"] = new(
+            Summary: "Where an entry sits in a queue, counting from 1. Pure data.",
+            Description: "<p>Reads <code>0</code> when that entry is not queued at all, so a plain \"greater than 0\" check answers \"are they in the line\" without a second node. Matched against the <code>EventID</code> the entry was pushed with, case-insensitively.</p>",
+            Example: "On <b>!spot</b> &rarr; <code>Queue.Position({user.name}, \"viewers\")</code> &rarr; \"you are #4\"."),
+        ["Queue.Remove"] = new(
+            Summary: "Takes one entry out of a queue wherever it currently sits.",
+            Description: "<p>Removes the front-most match when the same entry was added twice. Removing something that is not queued does nothing and still continues through <code>Done</code> — ask <code>Queue.Position</code> first if the difference matters.</p>",
+            Example: "On <b>!bail</b> &rarr; <code>Queue.Remove({user.name}, \"viewers\")</code>."),
+        ["Queue.List"] = new(
+            Summary: "The whole queue as a comma-separated list, front first. Pure data.",
+            Description: "<p>The same list format <code>Flow.ForEach</code> and the Array nodes consume, so the line can be walked, counted or sliced with the existing nodes. An empty queue outputs an empty list.</p>",
+            Example: "On <b>!lineup</b> &rarr; <code>Chat.Send(\"Waiting: \" + Queue.List(\"viewers\"))</code>."),
+        ["Queue.OnChanged"] = new(
+            Summary: "Fires whenever a queue changes — added, popped, removed or cleared.",
+            Description: "<p>An event root (no flow input). <code>Queue</code> names which one — empty for the unnamed queue — <code>Entry</code> is who or what moved, <code>Action</code> is <code>push</code> / <code>pop</code> / <code>remove</code> / <code>clear</code>, and <code>Length</code> is how many are left. Bound as <code>{event.queue}</code> / <code>{event.entry}</code> / <code>{event.action}</code> / <code>{event.length}</code>.</p>" +
+                         "<p>It fires for a <code>Queue.*</code> node AND for the viewer queue's own chat commands, because they write the same store — so a graph can react to <b>!join</b> without owning the queue.</p>",
+            Example: "On <code>Action</code> = <code>push</code> &rarr; play a short sound so you notice someone joined the line."),
 
         // ═══════════════════════════ TWITCH DATA ══════════════════════════════
         ["Twitch.GetUser"] = new(
             Summary: "Looks up a Twitch user's profile and the channel's last game / title.",
-            Description: "<p>Fetched through your Streamer.bot bot account. Returns id / login / display name / avatar / account-created plus the channel's last <code>Game</code> and <code>ChannelTitle</code> and the mod / sub / vip flags. <code>Username</code> defaults to <code>{user.name}</code> — the current chatter.</p>",
+            Description: "<p>Fetched through your Streamer.bot bot account. Returns id / login / display name / avatar / account-created plus the channel's last <code>Game</code> and <code>ChannelTitle</code> and the mod / sub / vip flags. <code>Username</code> defaults to <code>{user.name}</code> — the current chatter. <code>IsRegular</code> reads the User-Management tool's Regular group (a Phoenix concept, no platform source), and a group-granted Moderator / VIP / Subscriber also reports true here.</p>",
             Example: "On <b>!so</b> &rarr; GetUser the target &rarr; shout their last <code>Game</code>."),
         ["Twitch.GetStream"] = new(
             Summary: "Reads a channel's live state, title and last category on demand.",
-            Description: "<p>Through Streamer.bot. A request-time companion to the Stream.GoingLive / Stream.SessionEnd events — ask for the current state whenever you need it. For your own channel <code>IsLive</code> and <code>Uptime</code> report from the live on/offline tracking; for an arbitrary channel there's no Streamer.bot live path so <code>IsLive</code> is false and <code>ViewerCount</code> stays 0.</p>",
+            Description: "<p>Through Streamer.bot. A request-time companion to the Stream.GoingLive / Stream.SessionEnd events — ask for the current state whenever you need it. <code>IsLive</code>, <code>ViewerCount</code> and <code>Uptime</code> are read live for <em>any</em> channel, not just your own. Needs the <code>Phoenix: Get Stream Status</code> action from the action pack; without it the node falls back to the channel's last title / category and reports no viewer count rather than a misleading 0.</p>",
             Example: "Show the raider's last category in the raid alert."),
         ["Twitch.CheckRole"] = new(
-            Summary: "Resolves a user's mod / sub / vip / broadcaster flags.",
-            Description: "<p>Looks up the roles via your bot account. <code>IsBroadcaster</code> is derived by comparing the login to your configured broadcaster name. <code>Username</code> defaults to <code>{user.name}</code>.</p>",
+            Summary: "Resolves a user's mod / sub / vip / broadcaster / regular flags.",
+            Description: "<p>Looks up the roles via your bot account. <code>IsBroadcaster</code> is derived by comparing the login to your configured broadcaster name. <code>IsRegular</code> reads the User-Management tool's Regular group, and a group-granted Moderator / VIP / Subscriber also reports true here. <code>Username</code> defaults to <code>{user.name}</code>.</p>",
             Example: "Gate a command on <code>IsMod</code> OR <code>IsVip</code>."),
+        ["User.GetGroups"] = new(
+            Summary: "Checks which User-Management groups a user belongs to.",
+            Description: "<p><code>IsModerator</code> / <code>IsVip</code> / <code>IsSubscriber</code> report the PLATFORM's answer. Twitch, YouTube and Kick already publish those three ranks, so they are not a list anyone keeps in Phoenix — they resolve from the viewer's own chat messages, from the background viewer sample, or by looking the account up on demand. A login the platform has never reported reads false, and that means &quot;not known&quot; rather than &quot;not a moderator&quot; — worth remembering when you gate on it.</p><p><code>IsRegular</code> is the community-trust tier, the one standard group with no platform equivalent: its members are the names listed in the tool PLUS anyone past its watch-hour rule. Every CUSTOM group you define appears as an extra Bool output and behaves the same way — listed members plus an optional watch-hour rule. (The node's <code>Groups</code> attribute lists the custom ones and refreshes from the tool on spawn / load — it stays hand-editable.) Watch-hour membership is judged live and never written into the member list, so moving the threshold re-decides everybody at once. All outputs read false while the tool is disabled. <code>Username</code> defaults to <code>{user.name}</code>.</p>",
+            Example: "On <b>!vault</b> &rarr; GetGroups &rarr; only members of your \"Night Crew\" custom group may open the vault."),
+        ["User.OnFirstMessage"] = new(
+            Summary: "Fires the first time a viewer chats in a stream.",
+            Description: "<p>An event root (no flow input). Raised the moment the User Management tool notices a viewer's first line this stream — <i>before</i> any welcome goes out, so the graph can add to the moment rather than react after it. <code>FirstEver</code> is true when it is also their very first message in the channel ever. Bound as <code>{event.user}</code> / <code>{event.message}</code> / <code>{event.platform}</code> / <code>{event.first_ever}</code>, plus <code>{event.login}</code> for the stable login a databank or group lookup needs.</p>" +
+                         "<p>Needs the <b>Pre-Builds &rarr; User Management</b> tool switched on, but not its welcome or greeting messages — the event is a fact about the viewer, not a side-effect of the greeting, so a groups-only setup still fires it.</p>",
+            Example: "On a first message with <code>FirstEver</code> true &rarr; give them starting points and drop a row in your own \"newcomers\" table."),
         ["Twitch.IsOnline"] = new(
             Summary: "Checks whether a channel is currently live. Leave Channel empty for your own.",
             Description: "<p>For your own channel it answers from Hub's stream-online tracking. Arbitrary other channels report not-live honestly (Streamer.bot has no live-status lookup) but still resolve their last game / title.</p>",
@@ -930,11 +987,12 @@ internal static class NodeProse
             Summary: "Fires a named trigger on a Visualist widget — the most-used overlay node.",
             Description: "<p>Targets a widget on a layer by <code>LayerID</code> / <code>WidgetID</code> / <code>TriggerName</code>. Wire a comma-list into <code>Args</code> (read widget-side as <code>{Args1}</code>, <code>{Args2}</code>…), and drag <code>+ variable</code> pins for named event data. Fire-and-forget; use <code>Async.WaitForVisual</code> to wait for it to finish.</p>",
             Example: "<b>!hype</b> &rarr; fire the <code>burst</code> trigger on the alerts widget, passing the username."),
-        ["Visual.SetText"] = new(Summary: "Updates a text element on the overlay live.", Description: "<p>Broadcast to every connected browser source. <code>Id</code> is the compositor element id.</p>", Example: "Push a live sub-goal count to the overlay."),
-        ["Visual.SetVisible"] = new(Summary: "Shows or hides an overlay widget live.", Description: "<p>Broadcast to all connected browser sources.</p>", Example: "Hide the \"starting soon\" panel when you go live."),
-        ["Visual.SetProperty"] = new(Summary: "Sets an arbitrary CSS / DOM property on an overlay widget.", Description: "<p><code>Key</code> is the property (e.g. <code>opacity</code>, <code>transform</code>), <code>Value</code> the new value. Broadcast live.</p>", Example: "Fade a widget by setting its <code>opacity</code>."),
-        ["Chat.Overlay.Push"] = new(Summary: "Pushes a chat line into an on-overlay chat widget.", Description: "<p>Addresses a chat widget by <code>WidgetID</code>; <code>Color</code> tints the name (defaults to green). Broadcast to all browser sources.</p>", Example: "Mirror highlighted chat onto a stream overlay."),
-        ["Chat.Overlay.Clear"] = new(Summary: "Clears all messages from an overlay chat widget.", Example: "Wipe the overlay chat between segments."),
+        // (Visual.SetText / SetVisible / SetProperty and Chat.Overlay.Push /
+        // Clear had entries here until V4 part C deleted the nodes. Every one
+        // of those five prose blurbs described a broadcast compositor.js had no
+        // handler for, so the reference documentation was promising behaviour
+        // the product never had. Overlay.Publish + a widget-side Var.Live
+        // binding is the replacement.)
 
         // ══════════════════════════════ BUS ═══════════════════════════════════
         ["Bus.Send"] = new(Summary: "Sends a targeted IPC message to a named endpoint.", Description: "<p>Fire-and-forget to a named target (e.g. <code>Visualist</code>) with a <code>Type</code> and JSON <code>Payload</code>. Receive it with <code>Bus.OnMessage</code>.</p>", Example: "Tell Visualist to switch its active scene."),
@@ -977,6 +1035,276 @@ internal static class NodeProse
             Description: "<p>The source of truth for a giveaway's live state. Leave the <code>Giveaway</code> selector empty to follow the app-wide default giveaway; the ▾ picker lists your giveaways (matched by id, key or title). Reads <code>false</code> once the giveaway is closed or drawn — or when nothing matches / no default is set.</p>",
             Example: "Gate <b>!ticket</b> behind a Branch: IsActive &rarr; enter; else reply \"no giveaway running\"."),
 
+        // ══════════════════════════════ TIMER ═════════════════════════════════
+        ["Timer.Start"] = new(
+            Summary: "Starts (or restarts) a countdown running toward zero.",
+            Description: "<p><code>Duration</code> takes a bare number (seconds) or unit tokens — <code>90s</code>, <code>5m</code>, <code>1h30m</code>, <code>2h</code>, <code>1d</code>; leave it empty and the timer falls back to the start duration configured in the Hub Timer panel. A max cap clamps it. Starting re-seeds the milestone set, so the goals can fire again on the new run. On a Stopwatch-mode timer there is nothing to count down — Start zeroes it and it counts up instead.</p>",
+            Example: "On <code>System.Startup</code> &rarr; start the subathon clock at <b>4h</b>."),
+        ["Timer.Stop"] = new(
+            Summary: "Stops the timer — the clock freezes and its state becomes Stopped.",
+            Description: "<p>Harder than <code>Timer.Pause</code> in name only: both hold the clock exactly where it is, and <code>Timer.Resume</code> picks either state back up while there's time left. Use Stop for \"that segment is over\", Pause for \"back in a minute\".</p>",
+            Example: "Stream ends &rarr; stop the subathon clock so it doesn't drain overnight."),
+        ["Timer.Pause"] = new(
+            Summary: "Pauses the countdown — the remaining time stops draining until it's resumed.",
+            Description: "<p>Only acts on a <em>Running</em> timer; a stopped or ended one is left as it is. <code>Timer.Resume</code> or <code>Timer.Toggle</code> continues from exactly where it stopped.</p>",
+            Example: "Ad break &rarr; pause the clock, resume when you're back."),
+        ["Timer.Resume"] = new(
+            Summary: "Resumes a paused or stopped countdown from where it left off.",
+            Description: "<p>Runs again from the current remaining time as long as there is some left — including a timer that already <b>Ended</b> and has since had time put back on it, so a subathon rescued by a late sub keeps counting. With the clock at zero, Resume does nothing: <code>Timer.Toggle</code> or <code>Timer.Start</code> re-arms it.</p>",
+            Example: "Back from the break &rarr; resume the clock."),
+        ["Timer.Toggle"] = new(
+            Summary: "Flips the timer between running and paused in a single node.",
+            Description: "<p>A running timer pauses; anything else (stopped, paused, ended) runs. The one difference from <code>Timer.Resume</code>: a countdown that has run dry is re-armed to its configured start duration instead of sitting at zero, so one hotkey can restart an ended subathon.</p>",
+            Example: "A <code>System.Hotkey</code> that pauses / resumes the on-screen clock from anywhere."),
+        ["Timer.Reset"] = new(
+            Summary: "Resets the remaining time to the configured start duration and stops the timer.",
+            Description: "<p>Back to square one: the clock returns to the Hub panel's start duration, the added-time total clears, and milestones re-seed to that level <em>without</em> firing. The timer is left <b>Stopped</b> — follow with <code>Timer.Start</code> or <code>Timer.Resume</code> when it should run.</p>",
+            Example: "At stream start &rarr; reset yesterday's clock before starting today's."),
+        ["Timer.Add"] = new(
+            Summary: "Adds time to the countdown — or removes it with a negative amount.",
+            Description: "<p><code>Amount</code> takes a bare number (seconds) or unit tokens (<code>90s</code> / <code>5m</code> / <code>1h30m</code>), and a leading <code>-</code> flips the whole amount into a subtraction (<code>-90s</code>). A node add counts as <b>manual</b>: the per-add cap and the Happy-Hour multiplier apply to time earned from stream events (subs, bits, tips, follows, raids), not to this node — only the timer's overall max cap clamps it. Adding time to a timer that already hit zero re-arms it and it counts down again; every <em>positive</em> add that lands fires <code>Timer.OnAdd</code> with <code>Source</code> = <code>manual</code>.</p>" +
+                         "<p><b>Negative amounts</b> behave like the retired <code>Timer.Subtract</code> did: the clock is clamped at zero, no <code>Timer.OnAdd</code> fires, no milestone trips (those climb upward only) — and draining the clock to zero this way ends the timer and fires <code>Timer.OnZero</code>, exactly as if the countdown had run itself out.</p>",
+            Example: "A <b>!boost</b> redeem &rarr; <code>Timer.Add</code> <b>5m</b>; a death-penalty flow &rarr; <code>Timer.Add</code> <b>-60s</b> per boss death."),
+        ["Timer.SetTime"] = new(
+            Summary: "Sets the remaining time to an absolute value.",
+            Description: "<p><code>Amount</code> takes a bare number (seconds) or unit tokens (<code>5m</code> / <code>1h30m</code> / <code>2h</code>), clamped to the timer's max cap when one is set. A manual set is not a subathon \"crossing\": milestones re-seed silently to the new level rather than firing, so a goal you set past can fire again once time is added back.</p>",
+            Example: "A mod-only <b>!settimer 2h</b> &rarr; put the clock exactly where you want it."),
+        ["Timer.SetHappyHour"] = new(
+            Summary: "Opens a Happy-Hour window that multiplies the time incoming events add.",
+            Description: "<p><code>Multiplier</code> is the boost (<code>2</code> = double time), <code>Duration</code> how long the window runs, and <code>Scope</code> which events it covers — <code>all</code>, <code>subs</code>, <code>bits</code>, <code>tips</code>, <code>follows</code> or <code>raids</code>. It boosts <em>event-earned</em> time only; a <code>Timer.Add</code> node is a manual add and is never multiplied. A multiplier of 1 or below, or a zero duration, clears the window — and it expires on its own when the duration runs out.</p>",
+            Example: "First hour of the stream &rarr; double-time on subs, then let it lapse."),
+        ["Timer.GetRemaining"] = new(
+            Summary: "Outputs the timer's remaining time in whole seconds. Pure data.",
+            Description: "<p>Reads the live clock — no flow pin, no round trip. On a Stopwatch-mode timer it reads the elapsed count-up instead, so it's always the number on screen. An unknown timer reads <code>0</code>.</p>",
+            Example: "<b>!timeleft</b> &rarr; reply with the seconds, or gate a \"final countdown\" alert on <code>&lt; 300</code>."),
+        ["Timer.GetState"] = new(
+            Summary: "Outputs the timer's lifecycle state. Pure data.",
+            Description: "<p>One of <code>Stopped</code>, <code>Running</code>, <code>Paused</code> or <code>Ended</code> — branch on it with <code>Logic.Switch</code>. <code>Ended</code> means the countdown reached zero; putting time back on the clock re-arms it to <code>Running</code>.</p>",
+            Example: "On <b>!timer</b> &rarr; switch on the state and answer with a line per state."),
+        ["Timer.OnZero"] = new(
+            Summary: "Fires once when a timer runs out and ends.",
+            Description: "<p>An event root (no flow input). <code>TimerName</code> is the timer that hit zero, bound as <code>{event.timername}</code> with <code>{event.slug}</code> alongside it. Fires exactly once per run-down — the timer parks in <b>Ended</b> afterwards and only new time on the clock re-arms it.</p>",
+            Example: "Subathon over &rarr; post the goodbye line and switch OBS to the ending scene."),
+        ["Timer.OnMilestone"] = new(
+            Summary: "Fires the first time a timer's clock reaches one of its milestone goals.",
+            Description: "<p>An event root (no flow input). <code>TimerName</code> / <code>MilestoneId</code> / <code>Label</code> describe the goal (bound as <code>{event.timername}</code> / <code>{event.milestoneid}</code> / <code>{event.label}</code>). A milestone trips when the value the timer <em>displays</em> reaches its target, and fires once until a start / reset / set re-seeds it. On a <b>Subathon</b> or <b>Countdown</b> that value is the remaining time, so goals trip as added time pushes the clock UP past them, not as it counts down through them. On a <b>Stopwatch</b> it is the elapsed time, so a goal trips by running long enough. All three modes support milestones.</p>",
+            Example: "Crossing the <b>\"12 hours\"</b> goal &rarr; announce the <code>Label</code> and fire a Visualist burst."),
+        ["Timer.OnAdd"] = new(
+            Summary: "Fires whenever time is added to a timer — by a stream event, a node, or the panel.",
+            Description: "<p>An event root (no flow input). <code>Seconds</code> is how much actually landed (after the caps), and <code>Source</code> is what added it: <code>manual</code> for a <code>Timer.Add</code> node or a panel +ADD, otherwise the event that earned it (e.g. <code>Twitch.Subscription</code>). Bound as <code>{event.timername}</code> / <code>{event.source}</code> / <code>{event.seconds}</code>, plus <code>{event.remaining}</code> for the clock after the add.</p>",
+            Example: "On any add &rarr; overlay \"+{event.seconds}s from {event.source}\" over the clock."),
+
+        // ══════════════════════════════ LOYALTY ═══════════════════════════════
+        // The six imperative/value wrapper nodes were RETIRED in the 2026-08 tool-node
+        // cut — the balance + ledger are OPEN tables, so DB.FindRow / DB.GetCell /
+        // DB.Increment / DB.InsertRow / DB.Top cover them. Only the event roots remain.
+        ["Loyalty.OnEarn"] = new(
+            Summary: "Fires when a stream event earns a viewer points.",
+            Description: "<p>An event root (no flow input) for the Loyalty tool's earn rules — a follow, sub / resub, gift sub or gift bomb, cheer, raid or tip mapped to an award in the Hub Loyalty panel. <code>User</code> is who earned, <code>Amount</code> how many (after multipliers and the daily cap) and <code>Reason</code> which rule paid out (<code>follow</code>, <code>sub</code>, <code>resub</code>, <code>gift</code>, <code>giftbomb</code>, <code>cheer</code>, <code>raid</code>, <code>tip</code>), bound as <code>{event.user}</code> / <code>{event.amount}</code> / <code>{event.reason}</code> — with <code>{event.balance}</code> and <code>{event.currency}</code> alongside. Watch-time ticks fire <code>Loyalty.OnPayout</code> instead, and a databank-written grant (a <code>DB.Increment</code> on the balance table) is silent.</p>",
+            Example: "Big cheer earns points &rarr; thank them with the running total: \"{event.user} is up to {event.balance} {event.currency}!\""),
+        ["Loyalty.OnPayout"] = new(
+            Summary: "Fires once per watch-time tick, after the active viewers have been credited in bulk.",
+            Description: "<p>An event root (no flow input). One event for the whole tick, not one per viewer: <code>Count</code> is how many viewers were actually paid, <code>Total</code> the points handed out across them, <code>Amount</code> the per-viewer base award and <code>Currency</code> the points name (<code>{event.count}</code> / <code>{event.total}</code> / <code>{event.amount}</code> / <code>{event.currency}</code>). The tick cadence, the award and the bots-excluded list are all set in the Hub Loyalty panel; a tick that credits nobody stays silent.</p>",
+            Example: "Every payout &rarr; a quiet overlay ticker: \"{event.total} {event.currency} paid to {event.count} viewers\"."),
+        ["Loyalty.OnRedeem"] = new(
+            Summary: "Fires when a viewer buys a reward from the points store.",
+            Description: "<p>An event root (no flow input). Fires only once the points have actually been charged — a sold-out, on-cooldown or unaffordable redeem never reaches it. <code>User</code> / <code>Reward</code> / <code>Cost</code> describe the purchase (<code>{event.user}</code> / <code>{event.reward}</code> / <code>{event.cost}</code>), with <code>{event.balance}</code> for what's left and <code>{event.currency}</code> for the points name. Branch on the reward name with <code>Logic.Switch</code>, the way you would on <code>Twitch.PointRedeem</code>.</p>",
+            Example: "<b>\"Pick the next song\"</b> redeemed &rarr; queue the request and confirm in chat."),
+        ["Loyalty.OnRaffle"] = new(
+            Summary: "Fires when a loyalty raffle is drawn.",
+            Description: "<p>An event root (no flow input). <code>Winners</code> is a comma-separated list of names — <code>Text.Split</code> it for a <code>Flow.ForEach</code> — with <code>Count</code> how many won, <code>Pot</code> the total prize, <code>Entrants</code> how many played and <code>Currency</code> the points name (<code>{event.winners}</code> / <code>{event.count}</code> / <code>{event.pot}</code> / <code>{event.entrants}</code> / <code>{event.currency}</code>). The prizes are already credited by the time this fires. An open raffle is also drawn on shutdown so paid entries never vanish.</p>",
+            Example: "Raffle drawn &rarr; celebrate each winner in turn and post the pot to the overlay."),
+
+        // ══════════════════════════════ COUNTERS ══════════════════════════════
+        // The five imperative/value wrapper nodes were RETIRED in the 2026-08 tool-node
+        // cut — the counts live in the OPEN "Counters" table, so DB.GetCell / DB.SetCell /
+        // DB.Increment / DB.DeleteRow cover them, and the tool's 15-second databank sweep
+        // keeps the overlay + Counter.OnChanged honest for those writes. Only the event
+        // root remains.
+        ["Counter.OnChanged"] = new(
+            Summary: "Fires whenever any counter changes — chat command, panel, or databank write.",
+            Description: "<p>An event root (no flow input). <code>Counter</code> names which counter changed and <code>Count</code> is its new value (bound as <code>{event.counter}</code> / <code>{event.count}</code>). Fires for a chat <code>!&lt;cmd&gt;+</code>, a set/reset from the Hub Counters panel, or a <code>db.*</code> write to the OPEN <code>Counters</code> table — the tool sweeps the table every 15 seconds, so a databank-written change fires within one sweep rather than instantly.</p>",
+            Example: "On a milestone (<code>Count</code> hits 100) &rarr; celebrate with a visual trigger."),
+
+        // ══════════════════════════════ QUOTES ══════════════════════════════
+        // The five imperative/value wrapper nodes were RETIRED in the 2026-08 tool-node
+        // cut — the quotes live in the OPEN "Quotes" table, so the generic DB.* band
+        // covers them (DB.GetColumn + Array.Shuffle for a random pick). Only the event
+        // root remains.
+        ["Quote.OnAdded"] = new(
+            Summary: "Fires whenever a quote is added — chat command or panel.",
+            Description: "<p>An event root (no flow input). <code>Number</code>/<code>Text</code>/<code>Name</code> describe the new quote (bound as <code>{event.number}</code> / <code>{event.text}</code> / <code>{event.name}</code>). Fires for a chat <code>!addquote</code> or an add from the Hub Quotes panel. (A <code>DB.InsertRow</code> straight into the open <code>Quotes</code> table does not fire it — the tool only announces its own adds.)</p>",
+            Example: "On a new quote &rarr; announce \"New quote #{event.number} added!\"."),
+        ["Command.OnCustom"] = new(
+            Summary: "Fires when a viewer runs one of your custom chat commands.",
+            Description: "<p>An event root (no flow input) for the Custom Chat Commands tool. <code>Command</code> is the trigger word that fired, <code>User</code> is who ran it, and <code>Args</code> is everything typed after it (bound as <code>{event.command}</code> / <code>{event.user}</code> / <code>{event.args}</code>). The tool already sends the command's response text itself — use this to add extra reactions (a sound, a counter bump, a log line) on top.</p>",
+            Example: "On <code>{event.command}</code> == \"hug\" &rarr; fire a hug overlay for <code>{event.args}</code>."),
+
+        // ═══════════════════════════ SONG REQUESTS ═══════════════════════════
+        ["Song.Current"] = new(
+            Summary: "Outputs what the song player is doing right now. Pure data.",
+            Description: "<p>One read backs all five outputs, so <code>Title</code>, <code>Requester</code>, <code>VideoId</code>, <code>State</code> (<code>idle</code> / <code>playing</code> / <code>paused</code>) and <code>Volume</code> always describe the same moment — a skip landing mid-graph cannot leave you printing an old title beside a new state.</p>" +
+                         "<p><code>Title</code> falls back to the YouTube video id when no API key is set and the real title could not be read. That is deliberate: Phoenix would rather show you an id than invent a name.</p>",
+            Example: "<b>!nowplaying</b> &rarr; <code>Chat.Send</code> \"Playing {Title} for {Requester}\"."),
+        ["Song.UpNext"] = new(
+            Summary: "Outputs the next song that will actually play. Pure data.",
+            Description: "<p>Reads the first APPROVED request. While approval is switched on, a request still waiting for a verdict is skipped over — it is not up next until a moderator says so. Every output is empty when nothing is queued.</p>",
+            Example: "On a song change &rarr; tease the next one: \"Coming up: {Title}\"."),
+        ["Song.QueueLength"] = new(
+            Summary: "Outputs how many songs are waiting. Pure data.",
+            Description: "<p>The playing song is not counted — this is the length of the line behind it. Reads <code>0</code> while the tool is switched off, because the queue is per session and does not exist when the tool is dormant.</p>",
+            Example: "Branch on <code>Count</code> &gt; 20 &rarr; tell chat requests are backed up."),
+        ["Song.QueuePosition"] = new(
+            Summary: "Outputs where a viewer's next song sits in the line. Pure data.",
+            Description: "<p>Counts from <code>1</code>; <code>0</code> means that viewer has nothing waiting. Requests still awaiting approval are counted — the viewer asked where their song is, and \"behind three others\" is the honest answer.</p>" +
+                         "<p><code>User</code> is a LOGIN: the queue is keyed on it, so pass <code>{event.user_login}</code>, not the display name <code>{user.name}</code>. Left empty it resolves to the triggering chatter's login.</p>",
+            Example: "A custom <b>!myplace</b> &rarr; \"You're #{Position} in the queue\"."),
+        ["Song.Request"] = new(
+            Summary: "Adds a song to the queue on a viewer's behalf.",
+            Description: "<p><code>Query</code> takes exactly what a viewer would type after <b>!sr</b>: a YouTube link, a bare 11-character video id, or words to search for. Links and ids resolve with no setup; searching by words needs the streamer's YouTube Data API key (Hub &rarr; <b>Settings &rarr; Connection</b>), and without one the request is refused rather than guessed at.</p>" +
+                         "<p><b>No back door.</b> Every cap, price and approval rule applies exactly as it would to a chat request — the node is the same capability, not a privileged one. The subscriber discount is the single exception: a graph passes a name, not a subscription, so it always pays full price. <code>Song.OnQueued</code> fires when the request joins the playable line.</p>" +
+                         "<p><b><code>User</code> is a LOGIN, not a display name.</b> The queue keys the per-user cap, <b>!when</b>, <b>!wrongsong</b> and the refund on it, so pass <code>{event.user_login}</code> rather than <code>{user.name}</code> — for a viewer whose display name is not simply their login capitalised (a localized or CJK handle), the two are different people as far as the queue is concerned. Left empty it resolves to the triggering chatter's login automatically, and their display name is used for what chat and the overlay print.</p>",
+            Example: "A channel-point reward &rarr; <code>Song.Request({user.input}, {event.user_login})</code>."),
+        ["Song.Skip"] = new(
+            Summary: "Skips the playing song and starts the next one.",
+            Description: "<p>Fires <code>Song.OnSkip</code> for the song that was cut short (with <code>SkippedBy</code> = <code>script</code>) and then <code>Song.OnPlay</code> for the one that took over. Does nothing when nothing is playing.</p>",
+            Example: "A mod-only <b>!nope</b> &rarr; <code>Song.Skip</code> &rarr; announce the new track."),
+        ["Song.Pause"] = new(
+            Summary: "Holds the playing song.",
+            Description: "<p>Sets the player to <code>paused</code>. The queue keeps its order and nothing is dropped — <code>Song.Resume</code> picks the same track back up.</p>",
+            Example: "On a raid arriving &rarr; pause the music, run the shoutout, resume."),
+        ["Song.Resume"] = new(
+            Summary: "Starts the music — resumes a held song, or picks up the queue.",
+            Description: "<p>Two jobs in one node, which is what makes it the <b>!play</b> verb: with a song held it resumes that song, and with nothing selected it starts the first queued one. Does nothing only when the player is already playing or the queue is genuinely empty.</p>",
+            Example: "At the end of a starting-soon scene &rarr; <code>Song.Resume</code>."),
+        ["Song.Remove"] = new(
+            Summary: "Removes the waiting song at Position and refunds it.",
+            Description: "<p>Positions count from <code>1</code> and address the WAITING queue only — the playing song has no position, so skip it instead. Anything the request was charged is given back. An unknown position does nothing.</p>",
+            Example: "A mod command <b>!drop 3</b> &rarr; <code>Song.Remove(3)</code>."),
+        ["Song.RemoveLast"] = new(
+            Summary: "Removes a viewer's most recent waiting request and refunds it.",
+            Description: "<p>The <b>!wrongsong</b> verb, for the mis-pasted link. Removes their LAST waiting request, not their first — the viewer just realised the thing they typed a moment ago was wrong. <code>User</code> is a LOGIN (pass <code>{event.user_login}</code>); left empty it resolves to the triggering chatter's login.</p>" +
+                         "<p>Whatever the request cost is given back. If the points economy cannot return it — the Loyalty tool switched off, its currency table renamed — nothing pretends otherwise: the chat reply says the points could not be returned and the System Log names the viewer and the amount.</p>",
+            Example: "<b>!oops</b> &rarr; <code>Song.RemoveLast()</code> &rarr; \"Removed, try again.\""),
+        ["Song.Clear"] = new(
+            Summary: "Empties the waiting queue and refunds everything in it.",
+            Description: "<p>The song that is playing keeps playing — this clears the line behind it. Every charged request in the queue is refunded, so wiping the list never quietly keeps viewers' points. If the points economy cannot give a charge back, the chat reply says how many could not be returned and the System Log names each viewer and amount — one command can strand a whole queue's charges, so it is never silent.</p>",
+            Example: "At the end of a music segment &rarr; <code>Song.Clear</code>."),
+        ["Song.SetVolume"] = new(
+            Summary: "Sets the song player's volume, 0 to 100.",
+            Description: "<p>Values outside the range are pulled back into it. The setting is remembered across restarts, and it is the MUSIC player only — <code>Audio.SetVolume</code> is the separate node for locally played sound effects. Like every other Song node it does nothing while the Song Request tool is switched off, rather than quietly rewriting a dormant tool's saved settings.</p>",
+            Example: "Before a talking segment &rarr; <code>Song.SetVolume(15)</code>, after it, back to 50."),
+        ["Song.VoteSkip"] = new(
+            Summary: "Counts one viewer's vote to skip the playing song.",
+            Description: "<p>One vote per viewer per song, and the votes reset the moment the song changes — otherwise the threshold would mean nothing. Once enough distinct viewers have voted, the song is skipped and <code>Song.OnSkip</code> fires with <code>SkippedBy</code> = <code>voteskip</code>. <code>User</code> is a LOGIN, which is what makes \"one vote per viewer\" hold — pass <code>{event.user_login}</code>, or leave it empty to resolve the triggering chatter's login.</p>",
+            Example: "A channel-point \"skip this\" reward &rarr; <code>Song.VoteSkip({event.user_login})</code>."),
+        ["Song.Approve"] = new(
+            Summary: "Approves the waiting request at Position so it can play.",
+            Description: "<p>Only does something while approval is switched on and that request is still awaiting a verdict. Approving is what fires <code>Song.OnQueued</code> — a request under review has not joined the line yet, so an announcement never celebrates one that is about to be rejected.</p>",
+            Example: "A mod <b>!ok 1</b> &rarr; <code>Song.Approve(1)</code> &rarr; \"{event.title} is in!\""),
+        ["Song.Deny"] = new(
+            Summary: "Rejects the waiting request at Position and refunds it.",
+            Description: "<p>Removes the request and gives back whatever it cost. Only affects a request that is still awaiting a verdict — an already-approved song is removed with <code>Song.Remove</code> instead.</p>",
+            Example: "A mod <b>!no 1</b> &rarr; <code>Song.Deny(1)</code> &rarr; whisper the requester why."),
+        ["Song.OnQueued"] = new(
+            Summary: "Fires when a song joins the queue for real.",
+            Description: "<p>An event root (no flow input). <code>Title</code> / <code>Requester</code> / <code>VideoId</code> / <code>Position</code> describe the request (bound as <code>{event.title}</code> / <code>{event.requester}</code> / <code>{event.video_id}</code> / <code>{event.position}</code>).</p>" +
+                         "<p><b>When it fires matters.</b> With approval switched on this is the moment a moderator approves, not the moment the viewer asked — so an announcement never celebrates a request that is about to be rejected.</p>",
+            Example: "On a new request &rarr; \"{event.requester} queued {event.title} at #{event.position}\"."),
+        ["Song.OnPlay"] = new(
+            Summary: "Fires each time a song is handed to the player.",
+            Description: "<p>An event root (no flow input). Fires on a skip, a <b>!play</b>, and any graph advance. <code>DurationSeconds</code> is <code>0</code> when the length is unknown (no API key), so branch on it being greater than zero rather than treating <code>0</code> as an instant song. Bound as <code>{event.title}</code> / <code>{event.requester}</code> / <code>{event.video_id}</code> / <code>{event.duration_seconds}</code>.</p>",
+            Example: "On every track change &rarr; push the title to an overlay caption."),
+        ["Song.OnSkip"] = new(
+            Summary: "Fires when a playing song is cut short rather than finishing.",
+            Description: "<p>An event root (no flow input). <code>SkippedBy</code> names who did it — a moderator's display name, <code>voteskip</code> when the vote passed, or <code>script</code> from a <code>Song.Skip</code> node — bound as <code>{event.skipped_by}</code>, alongside <code>{event.title}</code> / <code>{event.requester}</code> / <code>{event.video_id}</code> for the song that was dropped.</p>",
+            Example: "On a vote-skip &rarr; \"Chat has spoken — {event.title} is out.\""),
+
+        // ══════════════════════════════ POLLS ═════════════════════════════════
+        ["Poll.Status"] = new(
+            Summary: "Reads the whole live poll in one go. Pure data.",
+            Description: "<p>Eight outputs from a SINGLE read, and that is the point: votes and the pot move while a poll is open, so eight separate reads could hand you a leader from before a vote next to a total from after it. <code>State</code> is <code>open</code> / <code>closed</code> / <code>idle</code>, <code>IsOpen</code> is the boolean to branch on, and <code>Leader</code> is empty on a tie.</p>" +
+                         "<p>Everything reads empty or <code>0</code> while the Polls tool is switched off, because the poll is per session and does not exist when the tool is dormant.</p>",
+            Example: "A custom <b>!poll</b> &rarr; \"{Title}: {Leader} leads with {LeaderVotes} of {TotalVotes} ({SecondsLeft}s left)\"."),
+        ["Poll.GetVotes"] = new(
+            Summary: "Outputs one option's vote count. Pure data.",
+            Description: "<p>Address the option by its number (<code>1</code> is the first) or by its exact label, whichever your graph has to hand. An empty or unmatched <code>Option</code> reads the poll's TOTAL rather than <code>0</code>, so an unwired node still produces a true number.</p>",
+            Example: "Branch on <code>Poll.GetVotes(\"Yes\")</code> &gt; 50 &rarr; run the celebration."),
+        ["Poll.Open"] = new(
+            Summary: "Opens a chat poll, optionally taking points stakes.",
+            Description: "<p><code>Options</code> is ONE comma-separated list — <code>Yes, No, Maybe</code> — so the same node runs a two-way or a five-way poll. Blank and duplicate entries are dropped (two identical options would split the vote against themselves), and two is the minimum. <code>DurationSeconds</code> at <code>0</code> uses the length set in the Polls panel; the poll closes itself when the time runs out.</p>" +
+                         "<p><b><code>Betting</code> cannot switch the money on by itself.</b> It is honoured only while the Polls panel's own betting switch is on, so a graph can never start taking viewers' points behind the streamer's back. With betting asked for and no points economy to collect through, the poll is refused outright rather than opened as one that quietly charges nobody.</p>" +
+                         "<p><b><code>Mirror</code> is a request, not a promise.</b> It asks for Twitch's own poll (or prediction, when betting is on) alongside the chat one. Phoenix checks at that moment whether your Streamer.bot action pack can BOTH open and close that surface, and runs chat-only with one note in the System Log when it cannot — an opened prediction that could never be resolved would sit on your channel until you cleared it by hand.</p>",
+            Example: "A mod <b>!ask</b> &rarr; <code>Poll.Open(\"Next game?\", \"Elden Ring, Hades\", 90, false, true)</code>."),
+        ["Poll.Close"] = new(
+            Summary: "Closes the poll early and settles the pot.",
+            Description: "<p>Resolves the winner from the votes and pays out any stakes. Doing nothing has the same effect a moment later — a poll always closes itself at the end of its duration — so reach for this when something else decided the answer first.</p>" +
+                         "<p>Idempotent: closing an already-closed poll does nothing, which is what lets a manual close and the timer race safely.</p>",
+            Example: "On the boss dying &rarr; <code>Poll.Close</code> &rarr; announce the result."),
+        ["Poll.Cancel"] = new(
+            Summary: "Ends the poll with no winner and refunds every stake.",
+            Description: "<p><b>Money, not a tidy-up.</b> A poll cut short has no honest outcome, so this picks no winner and hands every staked point back. Use <code>Poll.Close</code> to end one early and still pay out.</p>" +
+                         "<p>The same thing happens by itself when the Polls tool is switched off with a poll open, and when the Hub shuts down cleanly — an open pot is never simply dropped.</p>",
+            Example: "On the stream ending mid-poll &rarr; <code>Poll.Cancel</code>."),
+        ["Poll.Vote"] = new(
+            Summary: "Casts one viewer's vote.",
+            Description: "<p>The same capability the chat vote verb exposes, not a privileged one: one vote per viewer, and a second vote is refused unless the Polls panel allows changing (in which case it MOVES the vote rather than adding one). <code>Option</code> takes the option's number or its exact label.</p>" +
+                         "<p><b><code>User</code> is a LOGIN, not a display name.</b> One-vote-each is keyed on it, so pass <code>{event.user_login}</code> rather than <code>{user.name}</code> — for a viewer whose display name is not simply their login capitalised, the two are different people as far as the poll is concerned. Left empty it resolves to the triggering chatter's login.</p>",
+            Example: "A channel-point reward &rarr; <code>Poll.Vote({user.input}, {event.user_login})</code>."),
+        ["Poll.Bet"] = new(
+            Summary: "Stakes a viewer's points on an option.",
+            Description: "<p>Charges the viewer straight away, so the pot is real money from the moment the bet lands. Refused — with nothing charged — when they cannot afford it, when they have already staked on this poll, when the stake is outside the panel's minimum and maximum, or when the poll takes no bets. One stake per viewer per poll: a stake is a position, and topping it up later would make the payout depend on when they typed rather than what they risked.</p>" +
+                         "<p>Winners split the WHOLE pot in proportion to their own stakes, so each gets their stake back plus a share of the losing side. A tie, a poll nobody voted in, a cancel, or a winning option nobody backed all return every stake untouched.</p>" +
+                         "<p><b><code>User</code> is a LOGIN</b>, for the same reason as <code>Poll.Vote</code>.</p>",
+            Example: "<b>!wager</b> &rarr; <code>Poll.Bet({event.arg1}, {event.arg2}, {event.user_login})</code>."),
+        ["Poll.OnOpened"] = new(
+            Summary: "Fires when a poll opens.",
+            Description: "<p>An event root (no flow input). Fires for a poll started from the Polls panel or a <code>Poll.Open</code> node. <code>Options</code> is the choices comma-separated in order, and <code>Betting</code> says whether this one takes stakes (bound as <code>{event.title}</code> / <code>{event.options}</code> / <code>{event.duration_seconds}</code> / <code>{event.betting}</code>).</p>",
+            Example: "On a poll opening &rarr; trigger an overlay bar and pin the question in chat."),
+        ["Poll.OnClosed"] = new(
+            Summary: "Fires when a poll ends, however it ended.",
+            Description: "<p>An event root (no flow input). <code>Winner</code> is the option with the most votes, bound as <code>{event.winner}</code> — and it is EMPTY on a tie or when nobody voted. That is deliberate: points can ride on the answer, so a tie is reported as a tie rather than resolved by whichever option was typed first. Branch on <code>Winner</code> being empty before you announce one.</p>" +
+                         "<p>Also bound: <code>{event.winner_votes}</code> / <code>{event.total_votes}</code> / <code>{event.options}</code>.</p>",
+            Example: "On close &rarr; if <code>Winner</code> is empty, \"It's a tie!\", otherwise celebrate it."),
+        ["Poll.OnSettled"] = new(
+            Summary: "Fires after a betting poll's pot is resolved.",
+            Description: "<p>An event root (no flow input). Fires only when something was actually staked, AFTER <code>Poll.OnClosed</code>. <code>Outcome</code> is <code>paid</code> or <code>refunded</code> (bound as <code>{event.outcome}</code>) — a tie, an unvoted poll, a cancel, or a winning option nobody backed all return every stake, and that is a refund rather than a payout of zero.</p>" +
+                         "<p><code>Winners</code> is a comma-separated list of who was paid and is empty on a refund; <code>Pot</code> is everything that was staked, <code>Currency</code> the plural name of your points.</p>",
+            Example: "On a payout &rarr; \"{event.winner_count} backers split {event.pot} {event.currency}!\""),
+
+        // ═══════════════════════════════ RANKS ════════════════════════════════
+        ["Rank.Get"] = new(
+            Summary: "Outputs a viewer's current rank name. Pure data.",
+            Description: "<p>Runs the ladder against the viewer's live number — watched minutes, or their points balance, whichever metric the <b>Pre-Builds &rarr; Ranks</b> panel is set to — and returns the name of the highest rung they have reached. A viewer below the lowest rung, or one with nothing recorded yet, reads an empty name, which a <code>Logic.Branch</code> on <code>Text.IsEmpty</code> can test.</p>" +
+                         "<p><b><code>User</code> is a LOGIN, not a display name — pass <code>{event.user_login}</code>, not <code>{user.name}</code>.</b> The ladder, the watch-minute store and the group grants are all keyed on the login, so a display name that is not simply the login re-cased looks up nothing at all. Left empty the Hub resolves the triggering chatter's own login, which is the safest thing to do when you just mean \"whoever set this off\".</p>" +
+                         "<p>This is a <em>read</em>: it never announces a promotion and never fires <code>Rank.OnRankUp</code>, because the exporter may inline a value node into a condition it evaluates more than once. Use <code>Rank.Evaluate</code> when you want the check to count.</p>",
+            Example: "<code>Rank.Get</code> &rarr; <code>Chat.Send</code> \"Welcome back, {rank} {user.name}!\""),
+        // Rank.Value / Rank.Top were RETIRED in the 2026-08 tool-node cut — the watch-
+        // minute store and the balance table are OPEN, so DB.FindRow + DB.GetCell read
+        // the raw number and DB.Top("WatchTime", "minutes", "name", N) prints a board.
+        // Rank.Get stays: the value→rank-name ladder lives in the panel config, which
+        // no databank node can reach.
+        ["Rank.Evaluate"] = new(
+            Summary: "Re-checks a viewer's rank now, firing Rank.OnRankUp if they just climbed.",
+            Description: "<p>The one Rank node with side effects. It resolves the viewer's rung from their live number, remembers it, announces the promotion if there is one, and applies the rung's optional User-Management group grant. A viewer who has not moved is a no-op, and so is a name with nothing on record — no rank is minted, nothing is announced and no group is granted for someone the tool has never counted.</p>" +
+                         "<p><b><code>User</code> is a LOGIN, not a display name — pass <code>{event.user_login}</code>, not <code>{user.name}</code>.</b> Left empty it evaluates the triggering chatter.</p>" +
+                         "<p><b>When you need it.</b> The ladder re-checks every active viewer on its own watch-time tick, so ordinary climbing is automatic. What that tick cannot see is a graph moving points <em>directly</em> — the points table is an open databank table, so a <code>DB.SetCell</code> or a hand-rolled economy never reaches the Ranks tool at all. Call this straight after such a change and the viewer gets their promotion on the spot instead of at the next tick. Nothing happens while the tool is disabled.</p>",
+            Example: "A custom quest pays a viewer with <code>DB.IncrementCell</code> &rarr; <code>Rank.Evaluate</code> so the promotion lands immediately."),
+        ["Rank.OnRankUp"] = new(
+            Summary: "Fires when a viewer climbs to a higher rank.",
+            Description: "<p>An event root (no flow input). Once per rung crossed, not once per check: the tool remembers each viewer's last rank in the open <code>Ranks</code> databank table, so a restart does not re-announce everybody. <code>User</code> is who climbed (their display name — what a chat line should print), <code>Login</code> the same viewer's stable login, <code>RankName</code> the rank they reached, <code>Value</code> the number that got them there and <code>Next</code> the rank above (empty at the top of the ladder) — bound as <code>{event.user}</code> / <code>{event.login}</code> / <code>{event.rankname}</code> / <code>{event.value}</code> / <code>{event.next}</code>, plus <code>{event.unit}</code> for the word (\"minutes\", or your currency name).</p>" +
+                         "<p><b>Use <code>Login</code>, not <code>User</code>, for anything that looks a viewer up</b> — a databank row, a group check, another Rank node. The ladder is keyed on the login, and a display name that is not simply the login re-cased finds nothing.</p>" +
+                         "<p>A rank going <em>down</em> — someone spending points — is recorded but never fires this: a demotion is not an event worth celebrating, and a group the rank granted is never taken back. Renaming or deleting a rung in the panel does not fire it either: the viewers standing on that rung did not climb anything, so they are re-recorded quietly rather than announced all over again.</p>",
+            Example: "Branch on <code>{event.rankname}</code> with <code>Logic.Switch</code> &rarr; a different overlay effect per rank."),
+
+        // ══════════════════════════════ SOUNDBOARD ════════════════════════════
+        ["Soundboard.OnPlay"] = new(
+            Summary: "Fires when the Soundboard plays a clip for someone.",
+            Description: "<p>An event root (no flow input). <code>Command</code> is the row's own word without the '!' (an alias fires the row it belongs to, so this is always the canonical word), <code>User</code> is who asked, and <code>Clip</code> is the file that was sent to the overlay, relative to your media library — bound as <code>{event.command}</code> / <code>{event.user}</code> / <code>{event.clip}</code>, with <code>{user.name}</code> also set to the same viewer.</p>" +
+                         "<p><b>Why you need this rather than <code>Chat.Message</code>.</b> A word the Soundboard answers is consumed before your chat scripts see it: the built-in tools run first, and the one that handles a line stops the author fan-out for it. So the moment you map <b>!airhorn</b> on the <b>Pre-Builds &rarr; Soundboard</b> page, an <code>on_chat</code> graph you had built for <b>!airhorn</b> stops running, with nothing said anywhere. Move that graph onto this root and it fires again, in step with the sound.</p>" +
+                         "<p>It fires on a real play only — not when a role gate or a cooldown refused the viewer, and not when the clip path or the board's overlay hookup was wrong. Those are written to the Hub System Log instead, one line each, naming the row.</p>",
+            Example: "<b>!airhorn</b> plays &rarr; <code>DB.Increment</code> an \"airhorns\" row &rarr; <code>Chat.Send</code> \"that's {count} today\"."),
+
         // ══════════════════════════════ SYSTEM ════════════════════════════════
         ["System.Log"] = new(
             Summary: "Writes a line to the Hub System Log at a chosen level.",
@@ -990,7 +1318,7 @@ internal static class NodeProse
             Example: "Throttle an alert to at most once per 60s with a per-alert key."),
         ["Time.StreamUptime"] = new(
             Summary: "How long the stream has been live, in several forms. Pure data.",
-            Description: "<p>Anchored at the configured stream-start (Hub startup by default). Human <code>Uptime</code> (\"1h 23m\") plus raw seconds / minutes / hours and the ISO <code>StartedAt</code>. Same values as the <code>{stream.*}</code> tokens.</p>",
+            Description: "<p>Anchored to the stream's real start time, which the Hub reads from Twitch on connect and refreshes about once a minute — so it survives starting or restarting the Hub mid-stream. Falls back to Hub startup when that lookup isn't available (it needs the <code>Phoenix: Get Stream Status</code> action). Human <code>Uptime</code> (\"1h 23m\") plus raw seconds / minutes / hours and the ISO <code>StartedAt</code>. Same values as the <code>{stream.*}</code> tokens.</p>",
             Example: "<b>!uptime</b> &rarr; reply with the live <code>Uptime</code>."),
 
         // ═════════════════════════════ REROUTE ════════════════════════════════
@@ -1012,10 +1340,10 @@ internal static class NodeProse
     {
         new TokenFamily("user.", "#C893BC", "Identity & event payload",
             "Bound by the trigger at the top of the flow — the field set varies per event (chat, sub, raid, cheer, redeem).",
-            new[] { "user.name", "user.id", "user.platform", "user.message", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_anonymous", "user.color_hex", "user.sub_months", "user.tier", "user.bits", "user.points", "user.viewers", "user.count", "user.total_gifts", "user.gifter", "user.recipient", "user.reward", "user.input" }),
+            new[] { "user.name", "user.id", "user.platform", "user.message", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_regular", "user.is_anonymous", "user.color_hex", "user.sub_months", "user.tier", "user.bits", "user.points", "user.viewers", "user.count", "user.total_gifts", "user.gifter", "user.recipient", "user.reward", "user.input" }),
         new TokenFamily("event.", "#7FBED1", "Event metadata",
-            "The shape of the firing event — webhook body, schedule tick, state change, bus message, and the fields platform events carry (a Super Chat's amount / currency, a stream's title / category, a chat message's id). <code>event.ret.*</code> / <code>event.arg.*</code> carry values across Event nodes.",
-            new[] { "event.iscommand", "event.payload", "event.body", "event.method", "event.path", "event.timestamp", "event.count", "event.type", "event.message", "event.message_id", "event.title", "event.category", "event.amount", "event.currency", "event.duration", "event.combo", "event.text", "event.data", "state.name", "state.new_value", "state.old_value" }),
+            "The shape of the firing event — webhook body, schedule tick, state change, bus message, the fields platform events carry (a Super Chat's amount / currency, a stream's title / category, a chat message's id), plus the tool event roots (Timer, Loyalty, Counters, Quotes, custom commands, Automod), which each bind their own slice of this family. <code>event.ret.*</code> / <code>event.arg.*</code> carry values across Event nodes.",
+            new[] { "event.iscommand", "event.message_id", "event.payload", "event.body", "event.method", "event.path", "event.timestamp", "event.count", "event.type", "event.message", "event.title", "event.category", "event.duration", "event.combo", "event.text", "event.data", "event.name", "event.number", "event.counter", "event.command", "event.user", "event.args", "event.rule", "event.action", "event.reason", "event.timername", "event.slug", "event.source", "event.seconds", "event.remaining", "event.milestoneid", "event.label", "event.amount", "event.balance", "event.currency", "event.reward", "event.cost", "event.total", "event.winners", "event.pot", "event.entrants", "state.name", "state.new_value", "state.old_value" }),
         new TokenFamily("result.", "#9CC97A", "Command outputs",
             "Written by the node that just ran — HTTP, file, Discord, JSON, clip, OBS and state lookups drop their return values here.",
             new[] { "result.http_status", "result.http_body", "result.http_error", "result.api_response", "result.json_value", "result.file_content", "result.discord_message_id", "result.obs_error", "clip.url", "clip.ok", "result.state_value", "result.sb_dispatched" }),
@@ -1056,6 +1384,10 @@ internal static class NodeProse
     {
         "stream.uptime", "stream.uptime_seconds", "stream.uptime_minutes", "stream.uptime_hours",
         "stream.uptime_formatted", "stream.started_at",
+        // Ambient current title/game — fed by the Hub's StreamInfoTracker
+        // (StreamUpdate/ChannelUpdate events + setter/Get-User write-through).
+        // "" until known; a Twitch.GetStream node's local results shadow them.
+        "stream.title", "stream.game",
     };
 
     /// <summary>

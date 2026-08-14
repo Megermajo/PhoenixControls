@@ -8,9 +8,9 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     // Partial split: db.* command registrations.
-    // Lifts the 13 DB-backed handlers (find_row, get/set/increment_cell,
-    // insert/delete_row, clear_table, get_column, delete_var, row_count, check,
-    // fetch_row) out of RegisterHubCommands. Behaviour, contracts, and the
+    // Lifts the 14 DB-backed handlers (find_row, get/set/increment_cell,
+    // insert/delete_row, clear_table, get_column, delete_var, row_count, top,
+    // check, fetch_row) out of RegisterHubCommands. Behaviour, contracts, and the
     // result.* writes are unchanged.
 #pragma warning disable CS1998
     public partial class ScriptManager
@@ -111,7 +111,18 @@ namespace Phoenix.Controls.Hub.Core
                         return currentStr;
                     }
                     int newValue = current + amt;
-                    await DB.Instance.SetCellAsync(table, rowId, column, newValue.ToString(CultureInfo.InvariantCulture));
+                    // Honour the refusal. SetCellAsync returns false when a
+                    // protection guard blocked the write (it logs the table and
+                    // the reason itself). This used to ignore the result and
+                    // return `newValue` regardless — so a script targeting a
+                    // protected table read back an incremented number that was
+                    // never stored, and a following db.get_cell disagreed with it.
+                    // Hand back the UNCHANGED value, exactly like the non-numeric
+                    // refusal a few lines up.
+                    bool wrote = await DB.Instance.SetCellAsync(
+                        table, rowId, column, newValue.ToString(CultureInfo.InvariantCulture));
+                    if (!wrote)
+                        return current.ToString(CultureInfo.InvariantCulture);
                     return newValue.ToString(CultureInfo.InvariantCulture);
                 }
                 finally { rmwLock.Release(); }
@@ -188,6 +199,44 @@ namespace Phoenix.Controls.Hub.Core
                 if (string.IsNullOrEmpty(table)) return "0";
                 int count = await DB.Instance.GetRowCountAsync(table);
                 return count.ToString();
+            });
+
+            // db.top(table, valueColumn, labelColumn, count, resultBase) — generic
+            // top-N leaderboard over any OPEN table, ordered numerically DESC by
+            // valueColumn (added in the 2026-08 tool-node cut as the generic
+            // replacement for the retired points.top / rank.top). ONE read backs both
+            // of the DB.Top node's outputs: when the exporter-injected ResultBase is
+            // present the handler also publishes "{base}_labels" / "{base}_values"
+            // (rank-aligned CSVs) via SetLocalResultVar — the retired quote.get's
+            // result-base shape — and always returns the labels CSV for hand-authored
+            // inline callers. Missing table/column degrades to the empty answer, like
+            // every other db.* read.
+            _engine.RegisterCommand("db.top", async (args) => {
+                var bound = _engine.CurrentBoundArgs;
+                string table    = StripBareQuotes(bound?.GetOrDefault<string>("Table", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0));
+                string valueCol = StripBareQuotes(bound?.GetOrDefault<string>("ValueColumn", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1));
+                string labelCol = StripBareQuotes(bound?.GetOrDefault<string>("LabelColumn", ArgOrEmpty(args, 2)) ?? ArgOrEmpty(args, 2));
+                int count = (bound != null && bound.ContainsKey("Count"))
+                    ? bound.Get<int>("Count")
+                    : (int.TryParse(ArgOrEmpty(args, 3), NumberStyles.Integer, CultureInfo.InvariantCulture, out var c) ? c : 5);
+                if (count <= 0) count = 5;
+                string baseVar = StripBareQuotes(bound?.GetOrDefault<string>("ResultBase", ArgOrEmpty(args, 4)) ?? ArgOrEmpty(args, 4));
+                string labels = "", values = "";
+                if (!string.IsNullOrEmpty(table) && !string.IsNullOrEmpty(valueCol) && !string.IsNullOrEmpty(labelCol))
+                {
+                    var rows = await DB.Instance.TopAsync(table, valueCol, labelCol, count);
+                    var labelList = new List<string>(rows.Count);
+                    var valueList = new List<string>(rows.Count);
+                    foreach (var row in rows) { labelList.Add(row.Label); valueList.Add(row.Value); }
+                    labels = string.Join(",", labelList);
+                    values = string.Join(",", valueList);
+                }
+                if (!string.IsNullOrEmpty(baseVar))
+                {
+                    _engine.SetLocalResultVar($"{baseVar}_labels", labels);
+                    _engine.SetLocalResultVar($"{baseVar}_values", values);
+                }
+                return labels;
             });
 
             // db.check(key) — exists check for Vars. Returns "true"/"false".

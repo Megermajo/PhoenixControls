@@ -125,7 +125,8 @@ public sealed partial class ArchitectSiblingWindow : Window
         {
             if (DispatcherQueue is null) return;
             DispatcherQueue.TryEnqueue(() => SetStatus(
-                ".phxg saved — .phx export failed (Hub will keep running the old script). See System Log.",
+                Localizer.T("architect.window.sibling.status.phx_export_failed",
+                    ".phxg saved — .phx export failed (Hub will keep running the old script). See System Log."),
                 ArchitectStatusLight.Yellow));
         };
 
@@ -265,7 +266,9 @@ public sealed partial class ArchitectSiblingWindow : Window
     // absolutely-positioned canvas nodes, so it stays cheap on large graphs.
     private const double PanelAnimMs = 170.0;
     private Microsoft.UI.Xaml.DispatcherTimer? _railWidthTween;
-    private Microsoft.UI.Xaml.DispatcherTimer? _inspectorWidthTween;
+    // _inspectorWidthTween removed 2026-08-14 with the inspector column — the
+    // floating card swaps between two markup widths. AnimatePanelColumnWidth
+    // stays; the LeftRail still tweens.
 
     private static Microsoft.UI.Xaml.DispatcherTimer? AnimatePanelColumnWidth(
         Microsoft.UI.Xaml.Controls.ColumnDefinition? col,
@@ -349,7 +352,7 @@ public sealed partial class ArchitectSiblingWindow : Window
 
     /// <summary>
     /// 0.11.x polish — the sibling window now hosts its own docked
-    /// LogicInspector inside the right-edge InspectorColumn (parity with
+    /// LogicInspector in the floating right-edge card (parity with
     /// MainView). The floating InspectorWindow path is no longer the
     /// default surface; calling OpenFor here would orphan the docked card
     /// AND the singleton would block sibling windows from each having
@@ -404,72 +407,105 @@ public sealed partial class ArchitectSiblingWindow : Window
         }
     }
 
-    // ─── Docked inspector column controls ───────────────
+    // ─── Floating inspector card controls ───────────────
     //
     // Mirrors MainView's ApplyInspectorVisibleToColumn / chevron handlers.
-    // Width-default constants are duplicated rather than lifted to a shared
-    // module (chrome helpers stay per-window). The InspectorRolledUpWidth
-    // value is the same 32 DIP MainView uses for its chevron strip.
+    // Constants are duplicated rather than lifted to a shared module (chrome
+    // helpers stay per-window, per feedback_visualist_architect_chrome_independence).
+    //
+    // ★ 2026-08-14 — the persisted-width path is gone. It read
+    // ArchitectInspectorColumnWidth, a key whose only writer (the inspector
+    // splitter) was deleted on 2026-05-24, and clamped it against a floor of
+    // 240 here versus 200 in MainView — so the same config rendered two
+    // different widths depending on which window you opened the graph in.
+    // The card is a markup constant in both now.
 
-    private const double InspectorDockedDefaultWidth = 320.0;
-    private const double InspectorDockedMinWidth     = 240.0;
-    private const double InspectorRolledUpWidth      = 32.0;
+    private const double InspectorCardWidth      = 320.0;
+    private const double InspectorCardMaxHeight  = 420.0;
+    private const double InspectorCardMinHeight  = 160.0;
+    private const double MiniMapReservedHeight   = 164.0;
+    private const double InspectorRolledUpWidth  = 32.0;
     private bool _inspectorExpanded = true;
 
     private void ApplyInspectorVisibleToColumn(bool visible, bool animate = true)
     {
-        if (InspectorColumn is null) return;
+        if (InspectorHost is null) return;
         _inspectorExpanded = visible;
-        double target;
-        if (visible)
-        {
-            var cfg = ConfigManager.Current;
-            double w = cfg.ArchitectInspectorColumnWidth > 0
-                ? cfg.ArchitectInspectorColumnWidth
-                : InspectorDockedDefaultWidth;
-            double maxW = double.IsInfinity(InspectorColumn.MaxWidth) ? 9999.0 : InspectorColumn.MaxWidth;
-            target = Math.Clamp(w, InspectorDockedMinWidth, maxW);
-        }
-        else
-        {
-            target = InspectorRolledUpWidth;
-        }
+        _ = animate;   // no width tween any more — two markup widths.
+
+        InspectorHost.Width = visible ? InspectorCardWidth : InspectorRolledUpWidth;
+
+        if (InspectorTitleText is not null)
+            InspectorTitleText.Visibility = visible
+                ? Microsoft.UI.Xaml.Visibility.Visible
+                : Microsoft.UI.Xaml.Visibility.Collapsed;
+        if (InspectorHeaderBorder is not null)
+            InspectorHeaderBorder.Padding = visible
+                ? new Microsoft.UI.Xaml.Thickness(6, 5, 6, 5)
+                : new Microsoft.UI.Xaml.Thickness(0);
+
+        if (InspectorRegion is not null)
+            InspectorRegion.Visibility = visible
+                ? Microsoft.UI.Xaml.Visibility.Visible
+                : Microsoft.UI.Xaml.Visibility.Collapsed;
+
         UpdateInspectorChevronGlyph(visible);
-        if (visible)
+        PublishInspectorViewportInset();
+    }
+
+    /// <summary>Declare the card's footprint to the canvas — see
+    /// LogicCanvasView.ViewportInsetRight.</summary>
+    private void PublishInspectorViewportInset()
+    {
+        try
         {
-            if (InspectorRegion is not null)
-                InspectorRegion.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-            if (animate)
-                _inspectorWidthTween = AnimatePanelColumnWidth(InspectorColumn, target, _inspectorWidthTween);
-            else
-            {
-                _inspectorWidthTween?.Stop();
-                InspectorColumn.Width = new Microsoft.UI.Xaml.GridLength(
-                    target, Microsoft.UI.Xaml.GridUnitType.Pixel);
-            }
+            if (CanvasView is null) return;
+            double w = InspectorHost is not null && !double.IsNaN(InspectorHost.Width)
+                ? InspectorHost.Width
+                : InspectorCardWidth;
+            CanvasView.ViewportInsetRight = w + 12.0;
         }
-        else
+        catch (Exception ex)
         {
-            if (animate)
-            {
-                _inspectorWidthTween = AnimatePanelColumnWidth(
-                    InspectorColumn, target, _inspectorWidthTween,
-                    () =>
-                    {
-                        if (InspectorRegion is not null)
-                            InspectorRegion.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-                    });
-            }
-            else
-            {
-                _inspectorWidthTween?.Stop();
-                InspectorColumn.Width = new Microsoft.UI.Xaml.GridLength(
-                    target, Microsoft.UI.Xaml.GridUnitType.Pixel);
-                if (InspectorRegion is not null)
-                    InspectorRegion.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
-            }
+            GlobalLogger.Error("Architect.SiblingWindow", "PublishInspectorViewportInset", ex);
         }
     }
+
+    private void ApplyInspectorCardHeightCap(double paneHeight)
+    {
+        if (InspectorCardRoot is null || paneHeight <= 0) return;
+        double avail = paneHeight - 12.0 - MiniMapReservedHeight;
+        InspectorCardRoot.MaxHeight = Math.Clamp(
+            Math.Min(InspectorCardMaxHeight, avail),
+            InspectorCardMinHeight,
+            InspectorCardMaxHeight);
+    }
+
+    // Clip the floating host to its own box so the 32 px rolled-up tab cannot
+    // bleed its header past the card fill onto the canvas (a Border does not
+    // clip children). Also the natural place to re-cap the card height, since
+    // the host resizes with the window.
+    private Microsoft.UI.Xaml.Media.RectangleGeometry? _inspectorHostClip;
+    private void OnInspectorHostSizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
+    {
+        if (sender is not Microsoft.UI.Xaml.FrameworkElement fe) return;
+        var rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+        if (_inspectorHostClip is null)
+        {
+            _inspectorHostClip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = rect };
+            fe.Clip = _inspectorHostClip;
+        }
+        else
+        {
+            _inspectorHostClip.Rect = rect;
+        }
+    }
+
+    // The card's cap tracks the BODY's height, not its own — the host is
+    // top-aligned and content-sized, so its SizeChanged does not fire when the
+    // window grows or shrinks vertically.
+    private void OnBodyGridSizeChanged(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
+        => ApplyInspectorCardHeightCap(e.NewSize.Height);
 
     private void UpdateInspectorChevronGlyph(bool expanded)
     {
@@ -477,11 +513,12 @@ public sealed partial class ArchitectSiblingWindow : Window
         try
         {
             InspectorChevronButton.Content = expanded ? "" : "";
-            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(InspectorChevronButton,
-                expanded ? "Roll up Inspector" : "Show Inspector");
+            string chevronLabel = expanded
+                ? Localizer.T("architect.window.sibling.inspector.chevron.rollup", "Roll up Inspector")
+                : Localizer.T("architect.window.sibling.inspector.chevron.show", "Show Inspector");
+            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(InspectorChevronButton, chevronLabel);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-                InspectorChevronButton,
-                expanded ? "Roll up Inspector" : "Show Inspector");
+                InspectorChevronButton, chevronLabel);
         }
         catch (Exception ex)
         {
@@ -753,11 +790,14 @@ public sealed partial class ArchitectSiblingWindow : Window
     private void UpdateCaptionFromState()
     {
         string? path = _viewModel.LoadedFilePath;
+        string titleFormat = Localizer.T("architect.window.sibling.window_title_format", "{0} — Architect");
         if (string.IsNullOrEmpty(path))
         {
-            CaptionFileName.Text = _viewModel.IsDirty ? "• (unsaved)" : "(unsaved)";
+            string unsaved = Localizer.T("architect.window.sibling.caption.unsaved", "(unsaved)");
+            if (_viewModel.IsDirty) unsaved = "• " + unsaved;
+            CaptionFileName.Text = unsaved;
             CaptionFilePath.Text = string.Empty;
-            Title = _viewModel.IsDirty ? "• (unsaved) — Architect" : "(unsaved) — Architect";
+            Title = string.Format(titleFormat, unsaved);
             return;
         }
 
@@ -766,7 +806,7 @@ public sealed partial class ArchitectSiblingWindow : Window
         if (_viewModel.IsDirty) fname = "• " + fname;
         CaptionFileName.Text = fname;
         CaptionFilePath.Text = folder;
-        Title = $"{fname} — Architect";
+        Title = string.Format(titleFormat, fname);
     }
 
     private string ResolvePersistKey()
@@ -791,7 +831,9 @@ public sealed partial class ArchitectSiblingWindow : Window
         try
         {
             var g = _viewModel.LogicCanvas.Graph;
-            StatusRight.Text = $"{g.Nodes.Count} nodes · {g.Links.Count} links";
+            StatusRight.Text = string.Format(
+                Localizer.T("architect.window.sibling.status.counts_format", "{0} nodes · {1} links"),
+                g.Nodes.Count, g.Links.Count);
         }
         catch
         {
@@ -826,8 +868,14 @@ public sealed partial class ArchitectSiblingWindow : Window
             return;
         DispatcherQueue.TryEnqueue(() =>
         {
-            string fname = string.IsNullOrEmpty(filePath) ? "(unknown)" : Path.GetFileName(filePath);
-            SetStatus($"Failed to load {fname} — {ex.GetType().Name}", ArchitectStatusLight.Red);
+            string fname = string.IsNullOrEmpty(filePath)
+                ? Localizer.T("architect.window.sibling.status.unknown_file", "(unknown)")
+                : Path.GetFileName(filePath);
+            SetStatus(string.Format(
+                    Localizer.T("architect.window.sibling.status.load_failed_format",
+                        "Failed to load {0} — {1}"),
+                    fname, ex.GetType().Name),
+                ArchitectStatusLight.Red);
         });
     }
 
@@ -913,7 +961,11 @@ public sealed partial class ArchitectSiblingWindow : Window
             if (!File.Exists(picked))
             {
                 RecentFiles.Remove(picked);
-                SetStatus($"Recent entry missing: {Path.GetFileName(picked)}", ArchitectStatusLight.Yellow);
+                SetStatus(string.Format(
+                        Localizer.T("architect.window.sibling.status.recent_missing_format",
+                            "Recent entry missing: {0}"),
+                        Path.GetFileName(picked)),
+                    ArchitectStatusLight.Yellow);
                 return;
             }
             SpawnOrFocusSibling(picked);
@@ -938,7 +990,11 @@ public sealed partial class ArchitectSiblingWindow : Window
             if (!File.Exists(picked))
             {
                 RecentFiles.Remove(picked);
-                SetStatus($"Recent entry missing: {Path.GetFileName(picked)}", ArchitectStatusLight.Yellow);
+                SetStatus(string.Format(
+                        Localizer.T("architect.window.sibling.status.recent_missing_format",
+                            "Recent entry missing: {0}"),
+                        Path.GetFileName(picked)),
+                    ArchitectStatusLight.Yellow);
                 return;
             }
             SpawnOrFocusSibling(picked);
@@ -976,9 +1032,14 @@ public sealed partial class ArchitectSiblingWindow : Window
         var spawned = await ArchitectWindowRegistry.OpenFileAsync(path).ConfigureAwait(true);
         if (spawned is null)
         {
-            string fname = string.IsNullOrEmpty(path) ? "(unknown)" : Path.GetFileName(path);
+            string fname = string.IsNullOrEmpty(path)
+                ? Localizer.T("architect.window.sibling.status.unknown_file", "(unknown)")
+                : Path.GetFileName(path);
             DispatcherQueue?.TryEnqueue(() => SetStatus(
-                $"Failed to open {fname} — file unreadable or malformed. See System Log.",
+                string.Format(
+                    Localizer.T("architect.window.sibling.status.open_failed_format",
+                        "Failed to open {0} — file unreadable or malformed. See System Log."),
+                    fname),
                 ArchitectStatusLight.Red));
             return false;
         }
@@ -994,7 +1055,8 @@ public sealed partial class ArchitectSiblingWindow : Window
         {
             if (!await ConfirmSaveValidationAsync())
             {
-                SetStatus("Save cancelled — validation rejected.", ArchitectStatusLight.Yellow);
+                SetStatus(Localizer.T("architect.window.sibling.status.save_cancelled",
+                    "Save cancelled — validation rejected."), ArchitectStatusLight.Yellow);
                 return;
             }
 
@@ -1007,7 +1069,10 @@ public sealed partial class ArchitectSiblingWindow : Window
                 // LastOpenUtc timestamp tracks active editing — Hub's replay
                 // walks newest-first.
                 RecentSiblingsStore.Touch(_viewModel.LoadedFilePath!);
-                SetStatus($"Saved {Path.GetFileName(_viewModel.LoadedFilePath)}.", ArchitectStatusLight.Green);
+                SetStatus(string.Format(
+                        Localizer.T("architect.window.sibling.status.saved_format", "Saved {0}."),
+                        Path.GetFileName(_viewModel.LoadedFilePath)),
+                    ArchitectStatusLight.Green);
                 UpdateCaptionFromState();
                 ArchitectWindowRegistry.Rebind(this, _viewModel.LoadedFilePath);
                 return;
@@ -1018,7 +1083,8 @@ public sealed partial class ArchitectSiblingWindow : Window
         catch (Exception ex)
         {
             GlobalLogger.Error("ArchitectSiblingWindow", "File → Save", ex);
-            SetStatus("Save failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.window.sibling.status.save_failed", "Save failed — see System Log."),
+                ArchitectStatusLight.Red);
         }
     }
 
@@ -1033,7 +1099,8 @@ public sealed partial class ArchitectSiblingWindow : Window
             // no-path-yet branch; the user-initiated Save As entry didn't.
             if (!validated && !await ConfirmSaveValidationAsync())
             {
-                SetStatus("Save cancelled — validation rejected.", ArchitectStatusLight.Yellow);
+                SetStatus(Localizer.T("architect.window.sibling.status.save_cancelled",
+                    "Save cancelled — validation rejected."), ArchitectStatusLight.Yellow);
                 return;
             }
 
@@ -1055,14 +1122,19 @@ public sealed partial class ArchitectSiblingWindow : Window
             // new path so a Hub restart re-opens the file under its new name.
             RecentSiblingsStore.Touch(path);
             RememberArchitectDir(path);
-            SetStatus($"Saved {Path.GetFileName(path)}.", ArchitectStatusLight.Green);
+            SetStatus(string.Format(
+                    Localizer.T("architect.window.sibling.status.saved_format", "Saved {0}."),
+                    Path.GetFileName(path)),
+                ArchitectStatusLight.Green);
             UpdateCaptionFromState();
             ArchitectWindowRegistry.Rebind(this, path);
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("ArchitectSiblingWindow", "File → Save As", ex);
-            SetStatus("Save As failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.window.sibling.status.save_as_failed",
+                    "Save As failed — see System Log."),
+                ArchitectStatusLight.Red);
         }
     }
 
@@ -1109,8 +1181,14 @@ public sealed partial class ArchitectSiblingWindow : Window
             }
 
             string summary = errorCount > 0
-                ? $"Saved with {errorCount} error(s) + {warningCount} warning(s) — see System Log."
-                : $"Saved with {warningCount} warning(s) — see System Log.";
+                ? string.Format(
+                    Localizer.T("architect.window.sibling.status.saved_with_errors_format",
+                        "Saved with {0} error(s) + {1} warning(s) — see System Log."),
+                    errorCount, warningCount)
+                : string.Format(
+                    Localizer.T("architect.window.sibling.status.saved_with_warnings_format",
+                        "Saved with {0} warning(s) — see System Log."),
+                    warningCount);
             SetStatus(summary, ArchitectStatusLight.Yellow);
             return true;
         }
@@ -1128,19 +1206,25 @@ public sealed partial class ArchitectSiblingWindow : Window
         {
             if (string.IsNullOrEmpty(_viewModel.LoadedFilePath))
             {
-                SetStatus("Save the graph first; export needs a path.", ArchitectStatusLight.Yellow);
+                SetStatus(Localizer.T("architect.window.sibling.status.export_needs_path",
+                        "Save the graph first; export needs a path."),
+                    ArchitectStatusLight.Yellow);
                 return;
             }
             // Async export path; pre-fix this ran
             // the exporter walk + disk write on the UI thread.
             await _viewModel.ExportPhxBesideAsync(_viewModel.LoadedFilePath!).ConfigureAwait(true);
-            SetStatus($"Exported {Path.GetFileNameWithoutExtension(_viewModel.LoadedFilePath)}.phx.",
+            SetStatus(string.Format(
+                    Localizer.T("architect.window.sibling.status.exported_format", "Exported {0}.phx."),
+                    Path.GetFileNameWithoutExtension(_viewModel.LoadedFilePath)),
                 ArchitectStatusLight.Green);
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("ArchitectSiblingWindow", "File → Export", ex);
-            SetStatus("Export failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.window.sibling.status.export_failed",
+                    "Export failed — see System Log."),
+                ArchitectStatusLight.Red);
         }
     }
 
@@ -1259,12 +1343,16 @@ public sealed partial class ArchitectSiblingWindow : Window
         try
         {
             CanvasView.RequestSyncEventPeersFromShell();
-            SetStatus("Sync Event Peers requested.", ArchitectStatusLight.Green);
+            SetStatus(Localizer.T("architect.window.sibling.status.sync_peers_requested",
+                    "Sync Event Peers requested."),
+                ArchitectStatusLight.Green);
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("ArchitectSiblingWindow", "Script → Sync Event Peers", ex);
-            SetStatus("Sync Event Peers failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.window.sibling.status.sync_peers_failed",
+                    "Sync Event Peers failed — see System Log."),
+                ArchitectStatusLight.Red);
         }
     }
 
@@ -1303,7 +1391,9 @@ public sealed partial class ArchitectSiblingWindow : Window
                 GlobalLogger.Log(
                     "Restore previous version: no file is loaded (save once to seed backups).",
                     "ArchitectSiblingWindow", LogLevel.System);
-                SetStatus("Restore: save the graph once to seed backups.", ArchitectStatusLight.Yellow);
+                SetStatus(Localizer.T("architect.window.sibling.status.restore_needs_save",
+                        "Restore: save the graph once to seed backups."),
+                    ArchitectStatusLight.Yellow);
                 return;
             }
 
@@ -1313,7 +1403,9 @@ public sealed partial class ArchitectSiblingWindow : Window
                 GlobalLogger.Log(
                     $"Restore previous version: no .phxg.bak[1-3] entries beside '{Path.GetFileName(_viewModel.LoadedFilePath)}' yet.",
                     "ArchitectSiblingWindow", LogLevel.System);
-                SetStatus("Restore: no backup versions found yet.", ArchitectStatusLight.Yellow);
+                SetStatus(Localizer.T("architect.window.sibling.status.restore_no_backups",
+                        "Restore: no backup versions found yet."),
+                    ArchitectStatusLight.Yellow);
                 return;
             }
 
@@ -1345,9 +1437,11 @@ public sealed partial class ArchitectSiblingWindow : Window
 
             var dlg = new ContentDialog
             {
-                Title = $"Restore '{Path.GetFileName(_viewModel.LoadedFilePath)}' from backup",
-                PrimaryButtonText = "Restore",
-                CloseButtonText = "Cancel",
+                Title = string.Format(
+                    Localizer.T("architect.dialog.restore_backup.title", "Restore '{0}' from backup"),
+                    Path.GetFileName(_viewModel.LoadedFilePath)),
+                PrimaryButtonText = Localizer.T("common.button.restore", "Restore"),
+                CloseButtonText = Localizer.T("common.button.cancel", "Cancel"),
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = root,
                 Content = list,
@@ -1364,21 +1458,32 @@ public sealed partial class ArchitectSiblingWindow : Window
             bool ok = GraphSerializer.RestoreBackup(_viewModel.LoadedFilePath!, b2.Path);
             if (!ok)
             {
-                SetStatus($"Restore from '{Path.GetFileName(b2.Path)}' failed — see System Log.",
+                SetStatus(string.Format(
+                        Localizer.T("architect.window.sibling.status.restore_failed_format",
+                            "Restore from '{0}' failed — see System Log."),
+                        Path.GetFileName(b2.Path)),
                     ArchitectStatusLight.Red);
                 return;
             }
 
             var reloaded = await _viewModel.OpenAsync(_viewModel.LoadedFilePath!).ConfigureAwait(true);
             SetStatus(reloaded
-                ? $"Restored from {Path.GetFileName(b2.Path)} (bak{b2.Slot})."
-                : $"Restored '{Path.GetFileName(b2.Path)}' but reload failed — see System Log.",
+                ? string.Format(
+                    Localizer.T("architect.window.sibling.status.restored_format",
+                        "Restored from {0} (bak{1})."),
+                    Path.GetFileName(b2.Path), b2.Slot)
+                : string.Format(
+                    Localizer.T("architect.window.sibling.status.restored_reload_failed_format",
+                        "Restored '{0}' but reload failed — see System Log."),
+                    Path.GetFileName(b2.Path)),
                 reloaded ? ArchitectStatusLight.Green : ArchitectStatusLight.Yellow);
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("ArchitectSiblingWindow", "File → Restore previous version", ex);
-            SetStatus("Restore failed — see System Log.", ArchitectStatusLight.Red);
+            SetStatus(Localizer.T("architect.window.sibling.status.restore_failed",
+                    "Restore failed — see System Log."),
+                ArchitectStatusLight.Red);
         }
     }
 

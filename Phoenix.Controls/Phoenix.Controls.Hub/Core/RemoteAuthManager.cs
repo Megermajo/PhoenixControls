@@ -59,7 +59,7 @@ namespace Phoenix.Controls.Hub.Core
         /// </summary>
         public PairingGrant BeginPairing(int? ttlSecondsOverride = null)
         {
-            int ttl = ttlSecondsOverride ?? Math.Max(30, ConfigManager.Current.RemotePairingTtlSeconds);
+            int ttl = ttlSecondsOverride ?? 300; // default pairing-code TTL (5 min)
             string pairingId = NewBase64UrlBytes(12);
             string code      = RandomNumberGenerator.GetInt32(PairingCodeMin, PairingCodeMax + 1)
                                                     .ToString("000000");

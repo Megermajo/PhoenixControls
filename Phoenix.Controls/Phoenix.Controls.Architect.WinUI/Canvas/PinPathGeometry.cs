@@ -26,7 +26,4 @@ public static class PinPathGeometry
         SocketPinKind.Mismatch      => Circle,   // unfilled circle when type-check fails
         _                           => Circle,
     };
-
-    /// <summary>True when the pin should render filled rather than outline.</summary>
-    public static bool IsFilledByDefault(SocketPinKind kind) => kind != SocketPinKind.Mismatch;
 }

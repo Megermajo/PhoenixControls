@@ -938,8 +938,8 @@ public sealed partial class SystemLogView : UserControl, IDisposable,
                 suggestedName,
                 new[]
                 {
-                    ("Text", ".txt"),
-                    ("Log",  ".log"),
+                    (Localizer.T("panel.systemlog.export.filter.text", "Text"), ".txt"),
+                    (Localizer.T("panel.systemlog.export.filter.log",  "Log"),  ".log"),
                 });
             if (string.IsNullOrEmpty(target)) return; // user cancelled
 

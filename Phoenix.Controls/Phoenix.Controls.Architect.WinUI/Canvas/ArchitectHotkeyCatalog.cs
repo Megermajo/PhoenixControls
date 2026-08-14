@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
 
@@ -31,17 +32,22 @@ public static class ArchitectHotkeyCatalog
 {
     // ─── Section names (mirrored in the modal reference view) ──────────────
 
-    public const string SectionEdit                 = "Edit";
-    public const string SectionFile                 = "File";
-    public const string SectionNavigateView         = "Navigate / View";
-    public const string SectionSpawnPalette         = "Spawn palette";
-    public const string SectionFind                 = "Find";
-    public const string SectionQuickKeySpawn        = "Quick-key spawn (hold + click empty canvas)";
-    public const string SectionBookmarks            = "Bookmarks";
-    public const string SectionDocumentation        = "Documentation";
-    public const string SectionRetired              = "Retired (intentional)";
-    public const string SectionView                 = "View";
-    public const string SectionHelp                 = "Help";
+    // `static readonly` (not `const`): the display string resolves through
+    // Localizer at first touch. Every consumer — the cheatsheet overlay, the
+    // KeyboardShortcutsDialog allow-lists, GroupedBySection's bucket keys —
+    // reads these same fields, so the grouping/allow-list identity holds
+    // whatever language the bundle resolves to.
+    public static readonly string SectionEdit                 = Localizer.T("architect.canvas.hotkey.section.edit", "Edit");
+    public static readonly string SectionFile                 = Localizer.T("architect.canvas.hotkey.section.file", "File");
+    public static readonly string SectionNavigateView         = Localizer.T("architect.canvas.hotkey.section.navigate_view", "Navigate / View");
+    public static readonly string SectionSpawnPalette         = Localizer.T("architect.canvas.hotkey.section.spawn_palette", "Spawn palette");
+    public static readonly string SectionFind                 = Localizer.T("architect.canvas.hotkey.section.find", "Find");
+    public static readonly string SectionQuickKeySpawn        = Localizer.T("architect.canvas.hotkey.section.quick_key_spawn", "Quick-key spawn (hold + click empty canvas)");
+    public static readonly string SectionBookmarks            = Localizer.T("architect.canvas.hotkey.section.bookmarks", "Bookmarks");
+    public static readonly string SectionDocumentation        = Localizer.T("architect.canvas.hotkey.section.documentation", "Documentation");
+    public static readonly string SectionRetired              = Localizer.T("architect.canvas.hotkey.section.retired", "Retired (intentional)");
+    public static readonly string SectionView                 = Localizer.T("architect.canvas.hotkey.section.view", "View");
+    public static readonly string SectionHelp                 = Localizer.T("architect.canvas.hotkey.section.help", "Help");
 
     /// <summary>
     /// The full chord catalog. Order here is the order the modal reference
@@ -49,6 +55,14 @@ public static class ArchitectHotkeyCatalog
     /// by <see cref="HotkeyContext"/> at render time.
     /// </summary>
     private static readonly HotkeyEntry[] _all = BuildEntries();
+
+    /// <summary>
+    /// Localized chord DESCRIPTION. Short local name so the table below stays
+    /// readable at one entry per line; <paramref name="english"/> is the
+    /// authoritative fallback whenever the bundle has no entry.
+    /// </summary>
+    private static string D(string slug, string english)
+        => Localizer.T("architect.canvas.hotkey." + slug, english);
 
     private static HotkeyEntry[] BuildEntries()
     {
@@ -66,79 +80,84 @@ public static class ArchitectHotkeyCatalog
         return new HotkeyEntry[]
         {
             // ── Edit ──────────────────────────────────────────────────────
-            new("Ctrl+Z",        "Undo",                                  SectionEdit, AnyCanvas),
-            new("Ctrl+Y",        "Redo",                                  SectionEdit, AnyCanvas),
-            new("Ctrl+Shift+Z",  "Redo (alt)",                            SectionEdit, AnyCanvas),
-            new("Ctrl+C",        "Copy selection",                        SectionEdit, NodesOnly),
-            new("Ctrl+V",        "Paste",                                 SectionEdit, AnyCanvas),
-            new("Ctrl+X",        "Cut selection",                         SectionEdit, NodesOnly),
-            new("Ctrl+D",        "Duplicate selection",                   SectionEdit, NodesOnly),
-            new("Ctrl+A",        "Select all nodes",                      SectionEdit, AnyCanvas),
-            new("Ctrl+G",        "Group selection into Macro",            SectionEdit, new[] { HotkeyContext.MultiSelection }),
-            new("Ctrl+L",        "Auto-format graph",                     SectionEdit, AnyCanvas),
-            new("Del",           "Delete selection",                      SectionEdit, AnySelected),
-            new("F2",            "Rename frame",                          SectionEdit, FrameOnly),
-            new("C",             "Comment frame — wraps selection, else empty at view centre", SectionEdit, CanvasOnly),
-            new("Arrow keys",    "Nudge selection 1 px (Shift = 10 px)",  SectionEdit, NodesOnly),
+            // The Combo column (chords) is NEVER localized — a chord is what
+            // the keyboard emits. The Description column is.
+            new("Ctrl+Z",        D("undo", "Undo"),                       SectionEdit, AnyCanvas),
+            new("Ctrl+Y",        D("redo", "Redo"),                       SectionEdit, AnyCanvas),
+            new("Ctrl+Shift+Z",  D("redo_alt", "Redo (alt)"),             SectionEdit, AnyCanvas),
+            new("Ctrl+C",        D("copy", "Copy selection"),             SectionEdit, NodesOnly),
+            new("Ctrl+V",        D("paste", "Paste"),                     SectionEdit, AnyCanvas),
+            new("Ctrl+X",        D("cut", "Cut selection"),               SectionEdit, NodesOnly),
+            new("Ctrl+D",        D("duplicate", "Duplicate selection"),   SectionEdit, NodesOnly),
+            new("Ctrl+A",        D("select_all", "Select all nodes"),     SectionEdit, AnyCanvas),
+            new("Ctrl+G",        D("group_macro", "Group selection into Macro"), SectionEdit, new[] { HotkeyContext.MultiSelection }),
+            new("Ctrl+L",        D("auto_format", "Auto-format graph"),   SectionEdit, AnyCanvas),
+            new("Del",           D("delete", "Delete selection"),         SectionEdit, AnySelected),
+            new("F2",            D("rename_frame", "Rename frame"),       SectionEdit, FrameOnly),
+            new("C",             D("comment_frame", "Comment frame — wraps selection, else empty at view centre"), SectionEdit, CanvasOnly),
+            new("Arrow keys",    D("nudge", "Nudge selection 1 px (Shift = 10 px)"), SectionEdit, NodesOnly),
 
             // ── File ──────────────────────────────────────────────────────
-            new("Ctrl+N",        "New Graph…",                            SectionFile, AnyCanvas),
-            new("Ctrl+O",        "Open…",                                 SectionFile, AnyCanvas),
-            new("Ctrl+S",        "Save",                                  SectionFile, AnyCanvas),
-            new("Ctrl+Shift+S",  "Save As…",                              SectionFile, AnyCanvas),
-            new("Ctrl+W",        "Close window (sibling windows only)",   SectionFile, AnyCanvas),
+            new("Ctrl+N",        D("new_graph", "New Graph…"),            SectionFile, AnyCanvas),
+            new("Ctrl+O",        D("open", "Open…"),                      SectionFile, AnyCanvas),
+            new("Ctrl+S",        D("save", "Save"),                       SectionFile, AnyCanvas),
+            new("Ctrl+Shift+S",  D("save_as", "Save As…"),                SectionFile, AnyCanvas),
+            new("Ctrl+W",        D("close_window", "Close window (sibling windows only)"), SectionFile, AnyCanvas),
 
             // ── Navigate / View ───────────────────────────────────────────
-            new("F",             "Frame selection (UE-Blueprints idiom)", SectionNavigateView, AnyCanvas),
+            new("F",             D("frame_selection", "Frame selection (UE-Blueprints idiom)"), SectionNavigateView, AnyCanvas),
             // the wheel chords were undocumented.
-            new("Ctrl+Wheel",    "Zoom (cursor-anchored)",                SectionNavigateView, AnyCanvas),
-            new("Wheel",         "Pan vertically",                        SectionNavigateView, AnyCanvas),
-            new("Shift+Wheel",   "Pan horizontally",                      SectionNavigateView, AnyCanvas),
-            new("Home",          "Zoom to fit graph",                     SectionNavigateView, AnyCanvas),
-            new("Ctrl+0",        "Reset zoom to 100%",                    SectionNavigateView, AnyCanvas),
-            new("Ctrl++ / Ctrl+=", "Zoom in",                             SectionNavigateView, AnyCanvas),
-            new("Ctrl+-",        "Zoom out",                              SectionNavigateView, AnyCanvas),
-            new("Ctrl+Shift+= / Ctrl+Shift+-", "Fine-step zoom (×1.025)", SectionNavigateView, AnyCanvas),
-            new("MMB drag",      "Pan canvas",                            SectionNavigateView, AnyCanvas),
-            new("Esc",           "Cancel drag / disarm quick-key / clear selection", SectionNavigateView, new[] { HotkeyContext.NodeSelected, HotkeyContext.MultiSelection, HotkeyContext.WireSelected, HotkeyContext.FrameSelected, HotkeyContext.DraggingWire, HotkeyContext.Panning }),
+            new("Ctrl+Wheel",    D("zoom_wheel", "Zoom (cursor-anchored)"), SectionNavigateView, AnyCanvas),
+            new("Wheel",         D("pan_vertical", "Pan vertically"),     SectionNavigateView, AnyCanvas),
+            new("Shift+Wheel",   D("pan_horizontal", "Pan horizontally"), SectionNavigateView, AnyCanvas),
+            new("Home",          D("zoom_fit", "Zoom to fit graph"),      SectionNavigateView, AnyCanvas),
+            new("Ctrl+0",        D("zoom_reset", "Reset zoom to 100%"),   SectionNavigateView, AnyCanvas),
+            new("Ctrl++ / Ctrl+=", D("zoom_in", "Zoom in"),               SectionNavigateView, AnyCanvas),
+            new("Ctrl+-",        D("zoom_out", "Zoom out"),               SectionNavigateView, AnyCanvas),
+            new("Ctrl+Shift+= / Ctrl+Shift+-", D("zoom_fine", "Fine-step zoom (×1.025)"), SectionNavigateView, AnyCanvas),
+            new("MMB drag",      D("pan_canvas", "Pan canvas"),           SectionNavigateView, AnyCanvas),
+            new("Esc",           D("escape_cancel", "Cancel drag / disarm quick-key / clear selection"), SectionNavigateView, new[] { HotkeyContext.NodeSelected, HotkeyContext.MultiSelection, HotkeyContext.WireSelected, HotkeyContext.FrameSelected, HotkeyContext.DraggingWire, HotkeyContext.Panning }),
 
             // ── Spawn palette ─────────────────────────────────────────────
-            new("Space",         "Open spawn palette at view centre",     SectionSpawnPalette, CanvasOnly),
-            new("Ctrl+Space",    "Open spawn palette (Blueprints alias)", SectionSpawnPalette, CanvasOnly),
+            new("Space",         D("spawn_palette", "Open spawn palette at view centre"), SectionSpawnPalette, CanvasOnly),
+            new("Ctrl+Space",    D("spawn_palette_alias", "Open spawn palette (Blueprints alias)"), SectionSpawnPalette, CanvasOnly),
 
             // ── Find ──────────────────────────────────────────────────────
-            new("Ctrl+F",        "Open Find Node flyout",                 SectionFind, AnyCanvas),
-            new("F3",            "Jump to next Find Node match",          SectionFind, AnyCanvas),
-            new("Shift+F3",      "Jump to previous Find Node match",      SectionFind, AnyCanvas),
+            new("Ctrl+F",        D("find_open", "Open Find Node flyout"), SectionFind, AnyCanvas),
+            new("F3",            D("find_next", "Jump to next Find Node match"), SectionFind, AnyCanvas),
+            new("Shift+F3",      D("find_prev", "Jump to previous Find Node match"), SectionFind, AnyCanvas),
 
             // ── Quick-key spawn (catalog-only; cheatsheet skips these to stay compact) ──
+            // Bare node type names stay English everywhere — they are the .phxg
+            // vocabulary, not prose. Only the parenthesised gloss on the digit
+            // row carries translatable text.
             new("B",             "Logic.If",                              SectionQuickKeySpawn, CanvasOnly),
             new("S",             "Logic.Sequence",                        SectionQuickKeySpawn, CanvasOnly),
             new("D",             "Flow.Delay",                            SectionQuickKeySpawn, CanvasOnly),
             new("O",             "Flow.DoOnce",                           SectionQuickKeySpawn, CanvasOnly),
             new("N",             "Flow.DoN",                              SectionQuickKeySpawn, CanvasOnly),
-            new("0 … 9",         "Value.Int (digit pre-filled)",          SectionQuickKeySpawn, CanvasOnly),
+            new("0 … 9",         D("quickkey_value_int", "Value.Int (digit pre-filled)"), SectionQuickKeySpawn, CanvasOnly),
 
             // ── Bookmarks ─────────────────────────────────────────────────
-            new("Ctrl+1 … Ctrl+9", "Store current pan + zoom in slot",    SectionBookmarks, AnyCanvas),
-            new("Alt+1 … Alt+9",   "Recall pan + zoom from slot",         SectionBookmarks, AnyCanvas),
+            new("Ctrl+1 … Ctrl+9", D("bookmark_store", "Store current pan + zoom in slot"), SectionBookmarks, AnyCanvas),
+            new("Alt+1 … Alt+9",   D("bookmark_recall", "Recall pan + zoom from slot"), SectionBookmarks, AnyCanvas),
 
             // ── Documentation ─────────────────────────────────────────────
-            new("F1",            "Open documentation for selected node",  SectionDocumentation, NodesOnly),
-            new("F1 (no selection)", "Open Keyboard Shortcuts dialog",    SectionDocumentation, CanvasOnly),
-            new("F4",            "Toggle Inspector panel",                SectionDocumentation, AnyCanvas),
+            new("F1",            D("docs_node", "Open documentation for selected node"), SectionDocumentation, NodesOnly),
+            new("F1 (no selection)", D("docs_shortcuts", "Open Keyboard Shortcuts dialog"), SectionDocumentation, CanvasOnly),
+            new("F4",            D("toggle_inspector", "Toggle Inspector panel"), SectionDocumentation, AnyCanvas),
 
             // ── In-flight (drag / pan / text-edit) ────────────────────────
-            new("LMB release",   "Drop wire onto target socket",          SectionEdit, DragWire),
-            new("Y",             "Drop reroute knot at cursor + continue", SectionEdit, DragWire),
-            new("Esc",           "Cancel wire drag",                      SectionEdit, DragWire),
-            new("Release MMB",   "Stop panning",                          SectionEdit, PanOnly),
-            new("Enter",         "Commit value",                          SectionEdit, EditOnly),
-            new("Esc",           "Cancel inline edit",                    SectionEdit, EditOnly),
+            new("LMB release",   D("wire_drop", "Drop wire onto target socket"), SectionEdit, DragWire),
+            new("Y",             D("wire_reroute", "Drop reroute knot at cursor + continue"), SectionEdit, DragWire),
+            new("Esc",           D("wire_cancel", "Cancel wire drag"),    SectionEdit, DragWire),
+            new("Release MMB",   D("pan_stop", "Stop panning"),           SectionEdit, PanOnly),
+            new("Enter",         D("edit_commit", "Commit value"),        SectionEdit, EditOnly),
+            new("Esc",           D("edit_cancel", "Cancel inline edit"),  SectionEdit, EditOnly),
 
             // ── Retired (intentional — keep visible in the full reference) ──
-            new("Space (pan)",   "Removed — Space now opens the spawn palette", SectionRetired, System.Array.Empty<HotkeyContext>()),
-            new("Tab (spawn)",   "Removed — Tab now traverses focus for accessibility", SectionRetired, System.Array.Empty<HotkeyContext>()),
+            new("Space (pan)",   D("retired_space", "Removed — Space now opens the spawn palette"), SectionRetired, System.Array.Empty<HotkeyContext>()),
+            new("Tab (spawn)",   D("retired_tab", "Removed — Tab now traverses focus for accessibility"), SectionRetired, System.Array.Empty<HotkeyContext>()),
         };
     }
 

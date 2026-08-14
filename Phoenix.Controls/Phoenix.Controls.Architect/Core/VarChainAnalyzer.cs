@@ -152,10 +152,16 @@ namespace Phoenix.Controls.Architect.Core
                 // Chat / Twitch event sources.
                 // Chat.Message — unified multi-platform chat trigger:
                 // Twitch.ChatMessage's set + the platform discriminator. The
-                // legacy titles below stay listed for graphs not yet re-saved
-                // through migration.
-                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform", "event.message_id" },
-                ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.color_hex", "user.sub_months", "event.iscommand", "event.message_id" },
+                // legacy titles below ("Twitch.ChatMessage" / "YouTube.Message")
+                // stay listed for graphs not yet re-saved through migration:
+                // they match no NodeRegistry template and therefore LOOK like
+                // phantom keys, but GraphSerializer.MigrateNodes only retitles
+                // them to Chat.Message on load, so an in-memory node still
+                // carries the legacy title before migration runs, and the
+                // exporter still honours both. DO NOT delete them —
+                // AnalyzerNodeKeyIntegrityTests allow-lists exactly these two.
+                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_regular", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform", "event.message_id" },
+                ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_regular", "user.color_hex", "user.sub_months", "event.iscommand", "event.message_id" },
                 ["Twitch.Subscription"]     = new[] { "user.name", "user.sub_months", "user.tier" },
                 // user.tier added: Twitch.Resub's template exposes a Tier output
                 // (maps to {user.tier}); the analyzer was missing it.
@@ -192,20 +198,103 @@ namespace Phoenix.Controls.Architect.Core
                 ["Schedule.RunAt"]          = new[] { "event.timestamp" },
                 ["Schedule.Recurring"]      = new[] { "event.timestamp", "event.count" },
                 ["State.OnChange"]          = new[] { "event.name", "event.oldvalue", "event.newvalue" },
+                // Counter.OnChanged — synced with AutocompleteScopeBuilder and the
+                // Counter.OnChanged arm in ScriptExporter.ResolveOutputFromNode
+                // (CountersService binds event.counter / event.count).
+                ["Counter.OnChanged"]       = new[] { "event.counter", "event.count" },
+                // Automod.OnViolation — synced with AutocompleteScopeBuilder and the
+                // Automod.OnViolation arm in ScriptExporter.ResolveOutputFromNode
+                // (AutomodService binds event.user / rule / action / reason / message).
+                ["Automod.OnViolation"]     = new[] { "event.user", "event.rule", "event.action", "event.reason", "event.message" },
+                // Quote.OnAdded — synced with AutocompleteScopeBuilder and the
+                // Quote.OnAdded arm in ScriptExporter.ResolveOutputFromNode
+                // (QuotesService binds event.number / event.text / event.name).
+                ["Quote.OnAdded"]           = new[] { "event.number", "event.text", "event.name" },
+                // Command.OnCustom — synced with AutocompleteScopeBuilder and the
+                // Command.OnCustom arm in ScriptExporter.ResolveOutputFromNode
+                // (CustomCommandsService binds event.command / event.user / event.args).
+                ["Command.OnCustom"]        = new[] { "event.command", "event.user", "event.args" },
+                // Queue.OnChanged — synced with AutocompleteScopeBuilder and the
+                // Queue.OnChanged arm in ScriptExporter.ResolveOutputFromNode
+                // (NamedQueueService binds event.queue / entry / action / length; a legacy
+                // unnamed-queue mutation raises the same set with an empty event.queue).
+                ["Queue.OnChanged"]         = new[] { "event.queue", "event.entry", "event.action", "event.length" },
+                // Song.On* — synced with AutocompleteScopeBuilder and the shared Song.On*
+                // arm in ScriptExporter.ResolveOutputFromNode (SongRequestService's
+                // RaiseSongEvent binds event.title / requester / video_id plus one extra
+                // per root). The snake_case tokens are the runtime's spelling, which is
+                // exactly why that exporter arm has to exist.
+                ["Song.OnQueued"]           = new[] { "event.title", "event.requester", "event.video_id", "event.position" },
+                ["Song.OnPlay"]             = new[] { "event.title", "event.requester", "event.video_id", "event.duration_seconds" },
+                ["Song.OnSkip"]             = new[] { "event.title", "event.requester", "event.video_id", "event.skipped_by" },
+                // Poll.On* — synced with AutocompleteScopeBuilder and the shared Poll.On*
+                // arm in ScriptExporter.ResolveOutputFromNode (PollsService's RaiseOpened /
+                // RaiseClosed / RaiseSettled). The snake_case tokens are the runtime's
+                // spelling, which is exactly why that exporter arm has to exist.
+                // event.option_count has no output socket but is a live var on the run, so
+                // the trace picker lists it — same rule the Timer roots follow.
+                ["Poll.OnOpened"]           = new[] { "event.title", "event.options", "event.option_count", "event.duration_seconds", "event.betting" },
+                ["Poll.OnClosed"]           = new[] { "event.title", "event.winner", "event.winner_votes", "event.total_votes", "event.options" },
+                ["Poll.OnSettled"]          = new[] { "event.title", "event.winner", "event.outcome", "event.pot", "event.winners", "event.winner_count", "event.currency" },
+                // Rank.OnRankUp — synced with AutocompleteScopeBuilder and the
+                // Rank.OnRankUp arm in ScriptExporter.ResolveOutputFromNode (RanksService's
+                // RaiseRankUp). event.login has its own Login output socket; event.user_login
+                // (the same login under the suite-wide spelling every Rank.* node's empty-User
+                // fallback resolves through) and event.unit have none but are live vars on the
+                // run, so the trace picker lists them — same rule the Timer and
+                // User-Management roots follow.
+                ["Rank.OnRankUp"]           = new[] { "event.user", "event.login", "event.user_login", "event.rankname", "event.value", "event.unit", "event.next" },
+                // Soundboard.OnPlay — synced with AutocompleteScopeBuilder and the
+                // Soundboard.OnPlay arm in ScriptExporter.ResolveOutputFromNode
+                // (SoundboardService's RaisePlayed). user.name has no output socket but is
+                // a live var on the run, so the trace picker lists it — same rule the Timer
+                // and User-Management roots follow.
+                ["Soundboard.OnPlay"]       = new[] { "event.command", "event.user", "event.clip", "user.name" },
+                // User.OnFirstMessage — synced with AutocompleteScopeBuilder and the
+                // User.OnFirstMessage arm in ScriptExporter.ResolveOutputFromNode
+                // (UserManagementService binds event.user / login / message / platform /
+                // first_ever). event.login has no output socket but is a live var on the
+                // run, so the trace picker lists it — same rule the Timer roots follow.
+                ["User.OnFirstMessage"]     = new[] { "event.user", "event.login", "event.message", "event.platform", "event.first_ever" },
+                // Timer.On* — synced with AutocompleteScopeBuilder. TimerService's
+                // Fire*Async raise sites bind the socket-derived event.* keys plus a
+                // slug / remaining pair and the raw timer.* aliases; all are live vars
+                // on the run, so the trace picker lists them all.
+                ["Timer.OnZero"]            = new[] { "event.timername", "event.slug", "timer.name", "timer.slug" },
+                ["Timer.OnMilestone"]       = new[] { "event.timername", "event.milestoneid", "event.label", "event.slug", "timer.name", "timer.slug", "timer.milestone_id", "timer.label" },
+                ["Timer.OnAdd"]             = new[] { "event.timername", "event.source", "event.seconds", "event.slug", "event.remaining", "timer.name", "timer.slug", "timer.source", "timer.seconds", "timer.remaining" },
+                // Loyalty.On* — synced with AutocompleteScopeBuilder and the Loyalty
+                // arm in ScriptExporter.ResolveOutputFromNode (LoyaltyService raises
+                // them from Earn.cs / LoyaltyService.cs / Games.cs). The un-namespaced
+                // reward / cost / balance aliases the redeem raise also sets are
+                // deliberately omitted — the event.* form is the documented one.
+                ["Loyalty.OnEarn"]          = new[] { "event.user", "event.amount", "event.reason", "event.balance", "event.currency", "user.name" },
+                ["Loyalty.OnPayout"]        = new[] { "event.count", "event.total", "event.amount", "event.currency" },
+                ["Loyalty.OnRedeem"]        = new[] { "event.user", "event.reward", "event.cost", "event.balance", "event.currency", "user.name" },
+                ["Loyalty.OnRaffle"]        = new[] { "event.winners", "event.count", "event.pot", "event.entrants", "event.currency" },
                 // Twitch read-side queries.
-                ["Twitch.GetUser"]          = new[] { "user.id", "user.display_name", "user.login", "user.profile_image", "user.account_created", "user.game", "user.channel_title", "user.is_mod", "user.is_sub", "user.is_vip" },
+                ["Twitch.GetUser"]          = new[] { "user.id", "user.display_name", "user.login", "user.profile_image", "user.account_created", "user.game", "user.channel_title", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_regular" },
                 ["Twitch.GetStream"]        = new[] { "stream.title", "stream.game", "stream.viewers", "stream.is_live", "stream.uptime" },
-                ["Twitch.CheckRole"]        = new[] { "role.is_mod", "role.is_sub", "role.is_vip", "role.is_broadcaster" },
+                ["Twitch.CheckRole"]        = new[] { "role.is_mod", "role.is_sub", "role.is_vip", "role.is_broadcaster", "role.is_regular" },
+                // User.GetGroups — the User-Management group lookup. The four
+                // standard keys are fixed; custom-group keys (group.<sanitized>)
+                // are per-node dynamic (from the Groups attribute) and therefore
+                // not listable in a static map — AutocompleteScopeBuilder derives
+                // them per node instead.
+                ["User.GetGroups"]          = new[] { "group.moderator", "group.vip", "group.subscriber", "group.regular" },
                 ["Twitch.GetFollowAge"]     = new[] { "follow.days", "follow.formatted", "follow.date", "follow.is_following" },
                 ["Twitch.CreateClip"]       = new[] { "clip.url", "clip.ok" },
-                ["StreamerBot.GetUser"]     = new[] { "user.id", "user.display_name", "user.login", "user.profile_image" },
-                // File / HTTP.
-                ["File.Read"]      = new[] { "result.file_content", "result.file_error" },
-                ["File.ReadAll"]   = new[] { "result.file_content", "result.file_error" },
+                // Widened to Twitch.GetUser's full set: streamerbot.get_user is an
+                // exact by-name mirror of twitch.get_user in ScriptManager.Twitch.cs
+                // — both call the shared ApplyUserGlobals, which binds all eleven
+                // user.* slots. The four-key entry under-reported the node.
+                ["StreamerBot.GetUser"]     = new[] { "user.id", "user.display_name", "user.login", "user.profile_image", "user.account_created", "user.game", "user.channel_title", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_regular" },
+                // File / HTTP. The registered File.* templates are the ReadText /
+                // ReadJSON / WriteText / WriteJSON quartet; the bare "File.Read" /
+                // "File.ReadAll" / "File.Write" / "File.Append" keys that used to
+                // sit here matched no template and were unreachable — dropped.
                 ["File.ReadText"]  = new[] { "result.file_content", "result.file_error" },
                 ["File.ReadJSON"]  = new[] { "result.file_content", "result.file_error" },
-                ["File.Write"]     = new[] { "result.file_error" },
-                ["File.Append"]    = new[] { "result.file_error" },
                 ["File.WriteText"] = new[] { "result.file_error" },
                 ["File.WriteJSON"] = new[] { "result.file_error" },
                 ["HTTP.Get"]       = new[] { "result.http_status", "result.http_body", "result.http_error" },
@@ -213,7 +302,10 @@ namespace Phoenix.Controls.Architect.Core
                 ["HTTP.Put"]       = new[] { "result.http_status", "result.http_body", "result.http_error" },
                 ["HTTP.Patch"]     = new[] { "result.http_status", "result.http_body", "result.http_error" },
                 ["HTTP.Delete"]    = new[] { "result.http_status", "result.http_body", "result.http_error" },
-                ["HTTP.Api"]       = new[] { "result.api_response", "result.api_error" },
+                // Registered title is "API.Call" (Platforms band); the old
+                // "HTTP.Api" key matched no template, so the api.call node's two
+                // result vars never reached the Trace-Variable picker.
+                ["API.Call"]       = new[] { "result.api_response", "result.api_error" },
                 ["HTTP.ParseJson"] = new[] { "result.json_value" },
                 // AI / Audio. (Keyed by the real node titles; the
                 // prior "AI.GenerateText" key matched no node, so var-chain
@@ -227,9 +319,17 @@ namespace Phoenix.Controls.Architect.Core
                 // result.ai_done flips when the tool call completes.
                 ["AI.WithTools"]       = new[] { "result.ai_response", "result.ai_tool_calls", "result.ai_error", "result.ai_done" },
                 ["AI.Moderate"]        = new[] { "result.ai_flagged",  "result.ai_category", "result.ai_error" },
-                ["AI.GenerateImage"]   = new[] { "result.ai_image_url", "result.ai_image_error" },
+                // result.ai_image_done added: ScriptManager.AI.cs's
+                // ai.generate_image handler seeds it "false" up front and flips it
+                // "true" on every exit path (success and failure), so scripts get a
+                // clean completion edge. AutocompleteScopeBuilder already listed it;
+                // this map did not, so the Trace-Variable picker missed it.
+                ["AI.GenerateImage"]   = new[] { "result.ai_image_url", "result.ai_image_error", "result.ai_image_done" },
+                // "Audio.Stop" replaced by "Audio.PlayTts": there is no Audio.Stop
+                // template, while Audio.PlayTts is fully wired (exporter handler +
+                // ScriptManager.Audio.cs command) and writes the same contract.
                 ["Audio.Play"]      = new[] { "result.audio_error" },
-                ["Audio.Stop"]      = new[] { "result.audio_error" },
+                ["Audio.PlayTts"]   = new[] { "result.audio_error" },
                 ["Audio.SetVolume"] = new[] { "result.audio_error" },
                 // Discord.
                 ["Discord.SendMessage"] = new[] { "result.discord_message_id", "result.discord_error" },
@@ -238,9 +338,16 @@ namespace Phoenix.Controls.Architect.Core
                 ["Discord.RemoveRole"]  = new[] { "result.discord_error" },
                 ["Discord.React"]       = new[] { "result.discord_error" },
                 ["Discord.GetUser"]     = new[] { "result.discord_user_id", "result.discord_user_name", "result.discord_user_global_name", "result.discord_user_avatar", "result.discord_error" },
-                // Streamer.bot / system dispatch.
-                ["Streamerbot.DoAction"] = new[] { "result.sb_dispatched" },
-                ["System.DoAction"]      = new[] { "result.sb_dispatched" },
+                // Streamer.bot dispatch. LIVE BUG, not dead weight: the registered
+                // template is "StreamerBot.DoAction" with a CAPITAL B. This map is
+                // Ordinal-keyed, so the old lowercase-b key never matched a real
+                // node — meaning result.sb_dispatched has never been offered in the
+                // Trace-Variable picker for the one node that produces it, even
+                // though NodeProse documents the variable to users
+                // ("{result.sb_dispatched} reports whether it went out"). The
+                // sibling "System.DoAction" key matched no template at all and is
+                // dropped.
+                ["StreamerBot.DoAction"] = new[] { "result.sb_dispatched" },
                 // Loop bindings — per-loop-id form mirrors the engine's
                 // Flow.ForLoop / Flow.ForEach substitution.
                 ["Flow.ForLoop"] = new[] { "loop.index" },
@@ -264,6 +371,18 @@ namespace Phoenix.Controls.Architect.Core
             }
             return map;
         }
+
+        /// <summary>
+        /// Test seam: every dispatch key in <see cref="ResultEmitterMap"/>,
+        /// including the PlatformEventCatalog entries folded in at build time.
+        /// Consumed by <c>AnalyzerNodeKeyIntegrityTests</c>, which asserts each
+        /// key resolves to a real NodeRegistry template (or catalog event) so a
+        /// misspelled title can't silently become an unreachable arm again.
+        /// Internal rather than public — Phoenix.Controls.Architect already
+        /// grants <c>InternalsVisibleTo Phoenix.Controls.Tests</c> in its csproj,
+        /// which keeps this off the shipped API surface.
+        /// </summary>
+        internal static IEnumerable<string> DispatchKeysForTests => ResultEmitterMap.Keys;
 
         private static bool WrittenByResultEmitter(string title, string varName)
         {

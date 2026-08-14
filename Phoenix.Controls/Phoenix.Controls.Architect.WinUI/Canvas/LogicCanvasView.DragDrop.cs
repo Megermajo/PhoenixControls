@@ -5,6 +5,7 @@ using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Phoenix.Controls.Architect.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.ApplicationModel.DataTransfer;
@@ -22,7 +23,7 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // DataPackage. We translate those to a concrete spawn:
 //
 //   kind=macro    → Macro.Call    with Attributes["MacroId"]   = id
-//   kind=process  → Process.Spawn with Attributes["ProcessId"] = id
+//   kind=process  → Process.Start with Attributes["ProcessId"] = id
 //   kind=variable → Var.Get       with Attributes["VarName"]   = name
 //
 // Polish:
@@ -105,7 +106,9 @@ public sealed partial class LogicCanvasView
         if (e.DataView.Properties.ContainsKey("phx-rail-kind"))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
-            TrySetDragUiOverride(e, $"Spawn {e.DataView.Properties["phx-rail-kind"]}");
+            TrySetDragUiOverride(e, string.Format(
+                Localizer.T("architect.canvas.drag.spawn_rail", "Spawn {0}"),
+                e.DataView.Properties["phx-rail-kind"]));
             ShowDropOverlay();
             return;
         }
@@ -114,8 +117,9 @@ public sealed partial class LogicCanvasView
         if (e.DataView.Properties.ContainsKey("phx-databank-table"))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
-            TrySetDragUiOverride(e,
-                $"Spawn DB.RowCount ({e.DataView.Properties["phx-databank-table"]})");
+            TrySetDragUiOverride(e, string.Format(
+                Localizer.T("architect.canvas.drag.spawn_rowcount", "Spawn DB.RowCount ({0})"),
+                e.DataView.Properties["phx-databank-table"]));
             return;
         }
 
@@ -140,7 +144,8 @@ public sealed partial class LogicCanvasView
                 int colEnd = secondPipe > 0 ? secondPipe : payload.Length;
                 caption = $"{payload[..firstPipe]}.{payload[(firstPipe + 1)..colEnd]}";
             }
-            TrySetDragUiOverride(e, $"Spawn DB node ({caption})");
+            TrySetDragUiOverride(e, string.Format(
+                Localizer.T("architect.canvas.drag.spawn_db_node", "Spawn DB node ({0})"), caption));
             ShowDropOverlay();
             return;
         }
@@ -194,9 +199,9 @@ public sealed partial class LogicCanvasView
             if (hasPhxg || hasPhxLayer || hasPhx)
             {
                 e.AcceptedOperation = DataPackageOperation.Copy;
-                string caption = hasPhxg     ? "Open .phxg"
-                               : hasPhxLayer ? "Open .phxlayer in Visualist"
-                                             : "Open matching .phxg";
+                string caption = hasPhxg     ? Localizer.T("architect.canvas.drag.open_phxg",           "Open .phxg")
+                               : hasPhxLayer ? Localizer.T("architect.canvas.drag.open_phxlayer",       "Open .phxlayer in Visualist")
+                                             : Localizer.T("architect.canvas.drag.open_matching_phxg", "Open matching .phxg");
                 TrySetDragUiOverride(e, caption);
                 ShowDropOverlay();
                 _fileDragAccepted      = true;
@@ -647,14 +652,22 @@ public sealed partial class LogicCanvasView
         {
             string phxName = missingPhxNames[0];
             string phxgName = Path.ChangeExtension(phxName, ".phxg");
-            title   = "Missing .phxg file";
-            message = $"'{phxgName}' not found alongside the .phx — drop the .phxg instead.";
+            title   = Localizer.T("architect.canvas.drop.missing_phxg.title", "Missing .phxg file");
+            message = string.Format(
+                Localizer.T("architect.canvas.drop.missing_phxg.body",
+                    "'{0}' not found alongside the .phx — drop the .phxg instead."),
+                phxgName);
         }
         else
         {
-            title   = $"Missing .phxg file ({missingPhxNames.Count})";
+            title   = string.Format(
+                Localizer.T("architect.canvas.drop.missing_phxg.title_many", "Missing .phxg file ({0})"),
+                missingPhxNames.Count);
             string joined = string.Join(", ", missingPhxNames.Select(n => Path.ChangeExtension(n, ".phxg")));
-            message = $"No matching .phxg next to these .phx files: {joined}.";
+            message = string.Format(
+                Localizer.T("architect.canvas.drop.missing_phxg.body_many",
+                    "No matching .phxg next to these .phx files: {0}."),
+                joined);
         }
 
         try
@@ -798,8 +811,8 @@ public sealed partial class LogicCanvasView
     {
         if (_vm is null) return null;
 
-        // Mirror SpawnMacroCall's validation for Process.Spawn. There
-        // is no export-time orphan check for Process.Spawn (CheckMacroCallOrphans
+        // Mirror SpawnMacroCall's validation for Process.Start. There
+        // is no export-time orphan check for Process.Start (CheckMacroCallOrphans
         // covers Macro.Call only), so front-loading the diagnostic here is the
         // only place a dangling process reference surfaces before runtime.
         var proc = _vm.Graph.Processes.FirstOrDefault(p => p.ProcessId == processId);
@@ -840,12 +853,12 @@ public sealed partial class LogicCanvasView
     // editor surface) can drive the bind back onto the canvas.
 
     /// <summary>
-    /// Bind a Process.Spawn node to <paramref name="process"/> from the inline
+    /// Bind a Process.Start node to <paramref name="process"/> from the inline
     /// process picker. Sets ProcessId, re-syncs ProcessName + the spawn's
     /// var-in/var-out sockets to the process Entry/Exit signature (the SAME path
     /// <see cref="SpawnProcessSpawn"/> uses), rebuilds the node's row VMs, and
     /// marks the graph mutated (one undo entry; canvas repaints + .phx
-    /// re-exports). No-op for a null / non-Process.Spawn node. Binding the id —
+    /// re-exports). No-op for a null / non-Process.Start node. Binding the id —
     /// not just the display name — is what makes the spawn actually resolve at
     /// export time (free-text ProcessName left ProcessId empty → "not found").
     /// </summary>
@@ -881,14 +894,14 @@ public sealed partial class LogicCanvasView
         _vm.OnGraphMutated();
     }
 
-    // ── Process.Spawn socket-signature sync ─────────────────────────────────
+    // ── Process.Start socket-signature sync ─────────────────────────────────
     // Restores the pre-T15 RefreshProcessSpawnSockets behaviour the
-    // WinUI port dropped: a freshly-spawned Process.Spawn should carry the
+    // WinUI port dropped: a freshly-spawned Process.Start node should carry the
     // referenced process's actual Entry/Exit socket signature, not just the
     // template default. The macro counterpart already exists as the public
     // LogicCanvasViewModel.RefreshMacroCallSockets, which the macro spawn path
     // reuses; there is NO process equivalent on the ViewModel, so this self-
-    // contained method (this file owns it) mirrors that logic for Process.Spawn.
+    // contained method (this file owns it) mirrors that logic for Process.Start.
     // Header/row spacing match the ViewModel's macro constants (24 + 22) so the
     // two stay visually consistent until the next intrinsic-size pass.
     private const int ProcessSpawnHeaderH   = 24;
@@ -1140,11 +1153,11 @@ public sealed partial class LogicCanvasView
         // table-cell increment until the user wires a row — a deliberate
         // default, not a defect.
         var menu = new MenuFlyout();
-        AddDatabankColumnSpawnItem(menu, "DB.GetCell",     "Get",               tableName, columnName, spawnPos);
-        AddDatabankColumnSpawnItem(menu, "DB.SetCell",     "Set",               tableName, columnName, spawnPos);
-        AddDatabankColumnSpawnItem(menu, "DB.Increment",   "Increment",         tableName, columnName, spawnPos);
-        AddDatabankColumnSpawnItem(menu, "DB.FindRow",     "Find row",          tableName, columnName, spawnPos);
-        AddDatabankColumnSpawnItem(menu, "DB.GetColumn",   "Get column (list)", tableName, columnName, spawnPos);
+        AddDatabankColumnSpawnItem(menu, "DB.GetCell",     Localizer.T("architect.canvas.drop.db_column.get",        "Get"),               tableName, columnName, spawnPos);
+        AddDatabankColumnSpawnItem(menu, "DB.SetCell",     Localizer.T("architect.canvas.drop.db_column.set",        "Set"),               tableName, columnName, spawnPos);
+        AddDatabankColumnSpawnItem(menu, "DB.Increment",   Localizer.T("architect.canvas.drop.db_column.increment",  "Increment"),         tableName, columnName, spawnPos);
+        AddDatabankColumnSpawnItem(menu, "DB.FindRow",     Localizer.T("architect.canvas.drop.db_column.find_row",   "Find row"),          tableName, columnName, spawnPos);
+        AddDatabankColumnSpawnItem(menu, "DB.GetColumn",   Localizer.T("architect.canvas.drop.db_column.get_column", "Get column (list)"), tableName, columnName, spawnPos);
 
         // ShowAt's FlyoutShowOptions.Position uses anchor-relative
         // coordinates per WinUI 3 docs — same convention used by

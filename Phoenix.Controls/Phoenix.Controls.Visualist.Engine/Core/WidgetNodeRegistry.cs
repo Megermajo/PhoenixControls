@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq;
 using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 
@@ -132,6 +131,14 @@ namespace Phoenix.Controls.Visualist.Core
                 ["Vector4.Constant"] = Localizer.T("visualist.node.bubble.vector4_constant"),
                 ["Vector.Rect4"] = Localizer.T("visualist.node.bubble.vector_rect4"),
                 ["Math.Resolution"] = Localizer.T("visualist.node.bubble.math_resolution"),
+                // Var.Live carries the two things an author cannot guess from the
+                // node body: that the Key must be a LITERAL (the browser reads the
+                // subscription out of that box when it scans the graph, so a key
+                // assembled from variables is publishable but never bindable), and
+                // that an unpublished key renders NOTHING rather than the
+                // design-time placeholder. Both are load-bearing enough that the
+                // tooltip is the right place for them.
+                ["Var.Live"] = Localizer.T("visualist.node.bubble.var_live"),
 
                 // ── Image kernels (canonical pipeline order) ──────────────
                 ["Image.Scale"] = Localizer.T("visualist.node.bubble.image_scale"),
@@ -142,6 +149,14 @@ namespace Phoenix.Controls.Visualist.Core
                 ["Image.Combine"] = Localizer.T("visualist.node.bubble.image_combine"),
                 ["Image.Crop"] = Localizer.T("visualist.node.bubble.image_crop"),
                 ["Image.Tile"] = Localizer.T("visualist.node.bubble.image_tile"),
+                // V10 — Image.Solid needs a tooltip for the two things its node body
+                // cannot show: that its X/Y/Width/Height fractions are of the WIDGET
+                // frame while every Mask.* generator's are of the LAYER (an author who
+                // learned the mask convention will otherwise read the difference as a
+                // bug), and that those four pins are WIRABLE, which is the entire reason
+                // the node exists — it is the only fill geometry a live channel value can
+                // drive.
+                ["Image.Solid"] = Localizer.T("visualist.node.bubble.image_solid"),
 
                 // ── Procedural mask / shape generators ────────────────────
                 ["Mask.Rectangle"] = Localizer.T("visualist.node.bubble.mask_rectangle"),
@@ -178,15 +193,41 @@ namespace Phoenix.Controls.Visualist.Core
                 ["Visual.OnTrigger"] = Localizer.T("visualist.node.bubble.visual_ontrigger"),
                 ["Visual.Complete"] = Localizer.T("visualist.node.bubble.visual_complete"),
                 ["Result.If"] = Localizer.T("visualist.node.bubble.result_if"),
+                // V7 — Visual.Arg carries the two things the node body cannot show:
+                // which field names actually arrive in the trigger payload, and that
+                // PreviewText is design-time ONLY (an unsupplied arg renders nothing on
+                // stream, unlike the older Message.Read whose MockValue leaks to air).
+                ["Visual.Arg"] = Localizer.T("visualist.node.bubble.visual_arg"),
+
+                // ── String ────────────────────────────────────────────────
+                // V7 — String.Select needs a tooltip more than any other string node:
+                // its "When" input is the VALUE being matched, whereas Result.If's
+                // identically-named attribute is an event-data KEY. Nothing on the node
+                // body distinguishes them, and the mandatory Default row is the other
+                // thing an author has to be told about rather than discover on stream.
+                ["String.Select"] = Localizer.T("visualist.node.bubble.string_select"),
 
                 // ── Captions / Text ───────────────────────────────────────
                 ["Caption.LiveCaption"] = Localizer.T("visualist.node.bubble.caption_livecaption"),
                 ["Text.Translate"] = Localizer.T("visualist.node.bubble.text_translate"),
                 ["Text.Render"] = Localizer.T("visualist.node.bubble.text_render"),
 
+                // ── V10 — the two channel-fed family readers ──────────────────
+                // Goal.Progress carries the one thing no node body can: the exact key
+                // family a publisher has to write into, and that Kind accepts a
+                // custom_<slug> beyond the five named kinds (there is no dropdown to
+                // discover them from, on purpose — a dropdown could not express a custom
+                // goal). List.Live carries the format-token rule, which is not guessable
+                // at all: its {tokens} are FIELD NAMES of whatever row shape the
+                // publisher chose, not a fixed vocabulary like the Loyalty formatter's.
+                ["Goal.Progress"] = Localizer.T("visualist.node.bubble.goal_progress"),
+                ["List.Live"] = Localizer.T("visualist.node.bubble.list_live"),
+
                 // ── Sinks ─────────────────────────────────────────────────
                 [DisplaySinkNode.Title] = Localizer.T("visualist.node.bubble.display"),
                 [AudioSinkNode.Title] = Localizer.T("visualist.node.bubble.audio_play"),
+                [WebOverlaySinkNode.Title] = Localizer.T("visualist.node.bubble.weboverlay_custom"),
+                [PlayerEmbedSinkNode.Title] = Localizer.T("visualist.node.bubble.player_embed"),
 
                 // ── Debug ─────────────────────────────────────────────────
                 ["Viewer"] = Localizer.T("visualist.node.bubble.viewer"),
@@ -247,8 +288,15 @@ namespace Phoenix.Controls.Visualist.Core
         public static NodeTemplate? Get(string title) =>
             _templates.TryGetValue(title, out var t) ? t : null;
 
-        public static IEnumerable<NodeTemplate> GetByCategory(string category) =>
-            _templates.Values.Where(t => string.Equals(t.Category, category, StringComparison.OrdinalIgnoreCase));
+        // ★ V14 — a GetByCategory(string) accessor lived here and was reported dead by
+        // THREE separate audits before anyone deleted it. It is gone, and the reason
+        // nothing ever called it is that no consumer wants ONE category: the palette and
+        // the spawn menu both need ALL of them at once, so they go
+        // Templates.Values.GroupBy(t => t.Category) (WidgetGraphCanvas.xaml.cs :2547,
+        // :3380) and a per-category accessor would have made that N lookups instead of
+        // one pass. Do not re-add it speculatively — a fourth rediscovery is the cost.
+        // A genuine single-category caller writes
+        // Templates.Values.Where(t => t.Category == …) at the call site.
 
         /// <summary>
         /// Build a Node instance from a registered template, placed at the given location.

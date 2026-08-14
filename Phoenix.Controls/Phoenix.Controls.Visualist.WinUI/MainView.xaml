@@ -4,7 +4,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls"
-    xmlns:canvas="using:Phoenix.Controls.Visualist.WinUI.Canvas">
+    xmlns:canvas="using:Phoenix.Controls.Visualist.WinUI.Canvas"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization">
 
     <!-- Sprint E — pillar-local focus-visual implicit Styles. Merged here
          (rather than in Hub.WinUI's App.xaml) so Visualist's overrides
@@ -40,8 +41,16 @@
         <Grid Grid.Row="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="LayerRailColumn" Width="200" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="280" />
+                <ColumnDefinition x:Name="RailSplitterColumn" Width="Auto" />
+                <!-- Centre canvas. MinWidth is the XAML floor; because a WinUI star
+                     column honours MinWidth only until two fixed siblings both grow
+                     greedily, the splitter drag handlers ALSO cap each side column
+                     (RailMaxRoomForCenter / InspectorMaxRoomForCenter) so the rail +
+                     inspector dragged wide can never starve the centre below
+                     CenterMinWidth on a narrow Hub window (T11-9). -->
+                <ColumnDefinition Width="*" MinWidth="360" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="InspectorColumn" Width="280" />
             </Grid.ColumnDefinitions>
 
             <controls:LayerRail
@@ -49,23 +58,67 @@
                 Grid.Column="0"
                 DataContext="{x:Bind ViewModel}" />
 
-            <controls:InspectorPanel
-                x:Name="InspectorPanelControl"
-                Grid.Column="2"
-                DataContext="{x:Bind ViewModel}" />
+            <!-- Draggable divider: rail | editing area. Hand-rolled — WinUI 3 has
+                 no built-in GridSplitter and we avoid a CommunityToolkit dependency
+                 per the per-pillar rule. Widens/narrows the rail; drag logic +
+                 resize cursor in code-behind. Width persists to
+                 VisualistUserConfig.RailWidth (restored in the ctor).
+                 T11-9 — grabber-pill idiom (transparent strip + centred pill),
+                 unified with the timeline N/S handle; the pill brightens to ember
+                 on hover/drag (SetSplitterPill). Transparent strip stays
+                 hit-testable and shows the shell behind it as a thin recessed seam. -->
+            <Border x:Name="RailSplitter"
+                    Grid.Column="1"
+                    Width="6"
+                    Background="Transparent"
+                    Padding="0"
+                    PointerEntered="OnSplitterPointerEntered"
+                    PointerExited="OnSplitterPointerExited"
+                    PointerPressed="OnRailSplitterPressed"
+                    PointerMoved="OnRailSplitterMoved"
+                    PointerReleased="OnRailSplitterReleased"
+                    PointerCaptureLost="OnRailSplitterReleased"
+                    PointerCanceled="OnRailSplitterReleased">
+                <Border Width="2" Height="46" CornerRadius="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        IsHitTestVisible="False"
+                        Background="{StaticResource CoalDividerBrush}" />
+            </Border>
 
-            <!-- The [Layer Canvas | Widget Editor] shell sub-tab bar was removed
-                 (Majo, 2026-06-08): it duplicated navigation the per-widget
-                 trigger strip's "← Back" already provides, and double-clicking a
-                 widget enters the editor. Mode switching still flows through
-                 SelectSubTab (View menu, ← Back, EnterWidget) — the bar was the
-                 only redundant always-on surface. MainPaneRegion now fills the
-                 column directly. -->
+            <!-- Mode switching flows through SelectSubTab (View menu, ← Back,
+                 double-click-to-enter). No shell tab bar (removed 2026-06-08 and
+                 confirmed 2026-07-20: one canvas holds dozens of widgets, so a
+                 per-widget "Fusion tab" maps to nothing single). -->
             <ContentControl
                 x:Name="MainPaneRegion"
-                Grid.Column="1"
+                Grid.Column="2"
                 HorizontalContentAlignment="Stretch"
                 VerticalContentAlignment="Stretch" />
+
+            <!-- Draggable divider: editing area | inspector. Same T11-9 grabber-pill
+                 idiom as RailSplitter / the timeline handle. -->
+            <Border x:Name="InspectorSplitter"
+                    Grid.Column="3"
+                    Width="6"
+                    Background="Transparent"
+                    Padding="0"
+                    PointerEntered="OnSplitterPointerEntered"
+                    PointerExited="OnSplitterPointerExited"
+                    PointerPressed="OnInspectorSplitterPressed"
+                    PointerMoved="OnInspectorSplitterMoved"
+                    PointerReleased="OnInspectorSplitterReleased"
+                    PointerCaptureLost="OnInspectorSplitterReleased"
+                    PointerCanceled="OnInspectorSplitterReleased">
+                <Border Width="2" Height="46" CornerRadius="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        IsHitTestVisible="False"
+                        Background="{StaticResource CoalDividerBrush}" />
+            </Border>
+
+            <controls:InspectorPanel
+                x:Name="InspectorPanelControl"
+                Grid.Column="4"
+                DataContext="{x:Bind ViewModel}" />
         </Grid>
 
         <!-- Status bar — 3-zone 24px strip. Visual language mirrors Architect's
@@ -76,7 +129,8 @@
                 Background="{StaticResource CoalRaisedBrush}"
                 BorderBrush="{StaticResource CoalCardBrush}"
                 BorderThickness="0,1,0,0"
-                AutomationProperties.Name="Status Strip">
+                AutomationProperties.Name="Status Strip"
+                loc:Localize.AutomationKey="visualist.main.status_strip.a11y">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

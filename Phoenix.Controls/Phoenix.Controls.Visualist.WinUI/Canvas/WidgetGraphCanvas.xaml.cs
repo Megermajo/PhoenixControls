@@ -33,12 +33,14 @@ namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 //                multi-select. Lasso (rubber-band) and the spawn palette /
 //                right-click menus all landed later.
 //
+// Landed since: node-body preview thumbnails (RefreshPreviews +
+// WidgetGraphNodeView.SetPreview), which follow the timeline playhead as of
+// V11 (RefreshPreviewsAtTime), group-drag for multi-select, and the
+// right-click numeric pin → Animate keyframe context.
+//
 // Still out of scope (follow-ups):
-//   live preview thumbnails on each node body, timeline scrubbing,
-//   widget gallery / preset thumbnails, group-drag for multi-select,
-//   right-click numeric pin → Animate keyframe context. The seam where
-//   each of those plugs in is called out by comment in the right place
-//   below.
+//   widget gallery / preset thumbnails. The seam where that plugs in is
+//   called out by comment in the right place below.
 public sealed partial class WidgetGraphCanvas : UserControl
 {
     private VisualistViewModel? _vm;
@@ -1067,7 +1069,12 @@ public sealed partial class WidgetGraphCanvas : UserControl
             // that work today: right-click spawn palette, F search, drag-from-Media.
             string body = Localizer.T("visualist.canvas.emptyHint.body",
                 "is empty.\n\n· Right-click the canvas to open the spawn palette\n· Press F to search for a node\n· Drag a tile from the Media library onto the canvas");
-            EmptyHint.Text = $"Trigger \"{_trigger.Name}\" {body}";
+            // The trigger NAME is a persisted identifier in the .phxlayer
+            // (onStartup / onTrigger:<x>) and is never translated; only the
+            // sentence frame around it is.
+            EmptyHint.Text = string.Format(
+                Localizer.T("visualist.widget.empty.trigger_format", "Trigger \"{0}\" {1}"),
+                _trigger.Name, body);
             EmptyHint.Visibility = Visibility.Visible;
             return;
         }
@@ -1489,7 +1496,20 @@ public sealed partial class WidgetGraphCanvas : UserControl
     {
         if (_isPanning)
         {
-            var pos = e.GetCurrentPoint(HostGrid).Position;
+            var panPt = e.GetCurrentPoint(HostGrid);
+            // Stale-gesture guard: a pan only continues while the middle button is
+            // held. A swallowed activation release (alt-tab back in) would otherwise
+            // leave the canvas panning with the cursor. Settle like OnHostPointerLost.
+            if (!panPt.Properties.IsMiddleButtonPressed)
+            {
+                _isPanning = false;
+                ClearTransientHotkeyContext();
+                try { HostGrid.ReleasePointerCapture(e.Pointer); } catch { /* already lost */ }
+                ProtectedCursor = null;
+                e.Handled = true;
+                return;
+            }
+            var pos = panPt.Position;
             double dx = pos.X - _panStartPointerWorld.X;
             double dy = pos.Y - _panStartPointerWorld.Y;
             WorldTransform.TranslateX += dx;
@@ -1502,7 +1522,20 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (_isLassoing && _lassoRect is not null)
         {
-            var worldPos = TransformHostToWorld(e.GetCurrentPoint(HostGrid).Position);
+            var lassoPt = e.GetCurrentPoint(HostGrid);
+            // Stale-gesture guard: a lasso only continues while the left button is
+            // held. A swallowed activation release would otherwise leave the
+            // rubber-band rect tracking the cursor. Settle like OnHostPointerLost.
+            if (!lassoPt.Properties.IsLeftButtonPressed)
+            {
+                if (_lassoRect is not null) LinkLayer.Children.Remove(_lassoRect);
+                _lassoRect = null;
+                _isLassoing = false;
+                try { HostGrid.ReleasePointerCapture(e.Pointer); } catch { /* already lost */ }
+                e.Handled = true;
+                return;
+            }
+            var worldPos = TransformHostToWorld(lassoPt.Position);
             double x = Math.Min(_lassoStart.X, worldPos.X);
             double y = Math.Min(_lassoStart.Y, worldPos.Y);
             double w = Math.Abs(worldPos.X - _lassoStart.X);
@@ -1861,20 +1894,79 @@ public sealed partial class WidgetGraphCanvas : UserControl
     // (paste / wire add / wire delete / node delete / attribute commit
     // path via MarkDirty). NodeEvaluator.EvaluatePreviews is a sync graph
     // walk; cheap enough to call once per mutation but DON'T spin it on
-    // every pointer-move tick.
+    // every pointer-move tick — that is why the playhead-driven entry below
+    // is debounced by its caller and refuses to run mid-gesture.
+    //
+    // Evaluates at the CURRENT playhead (not a hard t=0): a mutation while the
+    // playhead sits at 2.4s must not snap an animated swatch back to the
+    // track's start value.
     private void RefreshPreviews()
+        => RefreshPreviewsCore(_vm?.PlayheadMs ?? 0, forcePush: true);
+
+    /// <summary>
+    /// V11 — re-resolve the node-body previews at a timeline position so
+    /// animated values follow the playhead. Public because the playhead lives
+    /// on the view model and this canvas deliberately does NOT subscribe to
+    /// <c>VisualistViewModel.PropertyChanged</c>; the host
+    /// (<c>WidgetEditorView</c>) owns the 150 ms debounce and calls in.
+    ///
+    /// Returns <c>false</c> when it declined to evaluate because a canvas
+    /// gesture is in flight — the caller re-arms its debounce on false so the
+    /// refresh lands once the gesture settles. Declining matters: this is a
+    /// synchronous whole-graph walk on the UI thread, exactly the per-frame
+    /// work class the perf release was spent removing, so it must never run
+    /// inside a node-drag / pan / lasso.
+    /// </summary>
+    public bool RefreshPreviewsAtTime(double timeMs)
+    {
+        // No unified "is a gesture running" flag exists on this canvas — the
+        // four drag states are independent, so all four are tested.
+        if (_dragNode is not null || _isPanning || _isLassoing || _isGroupDragging)
+            return false;
+
+        RefreshPreviewsCore(timeMs, forcePush: false);
+        return true;
+    }
+
+    // Signature of the snapshot last pushed into each node view, keyed by node
+    // id. The playhead path pushes ONLY changed nodes: ThumbnailHost.SetSnapshot
+    // resets its visual state and re-creates the BitmapImage on every call, so
+    // re-pushing an unchanged Image snapshot on each scrub-settle would re-decode
+    // the file and flicker the strip. Mutation-path pushes are unconditional
+    // (forcePush) because Rebuild() recreates the node views, and a fresh view
+    // starts with a collapsed strip that a diff would wrongly skip — so the
+    // mutation path also re-seeds this map.
+    private readonly Dictionary<string, string> _lastPushedPreviewSig = new(StringComparer.Ordinal);
+
+    private void RefreshPreviewsCore(double timeMs, bool forcePush)
     {
         try
         {
+            if (forcePush) _lastPushedPreviewSig.Clear();
+
             if (_trigger?.Graph is not { } graph)
             {
                 foreach (var v in _nodeViews.Values) v.SetPreview(null);
+                _lastPushedPreviewSig.Clear();
                 return;
             }
-            var snapshots = Phoenix.Controls.Visualist.Core.NodeEvaluator.EvaluatePreviews(graph);
+
+            // The trigger's own timeline + the requested time are what make the
+            // snapshot time-aware; with a null timeline the engine resolves
+            // exactly as it did pre-V11.
+            var snapshots = Phoenix.Controls.Visualist.Core.NodeEvaluator.EvaluatePreviews(
+                graph, _trigger.Timeline, timeMs);
             foreach (var kvp in _nodeViews)
             {
                 snapshots.TryGetValue(kvp.Key, out var snap);
+                string sig = PreviewSignature(snap);
+                if (!forcePush
+                    && _lastPushedPreviewSig.TryGetValue(kvp.Key, out var prev)
+                    && string.Equals(prev, sig, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                _lastPushedPreviewSig[kvp.Key] = sig;
                 kvp.Value.SetPreview(snap);
             }
         }
@@ -1883,6 +1975,21 @@ public sealed partial class WidgetGraphCanvas : UserControl
             GlobalLogger.Error("WidgetGraphCanvas", "RefreshPreviews", ex);
         }
     }
+
+    // Every field ThumbnailHost renders from, flattened into one comparable
+    // string, so "did this node's preview actually change" is a single
+    // dictionary probe. Unit-separator delimited so two adjacent fields cannot
+    // alias each other by concatenation (Source "ab" + hex "c" must not compare
+    // equal to Source "a" + hex "bc"). The separator can never occur inside a
+    // path / URL / hex / hint, and the null form carries no separator at all,
+    // so it cannot collide with a real snapshot either.
+    private const string PreviewSigSep = "\u001f";
+
+    private static string PreviewSignature(Phoenix.Controls.Visualist.Core.NodeEvaluator.PreviewSnapshot? snap)
+        => snap is null
+            ? "no-snapshot"
+            : $"{(int)snap.Kind}{PreviewSigSep}{snap.Source}{PreviewSigSep}{snap.ColorHex}"
+              + $"{PreviewSigSep}{snap.Hint}{PreviewSigSep}{(int)snap.Declared}";
 
     // Commit an inline value-pill edit. Mirrors every other attribute
     // mutation on this canvas (Browse Media / Edit Shape / manipulator): snapshot
@@ -2054,7 +2161,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
             if (e.DragUIOverride is not null)
             {
-                e.DragUIOverride.Caption          = "Add media node";
+                e.DragUIOverride.Caption          = Localizer.T("visualist.widget.drop.add_media", "Add media node");
                 e.DragUIOverride.IsCaptionVisible = true;
                 e.DragUIOverride.IsContentVisible = false;
             }
@@ -2187,6 +2294,22 @@ public sealed partial class WidgetGraphCanvas : UserControl
         if (!ReferenceEquals(_dragNode, view)) return;
 
         var pp = e.GetCurrentPoint(WorldCanvas);
+
+        // Stale-gesture guard — mirrors LayerCanvasView's drag-stick fix. A node
+        // drag only continues while the left button is held. When the window is
+        // re-activated by a click (alt-tab back in), WinUI can deliver the arming
+        // PointerPressed but swallow the matching PointerReleased — and node drag
+        // (unlike the host pan/lasso) has NO capture-lost handler — so _dragNode
+        // stays armed and the node sticks to the cursor on the next button-up move.
+        // Settle like a release and stop before any move math runs. This also
+        // covers a lost capture mid-drag, which would otherwise leak _dragNode.
+        if (!pp.Properties.IsLeftButtonPressed)
+        {
+            EndNodeDrag(view, e.Pointer);
+            e.Handled = true;
+            return;
+        }
+
         double dx = pp.Position.X - _dragStartCanvasPoint.X;
         double dy = pp.Position.Y - _dragStartCanvasPoint.Y;
 
@@ -2260,7 +2383,24 @@ public sealed partial class WidgetGraphCanvas : UserControl
         if (_dragNode is null || sender is not WidgetGraphNodeView view) return;
         if (!ReferenceEquals(_dragNode, view)) return;
 
-        view.ReleasePointerCapture(e.Pointer);
+        EndNodeDrag(view, e.Pointer);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Idempotent teardown for a node / group drag, shared by
+    /// <see cref="OnNodePointerReleased"/> and the stale-gesture guard in
+    /// <see cref="OnNodePointerMoved"/>. Mirrors LayerCanvasView.EndWidgetDrag:
+    /// releasing the capture is wrapped so a throw (capture already lost) can never
+    /// skip the state reset — a leaked <c>_dragNode</c> + held capture is exactly
+    /// what makes a node stick to the cursor or jump to the next click.
+    /// </summary>
+    private void EndNodeDrag(WidgetGraphNodeView? view, Microsoft.UI.Xaml.Input.Pointer? pointer)
+    {
+        if (view is not null && pointer is not null)
+        {
+            try { view.ReleasePointerCapture(pointer); } catch { /* already lost — harmless */ }
+        }
 
         if (_dragHasPushedUndo && _vm?.Document is { } doc)
             doc.MarkDirty();
@@ -2269,7 +2409,6 @@ public sealed partial class WidgetGraphCanvas : UserControl
         _dragHasPushedUndo = false;
         _isGroupDragging = false;
         _groupDragOrigins.Clear();
-        e.Handled = true;
     }
 
     // ─── pin-press → wire-drop ───────────────────────────────────────────
@@ -2364,13 +2503,17 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         if (isAnimated)
         {
-            var remove = new MenuFlyoutItem { Text = $"Remove animation on \"{socket.Name}\"" };
+            var remove = new MenuFlyoutItem { Text = string.Format(
+                Localizer.T("visualist.widget.pin.remove_animation", "Remove animation on \"{0}\""),
+                socket.Name) };
             remove.Click += (_, _) => RemovePinAnimation(owner, socket);
             flyout.Items.Add(remove);
         }
         else
         {
-            var animate = new MenuFlyoutItem { Text = $"Animate \"{socket.Name}\"" };
+            var animate = new MenuFlyoutItem { Text = string.Format(
+                Localizer.T("visualist.widget.pin.animate", "Animate \"{0}\""),
+                socket.Name) };
             animate.Click += (_, _) => SeedPinAnimation(owner, socket);
             flyout.Items.Add(animate);
         }
@@ -2407,7 +2550,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
         }
 
         var flyout = new MenuFlyout();
-        var spawn  = new MenuFlyoutSubItem { Text = $"Spawn compatible node for \"{sourceOutput.Name}\"" };
+        var spawn  = new MenuFlyoutSubItem { Text = string.Format(
+            Localizer.T("visualist.widget.pin.spawn_compatible", "Spawn compatible node for \"{0}\""),
+            sourceOutput.Name) };
 
         var outType = sourceOutput.DataType;
         var byCategory = WidgetNodeRegistry.Templates.Values
@@ -2438,7 +2583,7 @@ public sealed partial class WidgetGraphCanvas : UserControl
             // submenu (no modal).
             spawn.Items.Add(new MenuFlyoutItem
             {
-                Text       = "(no compatible nodes)",
+                Text       = Localizer.T("visualist.widget.pin.no_compatible", "(no compatible nodes)"),
                 IsEnabled  = false,
             });
         }
@@ -3067,7 +3212,9 @@ public sealed partial class WidgetGraphCanvas : UserControl
         // modal.
         var snapToggle = new ToggleMenuFlyoutItem
         {
-            Text      = $"Snap to Grid ({SnapStepPx}px)",
+            Text      = string.Format(
+                Localizer.T("visualist.widget.context.snap_to_grid", "Snap to Grid ({0}px)"),
+                SnapStepPx),
             IsChecked = SnapEnabled,
         };
         snapToggle.Click += (_, _) =>
@@ -3280,6 +3427,18 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
+        // WebOverlay.Custom is singleton-per-trigger too (a widget maps to one DOM
+        // overlay host). Mirror the Audio.Play gate — log via GlobalLogger, no modal.
+        if (string.Equals(title, WebOverlaySinkNode.Title, StringComparison.Ordinal)
+            && HasWebOverlay(graph))
+        {
+            GlobalLogger.Log(
+                $"WidgetGraphCanvas: {WebOverlaySinkNode.Title} rejected — trigger '{_trigger?.Name}' already carries one. " +
+                "Only one WebOverlay.Custom sink per trigger is allowed.",
+                "WidgetGraphCanvas", LogLevel.System);
+            return;
+        }
+
         // Viewer node drop-on-wire splice (Manifesto §4.6). Before
         // pushing undo + spawning, check whether the drop point lies on top
         // of an existing wire. If so, splice the Viewer node into that wire
@@ -3320,6 +3479,19 @@ public sealed partial class WidgetGraphCanvas : UserControl
         foreach (var n in graph.Nodes)
         {
             if (AudioSinkNode.Is(n)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the trigger graph already carries a WebOverlay.Custom sink.
+    /// Visualist-local check (per-pillar isolation), mirroring <see cref="HasAudioPlay"/>.
+    /// </summary>
+    private static bool HasWebOverlay(Graph graph)
+    {
+        foreach (var n in graph.Nodes)
+        {
+            if (WebOverlaySinkNode.Is(n)) return true;
         }
         return false;
     }
@@ -3513,6 +3685,18 @@ public sealed partial class WidgetGraphCanvas : UserControl
 
         flyout.Items.Clear();
 
+        // ── Edit HTML / CSS… (WebOverlay.Custom) ────────────────────────────
+        if (WebOverlaySinkNode.Is(node))
+        {
+            var editOverlay = new MenuFlyoutItem
+            {
+                Text = Localizer.T("visualist.canvas.menu.editWebOverlay", "Edit HTML / CSS…"),
+            };
+            editOverlay.Click += (_, _) => _ = OpenWebOverlayEditorAsync(node);
+            flyout.Items.Add(editOverlay);
+            flyout.Items.Add(new MenuFlyoutSeparator());
+        }
+
         // ── Edit Shape… (Mask.Polygon / Mask.Bezier) ────────────────────────
         if (IsShapeNode(node))
         {
@@ -3679,6 +3863,36 @@ public sealed partial class WidgetGraphCanvas : UserControl
         catch (Exception ex)
         {
             GlobalLogger.Error("WidgetGraphCanvas", "OpenShapeEditor", ex);
+        }
+    }
+
+    /// <summary>
+    /// Open the pop-up HTML/CSS editor for a WebOverlay.Custom node. Snapshot for undo
+    /// only on Save (the dialog holds edits until <see cref="WebOverlayEditorDialog.ApplyTo"/>),
+    /// then mark dirty + rebuild + refresh the live preview so the DOM overlay updates.
+    /// </summary>
+    private async System.Threading.Tasks.Task OpenWebOverlayEditorAsync(Node node)
+    {
+        if (XamlRoot is null) return;
+        try
+        {
+            var dialog = new Dialogs.WebOverlayEditorDialog(node) { XamlRoot = XamlRoot };
+            var result = await dialog.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                _vm?.Document?.PushUndo();
+                dialog.ApplyTo(node);
+                _vm?.Document?.MarkDirty();
+                Rebuild();
+                RefreshPreviews();
+                GlobalLogger.Log(
+                    $"Web overlay edited on '{node.Title}'.",
+                    "WidgetGraphCanvas", LogLevel.System);
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("WidgetGraphCanvas", "OpenWebOverlayEditor", ex);
         }
     }
 
@@ -3903,6 +4117,17 @@ public sealed partial class WidgetGraphCanvas : UserControl
             return;
         }
 
+        // WebOverlay.Custom is singleton-per-trigger too — duplicating would put a
+        // second DOM-overlay sink in the same graph. Reject (no modal), like Audio.Play.
+        if (WebOverlaySinkNode.Is(src))
+        {
+            GlobalLogger.Log(
+                $"WidgetGraphCanvas: {WebOverlaySinkNode.Title} duplicate rejected — trigger '{_trigger?.Name}' already carries one. " +
+                "Only one WebOverlay.Custom sink per trigger is allowed.",
+                "WidgetGraphCanvas", LogLevel.System);
+            return;
+        }
+
         if (_vm?.Document is { } doc) doc.PushUndo();
 
         // Deep-clone via WidgetNodeRegistry.Instantiate plus value copy of
@@ -4120,6 +4345,30 @@ public sealed partial class WidgetGraphCanvas : UserControl
                 $"WidgetGraphCanvas: paste skipped {skipped} node(s) outside Visualist's allowed categories " +
                 "(likely Architect-only logic / Twitch / DB / Bus / AI nodes).",
                 "WidgetGraphCanvas", LogLevel.Communication);
+        }
+        if (snap.Nodes.Count == 0) return;
+
+        // WebOverlay.Custom singleton-per-trigger — cap the graph at one overlay total.
+        // If the destination already carries one, drop every incoming overlay; otherwise
+        // keep only the first. Silent removal stays discoverable via the log line.
+        {
+            int overlayRemoved;
+            int beforeOverlay = snap.Nodes.Count;
+            if (HasWebOverlay(graph))
+            {
+                snap.Nodes.RemoveAll(n => WebOverlaySinkNode.Is(n));
+            }
+            else
+            {
+                int seen = 0;
+                snap.Nodes.RemoveAll(n => WebOverlaySinkNode.Is(n) && ++seen > 1);
+            }
+            overlayRemoved = beforeOverlay - snap.Nodes.Count;
+            if (overlayRemoved > 0)
+                GlobalLogger.Log(
+                    $"WidgetGraphCanvas: paste dropped {overlayRemoved} extra {WebOverlaySinkNode.Title} node(s) — " +
+                    "only one WebOverlay.Custom sink per trigger is allowed.",
+                    "WidgetGraphCanvas", LogLevel.System);
         }
         if (snap.Nodes.Count == 0) return;
 

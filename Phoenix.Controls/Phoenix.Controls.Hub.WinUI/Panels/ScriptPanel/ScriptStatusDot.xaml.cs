@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Phoenix.Controls.Hub.WinUI.Services;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 using Windows.UI;
 
@@ -150,10 +151,10 @@ public sealed partial class ScriptStatusDot : UserControl
     {
         StateText = State switch
         {
-            ScriptState.Errored => "Errored — last run faulted",
-            ScriptState.Queued  => "Queued — waiting to run",
-            ScriptState.Running => "Running — executing now",
-            _                   => "Idle — ready / last run clean",
+            ScriptState.Errored => Localizer.T("panel.scripts.dot.state.errored", "Errored — last run faulted"),
+            ScriptState.Queued  => Localizer.T("panel.scripts.dot.state.queued",  "Queued — waiting to run"),
+            ScriptState.Running => Localizer.T("panel.scripts.dot.state.running", "Running — executing now"),
+            _                   => Localizer.T("panel.scripts.dot.state.idle",    "Idle — ready / last run clean"),
         };
     }
 

@@ -1,3 +1,4 @@
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 
 // Namespace deliberately avoids "Phoenix.Controls.Architect.WinUI.Windows" —
@@ -39,6 +40,6 @@ public static class NodeDocumentationWindow
             Page: "node-reference.html",
             InjectionScript: injection,
             Anchor: anchor,
-            Title: "Architect — Node Reference"));
+            Title: Localizer.T("architect.window.node_reference.viewer_title", "Architect — Node Reference")));
     }
 }

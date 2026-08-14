@@ -136,6 +136,163 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         public event Action<string>? OnLayerReloaded;
 
         /// <summary>
+        /// V13 — one design-time trace frame per trigger ACTIVATION, listing every
+        /// widget-graph node the compositor visited while rendering it. Subscribed by
+        /// <c>WidgetGraphNodeView</c>, which flashes its own node when its id appears
+        /// in <see cref="WidgetNodeTrace.NodeIds"/>.
+        ///
+        /// Raised on the receive-loop thread — a subscriber that touches UI MUST
+        /// marshal (see the DispatcherQueue hop in WidgetGraphNodeView).
+        /// </summary>
+        public event Action<WidgetNodeTrace>? OnWidgetNodeTrace;
+
+        /// <summary>
+        /// Parsed <c>DEBUG_WIDGET_NODE</c> payload — the design-time counterpart of
+        /// Architect's per-node <c>DEBUG_NODE_EXEC</c>, batched rather than per-node.
+        ///
+        /// The batching is not an optimisation, it is a correctness requirement:
+        /// <c>renderWidgetTrigger</c> re-runs on EVERY animation frame, so a per-node
+        /// (or per-frame) trace would push the bus at frame rate for as long as an
+        /// animated widget is on screen. One frame per activation, carrying the whole
+        /// visited set, is the only shape that can't flood.
+        ///
+        /// <paramref name="Seq"/> is carried through verbatim and deliberately NOT used
+        /// as a drop-older-frames guard: Hub's counter is process-scoped, so a Hub
+        /// restart resets it while an editor session is still holding a high value —
+        /// exactly the permanently-dark failure the LIVE_SNAPSHOT seq carve-out exists
+        /// to avoid. A duplicate trace costs one extra flash; a stuck guard costs the
+        /// whole feature.
+        /// </summary>
+        public sealed record WidgetNodeTrace(
+            string LayerId,
+            string WidgetId,
+            string TriggerName,
+            IReadOnlyList<string> NodeIds,
+            long Seq);
+
+        /// <summary>
+        /// Fan a parsed trace out to every <see cref="OnWidgetNodeTrace"/> subscriber
+        /// with PER-HANDLER isolation — the project idiom recorded for
+        /// <c>Bus.OnMessageReceived</c> (<c>GetInvocationList()</c> + a try/catch inside
+        /// the loop), also used by <c>WS.OnMessageReceived</c> / <c>OnChatMessage</c>.
+        ///
+        /// <para>
+        /// A bare <c>OnWidgetNodeTrace?.Invoke(trace)</c> inside ONE try/catch is wrong
+        /// here specifically because of how this event is subscribed: <b>one delegate per
+        /// widget-graph node view</b> in the open graph, and those handlers carry no
+        /// try/catch of their own (they hop to the DispatcherQueue and flash). A single
+        /// throwing node view therefore silences every node registered after it — the
+        /// flash stops working on part of the graph, with one log line and no other
+        /// symptom, and which part depends on mount order.
+        /// </para>
+        /// <para>
+        /// It still must not rethrow: the caller is the receive loop, whose outer
+        /// <c>catch { break; }</c> would drop the bus connection until the 5 s reconnect
+        /// rebuilds it. A flash bug must not cost the author their bus link.
+        /// </para>
+        /// <para>
+        /// Static and internal so the fan-out is testable without a WebSocket, a
+        /// singleton or a UI thread: the caller passes the multicast delegate in.
+        /// </para>
+        /// </summary>
+        internal static void RaiseWidgetNodeTrace(
+            Action<WidgetNodeTrace>? handlers, WidgetNodeTrace trace)
+        {
+            var list = handlers?.GetInvocationList();
+            if (list is null) return;
+            for (int i = 0; i < list.Length; i++)
+            {
+                try { ((Action<WidgetNodeTrace>)list[i])(trace); }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Log($"OnWidgetNodeTrace subscriber threw: {ex.Message}",
+                        "BusClient", LogLevel.CriticalError);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Parse a <c>DEBUG_WIDGET_NODE</c> bus payload. Returns null for anything
+        /// that isn't a usable trace — malformed JSON, a non-object root, a missing or
+        /// empty <c>nodeIds</c> array — so the caller never raises an event carrying
+        /// nothing to flash. Property matching is case-insensitive because the frame is
+        /// authored browser-side in camelCase while the C# record is PascalCase; ids
+        /// themselves are taken verbatim (node ids are GUIDs matched Ordinal).
+        ///
+        /// Internal rather than private so the parse contract is unit-testable without
+        /// standing up a WebSocket (reached via the csproj InternalsVisibleTo grant).
+        /// </summary>
+        internal static WidgetNodeTrace? TryParseWidgetNodeTrace(string? payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return null;
+
+                if (!TryGetArray(root, "nodeIds", out var idsEl)) return null;
+
+                var ids = new System.Collections.Generic.List<string>(idsEl.GetArrayLength());
+                foreach (var el in idsEl.EnumerateArray())
+                {
+                    if (el.ValueKind != JsonValueKind.String) continue;
+                    string? id = el.GetString();
+                    if (!string.IsNullOrEmpty(id)) ids.Add(id!);
+                }
+                // No ids ⇒ nothing to flash. Dropping here (rather than raising an
+                // empty trace) keeps every subscriber's fast path free of an
+                // is-it-empty check.
+                if (ids.Count == 0) return null;
+
+                return new WidgetNodeTrace(
+                    ReadString(root, "layerId"),
+                    ReadString(root, "widgetId"),
+                    ReadString(root, "triggerName"),
+                    ids,
+                    ReadInt64(root, "seq"));
+            }
+            catch (Exception ex)
+            {
+                GlobalLogger.Error("VisualistBusClient", "Malformed DEBUG_WIDGET_NODE payload", ex);
+                return null;
+            }
+        }
+
+        // Case-insensitive property probes. JsonDocument has no options-driven
+        // case-insensitivity (that is a JsonSerializer feature), so the fallback scan
+        // is explicit rather than free.
+        private static bool TryGetProperty(JsonElement obj, string name, out JsonElement value)
+        {
+            if (obj.TryGetProperty(name, out value)) return true;
+            foreach (var p in obj.EnumerateObject())
+            {
+                if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = p.Value;
+                    return true;
+                }
+            }
+            value = default;
+            return false;
+        }
+
+        private static bool TryGetArray(JsonElement obj, string name, out JsonElement value)
+            => TryGetProperty(obj, name, out value) && value.ValueKind == JsonValueKind.Array;
+
+        private static string ReadString(JsonElement obj, string name)
+            => TryGetProperty(obj, name, out var el) && el.ValueKind == JsonValueKind.String
+                ? el.GetString() ?? ""
+                : "";
+
+        private static long ReadInt64(JsonElement obj, string name)
+            => TryGetProperty(obj, name, out var el)
+               && el.ValueKind == JsonValueKind.Number
+               && el.TryGetInt64(out long v)
+                ? v
+                : 0L;
+
+        /// <summary>
         /// Starts the connect loop. Idempotent — a second Start() with no intervening
         /// Stop()/StopAsync() is a no-op (the <c>_started</c> guard returns before any
         /// CTS work). Start/Stop must be paired: every Start() is matched by a Stop()/
@@ -343,6 +500,19 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
                                     "BusClient", LogLevel.CriticalError);
                             }
                             break;
+
+                        // V13 — design-time widget-graph trace. Unlike the arm above this
+                        // one fans out through RaiseWidgetNodeTrace, which isolates EACH
+                        // subscriber: the invocation list holds one delegate per node view
+                        // in the open graph, so a single throwing node must not silence the
+                        // rest. Swallowing is still mandatory either way — a subscriber
+                        // throw that reached the receive loop's `catch { break; }` below
+                        // would kill the socket until the 5 s reconnect rebuilds it.
+                        case "DEBUG_WIDGET_NODE":
+                            var trace = TryParseWidgetNodeTrace(msg.Payload);
+                            if (trace is null) break;   // malformed / no ids — already logged
+                            RaiseWidgetNodeTrace(OnWidgetNodeTrace, trace);
+                            break;
                     }
                 }
                 catch (OperationCanceledException) { break; }
@@ -530,9 +700,15 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         // Exposed (via the csproj InternalsVisibleTo grant to Phoenix.Controls.Tests)
         // to verify queue + drop semantics without standing up a real WebSocket.
         // NOT part of the public API.
+        // V14 removed EnqueueRawForTests(json) — no test ever called it.
+        // VisualistCoreFoundationsTests drives the queue through the real SendAsync
+        // surface instead, which is what makes those cases meaningful; a raw
+        // back-door enqueue would have bypassed the very drop/classify logic under
+        // test. All four hooks that remain in this block ARE used by that class
+        // (OutboundQueueCount, OutboundQueueCapacityForTests, TryDequeueRawForTests,
+        // ResetDroppedCountForTests) — do not prune them.
         internal int OutboundQueueCount => _outbound.Reader.Count;
         internal int OutboundQueueCapacityForTests => OutboundQueueCapacity;
-        internal void EnqueueRawForTests(string json) => _outbound.Writer.TryWrite(json);
         internal bool TryDequeueRawForTests(out string? json)
         {
             if (_outbound.Reader.TryRead(out var s)) { json = s; return true; }

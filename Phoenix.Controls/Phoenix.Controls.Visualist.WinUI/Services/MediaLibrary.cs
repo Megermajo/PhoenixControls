@@ -293,22 +293,11 @@ public static class MediaLibrary
         return Path.Combine(ThumbCacheRoot, sb.ToString() + ".png");
     }
 
-    /// <summary>
-    /// Synchronous cache lookup — returns the cached PNG bytes for
-    /// <paramref name="fullPath"/> if a fresh (path + mtime) entry exists, else
-    /// <c>null</c>. Never throws: a corrupt / unreadable cache entry returns
-    /// <c>null</c> so the caller falls back to a live decode.
-    /// </summary>
-    public static byte[]? TryGetCachedThumbnail(string fullPath)
-    {
-        string? cachePath = TryGetCachePath(fullPath);
-        if (cachePath is null) return null;
-        try
-        {
-            return File.Exists(cachePath) ? File.ReadAllBytes(cachePath) : null;
-        }
-        catch { return null; }
-    }
+    // V14 removed the synchronous TryGetCachedThumbnail(fullPath) — zero callers.
+    // GetThumbnailAsync below is the surviving lookup and is the one to use: the
+    // cache lives on disk, and the sync variant did a blocking File.ReadAllBytes
+    // that every real caller would have been running from a UI-thread thumbnail
+    // fill. The shared TryGetCachePath above stays — three live sites use it.
 
     /// <summary>
     /// Returns cached PNG bytes for <paramref name="fullPath"/>, or <c>null</c>

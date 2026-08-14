@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.SystemLogPanel"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
@@ -225,6 +226,7 @@
                           ScrollViewer.IsVerticalRailEnabled="True"
                           AutomationProperties.LiveSetting="Polite"
                           AutomationProperties.Name="System log entries"
+                          loc:Localize.AutomationKey="panel.systemlog.list.a11y"
                           RightTapped="OnLogRightTapped">
                     <ListView.KeyboardAccelerators>
                         <KeyboardAccelerator Key="C" Modifiers="Control" Invoked="OnCopyAccelerator" />

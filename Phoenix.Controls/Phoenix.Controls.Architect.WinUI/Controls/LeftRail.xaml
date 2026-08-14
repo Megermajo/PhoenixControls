@@ -8,7 +8,8 @@
     x:Class="Phoenix.Controls.Architect.WinUI.Controls.LeftRail"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:local="using:Phoenix.Controls.Architect.WinUI.Controls">
+    xmlns:local="using:Phoenix.Controls.Architect.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <Border Background="{StaticResource CoalSurfaceBrush}"
             BorderBrush="{StaticResource CoalCardBrush}"
@@ -70,6 +71,8 @@
                             FontSize="11"
                             ToolTipService.ToolTip="Collapse rail (chevron)"
                             AutomationProperties.Name="Collapse rail"
+                            loc:Localize.TooltipKey="architect.rail.collapse.tip"
+                            loc:Localize.AutomationKey="architect.rail.collapse.a11y"
                             Content="&#xE76B;"
                             Click="OnChevronToggleClicked" />
 
@@ -81,23 +84,36 @@
                                FontSize="12"
                                CharacterSpacing="80"
                                Foreground="{StaticResource CoalSecondaryTextBrush}"
-                               Text="LIBRARY" />
+                               Text="LIBRARY"
+                               loc:Localize.Key="architect.rail.header.title" />
                 </Grid>
             </Border>
 
+            <!-- Title routes through loc:Localize.Key with an explicit
+                 Property="Title" because RailSection carries TWO text
+                 properties (Title + Hint) and the attached property can only
+                 drive one of them. The Hint strings are localized in
+                 LeftRail's constructor (see LocalizeSectionHints) — same
+                 English literal, same key family, just the other slot. -->
             <local:RailSection x:Name="VariablesSection"
                                Grid.Row="1"
                                Title="Variables"
+                               loc:Localize.Key="architect.rail.variables.title"
+                               loc:Localize.Property="Title"
                                ShowScope="True" />
 
             <local:RailSection x:Name="ProcessesSection"
                                Grid.Row="2"
                                Title="Processes"
+                               loc:Localize.Key="architect.rail.processes.title"
+                               loc:Localize.Property="Title"
                                Hint="long-running · async" />
 
             <local:RailSection x:Name="MacrosSection"
                                Grid.Row="3"
                                Title="Macros"
+                               loc:Localize.Key="architect.rail.macros.title"
+                               loc:Localize.Property="Title"
                                Hint="reusable subgraphs"
                                AllowGrow="True" />
 
@@ -118,7 +134,8 @@
                      rail-search hint must already match the post-rebind reality
                      to avoid pointing at the wrong action. -->
                 <TextBlock Style="{StaticResource EyebrowTextStyle}"
-                           Text="Ctrl+F  SEARCH  ·  RMB  SPAWN" />
+                           Text="Ctrl+F  SEARCH  ·  RMB  SPAWN"
+                           loc:Localize.Key="architect.rail.footer.hint" />
             </Border>
         </Grid>
     </Border>

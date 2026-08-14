@@ -20,7 +20,8 @@
 <UserControl
     x:Class="Phoenix.Controls.Architect.WinUI.Controls.ArchitectWindowChrome"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <UserControl.Resources>
         <!-- 46×32 caption button per the redesign brief. Custom template
@@ -197,18 +198,24 @@
                             Style="{StaticResource CaptionButtonStyle}"
                             ToolTipService.ToolTip="Minimize"
                             AutomationProperties.Name="Minimize"
+                            loc:Localize.TooltipKey="chrome.architect.caption.minimize"
+                            loc:Localize.AutomationKey="chrome.architect.caption.minimize"
                             Click="OnMinimizeClicked"
                             Content="&#xE921;" />
                     <Button x:Name="MaximizeButton"
                             Style="{StaticResource CaptionButtonStyle}"
                             ToolTipService.ToolTip="Maximize"
                             AutomationProperties.Name="Maximize"
+                            loc:Localize.TooltipKey="chrome.architect.caption.maximize"
+                            loc:Localize.AutomationKey="chrome.architect.caption.maximize"
                             Click="OnMaximizeClicked"
                             Content="&#xE922;" />
                     <Button x:Name="CloseButton"
                             Style="{StaticResource CloseCaptionButtonStyle}"
                             ToolTipService.ToolTip="Close"
                             AutomationProperties.Name="Close"
+                            loc:Localize.TooltipKey="chrome.architect.caption.close"
+                            loc:Localize.AutomationKey="chrome.architect.caption.close"
                             Click="OnCloseClicked"
                             Content="&#xE8BB;" />
                 </StackPanel>

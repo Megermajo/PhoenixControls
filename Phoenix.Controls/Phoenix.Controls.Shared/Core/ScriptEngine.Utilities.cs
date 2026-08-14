@@ -397,8 +397,13 @@ namespace Phoenix.Controls.Shared.Core
         public static bool ParseTruthy(string input)
         {
             if (string.IsNullOrWhiteSpace(input)) return false;
-            string s = input.Trim().ToLowerInvariant();
-            return s is "true" or "1" or "yes" or "on" or "y" or "t";
+            string s = input.Trim();
+            return s.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("1", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("on", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("y", StringComparison.OrdinalIgnoreCase)
+                || s.Equals("t", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

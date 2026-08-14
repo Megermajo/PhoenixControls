@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:dialogs="using:Phoenix.Controls.Hub.WinUI.Dialogs"
     xmlns:hubctl="using:Phoenix.Controls.Hub.WinUI.Controls"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
     DefaultButton="Primary"
     PrimaryButtonClick="OnSkipClick"
     Background="{StaticResource CoalSurfaceBrush}"
@@ -57,6 +58,7 @@
                       VerticalScrollBarVisibility="Auto">
             <Grid>
                 <ItemsRepeater x:Name="SamplesList"
+                               cmn:RowDataContext.Supply="True"
                                ItemsSource="{x:Bind Samples, Mode=OneWay}">
                     <ItemsRepeater.Layout>
                         <StackLayout Orientation="Vertical" Spacing="6" />

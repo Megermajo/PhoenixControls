@@ -10,7 +10,7 @@ const PIN_LEN = 6;
 export function renderPair(root, ctx) {
   root.innerHTML = "";
 
-  const topbar = topbarMarkup(ctx.channel, "lan", null);
+  const topbar = topbarMarkup(ctx.channel, null);
   root.appendChild(topbar);
 
   const stage = el("div", "pair-stage");
@@ -21,12 +21,12 @@ export function renderPair(root, ctx) {
   card.appendChild(el("div", "mark"));
   card.appendChild(el("div", "eyebrow", "Pair this device"));
   const h1 = el("h1");
-  h1.textContent = "Enter the PIN shown in Hub";
+  h1.textContent = "Enter your 6-digit pairing PIN";
   card.appendChild(h1);
   const lead = el("p", "lead");
-  lead.appendChild(document.createTextNode("On your streaming PC, open Hub → Settings → Remote Viewer."));
+  lead.appendChild(document.createTextNode("Device pairing is not yet available in this version of Phoenix Controls."));
   lead.appendChild(document.createElement("br"));
-  lead.appendChild(document.createTextNode("A 6-digit code appears for the next 60 seconds."));
+  lead.appendChild(document.createTextNode("A future update will let Hub issue the pairing PIN for this screen."));
   card.appendChild(lead);
 
   const pinRow = el("div", "pin-row");
@@ -58,12 +58,7 @@ export function renderPair(root, ctx) {
   card.appendChild(meta);
 
   const foot = el("div", "pair-foot");
-  foot.appendChild(document.createTextNode("Code expires per Hub display · "));
-  const retry = document.createElement("span");
-  retry.className = "link";
-  retry.id = "pair-retry";
-  retry.textContent = "Use a different code";
-  foot.appendChild(retry);
+  foot.appendChild(document.createTextNode("Codes expire 60 seconds after they are issued."));
   card.appendChild(foot);
 
   stage.appendChild(card);
@@ -186,7 +181,7 @@ function showError(footEl, msg) {
 }
 
 // Re-export the topbar helper so renderConnected can reuse it.
-export function topbarMarkup(channel, mode, latencyMs) {
+export function topbarMarkup(channel, latencyMs) {
   const top = el("div", "viewer-topbar");
   top.appendChild(el("div", "viewer-mark"));
   const brand = el("span", "viewer-brand");
@@ -207,10 +202,10 @@ export function topbarMarkup(channel, mode, latencyMs) {
   ro.appendChild(document.createTextNode("Read-only"));
   top.appendChild(ro);
 
-  const mp = el("div", `viewer-pill connection ${mode === "cloud" ? "cloud" : ""}`);
+  const mp = el("div", "viewer-pill connection");
   const host = window.location.host || "loopback";
   mp.appendChild(el("span", "dot"));
-  mp.appendChild(document.createTextNode(`${mode === "cloud" ? "Cloud" : "LAN"} · ${host}`));
+  mp.appendChild(document.createTextNode(`LAN · ${host}`));
   top.appendChild(mp);
 
   const lat = el("span", "viewer-latency");
@@ -231,9 +226,4 @@ export function el(tag, cls, text) {
   if (cls)  node.className = cls;
   if (text) node.textContent = text;
   return node;
-}
-export function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  })[c]);
 }

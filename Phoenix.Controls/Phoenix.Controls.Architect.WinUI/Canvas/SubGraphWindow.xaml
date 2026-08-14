@@ -18,7 +18,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:canvas="using:Phoenix.Controls.Architect.WinUI.Canvas"
-    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls">
+    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <Grid Background="{StaticResource CoalShellBrush}">
         <Grid.RowDefinitions>
@@ -31,6 +32,12 @@
             <!-- Left slot — eyebrow + dirty dot + breadcrumb (Parent.phxg › Macro: X). -->
             <controls:ArchitectWindowChrome.LeftCaptionContent>
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <!-- ★ NO loc:Localize.Key on EyebrowText, deliberately. ONE TextBlock serves
+                         BOTH sub-graph editors and the factory picks the word: OpenMacroEditor
+                         writes "MACRO EDITOR", OpenProcessEditor writes "PROCESS EDITOR" (both
+                         already localized, SubGraphWindow.xaml.cs:496 / :563). A key here resolves
+                         at Loaded — after the factory has chosen — and would stamp the macro string
+                         over the process editor's header in every language. -->
                     <TextBlock x:Name="EyebrowText"
                                VerticalAlignment="Center"
                                FontFamily="{StaticResource SansFont}"
@@ -51,7 +58,8 @@
                                Foreground="{StaticResource CoalSecondaryTextBrush}"
                                Text="• Drop a wire on “+ variable” to add a parameter"
                                Margin="6,0,0,0"
-                               TextTrimming="CharacterEllipsis" />
+                               TextTrimming="CharacterEllipsis"
+                               loc:Localize.Key="architect.canvas.subgraph.placeholder_hint" />
                     <Ellipse x:Name="DirtyMarker"
                              Width="6"
                              Height="6"
@@ -104,6 +112,9 @@
                         CharacterSpacing="120"
                         ToolTipService.ToolTip="Reveal call sites in the parent graph"
                         AutomationProperties.Name="Reveal call site"
+                        loc:Localize.TooltipKey="architect.canvas.subgraph.reveal_callers.tip"
+                        loc:Localize.AutomationKey="architect.canvas.subgraph.reveal_callers.a11y"
+                        loc:Localize.Key="architect.canvas.subgraph.reveal_callers"
                         Click="OnRevealCallSiteClicked"
                         Content="REVEAL CALLERS" />
             </controls:ArchitectWindowChrome.RightCaptionContent>
@@ -115,10 +126,13 @@
                  Title="Unsaved changes"
                  Message="Save changes before closing?"
                  IsOpen="False"
-                 IsClosable="True">
+                 IsClosable="True"
+                 loc:Localize.Key="architect.canvas.subgraph.dirty_bar.title"
+                 loc:Localize.Property="Title">
             <InfoBar.ActionButton>
                 <Button x:Name="DirtySaveButton"
-                        Content="Save" />
+                        Content="Save"
+                        loc:Localize.Key="architect.canvas.subgraph.dirty_bar.save" />
             </InfoBar.ActionButton>
         </InfoBar>
 
@@ -128,30 +142,44 @@
              in a macro / process required opening a process-wide floating
              inspector. Defaults open per
              AppConfig.ArchitectInspectorVisible. -->
-        <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition x:Name="InspectorColumn" Width="0" MinWidth="0" MaxWidth="500" />
-            </Grid.ColumnDefinitions>
+        <!-- ★ 2026-08-14 — single column; the inspector card floats over the
+             canvas instead of taking a column of its own (parity with
+             MainView / ArchitectSiblingWindow). This window had the same dead
+             strip the sibling window did: an up-to-500 px column whose region
+             below the top-aligned card was backed by nothing.
 
-            <canvas:LogicCanvasView x:Name="Canvas" Grid.Column="0" />
+             ⚠ The canvas here is a BARE, unwrapped LogicCanvasView — no host
+             Border, no clip. This overlay is the first element ever placed on
+             top of it, so the hit-test seam is unprecedented in this window;
+             it is the one surface of this change with no prior art. -->
+        <Grid Grid.Row="2"
+              x:Name="BodyGrid"
+              SizeChanged="OnBodyGridSizeChanged">
+            <canvas:LogicCanvasView x:Name="Canvas" Canvas.ZIndex="1" />
 
-            <Grid Grid.Column="1"
-                  Canvas.ZIndex="2"
+            <Grid x:Name="InspectorHost"
+                  Canvas.ZIndex="3"
                   Background="{x:Null}"
+                  HorizontalAlignment="Right"
                   VerticalAlignment="Top"
-                  AutomationProperties.Name="Inspector">
+                  Width="320"
+                  Margin="0,12,12,0"
+                  SizeChanged="OnInspectorHostSizeChanged"
+                  AutomationProperties.Name="Inspector"
+                  loc:Localize.AutomationKey="architect.canvas.subgraph.inspector.a11y">
                 <Border x:Name="InspectorCardRoot"
                         Background="{StaticResource CoalSurfaceBrush}"
                         BorderBrush="{StaticResource CoalCardBrush}"
-                        BorderThickness="1,0,0,1">
+                        BorderThickness="1"
+                        CornerRadius="6">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0"
+                        <Border x:Name="InspectorHeaderBorder"
+                                Grid.Row="0"
                                 Padding="6,5,6,5"
                                 BorderBrush="{StaticResource CoalCardBrush}"
                                 BorderThickness="0,0,0,1">
@@ -160,7 +188,8 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
+                                <TextBlock x:Name="InspectorTitleText"
+                                           Grid.Column="0"
                                            Text="INSPECTOR"
                                            VerticalAlignment="Center"
                                            Margin="6,0,0,0"
@@ -168,7 +197,8 @@
                                            FontSize="14"
                                            FontWeight="SemiBold"
                                            CharacterSpacing="180"
-                                           Foreground="{StaticResource CoalPaperBrush}" />
+                                           Foreground="{StaticResource CoalPaperBrush}"
+                                           loc:Localize.Key="architect.canvas.subgraph.inspector.title" />
                                 <Button x:Name="InspectorChevronButton"
                                         Grid.Column="1"
                                         Width="32"
@@ -181,6 +211,8 @@
                                         FontSize="14"
                                         ToolTipService.ToolTip="Roll up Inspector"
                                         AutomationProperties.Name="Roll up Inspector"
+                                        loc:Localize.TooltipKey="architect.canvas.subgraph.inspector.rollup.tip"
+                                        loc:Localize.AutomationKey="architect.canvas.subgraph.inspector.rollup.a11y"
                                         Content="&#xE70D;"
                                         Click="OnInspectorChevronClicked" />
                             </Grid>

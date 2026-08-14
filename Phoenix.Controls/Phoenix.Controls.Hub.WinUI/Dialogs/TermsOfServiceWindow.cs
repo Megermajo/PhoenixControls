@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using Phoenix.Controls.Hub.Core;
 using Phoenix.Controls.Hub.WinUI.Services;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.Graphics;
@@ -63,7 +64,9 @@ public sealed class TermsOfServiceWindow : Window
     {
         _docsDir = docsDir;
         _fallbackContent = fallbackContent;
-        Title = string.IsNullOrEmpty(title) ? "Phoenix Controls — Terms of Service" : title;
+        Title = string.IsNullOrEmpty(title)
+            ? Localizer.T("dialog.tos.window.title", "Phoenix Controls — Terms of Service")
+            : title;
 
         _web = new WebView2 { Visibility = Visibility.Visible };
 
@@ -130,7 +133,8 @@ public sealed class TermsOfServiceWindow : Window
     {
         var hint = new TextBlock
         {
-            Text = "You must accept these terms to use Phoenix Controls. Declining closes the app.",
+            Text = Localizer.T("dialog.tos.action.hint",
+                "You must accept these terms to use Phoenix Controls. Declining closes the app."),
             FontFamily = TryFont("SansFont"),
             FontSize = 12,
             Foreground = Brush("CoalSecondaryTextBrush", 0xFF, 0x9C, 0x8A, 0x72),
@@ -139,11 +143,20 @@ public sealed class TermsOfServiceWindow : Window
         };
         Grid.SetColumn(hint, 0);
 
-        var declineBtn = new Button { Content = "Decline & Exit", MinWidth = 128 };
+        var declineBtn = new Button
+        {
+            Content = Localizer.T("dialog.tos.button.decline", "Decline & Exit"),
+            MinWidth = 128,
+        };
         ApplyStyle(declineBtn, "CoalSecondaryButtonStyle");
         declineBtn.Click += (_, _) => Decide(false);
 
-        var acceptBtn = new Button { Content = "I Accept", MinWidth = 128, Margin = new Thickness(10, 0, 0, 0) };
+        var acceptBtn = new Button
+        {
+            Content = Localizer.T("dialog.tos.button.accept", "I Accept"),
+            MinWidth = 128,
+            Margin = new Thickness(10, 0, 0, 0),
+        };
         ApplyStyle(acceptBtn, "EmberPrimaryButtonStyle");
         acceptBtn.Click += (_, _) => Decide(true);
 

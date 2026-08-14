@@ -77,7 +77,7 @@ namespace Phoenix.Controls.Hub.Core
                 string targetVar = string.IsNullOrWhiteSpace(resultVarRaw) ? "global.chance_result" : resultVarRaw.Trim();
 
                 bool success = RNG.Chance(percent);
-                await _engine.SetScriptVarAsync(targetVar, success.ToString().ToLower());
+                await _engine.SetScriptVarAsync(targetVar, (success ? "true" : "false"));
                 return null;
             });
 

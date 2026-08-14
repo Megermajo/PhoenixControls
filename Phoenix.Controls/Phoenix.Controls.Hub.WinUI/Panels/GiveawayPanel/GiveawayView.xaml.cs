@@ -1,14 +1,12 @@
 using System;
-using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
-using Microsoft.UI.Xaml.Shapes;
+using Phoenix.Controls.Hub.WinUI.Animation;
+using Phoenix.Controls.Hub.WinUI.Panels.Common;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Windows.System;
-using Windows.UI;
 
 namespace Phoenix.Controls.Hub.WinUI.Panels.GiveawayPanel;
 
@@ -23,31 +21,42 @@ public sealed partial class GiveawayView : UserControl, IDisposable
 {
     public GiveawayViewModel ViewModel { get; }
     private bool _disposed;
-    private Storyboard? _pulseStoryboard;
+
+    // T11-10 — gate the empty→populated detail crossfade so it fires only on a
+    // genuine user-driven selection, never on the initial LoadAsync (which may
+    // already have a default giveaway selected, and the pop-out window itself
+    // already fades in). Set true once the first load settles.
+    private bool _contentPrimed;
+    // Tracks the detail column's last visibility so the crossfade fires only on
+    // the true empty→populated edge (Collapsed→Visible), not on every
+    // giveaway-switch (Visible→Visible) — those show change via the tile pulses.
+    private bool _detailVisible;
 
     public GiveawayView(GiveawayViewModel viewModel)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
 
+        // The band is write-once for identity; state + switch are seeded from
+        // the VM by ApplyHeaderState on load and on every detail refresh.
+        PageHeader.Title = Localizer.T("popout.title.giveaway", "Giveaway");
+        PageHeader.MasterToggled += OnHeaderMasterToggled;
+
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        // Snap the default-toggle visual to the current state and start the
-        // status-pill pulse if the giveaway is open.
-        ApplyDefaultToggleVisual();
-        ApplyStatusPulse();
+        // Seed the band (switch + state phrase) and settle the one-brass rule
+        // before anything can open an overlay.
+        ApplyHeaderState();
+        ApplyBrassGate();
         try { await ViewModel.LoadAsync(); }
         catch (Exception ex) { GlobalLogger.Error("GiveawayView", "LoadAsync failed", ex); }
-    }
-
-    private void OnUnloaded(object sender, RoutedEventArgs e)
-    {
-        StopPulse();
+        // Arm change-animations only after the initial load has settled so the
+        // empty→populated crossfade never fires for a default selection on open.
+        _contentPrimed = true;
     }
 
     public void Dispose()
@@ -55,9 +64,8 @@ public sealed partial class GiveawayView : UserControl, IDisposable
         if (_disposed) return;
         _disposed = true;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        PageHeader.MasterToggled -= OnHeaderMasterToggled;
         Loaded -= OnLoaded;
-        Unloaded -= OnUnloaded;
-        StopPulse();
         ViewModel.Dispose();
     }
 
@@ -65,17 +73,110 @@ public sealed partial class GiveawayView : UserControl, IDisposable
     {
         switch (e.PropertyName)
         {
+            // All three are raised together by RaiseDetailProperties; the band
+            // reads the same predicates the pill and the toggle pill used to.
             case nameof(GiveawayViewModel.IsDefault):
             case nameof(GiveawayViewModel.HasSelection):
-                ApplyDefaultToggleVisual();
-                break;
             case nameof(GiveawayViewModel.IsOpen):
-            case nameof(GiveawayViewModel.StatusDotPulseVisibility):
-                ApplyStatusPulse();
+                ApplyHeaderState();
                 break;
             case nameof(GiveawayViewModel.CreateDialogOpen):
                 ApplyCreateOverlay();
                 break;
+            case nameof(GiveawayViewModel.DetailVisibility):
+                // Empty-state → populated: crossfade the detail column in only on
+                // the Collapsed→Visible edge (guarded past initial load).
+                {
+                    bool nowVisible = ViewModel.DetailVisibility == Visibility.Visible;
+                    if (_contentPrimed && nowVisible && !_detailVisible)
+                        AnimateExtensions.FadeIn(DetailScroll, 180);
+                    _detailVisible = nowVisible;
+                }
+                break;
+            case nameof(GiveawayViewModel.SettingsBodyVisibility):
+                // Collapsible SETTINGS card: fade + short slide the body in on
+                // expand (layout still reflows instantly; only the content
+                // settles — no forbidden height animation).
+                if (ViewModel.SettingsBodyVisibility == Visibility.Visible)
+                    AnimateExtensions.FadeSlideIn(SettingsBody, slideY: 6, durationMs: 150);
+                break;
+            case nameof(GiveawayViewModel.WinnerOverlayVisibility):
+                ApplyBrassGate();
+                if (ViewModel.WinnerOverlayVisibility == Visibility.Visible)
+                    PlayWinnerReveal();
+                break;
+        }
+    }
+
+    // ── Header band ─────────────────────────────────────────────────────
+    // The band renders what three separate controls used to: the set-default
+    // pill (a hand-rolled Border + Ellipse + label with its own colour table),
+    // the status pill (a tinted capsule with a 2s pulse storyboard) and the
+    // "entries accepted from chat" hint beside it. All three are gone; none of
+    // the PREDICATES behind them changed.
+    private void ApplyHeaderState()
+    {
+        PageHeader.IsOn = ViewModel.IsDefault;
+
+        if (!ViewModel.HasSelection)
+        {
+            PageHeader.SetState(
+                Localizer.T("panel.giveaway.state.none_selected", "no giveaway selected"),
+                ToolStateKind.Dormant);
+            return;
+        }
+
+        // VM.StatusPillText verbatim — "open · accepting entries" / "closed" /
+        // "drawn · winner picked". IsOpen is the same predicate that gated the
+        // pill's ok-green and its pulsing dot.
+        PageHeader.SetState(
+            ViewModel.StatusPillText,
+            ViewModel.IsOpen ? ToolStateKind.Live : ToolStateKind.Dormant);
+    }
+
+    private async void OnHeaderMasterToggled(object? sender, bool isOn)
+    {
+        // The band's master switch IS the old set-default toggle: same VM call,
+        // same store write. ToggleDefaultAsync flips off !IsDefault and no-ops
+        // when nothing is selected, so re-seed from the VM afterwards rather
+        // than leaving the switch asserting a state the store never took.
+        try { await ViewModel.ToggleDefaultAsync(); }
+        catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Toggle default failed", ex); }
+        PageHeader.IsOn = ViewModel.IsDefault;
+    }
+
+    // ── One brass CTA at a time ─────────────────────────────────────────
+    // Both overlays are full-page 0.78-alpha scrims drawn over the verb strip,
+    // so the strip's brass DRAW WINNER used to bleed through beside the
+    // overlay's own brass CTA — two brass CTAs on screen, one of them muddy.
+    // Opacity rather than Visibility: collapsing the strip's last column slides
+    // CLOSE GIVEAWAY across, and that reflow is legible through the scrim.
+    private void ApplyBrassGate()
+    {
+        bool overlayOpen = ViewModel.WinnerOverlayVisibility == Visibility.Visible
+                           || ViewModel.CreateDialogOpen;
+        DrawButton.Opacity = overlayOpen ? 0 : 1;
+        // A faded button is still a tab stop. The scrim already eats the pointer
+        // (it carries a Background), but Tab would otherwise land focus on an
+        // invisible control behind a modal. IsEnabled stays bound to CanDraw.
+        DrawButton.IsTabStop = !overlayOpen;
+    }
+
+    // ── Winner-reveal (marquee) ─────────────────────────────────────────
+    // The winner overlay used to just pop in. Give it a short, intentional
+    // reveal: scrim fade, card scale-up + fade, and a one-shot name pop —
+    // all composited (Opacity / Scale), ~200 ms, self-clearing.
+    private void PlayWinnerReveal()
+    {
+        try
+        {
+            AnimateExtensions.FadeIn(WinnerOverlay, 140);                       // scrim
+            AnimateExtensions.RevealScaleFade(WinnerCard, fromScale: 0.96, durationMs: 200);
+            AnimateExtensions.PulseScale(WinnerNameText, peak: 1.06, durationMs: 240, delayMs: 110);
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("GiveawayView", "Winner reveal animation failed", ex);
         }
     }
 
@@ -109,12 +210,6 @@ public sealed partial class GiveawayView : UserControl, IDisposable
     {
         try { await ViewModel.DrawWinnerAsync(); }
         catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Draw winner failed", ex); }
-    }
-
-    private async void OnToggleDefaultClick(object sender, RoutedEventArgs e)
-    {
-        try { await ViewModel.ToggleDefaultAsync(); }
-        catch (Exception ex) { GlobalLogger.Error("GiveawayView", "Toggle default failed", ex); }
     }
 
     // ── Settings card ───────────────────────────────────────────────────
@@ -245,6 +340,7 @@ public sealed partial class GiveawayView : UserControl, IDisposable
     {
         bool open = ViewModel.CreateDialogOpen;
         CreateOverlay.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        ApplyBrassGate();
         if (open)
         {
             // Focus the title box once the overlay shows.
@@ -276,83 +372,8 @@ public sealed partial class GiveawayView : UserControl, IDisposable
         }
     }
 
-    // ── Default-toggle visual state ─────────────────────────────────────
-
-    private static readonly Color EmberPrimary = Color.FromArgb(0xFF, 0xE5, 0xA2, 0x4E);
-    private static readonly Color CoalSecondary = Color.FromArgb(0xFF, 0x9C, 0x8A, 0x72);
-    private static readonly Color CoalShell = Color.FromArgb(0xFF, 0x0B, 0x09, 0x07);
-    private static readonly Color CoalDivider = Color.FromArgb(0xFF, 0x3A, 0x31, 0x27);
-
-    private void ApplyDefaultToggleVisual()
-    {
-        bool on = ViewModel.IsDefault;
-
-        // Knob slides right + recolors; pill fill toggles ember.
-        DefaultToggleKnob.HorizontalAlignment = on ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-        DefaultToggleKnob.Margin = on ? new Thickness(0, 0, 1, 0) : new Thickness(1, 0, 0, 0);
-        DefaultToggleKnob.Fill = new SolidColorBrush(on ? CoalShell : CoalSecondary);
-        DefaultTogglePill.Background = new SolidColorBrush(on ? EmberPrimary : CoalDivider);
-
-        // Label color follows state (ember when default, secondary otherwise).
-        DefaultToggleLabel.Foreground = new SolidColorBrush(on ? EmberPrimary : CoalSecondary);
-    }
-
-    // ── Status-pill pulsing dot ─────────────────────────────────────────
-
-    private void ApplyStatusPulse()
-    {
-        if (ViewModel.IsOpen) StartPulse();
-        else StopPulse();
-    }
-
-    private void StartPulse()
-    {
-        if (_pulseStoryboard is not null) return;
-        if (StatusPulseDot is null) return;
-
-        // Matches the CSS @keyframes phx-pulse: opacity 1→0.5→1 +
-        // scale 1→0.85→1 over 2s, infinite.
-        StatusPulseDot.RenderTransformOrigin = new global::Windows.Foundation.Point(0.5, 0.5);
-        var scale = new ScaleTransform();
-        StatusPulseDot.RenderTransform = scale;
-
-        var sb = new Storyboard { RepeatBehavior = RepeatBehavior.Forever };
-
-        var opacity = new DoubleAnimationUsingKeyFrames();
-        opacity.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.Zero), Value = 1.0 });
-        opacity.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(1)), Value = 0.5 });
-        opacity.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(2)), Value = 1.0 });
-        Storyboard.SetTarget(opacity, StatusPulseDot);
-        Storyboard.SetTargetProperty(opacity, "Opacity");
-        sb.Children.Add(opacity);
-
-        AddScaleTrack(sb, scale, "ScaleX");
-        AddScaleTrack(sb, scale, "ScaleY");
-
-        _pulseStoryboard = sb;
-        try { sb.Begin(); } catch { _pulseStoryboard = null; }
-    }
-
-    private static void AddScaleTrack(Storyboard sb, ScaleTransform scale, string property)
-    {
-        var anim = new DoubleAnimationUsingKeyFrames { EnableDependentAnimation = true };
-        anim.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.Zero), Value = 1.0 });
-        anim.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(1)), Value = 0.85 });
-        anim.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(2)), Value = 1.0 });
-        Storyboard.SetTarget(anim, scale);
-        Storyboard.SetTargetProperty(anim, property);
-        sb.Children.Add(anim);
-    }
-
-    private void StopPulse()
-    {
-        if (_pulseStoryboard is null) return;
-        try { _pulseStoryboard.Stop(); } catch { /* best-effort */ }
-        _pulseStoryboard = null;
-        if (StatusPulseDot is not null)
-        {
-            StatusPulseDot.Opacity = 1.0;
-            StatusPulseDot.RenderTransform = null;
-        }
-    }
+    // The hand-rolled set-default toggle (Border + Ellipse knob + a four-Color
+    // table) and the status pill's 2 s pulse storyboard used to live here. Both
+    // controls are gone with the band; their state now renders as the band's
+    // switch and its one lowercase phrase, off the same VM predicates.
 }

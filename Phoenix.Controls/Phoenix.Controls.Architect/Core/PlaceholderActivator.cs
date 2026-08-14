@@ -180,10 +180,35 @@ namespace Phoenix.Controls.Architect.Core
             int groupCount = node.Sockets.Count(s =>
                 IsPayloadSocket(s) && s.Type == placeholder.Type);
 
-            string newName = (isMacroEntry || isProcEntry) ? $"In{groupCount + 1}"
-                          :  (isMacroExit  || isProcExit ) ? $"Out{groupCount + 1}"
-                          :  isReturnSocket                 ? $"RetVal{groupCount + 1}"
-                          :                                   $"Var{groupCount + 1}";
+            string namePrefix = (isMacroEntry || isProcEntry) ? "In"
+                             :  (isMacroExit  || isProcExit ) ? "Out"
+                             :  isReturnSocket                 ? "RetVal"
+                             :                                   "Var";
+
+            // The suffix STARTS at "one past the current payload count" but must
+            // never collide with a name the node already carries. A raw count is
+            // not enough: RevertIfOrphaned resets an orphaned Var1 back to a
+            // placeholder WITHOUT renumbering the surviving Var2, so re-activating
+            // that freed slot would compute groupCount=1 and mint a SECOND "Var2".
+            // Duplicate socket NAMES are silently destructive — nothing validates
+            // them (RepairIntraNodeSocketIdCollisions only dedupes socket Ids, and
+            // these two carry distinct GUIDs), while ScriptExporter.ResolveInputValue
+            // resolves inputs by NAME via FirstOrDefault: both duplicates would
+            // resolve through the FIRST socket's Id, so one of the user's two wired
+            // values is silently replaced by the other's in the generated .phx
+            // (`event.trigger(Name, Var2=X, Var2=X)`). SyncEventPair then copies the
+            // duplicate onto the paired node as well. Walking the suffix past every
+            // existing name keeps activation total and non-destructive; numbering
+            // may end up sparse (Var2, Var3) after a revert, which is harmless —
+            // the exporter and the pair sync both key off the name, not the index.
+            int suffix = groupCount + 1;
+            string newName = namePrefix + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            while (node.Sockets.Any(s => !ReferenceEquals(s, placeholder)
+                                      && string.Equals(s.Name, newName, StringComparison.Ordinal)))
+            {
+                suffix++;
+                newName = namePrefix + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
 
             Color inheritedColor = isReturnSocket
                 ? NodeRegistry.ColReturn

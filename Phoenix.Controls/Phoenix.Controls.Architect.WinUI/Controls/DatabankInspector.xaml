@@ -10,7 +10,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Phoenix.Controls.Architect.WinUI.Controls"
-    xmlns:vm="using:Phoenix.Controls.Architect.WinUI.ViewModels">
+    xmlns:vm="using:Phoenix.Controls.Architect.WinUI.ViewModels"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <Grid>
         <Grid.RowDefinitions>
@@ -45,10 +46,12 @@
                     Padding="12,6,12,6">
             <ToggleButton x:Name="FieldsToggle"
                           Content="Fields"
+                          loc:Localize.Key="architect.inspector.databank.fields"
                           IsChecked="True"
                           Click="OnFieldsToggleClick" />
             <ToggleButton x:Name="SchemaToggle"
                           Content="Schema"
+                          loc:Localize.Key="architect.inspector.databank.schema"
                           Click="OnSchemaToggleClick" />
         </StackPanel>
 

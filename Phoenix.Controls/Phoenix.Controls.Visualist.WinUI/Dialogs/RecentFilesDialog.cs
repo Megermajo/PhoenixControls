@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Visualist.WinUI.Services;
 
 namespace Phoenix.Controls.Visualist.WinUI.Dialogs;
@@ -58,9 +59,9 @@ public sealed class RecentFilesDialog : ContentDialog
 
     public RecentFilesDialog()
     {
-        Title = "Open Recent Layer";
-        PrimaryButtonText = "Open";
-        CloseButtonText = "Cancel";
+        Title = Localizer.T("visualist.dialog.recent.title", "Open Recent Layer");
+        PrimaryButtonText = Localizer.T("common.button.open", "Open");
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Primary;
 
         var grid = new Grid { Width = 520, Height = 360 };
@@ -72,7 +73,8 @@ public sealed class RecentFilesDialog : ContentDialog
         {
             Margin = new Thickness(0, 0, 0, 6),
             FontSize = 11,
-            Text = "Visualist MRU — last 10 layers opened",
+            Text = Localizer.T("visualist.dialog.recent.header_hint",
+                "Visualist MRU — last 10 layers opened"),
         };
         Grid.SetRow(HeaderHintText, 0);
 
@@ -92,7 +94,8 @@ public sealed class RecentFilesDialog : ContentDialog
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = 12,
-            Text = "No recent layers yet — open a .phxlayer from File → Open Layer.",
+            Text = Localizer.T("visualist.dialog.recent.empty",
+                "No recent layers yet — open a .phxlayer from File → Open Layer."),
         };
         Grid.SetRow(EmptyHint, 1);
 
@@ -100,7 +103,7 @@ public sealed class RecentFilesDialog : ContentDialog
         {
             Margin = new Thickness(0, 8, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Content = "Clear list",
+            Content = Localizer.T("visualist.dialog.recent.clear", "Clear list"),
         };
         ClearButton.Click += OnClearClick;
         Grid.SetRow(ClearButton, 2);

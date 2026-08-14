@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -32,6 +32,9 @@ namespace Phoenix.Controls.Hub.Core
     {
         private HttpListener _listener;
         private readonly string _overlayPath;
+        // The port this instance listens on — kept so the WebSocket origin gate can
+        // require a same-authority Origin without re-deriving it from the prefixes.
+        private readonly int _listenPort;
         private CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly LayerRegistry _layerRegistry;
         // TTL pulled from AppConfig.UrlImageCacheTtlHours so
@@ -54,6 +57,41 @@ namespace Phoenix.Controls.Hub.Core
         //     tier so a slow OBS browser source surfaces in the syslog without
         //     stalling the script engine that owns the trigger.
         private readonly ConcurrentDictionary<WebSocket, PerSocketSender> _layerSenders = new();
+
+        // ─── V13 §8.3 — per-socket TRUST classification ─────────────────────
+        //
+        // Membership = the socket presented this layer's current connect token on its
+        // /hud/<id> upgrade, i.e. it is running a page THIS Hub process served.
+        // Absence = Untrusted.
+        //
+        // PRESENCE-MEANS-TRUSTED is the deliberate direction, and it is the opposite of
+        // _editorSockets in LayerRegistry (where absence means the common case). Here the
+        // safe answer for an unknown socket is "declined the privileged upward paths", so
+        // the exceptional case has to be the one that gets recorded. It is race-free
+        // because the entry is written immediately after TryRegisterConnection succeeds
+        // and BEFORE the receive loop that could deliver the socket's first frame — so a
+        // legitimately trusted connection can never be observed un-recorded.
+        //
+        // Lifetime is exactly _layerSenders': written on registration, removed by the
+        // grace-window teardown and swept in Stop(). A leaked entry would pin a dead
+        // WebSocket object, which is why both removal sites matter.
+        private readonly ConcurrentDictionary<WebSocket, byte> _trustedSockets = new();
+
+        // V13 §8.3 — per-socket latch for the ONE self-heal reload offer (see
+        // OfferSelfHealReloadOnce). Needed because the trigger — a LIVE_HELLO from an untrusted
+        // socket — legitimately repeats on the same socket after every author save
+        // (softReloadLayer re-sends the hello). Shares _layerSenders' / _trustedSockets' lifetime:
+        // written on the first offer, removed by the grace teardown, swept in Stop().
+        private readonly ConcurrentDictionary<WebSocket, byte> _selfHealOfferedSockets = new();
+
+        // V13 §8.3 — one-shot latch per layer for the untrusted-connection notice, so an
+        // OBS scene that cycles a stale-cached source doesn't repeat the same paragraph.
+        //
+        // Cleared ONLY in Stop(). Deliberately NOT pruned by OnLayerRemoved: LayerWatcher fires
+        // Remove+Register on every `.phxlayer` SAVE, so pruning there would re-arm a "once per
+        // layer" notice on every author save. Same reasoning LayerRegistry already records next to
+        // the connect token it likewise refuses to drop on RemoveLayer. Bounded by the layer count.
+        private readonly ConcurrentDictionary<string, byte> _untrustedLayerLogged = new();
 
         // Per-socket disconnect grace window. When OBS hides a browser source (or the
         // visibility flickers), the socket closes; we used to immediately drop the layer's
@@ -85,13 +123,39 @@ namespace Phoenix.Controls.Hub.Core
         private System.Threading.Timer? _recentlyReloadedSweeper;
         private const int RECENT_RELOAD_SWEEP_INTERVAL_SECONDS = 60;
 
-        // Per-layer WebSocket connection cap. OBS only opens a small fixed
+        // Per-layer PRODUCTION WebSocket connection cap. OBS only opens a small fixed
         // number of browser sources per scene (Preview + Studio = 2; one or two spares
         // for multi-monitor layouts), so 4 is generous. Without this cap an attacker
         // could fuzz /hud/<layerId> until the HashSet inside LayerRegistry exhausted
         // RAM; with it, the 5th concurrent connection per layer gets closed with code
         // 1013 (Try Again Later) and the receive loop never starts.
+        //
+        // V6 — this budget now counts PRODUCTION sockets only (LayerClientKind.Production).
+        // It used to be the single shared budget, which was a live bug: Visualist can open
+        // FOUR design surfaces on one layer (layer-canvas capture host, embedded
+        // single-widget pane, layer popout, widget popout) and 4 was also the cap, so an
+        // author with previews open could lock a real OBS Browser Source out of its own
+        // layer. The symptom was "my overlay just stopped working" plus a 1013 close the
+        // author never sees. Splitting the budgets means an OBS source is only ever
+        // rejected by four OTHER OBS sources.
         private const int MAX_CONNECTIONS_PER_LAYER = 4;
+
+        // V6 — per-layer EDITOR WebSocket budget, disjoint from the production one above.
+        //
+        // Why a bound at all rather than an exemption: ?client=editor is attacker-supplied
+        // (anything that can reach /hud/<id> can append it), so an exempt kind would just
+        // move the unbounded-growth hole behind a query param. Two bounded budgets keep the
+        // amplification ceiling at MAX_CONNECTIONS_PER_LAYER + MAX_EDITOR_CONNECTIONS_PER_LAYER
+        // per layer while making it impossible for either kind to starve the other.
+        //
+        // Sized 6 = the 4 design surfaces Visualist can actually open on one layer, plus 2
+        // for the reconnect window. The dead-socket prune in TryRegisterConnection only
+        // reclaims sockets that have LEFT WebSocketState.Open; a WebView2 torn down without
+        // a close handshake leaves a half-open socket that still reads Open until a send
+        // fails, so a preview pane that re-navigates can transiently hold two slots.
+        // Under-sizing this would reject a preview pane, which is a visible authoring
+        // failure, so the headroom is deliberate.
+        private const int MAX_EDITOR_CONNECTIONS_PER_LAYER = 6;
 
         // Per-layer counter of "registered but no live socket"
         // RUN_TRIGGER drops. Used to rate-limit the diagnostic log so a tight
@@ -137,12 +201,16 @@ namespace Phoenix.Controls.Hub.Core
         // observes the class-level lifecycle, not a specific instance.
         // Per-request faults never raise this; they continue the loop.
         public static event Action? OnFatalError;
-        // Per-layer WebSocket connections live in `_layerRegistry`. ClientCount and
-        // OnClientCountChanged read from there; the legacy single-broadcast `_clients`
-        // list was retired alongside the rewrite of BroadcastRawAsync to fan out via
-        // the registry.
+        // Per-layer WebSocket connections live in `_layerRegistry`. ClientCount reads
+        // from there; the legacy single-broadcast `_clients` list was retired when
+        // every send path moved onto the registry, and the last untargeted senders
+        // (BroadcastAsync / BroadcastRawAsync) went with the inert per-widget mutation
+        // commands in V4 part C.
+        // Test-only-reachable (same bucket as GetLastFps / CancelPendingTeardown):
+        // no production caller reads this — LayerRouteTests asserts the fan-out
+        // counts the registry, not a private client list. The status bar does NOT
+        // subscribe or read here; it polls its own service counters on a timer.
         public int ClientCount => _layerRegistry.GetTotalConnectionCount();
-        public event Action<int>? OnClientCountChanged;
 
         /// <summary>
         /// Webhook activity event.
@@ -208,10 +276,6 @@ namespace Phoenix.Controls.Hub.Core
         public HUDServer(int port = 18080, LayerRegistry? registry = null)
         {
             _layerRegistry = registry ?? LayerRegistry.Instance;
-            // Re-emit LayerRegistry's connection-count changes as our own
-            // OnClientCountChanged event so existing subscribers (status bar)
-            // don't need to know about the registry.
-            _layerRegistry.OnConnectionsChanged += FireClientCountChanged;
             // Prune the per-layer drop-count diagnostic dict when a
             // layer is removed from the registry (Deleted/Renamed-away in
             // LayerWatcher). Without this hook the dict grew across the Hub
@@ -227,6 +291,7 @@ namespace Phoenix.Controls.Hub.Core
             // for the rest of the session.
             _layerRegistry.LayerReloaded += OnLayerReloadedRegistry;
             _overlayPath = ResolveOverlayPath();
+            _listenPort  = port;
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Prefixes.Add($"http://localhost:{port}/");
@@ -245,9 +310,22 @@ namespace Phoenix.Controls.Hub.Core
             // overlay HTML and layer JSON; without it, /media/<rel> 404s on
             // every dev-run request even though the file exists.
             AssetDirectory = ResolveDataSubfolder("assets", Paths.AppAssets);
-            MediaDirectory = ResolveDataSubfolder("media",  Paths.AppMedia);
+            MediaDirectory = ResolveMediaRoot();
             try { Directory.CreateDirectory(MediaDirectory); } catch { /* best-effort */ }
         }
+
+        /// <summary>
+        /// The media-library root <c>/media/&lt;rel&gt;</c> serves from, resolved WITHOUT
+        /// constructing a server. Design-time surfaces that need to offer the streamer a
+        /// clip (the Soundboard tool's picker) must enumerate the same folder the overlay
+        /// will later fetch from, and the two resolutions differ in a real corner case:
+        /// <see cref="Paths.HubMedia"/> alone points into the source tree whenever
+        /// <c>data/</c> exists, even if <c>data/media</c> has never been created, whereas
+        /// this falls back to the AppBase copy the ctor then creates. A picker listing one
+        /// folder while the overlay reads another produces a clip that plays in no OBS —
+        /// so there is exactly one resolver and both callers use it.
+        /// </summary>
+        public static string ResolveMediaRoot() => ResolveDataSubfolder("media", Paths.AppMedia);
 
         /// <summary>
         /// Resolve a Hub <c>data/&lt;leaf&gt;</c> directory via the solution-anchored
@@ -278,15 +356,6 @@ namespace Phoenix.Controls.Hub.Core
             return baseGuess;
         }
 
-        private void FireClientCountChanged(int total)
-        {
-            try { OnClientCountChanged?.Invoke(total); }
-            catch (Exception ex)
-            {
-                GlobalLogger.Error("HUDServer", "OnClientCountChanged subscriber threw", ex);
-            }
-        }
-
         /// <summary>
         /// Clear this layer's drop-count slot so the per-layer
         /// diagnostic dict can't grow without bound as layers come and go.
@@ -296,10 +365,34 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (string.IsNullOrEmpty(layerId)) return;
             _layerDropCounts.TryRemove(layerId, out _);
+            // V6 — same prune for the refused-editor-inbound counters. Keyed
+            // "<layerId>|<messageType>", so the whole layer's slots go together.
+            _editorRefusalCounts.TryRemove($"{layerId}|VISUAL_COMPLETE", out _);
+            _editorRefusalCounts.TryRemove($"{layerId}|FPS", out _);
+            // V13 — the production-refusal COUNTER is pruned (it is a rate limiter keyed
+            // "<layerId>|<messageType>"; re-arming it only means the next hundred-line window
+            // starts over).
+            //
+            // ★ _untrustedLayerLogged is deliberately NOT pruned here, for exactly the reason
+            // LayerRegistry does not prune the connect token on RemoveLayer: LayerWatcher fires
+            // Remove+Register on every `.phxlayer` SAVE, so pruning would re-arm a latch that is
+            // documented — and tested — as firing ONCE per layer, and an author iterating on a
+            // layer would re-read the same six-line paragraph after every save. The latch keys the
+            // layer ID, not the layer CONTENT, so surviving a reload is the correct behaviour. It
+            // stays bounded by the real layer count (same bound as the token map) and is cleared in
+            // Stop().
+            _productionRefusalCounts.TryRemove($"{layerId}|DEBUG_WIDGET_NODE", out _);
             // Symmetric prune for the reload-stamp dict so a layer
             // removed mid-grace-window doesn't leak its entry until the next
             // periodic sweep.
             _recentlyReloaded.TryRemove(layerId, out _);
+            // Overlay Live Channel — a removed layer can never receive another
+            // frame, so its subscription + dirty set go with the diagnostic slots
+            // above. The socket-close path only clears when a browser actually
+            // disconnects; a .phxlayer deleted while OBS still holds the source
+            // open would otherwise keep the layer dirtying the pump against an id
+            // that no longer resolves.
+            OverlayLiveStore.Instance.ClearLayer(layerId);
         }
 
         /// <summary>
@@ -433,14 +526,12 @@ namespace Phoenix.Controls.Hub.Core
         {
             if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
 
-            // Unhook the registry forwarder so a recreated HUDServer doesn't
-            // accumulate stale subscriptions on the singleton LayerRegistry.
-            try { _layerRegistry.OnConnectionsChanged -= FireClientCountChanged; } catch { }
-            // Symmetric unhook for the LayerRemoved subscription.
+            // Unhook the registry subscriptions so a recreated HUDServer doesn't
+            // accumulate stale handlers on the singleton LayerRegistry.
             try { _layerRegistry.LayerRemoved -= OnLayerRemoved; } catch { }
-            // Symmetric unhook for the LayerReloaded forwarder (the third of the
-            // three registry subscriptions — omitting it leaked one disposed
-            // HUDServer reference per session and re-entered it on later reloads).
+            // Symmetric unhook for the LayerReloaded forwarder (omitting it leaked
+            // one disposed HUDServer reference per session and re-entered it on
+            // later reloads).
             try { _layerRegistry.LayerReloaded -= OnLayerReloadedRegistry; } catch { }
 
             try { _cts.Cancel(); } catch { }
@@ -479,14 +570,31 @@ namespace Phoenix.Controls.Hub.Core
             // restarted server thinking a phantom client is there). Mirrors the
             // close-on-disconnect path that the receive-loop's finally normally runs
             // — just triggered for everything during a hard Stop.
+            //
+            // V6 — GetLayerIdsWithAnyConnection, NOT GetActiveLayerIds. Presence is now
+            // production-only, so a layer whose sole client is a Visualist preview is no
+            // longer "active" — and iterating the presence accessor here would skip it,
+            // leaking its sockets in _connections across a Stop→StartAsync and resurrecting
+            // exactly the stale-presence bug this sweep exists to fix.
             try
             {
-                foreach (var layerId in _layerRegistry.GetActiveLayerIds())
+                foreach (var layerId in _layerRegistry.GetLayerIdsWithAnyConnection())
                 {
                     foreach (var ws in _layerRegistry.GetConnections(layerId))
                     {
                         try { _layerRegistry.UnregisterConnection(layerId, ws); } catch { }
                     }
+                    // Overlay Live Channel — drop the subscription with the
+                    // presence. Neither of the two normal clear paths can cover a
+                    // hard Stop(): the LayerRemoved unhook above already fired, and
+                    // the grace-window teardowns (which hold the last-socket clear)
+                    // are cancelled a few lines below, so their callbacks return
+                    // without running. Without this, a Stop→StartAsync restart —
+                    // the case the unregister sweep itself exists for — would leave
+                    // the pump dirtying layers whose browsers are gone, and the next
+                    // browser's LIVE_HELLO is the only thing that would ever
+                    // overwrite the stale key set.
+                    try { OverlayLiveStore.Instance.ClearLayer(layerId); } catch { }
                 }
             }
             catch (Exception ex)
@@ -508,6 +616,16 @@ namespace Phoenix.Controls.Hub.Core
                 try { kv.Value.Dispose(); } catch { }
             }
             _layerSenders.Clear();
+
+            // V13 §8.3 — sweep the per-socket trust records and the per-layer notice
+            // latches with the senders they shadow. A hard Stop() can abort sockets before
+            // their grace teardowns run, so without this sweep the dict would hold dead
+            // WebSocket references across a Stop→StartAsync (same leak class the sender
+            // sweep above exists for), and every layer would stay permanently "already
+            // warned" for the next session.
+            _trustedSockets.Clear();
+            _selfHealOfferedSockets.Clear();
+            _untrustedLayerLogged.Clear();
 
             // Wipe the per-layer drop-count dict on Stop too. Even
             // with the LayerRemoved hook, a Hub shutdown that occurs while
@@ -783,11 +901,20 @@ namespace Phoenix.Controls.Hub.Core
                     return;
                 }
 
-                // /asset/url?u=<encoded> — Phase 7 URL-image cache proxy.
+                // /asset/url?u=<encoded>[&_ts=<bucket>] — Phase 7 URL-image cache proxy.
                 if (path.Equals("/asset/url", StringComparison.OrdinalIgnoreCase))
                 {
                     string? remote = context.Request.QueryString["u"];
-                    await ServeCachedUrlAsync(context, remote);
+                    // `_ts` is compositor.js's cache-busting bucket for
+                    // WebSource.RefreshSeconds — it flips value once per refresh
+                    // window. Forward it to the cache as an opaque freshness
+                    // token so a value we haven't fetched under yet revalidates
+                    // against the origin. Dropping it (as this route used to)
+                    // pinned every WebSource to the 24h UrlImageCacheTtlHours
+                    // default, so a live scoreboard painted one frame at the
+                    // start of the stream and then never changed again.
+                    string? bucket = context.Request.QueryString["_ts"];
+                    await ServeCachedUrlAsync(context, remote, bucket);
                     return;
                 }
 
@@ -828,7 +955,44 @@ namespace Phoenix.Controls.Hub.Core
                     SendMethodNotAllowed(context, "GET, HEAD");
                     return;
                 }
-                if (path == "/" || path == "/overlay") path = "/index.html";
+                // V13 §8.3 — `/`, `/overlay` and `/index.html` are a SUPPORTED overlay
+                // configuration, not a legacy accident: compositor.js still resolves its layer from
+                // `params.get('layer')` on purpose and does not care what path served the page, so
+                // `/?layer=main` and `/index.html?layer=main` are both valid OBS Browser Source
+                // URLs. They used to rewrite straight to /index.html and fall through to
+                // ServeStaticFileAsync, which bypassed ServeLayerHtmlAsync — and therefore the
+                // connect-token injection, the CSP header AND the ?v= cache-bust. A source
+                // configured this way could never become Trusted, and the notice it triggered named
+                // a cache refresh that could not possibly help, because the served page had no
+                // token to pick up no matter how often it was re-fetched.
+                //
+                // So resolve the id the same way the page will (query, else compositor's own
+                // 'main' fallback) and serve it through the one HTML path.
+                //
+                // ★ /index.html is spelled OrdinalIgnoreCase deliberately. The other two spellings
+                // are exact because a mis-cased `/OVERLAY` never reached the page at all (no such
+                // file, so File.Exists said no and the request 404'd) — but `/INDEX.HTML` DID serve
+                // the page, because Windows' file system is case-insensitive and File.Exists
+                // matched index.html. Matching case-sensitively here would have left that exact
+                // spelling as a live bypass of the very injection this arm exists to guarantee.
+                //
+                // The resolve-first guard keeps this strictly non-regressive: an id that does not
+                // resolve to a layer falls back to the ORIGINAL static /index.html behaviour rather
+                // than turning a previously-served page into a 404. ServeLayerHtmlAsync would 404
+                // on its own resolve, so the pre-check is what preserves the old surface. It costs
+                // one registry lookup on a route OBS hits once per source.
+                if (path == "/" || path == "/overlay" ||
+                    path.Equals("/index.html", StringComparison.OrdinalIgnoreCase))
+                {
+                    string rootId = (context.Request.QueryString["layer"] ?? "").Trim();
+                    if (rootId.Length == 0) rootId = DefaultRootLayerId;
+                    if (IsValidLayerId(rootId) && await GetOrLoadLayerResilientAsync(rootId) is not null)
+                    {
+                        await ServeLayerHtmlAsync(context, rootId);
+                        return;
+                    }
+                    path = "/index.html";
+                }
 
                 // Pipe the /overlay static-file fallback through the same path-
                 // traversal guard /assets/ and /media/ enforce. Previously HttpListener's
@@ -946,6 +1110,7 @@ namespace Phoenix.Controls.Hub.Core
         // relative path. Used by the Visualist Media Library window and (in the
         // future) browser-side picker. Response shape:
         //   [{ "rel": "images/welcome.png", "kind": "image", "sizeBytes": 1234, "mtime": "2026-04-29T..." }, ...]
+        private static readonly byte[] EmptyJsonArray = System.Text.Encoding.UTF8.GetBytes("[]");
         private async Task ServeMediaListingAsync(HttpListenerContext context)
         {
             try
@@ -955,7 +1120,7 @@ namespace Phoenix.Controls.Hub.Core
                 {
                     context.Response.ContentType = "application/json";
                     context.Response.StatusCode = 200;
-                    var empty = System.Text.Encoding.UTF8.GetBytes("[]");
+                    var empty = EmptyJsonArray;
                     context.Response.ContentLength64 = empty.Length;
                     // Thread _cts.Token through the OutputStream write so the
                     // empty-list response can be torn down on Stop(). Sister methods at
@@ -1001,7 +1166,12 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        private static string MediaKindForExtension(string ext) => ext.ToLowerInvariant() switch
+        /// <summary>Coarse media classification from a file extension —
+        /// "image" / "video" / "audio" / "other". Public because it is the one
+        /// definition of what the media library considers playable: the
+        /// <c>/api/media</c> listing filters on it, and so does the Soundboard tool's
+        /// clip picker, which must offer exactly the files the listing would name.</summary>
+        public static string MediaKindForExtension(string ext) => ext.ToLowerInvariant() switch
         {
             ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif" or ".bmp" => "image",
             ".mp4" or ".webm" or ".mov" or ".m4v"                       => "video",
@@ -1009,7 +1179,7 @@ namespace Phoenix.Controls.Hub.Core
             _                                                            => "other",
         };
 
-        private async Task ServeCachedUrlAsync(HttpListenerContext context, string? remoteUrl)
+        private async Task ServeCachedUrlAsync(HttpListenerContext context, string? remoteUrl, string? freshnessToken = null)
         {
             if (string.IsNullOrWhiteSpace(remoteUrl))
             {
@@ -1029,9 +1199,28 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
-            string? cached = await _urlCache.GetCachedPathAsync(remoteUrl, _cts.Token);
+            string? cached = await _urlCache.GetCachedPathAsync(remoteUrl, _cts.Token, freshnessToken);
             if (cached is null || !File.Exists(cached))
             {
+                context.Response.StatusCode = 502;
+                context.Response.Close();
+                return;
+            }
+
+            // Label the body with the MIME UrlImageCache actually VALIDATED — its
+            // cache filename carries the canonical extension for the accepted image
+            // type — never a type re-derived from the remote URL's path. A `…/x.html`
+            // URL whose origin served a magic-byte-valid PNG used to come back as
+            // text/html on the overlay origin, which is a script-execution sink one
+            // <img>/<iframe> away from any page the streamer visits: script running on
+            // http://127.0.0.1:18080 can read /layer/<id>, lift the phx-hud-token
+            // meta and open a Trusted /hud/<id> socket.
+            string? mime = UrlImageCache.MimeForCachedFile(cached);
+            if (mime is null)
+            {
+                GlobalLogger.Log(
+                    $"/asset/url refusing to serve '{Path.GetFileName(cached)}' — not a recognised validated-image cache entry",
+                    "HUDServer", LogLevel.CriticalError);
                 context.Response.StatusCode = 502;
                 context.Response.Close();
                 return;
@@ -1041,7 +1230,11 @@ namespace Phoenix.Controls.Hub.Core
             // single byte[]. Multi-MB PNGs/GIFs would land on the LOH and stall GC; a
             // 64KB streaming copy stays well under the 85KB threshold. Mirrors the
             // ServeStaticFileAsync success path.
-            context.Response.ContentType     = GetMimeType(cached);
+            context.Response.ContentType     = mime;
+            // nosniff — the declared type is the validated one, so never let a
+            // browser content-sniff its way to a different (scriptable) type on a
+            // polyglot payload.
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
             context.Response.StatusCode      = 200;
             await StreamFileToResponseAsync(cached, context.Response, _cts.Token).ConfigureAwait(false);
             context.Response.Close();
@@ -1192,6 +1385,42 @@ namespace Phoenix.Controls.Hub.Core
             // be tightened by dropping 'unsafe-eval'. img-src and media-src
             // allow data: and blob: so embedded base64 thumbnails and
             // generated media (from Image nodes) keep rendering.
+            //
+            // ── V15 — frame-src, and why it is exactly two hosts ────────────────
+            //
+            // The Player.Embed widget sink mounts a third-party <iframe> on the
+            // DOM-overlay track. `frame-src` falls back to `child-src` and then to
+            // `default-src 'self'`, so before this directive existed EVERY such frame was
+            // blocked outright — there was no partial behaviour to preserve.
+            //
+            // The allowlist is enumerated rather than wildcarded because a frame is the
+            // one thing on this page that runs code we did not write, inside our origin's
+            // window tree. `https:` — or even `https://*.youtube.com` — would let any
+            // author-typed URL that survives a graph edit load a stranger's document into
+            // the overlay a streamer is broadcasting. The two entries are precisely the
+            // two feeds Player.Embed can build a URL for, and the browser-side builder
+            // hard-codes the same two origins, so a URL this policy would reject is one
+            // the compositor never constructs:
+            //
+            //   https://www.youtube-nocookie.com  — the song-request player. The
+            //     -nocookie host rather than www.youtube.com: it is YouTube's own
+            //     no-tracking-cookie variant of the same embed, it serves the identical
+            //     player and postMessage API, and it keeps the overlay from writing
+            //     third-party ad cookies into the streamer's OBS browser profile.
+            //   https://clips.twitch.tv           — the clip shoutout. The clip embed
+            //     lives on this host only; twitch.tv/<channel>/clip/<slug> is a WEB page,
+            //     not an embed, and the compositor rewrites that form to this host.
+            //
+            // ★ Nothing else widens with it, deliberately. No img-src entry for
+            // i.ytimg.com (so no poster thumbnails — the idle card is CSS), no connect-src
+            // entry (the page never fetches either host), no script-src entry (the YouTube
+            // IFrame API JS is NOT loaded; the compositor speaks the player's postMessage
+            // protocol directly, which is what keeps script-src at 'self').
+            //
+            // ★ UNPROVEN AT THIS TIP: nobody has yet confirmed that a youtube-nocookie
+            // frame loads AND autoplays inside a real OBS Browser Source. If that
+            // pre-flight comes back negative this line is the whole of the CSP change to
+            // revert — see PlayerEmbedSinkNode for the rest of the blast radius.
             context.Response.Headers["Content-Security-Policy"] =
                 "default-src 'self'; " +
                 "script-src 'self' 'unsafe-eval'; " +
@@ -1199,8 +1428,159 @@ namespace Phoenix.Controls.Hub.Core
                 "img-src 'self' data: blob:; " +
                 "media-src 'self' data: blob:; " +
                 "connect-src 'self' ws: wss:; " +
+                "frame-src https://www.youtube-nocookie.com https://clips.twitch.tv; " +
                 "font-src 'self' data:";
-            await ServeStaticFileAsync(context, indexPath, "/index.html");
+
+            // Cache-bust the two hot static refs. HUDServer already sends
+            // no-cache on .js/.css, but OBS's embedded CEF browser can still
+            // serve compositor.js from a warm in-memory cache across a
+            // LAYER_RELOADED (location.reload) — so a shipped compositor fix
+            // silently doesn't reach the overlay until the source is manually
+            // recreated. Appending ?v=<token> makes the URL itself change the
+            // instant EITHER file changes (token = the two files' mtime⊕length),
+            // which defeats every cache layer unconditionally while staying stable
+            // within a deploy. AbsolutePath routing strips the query, so /compositor.js
+            // still resolves. The index is ~1KB, so read+rewrite per hit is
+            // negligible; a quoting change in the HTML just no-ops the replace
+            // (falls back to the un-versioned ref, still served no-cache).
+            string html = await File.ReadAllTextAsync(indexPath, _cts.Token).ConfigureAwait(false);
+            string v    = OverlayAssetVersion();
+            html = html
+                .Replace("src=\"/compositor.js\"", $"src=\"/compositor.js?v={v}\"")
+                .Replace("href=\"/overlay.css\"",  $"href=\"/overlay.css?v={v}\"");
+            html = InjectConnectToken(html, id);
+            await ServeHtmlStringAsync(context, html);
+        }
+
+        /// <summary>
+        /// V13 §8.3 — stamps this layer's connect token into the served page so the
+        /// <c>/hud/&lt;id&gt;</c> socket the page opens can present it back
+        /// (<c>?token=&lt;t&gt;</c>) and be classified Trusted.
+        ///
+        /// <para>The carrier is a <c>&lt;meta&gt;</c> tag rather than an inline
+        /// <c>&lt;script&gt;</c> assignment because the overlay's CSP is
+        /// <c>default-src 'self'; script-src 'self' 'unsafe-eval'</c> with no
+        /// <c>'unsafe-inline'</c> — an inline script would be blocked by the very header
+        /// this method's caller sets three statements earlier. A meta tag is markup, not
+        /// script, so it is unaffected. The value is lower-case hex by construction
+        /// (<c>LayerRegistry.GetOrCreateConnectToken</c>), so it needs no attribute
+        /// escaping and cannot break out of the quotes.</para>
+        ///
+        /// <para>Injection is idempotent-by-position: <c>&lt;/head&gt;</c> appears once in
+        /// the overlay's <c>index.html</c>. If a future index has no <c>&lt;/head&gt;</c>,
+        /// the page is served UNSTAMPED rather than mangled — which lands its socket in the
+        /// grace path (renders, declines the upward paths, logs once), never dark. That is
+        /// the same failure direction as a stale cached page, which is the whole posture of
+        /// §8.3.</para>
+        /// </summary>
+        private string InjectConnectToken(string html, string layerId)
+        {
+            string token = _layerRegistry.GetOrCreateConnectToken(layerId);
+            if (string.IsNullOrEmpty(token)) return html;
+
+            int idx = html.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return html;
+
+            return html.Insert(idx,
+                $"    <meta name=\"{ConnectTokenMetaName}\" content=\"{token}\">\n");
+        }
+
+        /// <summary>
+        /// V13 §8.3 — the <c>&lt;meta name&gt;</c> compositor.js reads the connect token from.
+        /// The contract FIXES this literal at <c>phx-hud-token</c>; it is not a free choice.
+        ///
+        /// <para>★ THIS STRING IS A CROSS-FILE CONTRACT with <c>compositor.js</c>'s
+        /// <c>CONNECT_TOKEN</c> reader (<c>document.querySelector('meta[name="phx-hud-token"]')</c>),
+        /// and a silent disagreement has no error path at all: every socket simply classifies
+        /// Untrusted, the overlay keeps rendering, and the only symptom is "my Visual.Complete
+        /// payload is always empty and node flashes never fire".</para>
+        ///
+        /// <para>★ THAT IS NOT HYPOTHETICAL — it is what V13's first attempt shipped. Hub stamped
+        /// <c>phx-hud-token</c> while the browser queried <c>phx-layer-token</c>, so BOTH new
+        /// capabilities were dead on arrival, and the test that appeared to guard it asserted this
+        /// very constant against markup built from this very constant — self-agreement, which
+        /// passes for any name. The guard now asserts the LITERAL on both sides
+        /// (<c>V13PayloadAndTokenTests.A1_ConnectTokenMetaName_IsTheSameLiteralOnBothSidesOfTheWire</c>
+        /// re-reads the name out of compositor.js source text), so a one-sided rename fails.
+        /// Never re-write that test to compare a constant with output derived from it.</para>
+        /// </summary>
+        internal const string ConnectTokenMetaName  = "phx-hud-token";
+
+        /// <summary>V13 §8.3 — query-string key on the <c>/hud/&lt;id&gt;</c> upgrade.</summary>
+        internal const string ConnectTokenQueryKey  = "token";
+
+        /// <summary>
+        /// V13 §8.3 belt-and-braces — the downward frame that asks ONE untrusted page to
+        /// hard-reload itself so it re-fetches <c>/layer/&lt;id&gt;</c> and picks up the token.
+        ///
+        /// <para>★ CROSS-FILE LITERAL with compositor.js's <c>msg.type === 'HUD_RELOAD'</c> arm.
+        /// Same failure shape as <see cref="ConnectTokenMetaName"/>: a one-sided rename has no
+        /// error path — Hub would keep sending a frame nothing handles, and the page would degrade
+        /// silently forever. <c>V13PayloadAndTokenTests</c> asserts the LITERAL on both sides.</para>
+        /// </summary>
+        internal const string SelfHealReloadFrameType = "HUD_RELOAD";
+
+        /// <summary>
+        /// V13 §8.3 — the layer id <c>/</c> and <c>/overlay</c> resolve to when the request carries
+        /// no <c>?layer=</c>.
+        ///
+        /// <para>★ CROSS-FILE LITERAL with compositor.js's own fallback chain
+        /// (<c>pathMatch || params.get('layer') || 'main'</c>). If these two disagreed, a bare
+        /// <c>/</c> would be stamped with a token minted for a DIFFERENT layer than the one the
+        /// page then binds to, and the socket would classify Untrusted with no clue why.</para>
+        /// </summary>
+        internal const string DefaultRootLayerId = "main";
+
+        // Cache-bust token for the overlay's static <script>/<link> refs, keyed off
+        // the (mtime,length) of BOTH files the token is stamped onto — compositor.js
+        // and overlay.css — so it's stable within a deploy (no redundant re-fetch)
+        // and flips the instant an update rewrites EITHER of them. Keying it off
+        // compositor.js alone meant a CSS-only edit shipped under an unchanged token
+        // and CEF happily kept serving the stale overlay.css, which is exactly the
+        // failure this token exists to close. The two halves are emitted separately
+        // rather than folded together so neither file can mask the other's change.
+        private readonly object _assetVerGate = new();
+        private string? _assetVerToken;
+        private (long jsTicks, long jsLen, long cssTicks, long cssLen) _assetVerStamp;
+
+        private string OverlayAssetVersion()
+        {
+            try
+            {
+                var js = new FileInfo(Path.Combine(_overlayPath, "compositor.js"));
+                if (!js.Exists) return "0";
+                // A missing overlay.css contributes zeros instead of voiding the whole
+                // token — compositor.js is the load-bearing ref and must still bust.
+                var css = new FileInfo(Path.Combine(_overlayPath, "overlay.css"));
+                var stamp = (jsTicks:  js.LastWriteTimeUtc.Ticks,
+                             jsLen:    js.Length,
+                             cssTicks: css.Exists ? css.LastWriteTimeUtc.Ticks : 0L,
+                             cssLen:   css.Exists ? css.Length : 0L);
+                lock (_assetVerGate)
+                {
+                    if (_assetVerToken is not null && _assetVerStamp == stamp) return _assetVerToken;
+                    _assetVerStamp = stamp;
+                    _assetVerToken = $"{(stamp.jsTicks ^ stamp.jsLen):x}-{(stamp.cssTicks ^ stamp.cssLen):x}";
+                    return _assetVerToken;
+                }
+            }
+            catch { return "0"; }
+        }
+
+        // Serve an in-memory HTML string with the same no-cache posture as the
+        // static .html path. The caller sets any page-specific headers (e.g. CSP)
+        // before invoking; this only adds Cache-Control/Content-Type/length.
+        private async Task ServeHtmlStringAsync(HttpListenerContext context, string html)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(html);
+            context.Response.ContentType     = "text/html; charset=utf-8";
+            context.Response.ContentLength64 = bytes.Length;
+            context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+            context.Response.Headers["Pragma"]        = "no-cache";
+            context.Response.Headers["Expires"]       = "0";
+            context.Response.StatusCode = 200;
+            await context.Response.OutputStream.WriteAsync(bytes.AsMemory(0, bytes.Length), _cts.Token).ConfigureAwait(false);
+            context.Response.Close();
         }
 
         private async Task ServeLayerJsonAsync(HttpListenerContext context, string id)
@@ -1351,6 +1731,19 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
+            // V6 — classify the client BEFORE either cap gate, because the kind selects
+            // which budget the connection is measured against.
+            //
+            // The route above parses layerId from Url.AbsolutePath, which STRIPS the query
+            // (same idiom as the HTTP handler and the /compositor.js route) — so
+            // ?client=editor cannot reach IsValidLayerId and the id parse needs no change.
+            // The query itself is still on the request: HttpListener parses it into
+            // Request.QueryString for us (precedent: the /assets/ route's QueryString["u"]
+            // read), which is why the discriminator can be a pure read with no route work.
+            var clientKind = ClassifyClientKind(context.Request.QueryString);
+            bool isEditorClient = clientKind == LayerClientKind.Editor;
+            int kindCap = isEditorClient ? MAX_EDITOR_CONNECTIONS_PER_LAYER : MAX_CONNECTIONS_PER_LAYER;
+
             // Per-layer connection cap. Check BEFORE the upgrade
             // handshake so a flood of /hud/<layerId> fuzzes doesn't burn handle
             // counts spinning up doomed sockets. OBS realistically opens 2
@@ -1369,11 +1762,14 @@ namespace Phoenix.Controls.Hub.Core
             // under the same lock. The double-gate pattern keeps the
             // pre-upgrade reject (no upgrade cost for the obvious-flood
             // case) AND ensures the post-upgrade registration is atomic.
-            int currentCount = _layerRegistry.GetLiveConnectionCount(layerId!);
-            if (currentCount >= MAX_CONNECTIONS_PER_LAYER)
+            //
+            // V6 — measured PER KIND. Counting all sockets here is what let four preview
+            // panes pre-reject an OBS Browser Source before it ever reached the atomic gate.
+            int currentCount = _layerRegistry.GetLiveConnectionCount(layerId!, clientKind);
+            if (currentCount >= kindCap)
             {
                 GlobalLogger.Log(
-                    $"HUDServer: rejecting /hud/{layerId} — per-layer connection cap ({MAX_CONNECTIONS_PER_LAYER}) reached.",
+                    $"HUDServer: rejecting /hud/{layerId} — per-layer {clientKind} connection cap ({kindCap}) reached.",
                     "HUDServer", LogLevel.CriticalError);
                 // Upgrade-then-close-with-1013 so the client sees a proper
                 // WebSocket "Try Again Later" rather than a bare TCP reset.
@@ -1399,6 +1795,41 @@ namespace Phoenix.Controls.Hub.Core
                 return;
             }
 
+            // ─── Cross-site WebSocket-hijack gate ────────────────────────────────
+            // The listener binds 127.0.0.1/localhost only, which stops LAN peers but
+            // NOT browsers: a WebSocket handshake is exempt from CORS preflight, so
+            // any http:// page the streamer happens to visit can open
+            // ws://127.0.0.1:18080/hud/<id> from their machine and the upgrade used
+            // to be unconditional. That page cannot become Trusted (the connect
+            // token lives in the served HTML, which carries no
+            // Access-Control-Allow-Origin, so a cross-origin fetch cannot read it) —
+            // but the two upward frames that are deliberately NOT privileged were
+            // reachable: LIVE_HELLO replaces a layer's ENTIRE live subscription
+            // (freezing every live-bound widget on the real overlay until a
+            // legitimate socket re-hellos), and VISUAL_COMPLETE resolves a script's
+            // wait by waitId alone, first-ack-wins, so a forged ack beats the real
+            // browser's and the script takes the Done branch for a widget that never
+            // rendered. Both waitIds are handed to every socket on the layer in
+            // RUN_TRIGGER, so the attacker is given what it needs to forge.
+            //
+            // Same-origin pages send Origin = our own scheme+host (compositor.js
+            // dials window.location.host, so the real overlay always matches). A
+            // request with NO Origin is allowed: non-browser clients (the test
+            // harness, a native tool) omit it, and browsers always send it — so
+            // absence cannot be a browser attacker while presence-and-mismatch
+            // always is.
+            if (!IsAllowedWebSocketOrigin(context.Request))
+            {
+                GlobalLogger.Log(
+                    $"Refused a /hud WebSocket upgrade from a foreign origin '{context.Request.Headers["Origin"]}' " +
+                    $"(layer '{layerId}'). A page in a browser tried to connect to the overlay socket; " +
+                    "the overlay itself is unaffected.",
+                    "HUDServer", LogLevel.CriticalError);
+                context.Response.StatusCode = 403;
+                try { context.Response.Close(); } catch { /* best-effort */ }
+                return;
+            }
+
             var wsContext = await context.AcceptWebSocketAsync(null);
             var socket = wsContext.WebSocket;
 
@@ -1420,10 +1851,16 @@ namespace Phoenix.Controls.Hub.Core
             // the rejection cost is the same close-with-1013 + Dispose
             // pattern.
             // After the route-validation gate above, layerId is always non-null here.
-            if (!_layerRegistry.TryRegisterConnection(layerId!, socket, MAX_CONNECTIONS_PER_LAYER))
+            //
+            // V6 — this is where the per-socket kind becomes authoritative: the registry
+            // records it under the same lock that admits the socket, so every later
+            // presence read and every inbound-frame classification agrees with the cap
+            // decision made here. The budget handed over is this KIND's budget; the
+            // registry counts only same-kind sockets against it.
+            if (!_layerRegistry.TryRegisterConnection(layerId!, socket, kindCap, clientKind))
             {
                 GlobalLogger.Log(
-                    $"HUDServer: rejecting /hud/{layerId} at atomic gate — per-layer connection cap ({MAX_CONNECTIONS_PER_LAYER}) raced past the pre-upgrade fast-path.",
+                    $"HUDServer: rejecting /hud/{layerId} at atomic gate — per-layer {clientKind} connection cap ({kindCap}) raced past the pre-upgrade fast-path.",
                     "HUDServer", LogLevel.CriticalError);
                 try
                 {
@@ -1436,13 +1873,75 @@ namespace Phoenix.Controls.Hub.Core
                 finally { socket.Dispose(); }
                 return;
             }
+            // ── V13 §8.3 — CLASSIFY, never refuse ───────────────────────────
+            //
+            // A socket that presents this layer's current connect token is Trusted; anything
+            // else (no ?token=, a token from a previous Hub process, a token for another
+            // layer) is Untrusted. Untrusted is NOT a rejection: the socket is already
+            // registered above and receives every downward frame — LIVE_SNAPSHOT,
+            // LIVE_PATCH, RUN_TRIGGER, LAYER_RELOADED — unchanged. Only the new UPWARD
+            // paths are declined (see IsPrivilegedUpwardFrame and the VISUAL_COMPLETE arm).
+            //
+            // WHY NOT A HARD REJECT: every OBS Browser Source running a page cached from
+            // before this change presents no token. Refusing them would black out the
+            // streamer's whole overlay mid-stream, with the only clue in a log nobody is
+            // reading. An overlay that renders but declines one new privileged path is
+            // strictly better than one that disappears. Same posture as
+            // IsInboundAllowedFromEditorClient: classify the client, degrade the specific
+            // capability, keep the surface alive.
+            bool isTrustedClient = _layerRegistry.IsConnectTokenValid(
+                layerId!, context.Request.QueryString[ConnectTokenQueryKey]);
+            if (isTrustedClient)
+            {
+                // Recorded BEFORE the receive loop below, so the socket's very first frame
+                // already classifies correctly. See the _trustedSockets field comment for
+                // why presence (not absence) is the recorded case.
+                _trustedSockets[socket] = 1;
+            }
+            else
+            {
+                ReportUntrustedLayerClientOnce(layerId!, clientKind);
+                // NOTE: the self-heal reload is NOT offered here. It is offered when this socket
+                // sends its first LIVE_HELLO — see OfferSelfHealReloadOnce for why the offer has
+                // to be earned rather than fired at classification time.
+            }
+
             // Demote layer-presence chatter to
             // Communication tier. An OBS scene cycling through 5 browser-source
             // panels produced 10+ System-tier rows/sec in the syslog every time
             // the user toggled scenes, growing the SystemLog ring buffer with
             // noise. Communication tier still surfaces to the operator but the
             // default SystemLog filter (Info+Warn+Error) won't include it.
-            GlobalLogger.Log($"Layer client connected: /hud/{layerId}", "HUDServer", LogLevel.Communication);
+            // V6 — the kind is in the line so "Layers: 0" in the status strip while a
+            // preview is open is self-explaining in the log rather than looking like a
+            // presence bug.
+            GlobalLogger.Log(
+                $"Layer client connected ({clientKind}): /hud/{layerId}",
+                "HUDServer", LogLevel.Communication);
+
+            // Overlay Live Channel — arm the LIVE_HELLO watchdog. A compositor.js
+            // old enough to predate the live channel (an OBS Browser Source cache
+            // that never re-fetched the script) connects and renders normally but
+            // never sends LIVE_HELLO, so the layer subscribes to nothing and every
+            // live-key binding silently stays empty — a failure with no symptom
+            // other than "the overlay shows old values forever". NoteConnection
+            // records that we are now expecting a HELLO; the delayed check reports
+            // the miss ONCE per layer, and only while the layer still has a live
+            // socket (a source the user closed inside the window stays quiet).
+            //
+            // The server's own _cts.Token is both the delay token and the expected
+            // token: a Hub shutdown inside the 5 s window cancels the watchdog
+            // instead of logging a phantom diagnostic on the way out.
+            OverlayLiveStore.Instance.NoteConnection(layerId!);
+            _ = AsyncErrorBoundary.SafeRunAsync(
+                async () =>
+                {
+                    await Task.Delay(OverlayLiveStore.HelloDeadlineMs, _cts.Token).ConfigureAwait(false);
+                    OverlayLiveStore.Instance.ReportHelloDeadline(
+                        layerId!, _layerRegistry.GetLiveConnectionCount(layerId!));
+                },
+                "HUDServer", "LIVE_HELLO deadline",
+                _cts.Token);
 
             var buffer = new byte[16384];
             var inboundBuilder = new StringBuilder();
@@ -1539,6 +2038,37 @@ namespace Phoenix.Controls.Hub.Core
                         if (_layerSenders.TryRemove(capturedSocket, out var sender))
                         {
                             try { sender.Dispose(); } catch { }
+                        }
+                        // V13 §8.3 — the trust record and the self-heal-offer latch share
+                        // _layerSenders' lifetime exactly; dropping them here is what keeps the
+                        // dicts from pinning dead WebSocket objects for the process lifetime (one
+                        // per reconnect).
+                        _trustedSockets.TryRemove(capturedSocket, out _);
+                        _selfHealOfferedSockets.TryRemove(capturedSocket, out _);
+                        // Overlay Live Channel — drop this layer's subscription
+                        // once its LAST socket is gone, so the pump stops building
+                        // patch frames for a layer nobody is listening to. Gated on
+                        // the post-unregister live count rather than fired
+                        // unconditionally, because subscriptions are stored per
+                        // LAYER, not per socket: a second OBS browser source on the
+                        // same layer (or a reconnect that registered inside this
+                        // grace window) is served by the SAME subscription this
+                        // socket was, and every socket on a layer announces the
+                        // identical layer-wide key set (contract S6 — the client
+                        // never narrows its LIVE_HELLO by widget). So the zero-count
+                        // gate is exactly the right condition: while any connection
+                        // survives, the one shared subscription must survive with
+                        // it, otherwise that browser is bound to nothing until the
+                        // next page reload.
+                        //
+                        // V6 — the ALL-KINDS count, deliberately. An editor preview pane is
+                        // a real live-channel consumer; gating on production presence here
+                        // would drop the subscription the moment OBS closed and leave every
+                        // open preview bound to nothing, which is the authoring surface that
+                        // needs the live data most.
+                        if (_layerRegistry.GetLiveConnectionCount(capturedLayerId) == 0)
+                        {
+                            OverlayLiveStore.Instance.ClearLayer(capturedLayerId);
                         }
                         // Communication tier for the symmetric
                         // disconnect line — see connect-side comment above.
@@ -1742,34 +2272,18 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
-        //  BROADCAST
-        // ──────────────────────────────────────────────────────────────────
-
-        public Task BroadcastAsync(object message)
-        {
-            // SerializeToUtf8Bytes folds the
-            // Serialize → string → GetBytes(string) double-allocation into a
-            // single pass. Hot fan-out path (CAPTION_UPDATE / WIDGET_UPDATE /
-            // VISUAL_SET_PROPERTY all flow through here), so the saved string
-            // allocation matters under sustained traffic.
-            byte[] buff = JsonSerializer.SerializeToUtf8Bytes(message);
-            return FanOutAsync(buff, EnumerateAllLayerSockets(), _cts.Token);
-        }
-
-        // Broadcast now fans out across every
-        // connected per-layer WebSocket via `_layerRegistry`. Previously this iterated a
-        // legacy `_clients` list that was never populated, so chat.overlay.push,
-        // chat.overlay.clear, SET_TEXT, VISUAL_SET_VISIBLE and VISUAL_SET_PROPERTY all
-        // succeeded silently with nothing reaching the browser. Mirrors the per-socket
-        // sender pump pattern used by BroadcastToAllLayersAsync / SendToLayerAsync.
-        public Task BroadcastRawAsync(string json)
-        {
-            byte[] buff = Encoding.UTF8.GetBytes(json);
-            return FanOutAsync(buff, EnumerateAllLayerSockets(), _cts.Token);
-        }
-
-        // ──────────────────────────────────────────────────────────────────
         //  PER-LAYER DISPATCH
+        //
+        //  The untargeted pair that used to open this region —
+        //  BroadcastAsync(object) and BroadcastRawAsync(string) — was deleted
+        //  in V4 part C. Their only callers were the five inert per-widget
+        //  mutation commands (chat.overlay.push / chat.overlay.clear /
+        //  visual.set_text / set_visible / set_property), which went with the
+        //  nodes that emitted them. Everything that survives is ADDRESSED:
+        //  SendToLayerAsync for one layer, BroadcastToAllLayersAsync for the
+        //  documented every-layer primitive. Do not reintroduce a raw-string
+        //  broadcast — an untyped frame with no layer scope is how the
+        //  chat-overlay path stayed silently broken for a whole release cycle.
         // ──────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -1814,6 +2328,35 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
+        /// Sends a JSON payload to ONE socket, identified by the opaque token the receive
+        /// loop handed out (which is the <see cref="WebSocket"/> itself).
+        ///
+        /// <para>The addressed counterpart to <see cref="SendToLayerAsync"/>, wired into
+        /// <c>OverlayLiveStore.SocketDispatcher</c> so a <c>LIVE_HELLO</c> is answered by
+        /// a <c>LIVE_SNAPSHOT</c> to the ASKER instead of a full-repaint frame fanned at
+        /// every browser on the layer. Same pump, same bounded channel, same teardown
+        /// ownership as every other frame — see <see cref="OfferSelfHealReloadOnce"/>,
+        /// which uses the identical addressing.</para>
+        ///
+        /// <para>A token that is not a live open socket is a no-op rather than a fault:
+        /// the socket can close between a HELLO arriving and its snapshot being built,
+        /// and a closed browser is not an error condition.</para>
+        /// </summary>
+        public Task SendToSocketAsync(object socketToken, object payload, CancellationToken ct = default)
+        {
+            if (socketToken is not WebSocket ws) return Task.CompletedTask;
+            if (ws.State != WebSocketState.Open) return Task.CompletedTask;
+
+            byte[] buff = JsonSerializer.SerializeToUtf8Bytes(payload);
+
+            // GetOrAdd, not TryGetValue: a socket that has been sent nothing yet has no
+            // pump. The teardown path removes whatever is created here.
+            var sender = _layerSenders.GetOrAdd(ws, static (s, token) => new PerSocketSender(s, token), _cts.Token);
+            sender.TryEnqueue(buff);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
         /// Pushes a LAYER_RELOADED notification to every browser connected to /hud/&lt;layerId&gt;.
         /// Compositor.js handles it by calling location.reload() — the page reboots and re-fetches
         /// /api/layer/&lt;id&gt; on next load. HubBootstrapper wires LayerRegistry.LayerReloaded to this.
@@ -1828,27 +2371,43 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
-        /// Broadcasts a JSON payload to every active per-layer WebSocket. Used by
-        /// LiveCaptionService to push CAPTION_UPDATE to all connected browsers.
+        /// Broadcasts a JSON payload to every active per-layer WebSocket.
+        /// <para>
+        /// Retained primitive with no production caller: it was
+        /// LiveCaptionService's CAPTION_UPDATE path until V3 moved captions onto
+        /// the Overlay Live Channel, which routes per subscribed key instead of
+        /// fanning out. Kept because "one typed frame to every connected
+        /// overlay" is a real, occasionally-needed shape and reimplementing it
+        /// ad hoc is how untargeted raw broadcasts creep back in.
+        /// <c>LayerRouteTests</c> exercises it so the traversal cannot rot
+        /// while it waits for a caller. Prefer <see cref="SendToLayerAsync"/>
+        /// whenever the frame belongs to one layer.
+        /// </para>
         /// </summary>
         public Task BroadcastToAllLayersAsync(object payload, CancellationToken ct = default)
         {
             // SerializeToUtf8Bytes — same single-pass
-            // allocation win as the SendToLayerAsync / BroadcastAsync paths.
+            // allocation win as the SendToLayerAsync path.
             byte[] buff = JsonSerializer.SerializeToUtf8Bytes(payload);
             return FanOutAsync(buff, EnumerateAllLayerSockets(), ct);
         }
 
         /// <summary>
-        /// Yields every WebSocket on every active layer once. Used by both the
-        /// broad-fan-out methods (<see cref="BroadcastRawAsync"/> /
-        /// <see cref="BroadcastToAllLayersAsync"/>) so the registry traversal
-        /// is shared. Snapshots the active layer ids first because
+        /// Yields every WebSocket on every layer that holds one, once. Sole consumer is
+        /// <see cref="BroadcastToAllLayersAsync"/>; kept as its own method so
+        /// the registry traversal stays one readable unit. Snapshots the
+        /// layer ids first because
         /// <see cref="LayerRegistry.GetConnections"/> can change concurrently.
+        ///
+        /// <para>V6 — <see cref="LayerRegistry.GetLayerIdsWithAnyConnection"/>, NOT
+        /// <c>GetActiveLayerIds</c>. This is a FAN-OUT, so "which layers are live on
+        /// stream?" is the wrong question: a layer whose only client is a Visualist preview
+        /// must still receive every-layer frames, or the preview stops being a preview of
+        /// what OBS would show.</para>
         /// </summary>
         private IEnumerable<WebSocket> EnumerateAllLayerSockets()
         {
-            foreach (var layerId in _layerRegistry.GetActiveLayerIds())
+            foreach (var layerId in _layerRegistry.GetLayerIdsWithAnyConnection())
             {
                 foreach (var ws in _layerRegistry.GetConnections(layerId))
                     yield return ws;
@@ -1857,7 +2416,7 @@ namespace Phoenix.Controls.Hub.Core
 
         /// <summary>
         /// Shared per-socket send dispatch used by
-        /// <see cref="BroadcastRawAsync"/>, <see cref="SendToLayerAsync"/>, and
+        /// <see cref="SendToLayerAsync"/> and
         /// <see cref="BroadcastToAllLayersAsync"/>.
         ///
         /// <para>
@@ -1896,7 +2455,7 @@ namespace Phoenix.Controls.Hub.Core
             {
                 if (ct.IsCancellationRequested) break;
                 if (ws.State != WebSocketState.Open) continue;
-                var sender = _layerSenders.GetOrAdd(ws, s => new PerSocketSender(s, _cts.Token));
+                var sender = _layerSenders.GetOrAdd(ws, static (s, ct) => new PerSocketSender(s, ct), _cts.Token);
                 sender.TryEnqueue(buff);
             }
             return Task.CompletedTask;
@@ -1921,6 +2480,55 @@ namespace Phoenix.Controls.Hub.Core
                 if (!doc.RootElement.TryGetProperty("type", out var typeProp)) return;
                 string type = typeProp.GetString() ?? "";
 
+                // V6 — one gate, before the switch, for the frames a Visualist design-time
+                // socket must not be allowed to act on. The arm-by-arm reasoning lives on
+                // IsInboundAllowedFromEditorClient; the short version is that only the
+                // frames which mutate shared Hub state on the layer's behalf
+                // (VISUAL_COMPLETE, FPS, and since V15 MEDIA_ENDED) are refused, and the
+                // benign / preview-correctness ones (LIVE_HELLO, TRANSLATE_REQUEST, the two
+                // diagnostics) still pass.
+                //
+                // The registry is the authority on the kind — not a per-receive-loop bool —
+                // because the socket reference is already in hand here and the registry
+                // recorded the kind under the same lock that admitted the socket. That also
+                // means an already-unregistered socket classifies as production, which is
+                // the pre-V6 behaviour and the safe direction.
+                bool isEditorClient = _layerRegistry.IsEditorSocket(socket);
+                if (isEditorClient && !IsInboundAllowedFromEditorClient(type))
+                {
+                    ReportRefusedEditorInbound(layerId, type);
+                    return;
+                }
+
+                // V13 §8.3 — the SECOND, orthogonal gate: is this socket running a page
+                // THIS Hub served? The editor/production gate above answers "what kind of
+                // surface is this?"; this one answers "did it prove provenance?". They are
+                // independent — a Visualist preview is an editor client AND trusted, a
+                // stale-cached OBS source is production AND untrusted.
+                //
+                // Untrusted sockets are declined the privileged UPWARD frames outright.
+                // VISUAL_COMPLETE is deliberately NOT in that set: it is degraded rather
+                // than dropped, inside its own arm, because dropping a completion would
+                // hang a script that is waiting on it. Everything DOWNWARD is unaffected.
+                bool isTrustedClient = _trustedSockets.ContainsKey(socket);
+
+                // V13 §8.3 belt-and-braces — an untrusted page that speaks the CURRENT protocol
+                // gets offered the one self-heal reload. LIVE_HELLO is the proof: only a
+                // compositor.js new enough to have the HUD_RELOAD handler sends it, so the offer
+                // reaches exactly the pages that can act on it and nothing else. See
+                // OfferSelfHealReloadOnce.
+                if (!isTrustedClient && type == "LIVE_HELLO")
+                {
+                    OfferSelfHealReloadOnce(socket, layerId);
+                }
+
+                if (!isTrustedClient && IsPrivilegedUpwardFrame(type))
+                {
+                    ReportUntrustedLayerClientOnce(layerId ?? "", isEditorClient
+                        ? LayerClientKind.Editor : LayerClientKind.Production);
+                    return;
+                }
+
                 switch (type)
                 {
                     case "VISUAL_COMPLETE":
@@ -1929,7 +2537,83 @@ namespace Phoenix.Controls.Hub.Core
                         string widgetId    = ReadString(doc.RootElement, "widgetId");
                         string triggerName = ReadString(doc.RootElement, "triggerName");
                         string waitId      = ReadString(doc.RootElement, "waitId");
-                        LayerRuntime.Instance.NotifyTriggerComplete(layerId, widgetId, triggerName, waitId);
+                        // V13 §8.1 — the optional completion payload. ReadOptionalString
+                        // (not ReadString) so an OMITTED property stays null and is
+                        // distinguishable from an explicit empty string: `payload` is
+                        // omitted exactly when the Visual.Complete Payload pin is unwired,
+                        // which is the compatibility case that must behave as it did before
+                        // V13 existed.
+                        //
+                        // V13 §8.3 — an Untrusted socket's completion still RESOLVES (the
+                        // waiting script must not hang) but carries no data. This is the one
+                        // degrade-rather-than-drop path; see the gate above.
+                        string? payload = isTrustedClient
+                            ? ReadOptionalString(doc.RootElement, "payload")
+                            : null;
+                        LayerRuntime.Instance.NotifyTriggerComplete(
+                            layerId, widgetId, triggerName, waitId, payload);
+                        break;
+                    }
+                    case "DEBUG_WIDGET_NODE":
+                    {
+                        // V13 §8.2 — ONE batched trace frame per trigger ACTIVATION, listing
+                        // the node ids the widget graph visited. Design-time only.
+                        if (string.IsNullOrWhiteSpace(layerId)) break;
+
+                        // Suppressed on the RECEIVE side, not left to the browser to police
+                        // itself: an OBS Browser Source that sends this (old cached script,
+                        // hand-crafted page) must not be able to drive the author's canvas
+                        // flash, and `renderWidgetTrigger` re-runs per animation frame, so a
+                        // production sender would be a frame-rate firehose onto the bus.
+                        if (!isEditorClient)
+                        {
+                            ReportRefusedProductionInbound(layerId, type);
+                            break;
+                        }
+
+                        string widgetId    = ReadString(doc.RootElement, "widgetId");
+                        string triggerName = ReadString(doc.RootElement, "triggerName");
+                        var    nodeIds     = ReadStringArray(doc.RootElement, "nodeIds");
+                        int    seq         = ReadInt(doc.RootElement, "seq");
+                        ForwardWidgetNodeTrace(layerId, widgetId, triggerName, nodeIds, seq);
+                        break;
+                    }
+                    case "MEDIA_ENDED":
+                    {
+                        // V15 — THE ONE UPWARD AMENDMENT. A Player.Embed widget playing the
+                        // song-request queue reports that its media finished, so the queue can
+                        // advance. This is deliberately NOT general widget→script eventing:
+                        // the frame is consumed by exactly one owning Hub service and reaches
+                        // no script, no bus and no other tool.
+                        //
+                        // Trust: nothing to add here. IsPrivilegedUpwardFrame already lists
+                        // MEDIA_ENDED, so the gate above returned for an untrusted socket
+                        // before this switch ran, and the Origin check ran at upgrade time.
+                        //
+                        // Editor: also already handled — IsInboundAllowedFromEditorClient
+                        // refuses it, so a Visualist preview pane or a thumbnail-capture host
+                        // cannot advance the live queue. Both gates are the reason this arm has
+                        // no checks of its own beyond the layer guard.
+                        //
+                        // Whitespace-strict on layerId like LIVE_HELLO, not IsNullOrEmpty:
+                        // the value is only used for attribution in the log line below, and a
+                        // blank-but-present id would produce an unreadable one.
+                        if (string.IsNullOrWhiteSpace(layerId)) break;
+
+                        string widgetId = ReadString(doc.RootElement, "widgetId");
+                        string videoId  = ReadString(doc.RootElement, "videoId");
+                        // seq is the songrequest.play_token the widget was playing, NOT a
+                        // browser-minted counter. That choice is the whole dedupe: every OBS
+                        // source on the layer reads the same token off the same live channel,
+                        // so N sources report the SAME (videoId, seq) pair and the service can
+                        // collapse them. A per-page counter would be N different values and
+                        // would double-advance. Long, because play_token is a long Hub-side.
+                        long seq = ReadLong(doc.RootElement, "seq");
+
+                        _ = AsyncErrorBoundary.SafeRunAsync(
+                            () => HandleMediaEndedAsync(layerId!, widgetId, videoId, seq),
+                            "HUDServer", "MEDIA_ENDED",
+                            _cts.Token);
                         break;
                     }
                     case "TRIGGER_RECEIVED":
@@ -1952,9 +2636,47 @@ namespace Phoenix.Controls.Hub.Core
                         string triggerName = ReadString(doc.RootElement, "triggerName");
                         string reason      = ReadString(doc.RootElement, "reason");
                         string detail      = ReadString(doc.RootElement, "detail");
+                        // V6 — attribute the client. A widget-filtered preview pane emits
+                        // `not_visible` for every widget it isn't showing, which at System
+                        // tier is indistinguishable from a real OBS source failing to
+                        // render. Naming the kind makes preview noise triageable without
+                        // suppressing a diagnostic the author actually wants.
                         GlobalLogger.Log(
-                            $"HUDServer: browser TRIGGER_DIAGNOSTIC layer='{layerId}' widget='{widgetId}' trigger='{triggerName}' reason='{reason}' detail='{detail}'",
+                            $"HUDServer: browser TRIGGER_DIAGNOSTIC client={(isEditorClient ? "editor" : "production")} layer='{layerId}' widget='{widgetId}' trigger='{triggerName}' reason='{reason}' detail='{detail}'",
                             "HUDServer", LogLevel.System);
+                        break;
+                    }
+                    case "LIVE_HELLO":
+                    {
+                        // Overlay Live Channel handshake — compositor.js sends this
+                        // first thing in socket.onopen with the flat key/prefix set
+                        // every widget graph on the layer reads. The store replaces
+                        // the layer's whole subscription and answers with a
+                        // LIVE_SNAPSHOT, so a reconnect (or a graph edit that
+                        // changed the key set) needs no other bookkeeping than
+                        // re-sending this frame.
+                        //
+                        // Stricter than the sibling arms' IsNullOrEmpty on purpose:
+                        // a whitespace-only layerId would occupy a subscription slot
+                        // no /hud/<id> route can ever match again, so it would sit
+                        // in the store's dirty-tracking dict until Hub restarts.
+                        if (string.IsNullOrWhiteSpace(layerId)) break;
+                        int proto = ReadInt(doc.RootElement, "proto");
+                        var keys  = ReadStringArray(doc.RootElement, "keys");
+                        // Fire-and-forget: HandleHelloAsync builds and dispatches the
+                        // snapshot frame through the per-socket pump, and the receive
+                        // loop must not block behind a slow browser. proto is passed
+                        // through verbatim — the store owns the version policy and
+                        // its one-shot mismatch log; the transport doesn't second-
+                        // guess it. _cts.Token as both operation and expected token
+                        // so a HELLO racing shutdown cancels quietly.
+                        // `socket` is passed as the reply token so the answering
+                        // LIVE_SNAPSHOT — a full-repaint frame — goes to the browser
+                        // that asked, not to every browser on the layer.
+                        _ = AsyncErrorBoundary.SafeRunAsync(
+                            () => OverlayLiveStore.Instance.HandleHelloAsync(layerId, proto, keys, socket, _cts.Token),
+                            "HUDServer", "LIVE_HELLO",
+                            _cts.Token);
                         break;
                     }
                     case "TRANSLATE_REQUEST":
@@ -1996,6 +2718,334 @@ namespace Phoenix.Controls.Hub.Core
             {
                 GlobalLogger.Error("HUDServer", $"malformed inbound from /hud/{layerId ?? "(legacy)"}", ex);
             }
+        }
+
+        // V6 — refused-editor-inbound counter, keyed by "<layerId>|<messageType>".
+        //
+        // Rate-limited for the same reason SendToLayerAsync's drop diagnostic is: a preview
+        // pane emits FPS at 1 Hz per socket and can emit VISUAL_COMPLETE once per rendered
+        // trigger, so an unthrottled line per refusal would saturate the SystemLog ring
+        // buffer during a normal authoring session. Key space is bounded by
+        // (registered layers × the two refused types).
+        private readonly ConcurrentDictionary<string, long> _editorRefusalCounts = new();
+
+        /// <summary>
+        /// V6 — records that a design-time socket's side-effecting frame was dropped.
+        ///
+        /// <para>Communication tier, first + every 100th: the refusal is CORRECT behaviour,
+        /// not a fault, so it must not light the operator's error surfaces. It is logged at
+        /// all because "my Test Run does nothing when only the preview is open" is the
+        /// question this sprint's presence change provokes, and this line is the answer
+        /// (the Test Target affordance in the widget editor is the fix).</para>
+        /// </summary>
+        private void ReportRefusedEditorInbound(string? layerId, string messageType)
+        {
+            string key = $"{layerId ?? "(none)"}|{messageType}";
+            long n = _editorRefusalCounts.AddOrUpdate(key, 1, (_, prev) => prev + 1);
+            if (n != 1 && n % 100 != 0) return;
+            GlobalLogger.Log(
+                $"HUDServer: refused {messageType} from an editor (design-time) client on /hud/{layerId ?? "(none)"} — " +
+                $"a Visualist preview must not answer for a production overlay (total={n}).",
+                "HUDServer", LogLevel.Communication);
+        }
+
+        // V13 §8.2 — mirror counter for the OPPOSITE direction: a design-time-only frame
+        // arriving from a PRODUCTION socket. Rate-limited on the same first + every-100th
+        // schedule and for the same reason as _editorRefusalCounts: the frames this guards
+        // are emitted per trigger activation, and `renderWidgetTrigger` re-runs per
+        // animation frame, so a misbehaving sender is a frame-rate source.
+        private readonly ConcurrentDictionary<string, long> _productionRefusalCounts = new();
+
+        /// <summary>
+        /// V13 §8.2 — records that a production (OBS) socket's design-time-only frame was
+        /// dropped. Communication tier: like its editor-side sibling this is CORRECT
+        /// behaviour, not a fault, so it must not light the operator's error surfaces — but
+        /// it is logged because "my node flashes never fire" needs an answer, and the answer
+        /// is "that socket is an OBS source, open the widget editor instead".
+        /// </summary>
+        private void ReportRefusedProductionInbound(string? layerId, string messageType)
+        {
+            string key = $"{layerId ?? "(none)"}|{messageType}";
+            long n = _productionRefusalCounts.AddOrUpdate(key, 1, (_, prev) => prev + 1);
+            if (n != 1 && n % 100 != 0) return;
+            GlobalLogger.Log(
+                $"HUDServer: refused {messageType} from a production (OBS) client on /hud/{layerId ?? "(none)"} — " +
+                $"the widget trace is design-time only and is never driven by a live overlay (total={n}).",
+                "HUDServer", LogLevel.Communication);
+        }
+
+        /// <summary>
+        /// V13 §8.3 — the one-shot per-layer notice that a client connected without a valid
+        /// connect token, naming the remedy.
+        ///
+        /// <para>System tier (unlike the two refusal counters, which are Communication):
+        /// this one is actionable by the streamer and has a concrete fix. The usual cause is
+        /// an OBS Browser Source still running a <c>compositor.js</c> cached from before the
+        /// token existed, and the fix is a browser-source cache refresh.</para>
+        ///
+        /// <para>ONCE per layer, latched, because the trigger is a connect — an OBS scene
+        /// cycling a stale source would otherwise repeat this paragraph on every flip. The latch
+        /// survives a layer remove+register (i.e. every author save, see
+        /// <see cref="_untrustedLayerLogged"/>) and is cleared only by <see cref="Stop"/>.</para>
+        ///
+        /// <para>The caller that classifies an upgrade also offers that one socket the self-heal
+        /// reload (<see cref="RequestSelfHealReload"/>); this method only ever logs, so the
+        /// re-report from the inbound trust gate cannot cause a second reload.</para>
+        ///
+        /// <para>The token value is NEVER named here, nor is the value the client presented.
+        /// A log line carrying either would hand a capability to anything that can read the
+        /// SystemLog ring buffer — which includes the Hub UI, the pop-out panels and every
+        /// exported log file.</para>
+        /// </summary>
+        private void ReportUntrustedLayerClientOnce(string layerId, LayerClientKind clientKind)
+        {
+            string key = string.IsNullOrEmpty(layerId) ? "(none)" : layerId;
+            if (!_untrustedLayerLogged.TryAdd(key, 1)) return;
+
+            GlobalLogger.Log(
+                $"HUDServer: a {clientKind} client on /hud/{key} connected WITHOUT this Hub's " +
+                $"per-layer connect token. It still renders — every LIVE_SNAPSHOT / LIVE_PATCH / " +
+                $"RUN_TRIGGER frame is unaffected — but it cannot use the design-time trace or " +
+                $"return a Visual.Complete payload. The usual cause is an OBS Browser Source " +
+                $"running a page cached from before this Hub started: right-click the source → " +
+                $"Refresh cache of current page (or Interact → reload) and the token is picked up. " +
+                $"(Logged once per layer.)",
+                "HUDServer", LogLevel.System);
+        }
+
+        /// <summary>
+        /// V13 §8.3 belt-and-braces — asks ONE untrusted page to reload itself so it re-fetches
+        /// <c>/layer/&lt;id&gt;</c> and picks up the connect token, instead of degrading silently
+        /// for the rest of its life. (Nothing else would ever reload it: compositor.js's
+        /// <c>socket.onclose</c> reconnects the socket only, and <c>LAYER_RELOADED</c> prefers the
+        /// soft reload, which re-fetches <c>/api/layer/&lt;id&gt;</c> and not the page.)
+        ///
+        /// <para><b>WHY IT IS TRIGGERED BY LIVE_HELLO AND NOT BY THE CLASSIFICATION ITSELF.</b>
+        /// A page that cannot handle <c>HUD_RELOAD</c> must not be sent one, and "untrusted" alone
+        /// does not distinguish a current page holding a stale token (which self-heals) from a page
+        /// so old it predates the whole live channel, or from something that is not a compositor at
+        /// all. <c>LIVE_HELLO</c> is the proof of protocol level: only a compositor.js that has the
+        /// <c>HUD_RELOAD</c> arm sends it. Firing at classification time instead put an unsolicited
+        /// frame on EVERY tokenless socket, which is also why it is wrong in principle — Hub would
+        /// be shouting an instruction at clients that provably cannot obey it.</para>
+        ///
+        /// <para><b>Per socket, exactly once</b>, via <see cref="_selfHealOfferedSockets"/> — and
+        /// the latch is required, not decorative: <c>sendLiveHello</c> is re-sent after every
+        /// <c>softReloadLayer</c>, i.e. after every author save, on the SAME socket.</para>
+        ///
+        /// <para>The reload STORM §8.3 forbids is prevented on the BROWSER side, and it has to be:
+        /// a reload closes this socket, so any latch kept here dies with it and the fresh page's
+        /// socket would be instructed again, forever. compositor.js's <c>_selfHealHardReload</c>
+        /// therefore latches in <c>sessionStorage</c>, which survives the reload it guards.</para>
+        ///
+        /// <para>Targeted at the ONE socket, never <see cref="SendToLayerAsync"/>: the other
+        /// sockets on this layer may be perfectly trusted, and reloading them would be a
+        /// self-inflicted flash on a live overlay. <c>GetOrAdd</c> (not <c>TryGetValue</c>) because
+        /// the socket may not have been sent anything yet, so its pump may not exist; the teardown
+        /// path removes whatever we create here.</para>
+        ///
+        /// <para>The frame carries a reason and NEVER the token — it is going to a page that just
+        /// failed to prove provenance.</para>
+        /// </summary>
+        private void OfferSelfHealReloadOnce(WebSocket socket, string? layerId)
+        {
+            if (!_selfHealOfferedSockets.TryAdd(socket, 1)) return;
+            try
+            {
+                if (socket.State != WebSocketState.Open) return;
+                byte[] buff = JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    type   = SelfHealReloadFrameType,
+                    reason = "untrusted",
+                });
+                var sender = _layerSenders.GetOrAdd(socket, static (s, ct) => new PerSocketSender(s, ct), _cts.Token);
+                sender.TryEnqueue(buff);
+                GlobalLogger.Log(
+                    $"HUDServer: asking the untrusted overlay page on /hud/{layerId ?? "(none)"} to reload " +
+                    $"itself ONCE so it re-fetches the page and picks up this layer's connect token. " +
+                    $"If it comes back untrusted again it is left on the grace path — the page latches " +
+                    $"the attempt itself, so this never loops.",
+                    "HUDServer", LogLevel.Communication);
+            }
+            catch (Exception ex)
+            {
+                // Never fatal: failing to offer the self-heal just leaves the socket on the grace
+                // path it is already on.
+                GlobalLogger.Error("HUDServer", "self-heal reload instruction could not be enqueued", ex);
+            }
+        }
+
+        /// <summary>
+        /// V13 §8.3 — the inbound frame types an Untrusted socket may not act on AT ALL.
+        ///
+        /// <para><c>VISUAL_COMPLETE</c> is deliberately absent: it is DEGRADED (payload
+        /// stripped) rather than dropped, inside its own switch arm, because dropping a
+        /// completion would hang whatever script is waiting on it — strictly worse than
+        /// accepting a payload-less ack from a page whose provenance we cannot prove.</para>
+        ///
+        /// <para><c>MEDIA_ENDED</c> was listed here ahead of the V15 sprint that introduced
+        /// it, on purpose: §8.3 names it as one of the three privileged upward paths, and a
+        /// gate that has to be remembered later is a gate that will be forgotten. V15 has
+        /// since landed the switch arm, so this entry is now live rather than reserved — an
+        /// untrusted page cannot advance the song-request queue. (It is also refused from an
+        /// EDITOR socket, by the separate and orthogonal
+        /// <see cref="IsInboundAllowedFromEditorClient"/>; the two gates answer different
+        /// questions and a preview pane fails the second while passing this one.)</para>
+        ///
+        /// <para>Everything else returns false, so the default posture for a frame nobody has
+        /// classified is UNCHANGED behaviour. This predicate must stay a deny-list of
+        /// privileged paths, never become an allow-list of permitted ones — the latter would
+        /// silently break the next frame type somebody adds.</para>
+        /// </summary>
+        internal static bool IsPrivilegedUpwardFrame(string messageType)
+            => messageType switch
+            {
+                "DEBUG_WIDGET_NODE" => true,
+                "MEDIA_ENDED"       => true,
+                _                   => false,
+            };
+
+        /// <summary>
+        /// Whether a /hud WebSocket upgrade may proceed, judged on the request's
+        /// <c>Origin</c> header. See the call site in ProcessWebSocketRequestAsync for
+        /// why a loopback bind is not sufficient on its own.
+        ///
+        /// <para>ABSENT Origin ⇒ allowed. Browsers always send it on a WebSocket
+        /// handshake; non-browser clients (the test harness, any native tool, a future
+        /// desktop shell) do not. So absence cannot be the browser attacker this gate
+        /// exists for, while treating it as hostile would break every legitimate
+        /// non-browser consumer.</para>
+        ///
+        /// <para>PRESENT Origin ⇒ must be http(s) on a LOOPBACK host at THIS server's
+        /// port. compositor.js dials <c>window.location.host</c>, so the real overlay —
+        /// and the Visualist WebView2 preview, which navigates the same URL — always
+        /// matches whichever spelling (127.0.0.1 / localhost / [::1]) the page was
+        /// served from. A page on any other host, or on another local port, does
+        /// not.</para>
+        /// </summary>
+        internal static bool IsAllowedWebSocketOrigin(string? origin, int listenPort)
+        {
+            if (string.IsNullOrWhiteSpace(origin)) return true;
+            if (!Uri.TryCreate(origin, UriKind.Absolute, out var parsed)) return false;
+            if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) return false;
+            if (parsed.Port != listenPort) return false;
+
+            string host = parsed.Host;
+            // IsLoopback covers 127.0.0.0/8 and ::1; "localhost" is matched by name
+            // because it is a host STRING here, not a resolved address.
+            return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || (IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip));
+        }
+
+        private bool IsAllowedWebSocketOrigin(HttpListenerRequest request)
+            => IsAllowedWebSocketOrigin(request.Headers["Origin"], _listenPort);
+
+        /// <summary>
+        /// V13 §8.2 — forwards one widget-graph trace frame to Visualist on the TARGETED
+        /// route: <c>Target = "Visualist"</c>, which <c>Bus.BroadcastToRemoteAsync</c> filters
+        /// down to that single peer (<c>if (target != "*" &amp;&amp; target != id) continue;</c>).
+        ///
+        /// <para><b>Never <c>Target = "*"</c>.</b> A broadcast trace frame would be a real
+        /// product bug rather than a style problem: Hub→Hub local routing HAS landed —
+        /// <c>Bus.BroadcastAsync</c> delivers <c>Target "*" / "Hub"</c> frames to Hub's own
+        /// consumers (OnMessageReceived, pending waits, the <c>on_bus</c> fan-out) — so a
+        /// broadcast envelope WOULD run every <c>on_bus("DEBUG_WIDGET_NODE")</c> script once
+        /// per trigger activation. Targeting one peer is what keeps the frame off that path:
+        /// the local-delivery Target gate in <c>BroadcastAsync</c> skips any frame whose
+        /// Target is neither <c>"*"</c> nor <c>"Hub"</c>. That guard is active, not
+        /// hypothetical — keep this send targeted.</para>
+        ///
+        /// <para>This is the SAME route <c>DEBUG_NODE_EXEC</c> takes to Architect
+        /// (ScriptManager.cs) — <c>BroadcastAsync</c> with an explicit non-wildcard
+        /// <c>Target</c>, wrapped in <c>AsyncErrorBoundary.SafeRunAsync</c> so a bus fault
+        /// during reconnect churn lands in the log instead of on the unobserved-task pump.</para>
+        ///
+        /// <para>Unlike <c>DEBUG_NODE_EXEC</c> there is NO connected-peer pre-gate
+        /// (<c>DEBUG_NODE_EXEC</c> checks <c>Bus.IsArchitectConnected</c> before emitting).
+        /// That gate exists on the Architect path because it fires once per executed NODE
+        /// (~2500/sec on a busy chat) and pays serialisation each time. This frame is one
+        /// message per trigger ACTIVATION and only ever arrives from an editor socket — which
+        /// means Visualist is the thing that sent it — and <c>BroadcastToRemoteAsync</c>
+        /// already early-outs on <c>_clients.IsEmpty</c> before serialising anything. Adding
+        /// the gate would buy nothing and would make the forward unobservable to the in-proc
+        /// bridge.</para>
+        /// </summary>
+        private void ForwardWidgetNodeTrace(
+            string layerId, string widgetId, string triggerName, List<string> nodeIds, int seq)
+        {
+            try
+            {
+                string payload = JsonSerializer.Serialize(new
+                {
+                    layerId,
+                    widgetId,
+                    triggerName,
+                    nodeIds,
+                    seq,
+                });
+                _ = AsyncErrorBoundary.SafeRunAsync(
+                    () => Bus.Instance.BroadcastAsync(new BusMessage
+                    {
+                        Type    = "DEBUG_WIDGET_NODE",
+                        Source  = "Hub",
+                        Target  = "Visualist",
+                        Payload = payload,
+                    }, _cts.Token),
+                    "HUDServer",
+                    $"DEBUG_WIDGET_NODE forward for {layerId}/{widgetId}/{triggerName}",
+                    _cts.Token);
+            }
+            catch (Exception ex)
+            {
+                // Bus.Instance's own construction can throw on partial init (the same guard
+                // WidgetTriggerQueue's WIDGET_TIMEOUT broadcast carries), and a trace frame
+                // must never take down the receive loop that delivered it.
+                GlobalLogger.Error("HUDServer",
+                    $"DEBUG_WIDGET_NODE forward failed for {layerId}/{widgetId}", ex);
+            }
+        }
+
+        /// <summary>
+        /// V15 — hands one <c>MEDIA_ENDED</c> frame to the ONLY service allowed to consume
+        /// it. The whole upward amendment ends here: nothing else in the Hub sees this
+        /// frame, no script is raised, nothing goes on the bus.
+        ///
+        /// <para><b>The result is read, not discarded, and that is the point.</b>
+        /// <c>NotifyMediaEndedAsync</c> returns false for every ignore path — the tool is
+        /// off, nothing is playing, the reporting widget was on a different track, a
+        /// SECOND OBS source on the same layer reported the same
+        /// <c>(videoId, play_token)</c> pair the first one already spent, or a mod's
+        /// <c>!skip</c> moved the queue between the claim and the advance. All of those are
+        /// normal, so none of them is an error; but when a streamer's queue does not
+        /// advance, this Debug line is the only evidence anyone will have of which one
+        /// happened. Swallowing the bool would make a stuck queue undiagnosable — which is
+        /// also why the service's late bails (the tool switched off mid-flight, the skip
+        /// race) report false rather than a true that moved nothing.</para>
+        ///
+        /// <para>Debug tier rather than System: on a two-source layer exactly one refusal
+        /// is expected per track, by design. A System-tier line would train the streamer to
+        /// ignore their own log.</para>
+        /// </summary>
+        private static async Task HandleMediaEndedAsync(string layerId, string widgetId, string videoId, long seq)
+        {
+            bool advanced = await SongRequestService.Instance
+                .NotifyMediaEndedAsync(videoId, seq)
+                .ConfigureAwait(false);
+            if (advanced) return;
+
+            // Capped only on the way into the log, at the same 240 the frame-drop preview
+            // above uses and the same the browser's own diagnostic sender applies to its
+            // detail: both of these are strings a PAGE supplied, and a stale or hand-crafted
+            // source could otherwise push an unbounded value straight into the streamer's log.
+            // Capped here rather than at the read, because the service compares the full
+            // videoId — truncating before that would change what the queue matches on.
+            static string ForLog(string s) => s.Length <= 240 ? s : s.Substring(0, 240) + "…";
+
+            GlobalLogger.Log(
+                $"HUDServer: MEDIA_ENDED layer='{ForLog(layerId)}' widget='{ForLog(widgetId)}' video='{ForLog(videoId)}' token={seq} did not advance the song queue — "
+                + "the tool is off, nothing is playing, another browser source already reported "
+                + "this track, or a skip moved the queue first.",
+                "HUDServer", LogLevel.Debug);
         }
 
         private async Task HandleTranslateRequestAsync(WebSocket socket, string reqId, string text, string targetLang)
@@ -2041,6 +3091,99 @@ namespace Phoenix.Controls.Hub.Core
             if (obj.ValueKind != JsonValueKind.Object) return "";
             if (!obj.TryGetProperty(key, out var prop)) return "";
             return prop.ValueKind == JsonValueKind.String ? (prop.GetString() ?? "") : "";
+        }
+
+        /// <summary>
+        /// V13 §8.1 — presence-preserving sibling of <see cref="ReadString"/>: returns
+        /// <c>null</c> when the property is ABSENT (or not a JSON string) and the string's
+        /// own value otherwise, so an explicit <c>"payload": ""</c> is distinguishable from
+        /// an omitted <c>payload</c>.
+        ///
+        /// <para>That distinction is the compatibility gate: the browser omits the property
+        /// exactly when the <c>Visual.Complete → Payload</c> pin is unwired, and an omitted
+        /// payload has to reach <c>Bus.ResolveVisualWait</c> as <c>null</c> so nothing
+        /// downstream can tell V13 happened. Collapsing both to <c>""</c> here would work by
+        /// accident today and stop working the moment any consumer distinguishes them.</para>
+        ///
+        /// <para>A non-string <c>payload</c> (number, object, array — a hostile or buggy
+        /// sender) is treated as absent rather than stringified: the wire contract says
+        /// String, and coercing an object into the script's <c>global._wait_payload</c> would
+        /// be inventing data.</para>
+        /// </summary>
+        private static string? ReadOptionalString(JsonElement obj, string key)
+        {
+            if (obj.ValueKind != JsonValueKind.Object) return null;
+            if (!obj.TryGetProperty(key, out var prop)) return null;
+            if (prop.ValueKind != JsonValueKind.String) return null;
+            return prop.GetString();
+        }
+
+        /// <summary>
+        /// Integer sibling of <see cref="ReadString"/>. Fails closed to 0 for a
+        /// missing / non-numeric / out-of-Int32-range property — <c>GetInt32()</c>
+        /// throws on the last case, which would abort the whole inbound switch, so
+        /// <c>TryGetInt32</c> is the only safe read for browser-supplied numbers
+        /// (same rationale as the inline FPS parse above).
+        /// </summary>
+        private static int ReadInt(JsonElement obj, string key)
+        {
+            if (obj.ValueKind != JsonValueKind.Object) return 0;
+            if (!obj.TryGetProperty(key, out var prop)) return 0;
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt32(out int n)) return n;
+            if (prop.ValueKind == JsonValueKind.String && int.TryParse(prop.GetString(), out int parsed)) return parsed;
+            return 0;
+        }
+
+        /// <summary>
+        /// 64-bit sibling of <see cref="ReadInt"/>, for <c>MEDIA_ENDED</c>'s
+        /// <c>seq</c> — the song-request <c>play_token</c>, which is a <c>long</c> on the
+        /// Hub side and must not be silently truncated into an <c>int</c>.
+        ///
+        /// <para>Same fail-closed-to-0 posture and the same <c>TryGetInt64</c> reason as
+        /// its sibling: <c>GetInt64()</c> throws on an out-of-range property, which would
+        /// abort the whole inbound switch on a malformed frame. 0 is a safe failure here
+        /// because <c>play_token</c> starts at 0 and the first selection makes it 1, so a
+        /// zero can never match a playing track — a garbage <c>seq</c> is refused rather
+        /// than being read as some other track's token.</para>
+        ///
+        /// <para>A browser JSON number is a double, so a value large enough to have lost
+        /// integer precision fails <c>TryGetInt64</c>'s exactness and reads 0. That is the
+        /// correct direction: 2^53 selections in one session is not reachable, and a
+        /// fractional token is by definition not one this Hub minted.</para>
+        /// </summary>
+        private static long ReadLong(JsonElement obj, string key)
+        {
+            if (obj.ValueKind != JsonValueKind.Object) return 0;
+            if (!obj.TryGetProperty(key, out var prop)) return 0;
+            if (prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out long n)) return n;
+            if (prop.ValueKind == JsonValueKind.String && long.TryParse(prop.GetString(), out long parsed)) return parsed;
+            return 0;
+        }
+
+        /// <summary>
+        /// Reads a JSON string array (LIVE_HELLO's <c>keys</c>), skipping non-string
+        /// and blank elements. Returns an empty list for a missing or non-array
+        /// property — same fail-closed posture as <see cref="ReadString"/>: a
+        /// malformed handshake subscribes to nothing instead of throwing out of the
+        /// receive loop. Caps are the store's business, not the transport's.
+        /// </summary>
+        private static List<string> ReadStringArray(JsonElement obj, string key)
+        {
+            if (obj.ValueKind != JsonValueKind.Object) return new List<string>();
+            if (!obj.TryGetProperty(key, out var prop)) return new List<string>();
+            if (prop.ValueKind != JsonValueKind.Array) return new List<string>();
+            // Pre-size from the declared length but clamp it: the element count is
+            // browser-supplied and bounded only by the 1 MiB inbound frame cap, so a
+            // hostile HELLO must not get to name its own allocation size.
+            var list = new List<string>(Math.Min(prop.GetArrayLength(), 1024));
+            foreach (var el in prop.EnumerateArray())
+            {
+                if (el.ValueKind != JsonValueKind.String) continue;
+                string s = el.GetString() ?? "";
+                if (string.IsNullOrWhiteSpace(s)) continue;
+                list.Add(s);
+            }
+            return list;
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -2243,6 +3386,112 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         // ──────────────────────────────────────────────────────────────────
+        //  V6 — EDITOR-vs-PRODUCTION CLIENT CLASSIFICATION
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Classifies a <c>/hud/&lt;id&gt;</c> WebSocket upgrade as a Visualist design-time
+        /// surface or a production OBS Browser Source, from the upgrade request's query.
+        ///
+        /// <para>THE INVARIANT THIS ENFORCES: the server's classification must agree with
+        /// compositor.js's own page-side <c>IS_DESIGN_TIME</c>. If they ever disagreed, a
+        /// surface would render design-time mocks (fake leaderboard names, PreviewText) while
+        /// counting as production presence — the worst of both halves. compositor.js derives
+        /// IS_DESIGN_TIME from three page params: <c>?widget=&lt;id&gt;</c>, <c>?capture=1</c>
+        /// and <c>?client=editor</c>. This method therefore honours the same three, even
+        /// though every Visualist page URL now also carries <c>client=editor</c> explicitly:
+        /// the redundancy is what makes the two halves impossible to drift apart if a future
+        /// surface forwards only its own marker.</para>
+        ///
+        /// <para>Anything else — including a bare query and an unrecognised <c>client</c>
+        /// value — is Production. Failing toward production is deliberate: it is the pre-V6
+        /// behaviour, so a misclassification degrades to "presence is too generous" (a
+        /// cosmetic regression) rather than "a real OBS source is invisible to every
+        /// dispatch path" (a broken stream). An OBS Browser Source never sets any of these
+        /// params, so it can never be misread as an editor surface by accident.</para>
+        ///
+        /// <para>Takes the parsed collection rather than an <c>HttpListenerRequest</c> so the
+        /// classification is unit-testable without an HttpListener; the caller passes
+        /// <c>context.Request.QueryString</c>, which HttpListener has already parsed.</para>
+        /// </summary>
+        internal static LayerClientKind ClassifyClientKind(System.Collections.Specialized.NameValueCollection? query)
+        {
+            if (query is null) return LayerClientKind.Production;
+
+            if (string.Equals(query["client"], "editor", StringComparison.OrdinalIgnoreCase))
+                return LayerClientKind.Editor;
+
+            // The per-widget preview pane / popout (?widget=<id>) and the hidden
+            // thumbnail-capture host (?capture=1) are design-time by compositor.js's own
+            // rule. Presence of the key is the signal, matching the page side's
+            // `widgetFilterId !== null` / `params.has('capture')`.
+            if (query["widget"] is not null)  return LayerClientKind.Editor;
+            if (query["capture"] is not null) return LayerClientKind.Editor;
+
+            return LayerClientKind.Production;
+        }
+
+        /// <summary>
+        /// V6 — whether an inbound browser frame of <paramref name="messageType"/> may be
+        /// acted on when it arrives from a Visualist design-time socket.
+        ///
+        /// <para>The classification, arm by arm (see the switch in
+        /// <c>HandleInboundFromBrowser</c> for the bodies):</para>
+        /// <list type="bullet">
+        /// <item><c>VISUAL_COMPLETE</c> — REFUSED. Side-effecting, and the whole reason V6
+        /// exists: it resolves the WidgetTriggerQueue TCS and the bus visual-wait, so a
+        /// preview pane acking a widget it never drew is what completed a script's
+        /// <c>wait_for_visual</c> against a pane.</item>
+        /// <item><c>FPS</c> — REFUSED. Side-effecting: it writes the layer-KEYED
+        /// <c>LayerRegistry._fps</c> map that <c>IsLayerActive</c>'s fallback arm reads, so
+        /// one preview render would keep the layer reading ACTIVE for the 5 s TTL and would
+        /// average preview renders into the Hub's FPS readout. Refusing here is what let
+        /// the parked signal-divergence item stay parked (no per-socket re-key needed).</item>
+        /// <item><c>LIVE_HELLO</c> — ALLOWED. Side-effecting, but refusing it starves the
+        /// preview of live-channel data, and the subscription is layer-scoped and identical
+        /// across every socket on the layer by contract (the client never narrows its key
+        /// set by widget), so an editor hello asks for nothing a production hello wouldn't.</item>
+        /// <item><c>TRANSLATE_REQUEST</c> — ALLOWED. Side-effecting off-box (translation
+        /// API), but it touches no presence and no trigger state, the reply is per-socket,
+        /// and the client caches by (text, lang). A preview that couldn't translate would
+        /// render different text than OBS, which defeats the point of the preview.</item>
+        /// <item><c>TRIGGER_RECEIVED</c> — ALLOWED. Benign: the handler body is a no-op
+        /// diagnostic sink.</item>
+        /// <item><c>TRIGGER_DIAGNOSTIC</c> — ALLOWED. Benign (log only). Kept for editor
+        /// sockets on purpose: a preview pane's silent early-returns are exactly what an
+        /// author needs to see. The log line carries the client kind so preview-sourced
+        /// <c>not_visible</c> noise is attributable.</item>
+        /// <item>V15 <c>MEDIA_ENDED</c> — REFUSED. Side-effecting on SHARED state, and the
+        /// most consequential kind: it advances the live song-request queue. A Visualist
+        /// preview pane and the hidden thumbnail-capture host are both classified Editor AND
+        /// both classify as Trusted, so the V13 provenance gate does not touch them — without
+        /// an arm here, opening a widget preview while the stream is running would skip the
+        /// streamer's track. Refused rather than degraded (the VISUAL_COMPLETE treatment)
+        /// because nothing waits on it: a dropped MEDIA_ENDED costs a queue that stops
+        /// advancing until the next report, while an accepted one costs a track nobody got to
+        /// hear.</item>
+        /// <item>V13 <c>DEBUG_WIDGET_NODE</c> — ALLOWED, and in fact editor-ONLY: it is the
+        /// design-time trace, so its arm inverts this predicate's usual direction and refuses
+        /// the PRODUCTION case itself (see <c>ReportRefusedProductionInbound</c>). It reaches
+        /// here through the <c>_ =&gt; true</c> default rather than an explicit arm, because
+        /// this predicate's contract is "which frames must an EDITOR be stopped from acting
+        /// on" and the answer for the trace frame is "none".</item>
+        /// </list>
+        ///
+        /// <para>Unknown types return true — this predicate must not become a silent
+        /// allowlist that swallows a message arm somebody adds later; the switch already
+        /// ignores types it doesn't know.</para>
+        /// </summary>
+        internal static bool IsInboundAllowedFromEditorClient(string messageType)
+            => messageType switch
+            {
+                "VISUAL_COMPLETE" => false,
+                "FPS"             => false,
+                "MEDIA_ENDED"     => false,
+                _                 => true,
+            };
+
+        // ──────────────────────────────────────────────────────────────────
         //  MIME TYPE DETECTION
         // ──────────────────────────────────────────────────────────────────
 
@@ -2333,8 +3582,6 @@ namespace Phoenix.Controls.Hub.Core
             private long _droppedFrames;
             private long _lastReportedDrops;
             private int _disposed;
-
-            public long DroppedFrameCount => Interlocked.Read(ref _droppedFrames);
 
             public PerSocketSender(WebSocket socket, CancellationToken serverCt)
             {

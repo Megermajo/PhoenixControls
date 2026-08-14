@@ -28,11 +28,6 @@ internal static class Program
 
         ApplicationConfiguration.Initialize();
 
-        // Carry the AppData migration shim forward so a user upgrading
-        // from the WinForms Viewer keeps any existing Hub state pinned
-        // to the Phoenix Controls retail brand.
-        AppDataMigrator.RunOnce();
-
         IconFontResolver.Init();
         IconFontResolver.ShowMissingFontWarningIfNeeded();
 

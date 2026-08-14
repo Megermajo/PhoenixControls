@@ -4,13 +4,18 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Phoenix.Controls.Visualist.WinUI.Models"
-    xmlns:converters="using:Phoenix.Controls.Visualist.WinUI.Controls.Converters">
+    xmlns:converters="using:Phoenix.Controls.Visualist.WinUI.Controls.Converters"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization">
 
     <UserControl.Resources>
         <converters:LayerActiveToBrushConverter x:Key="LayerActiveToBrush" />
     </UserControl.Resources>
 
-    <Grid Background="{StaticResource CoalSurfaceBrush}">
+    <!-- Root grid catches right-taps on empty rail / header space → New Layer
+         only. Per-row right-taps are handled by the DataTemplate Border below
+         (which marks the event Handled), so this only fires off the rows. -->
+    <Grid Background="{StaticResource CoalSurfaceBrush}"
+          RightTapped="OnRailRightTapped">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -18,12 +23,37 @@
 
         <Border
             Grid.Row="0"
-            Padding="12,10,12,6"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            Padding="12,6,6,6"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="0,0,0,1">
-            <TextBlock
-                Style="{StaticResource EyebrowTextStyle}"
-                Text="LAYERS" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock
+                    Grid.Column="0"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource EyebrowTextStyle}"
+                    Text="LAYERS"
+                    loc:Localize.Key="visualist.rail.eyebrow" />
+                <!-- Small "+" (New Layer). Reuses the File → New Layer preset
+                     dialog so it matches Ctrl+N. -->
+                <Button
+                    Grid.Column="1"
+                    x:Name="NewLayerButton"
+                    Click="OnNewLayerButtonClick"
+                    MinWidth="28"
+                    Height="24"
+                    Padding="0"
+                    Content="+"
+                    FontSize="16"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Foreground="{StaticResource CoalPrimaryTextBrush}"
+                    ToolTipService.ToolTip="New Layer"
+                    loc:Localize.TooltipKey="visualist.rail.new_layer" />
+            </Grid>
         </Border>
 
         <!-- No ScrollViewer wrapper around the ListView — ListView already
@@ -55,6 +85,8 @@
                     <DataTemplate x:DataType="models:LayerListItem">
                         <Border
                             Padding="12,8"
+                            Background="Transparent"
+                            RightTapped="OnLayerRowRightTapped"
                             BorderBrush="{StaticResource CoalRaisedBrush}"
                             BorderThickness="0,0,0,1">
                             <StackPanel>
@@ -99,6 +131,7 @@
             MaxWidth="200"
             FontSize="11"
             Foreground="{StaticResource CoalMutedTextBrush}"
-            Text="No layers yet — File → New Layer to start" />
+            Text="No layers yet — File → New Layer to start"
+            loc:Localize.Key="visualist.rail.empty_hint" />
     </Grid>
 </UserControl>

@@ -10,11 +10,6 @@ public sealed partial class StatusStripView : UserControl, IDisposable
 {
     public StatusStripViewModel ViewModel { get; }
     private bool _disposed;
-    // Reentrancy guard — a second click while the dialog's still resolving
-    // ShowAsync would stack a second dialog onto the same XamlRoot, which
-    // WinUI rejects with InvalidOperationException ("only one ContentDialog
-    // open at a time"). Drop the second click silently.
-    private bool _settingsDialogInFlight;
 
     public StatusStripView(StatusStripViewModel viewModel)
     {
@@ -43,23 +38,13 @@ public sealed partial class StatusStripView : UserControl, IDisposable
     private void OnIpcBusDotClicked(object? sender, EventArgs e)
         => OpenSettingsAt(SettingsDialog.Tab.Connection);
 
-    private async void OpenSettingsAt(SettingsDialog.Tab tab)
-    {
-        if (_settingsDialogInFlight) return;
-        if (XamlRoot is null) return;
-        _settingsDialogInFlight = true;
-        try
-        {
-            var dlg = new SettingsDialog((int)tab) { XamlRoot = XamlRoot };
-            await dlg.ShowAsync();
-        }
-        catch (Exception ex)
-        {
-            GlobalLogger.Error("StatusStripView", $"OpenSettingsAt({tab}) failed", ex);
-        }
-        finally
-        {
-            _settingsDialogInFlight = false;
-        }
-    }
+    // The old per-view _settingsDialogInFlight guard only knew about clicks on
+    // THIS strip — it couldn't see the Tools → Settings path, so a dot click
+    // racing the menu still produced two live Settings windows that clobbered
+    // each other's saves on Save. The single-instance gate now lives on
+    // SettingsDialog itself (OpenOrFocus), shared by both entry points; it
+    // re-routes an already-open window to `tab` so the deep link still lands
+    // on the right category, and logs its own failures.
+    private void OpenSettingsAt(SettingsDialog.Tab tab)
+        => SettingsDialog.OpenOrFocus(tab);
 }

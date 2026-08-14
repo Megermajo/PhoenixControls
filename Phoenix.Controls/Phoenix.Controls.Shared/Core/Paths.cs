@@ -205,8 +205,6 @@ namespace Phoenix.Controls.Shared.Core
         public static string HubLayers  => HubData("layers");
         /// <summary>Solution-anchored Hub <c>data/overlay</c>.</summary>
         public static string HubOverlay => HubData("overlay");
-        /// <summary>Solution-anchored Hub <c>data/assets</c>.</summary>
-        public static string HubAssets  => HubData("assets");
         /// <summary>Solution-anchored Hub <c>data/media</c>.</summary>
         public static string HubMedia   => HubData("media");
 
@@ -220,8 +218,7 @@ namespace Phoenix.Controls.Shared.Core
         // dock layout, updater state, recent files, window state). The retail
         // rebrand collapses both roots into <c>%AppData%/PhoenixControls/</c>;
         // the same convention applies to <c>%LOCALAPPDATA%</c> for cache-tier
-        // state. <see cref="Phoenix.Controls.Shared.Services.AppDataMigrator"/>
-        // moves any legacy data forward on first launch.
+        // state.
         // ─────────────────────────────────────────────────────────────────
 
         /// <summary>The retail-brand folder name used under both AppData roots.</summary>

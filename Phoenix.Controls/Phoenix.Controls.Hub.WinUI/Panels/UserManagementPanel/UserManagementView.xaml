@@ -1,0 +1,1807 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.UserManagementPanel.UserManagementView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.UserManagementPanel"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="User Management page"
+    AutomationProperties.HelpText="Welcomes, first-time greetings, a viewer queue, role groups, and watch time. Pick a section from the chips on the left; the line of waiting viewers stays on the right."
+    loc:Localize.AutomationKey="panel.usermgmt.page.a11y"
+    loc:Localize.HelpTextKey="panel.usermgmt.page.help">
+
+    <!--
+        ══════════════════ THE HOUSE TOOL-PAGE SHELL ══════════════════
+
+        Row 0  ToolPageHeader — the 48 px band: name · master switch · ONE state
+               phrase. It replaces THREE rows this page used to stack — the action
+               strip, the ToolStatusPill inside it, and the pinned master-state
+               banner at the top of the left column — which between them rendered
+               the same boolean in three vocabularies (DISABLED / OFF / dormant)
+               above a strip of stat tiles reading 0 on a fresh install.
+        Row 1  two-column body, no ColumnSpacing: the right column's left border
+               IS the divider.
+
+               LEFT  *    every SETTING, behind the section nav —
+                           WELCOMING · GREETING · QUEUE · OVERLAY · REPLIES ·
+                           GROUPS · WATCH TIME.
+
+                           ★ WATCH TIME is the one section that is NOT this tool's
+                           config. Its three sampler settings are AppConfig, written
+                           straight through ConfigManager.SaveDeferred, because watch
+                           time records with every pre-build tool switched off. It
+                           lives on this page because this is where those hours are
+                           spent — the group cards turn them into memberships.
+               RIGHT 300  NOW WAITING (the live queue). A fixed width, not a
+                          proportion: a live list of logins does not get wider
+                          because the window did, and the settings column is the
+                          one that has fields to fit.
+
+        ★ THE PILL IS RE-SCOPED, NOT DELETED. ToolStatusPill, the service-side
+        UserManagementService.PillState machine and PreBuildStatusPillTests all
+        stay exactly as they were — they carry the honesty audit where partial
+        states were refused a green light. This page now renders that same
+        predicate's result in the header band instead of in a pill; see
+        UserManagementView.UpdateHeaderState, which reads StatusPillText and
+        StatusPulsing and invents no state of its own.
+
+        WHY THE QUEUE IS THE LIVE COLUMN. It is the only surface here that a
+        chat command or a script's Queue.Push can change while the panel is open:
+        it is rebuilt from the service on every RuntimeChanged. Groups deliberately
+        stay in the detail column — promoting them would cost the only column that
+        can honestly be called live.
+
+        WHY A SELECTOR AND NOT A PIVOT. Pivot is banned in this codebase (it
+        realizes lazily, which is the crash class this project has already paid
+        for). ToolSectionSelector owns no content: this page owns each section
+        body and its Visibility, and every body stays in the visual tree, so a
+        focused TextBox commits its LostFocus edit even when the section changes.
+
+        THE FIVE SECTION GATES STAY WITH THEIR SECTIONS. Only the master moved to
+        the header band. Welcoming, general-welcome, greeting, queue and overlay
+        each keep their own switch inside the card it governs — and the three that
+        used to sit beside a section eyebrow now sit alone on that eyebrow's rule,
+        because the nav above already names the section.
+
+        NO IsEnabled GATE ANYWHERE ON THIS PAGE, and that is deliberate. Nothing
+        on the old page was gated on the master switch, and greying the body now
+        would stop a streamer configuring the tool before switching it on — a
+        behaviour regression dressed up as a layout change. The header's state
+        phrase says what "off" means instead. (Corollary: none of the
+        IsEnabled-on-a-Panel markup-compiler traps can bite here, because this
+        page binds IsEnabled nowhere.)
+
+        NO STAT STRIP, NO ACTIVITY FEED. Both were watch surfaces on a config
+        page: four tiles reading 0 0 0 0 on a fresh install, and two feeds
+        answering "what happened 40 seconds ago" to someone who came here to
+        change a threshold. The one count worth a glance — how many are waiting —
+        is in the live column's own header, where the list it counts is.
+
+        NO ENTRANCE ANIMATION. the Pre-Builds rail already runs FadeSlideIn on every tool
+        activation; the page-side entrance this file used to run was the second of
+        two.
+
+        ★ LOCALIZATION. Every x:Name'd TextBlock below is re-pointed at a
+        lang-bundle key in UserManagementView.ApplyLocalizedText, and the XAML
+        literal is that key's English fallback. Renaming or dropping one silently
+        reverts a German / French / Spanish user to English on that line — and
+        dropping the ELEMENT without dropping its assignment line is a CS0103,
+        so the two always move together.
+
+        ★ Nine names left this pass and their assignment lines left with them:
+        the six section eyebrows that repeated their own nav label
+        (GreetingSectionEyebrow, QueueSectionEyebrow, QueueOverlayEyebrow,
+        QueueRepliesEyebrow, GroupsSectionEyebrow, WatchTimeSectionEyebrow — a
+        seventh, WELCOMING, was a literal with no name), PageScopeHint with the
+        banner, and QueueEmptyTitle with the queue's two-line empty state.
+        NOT ONE LANG KEY WAS REMOVED: six of the seven eyebrow keys are the very
+        keys the nav labels itself with in ApplyLocalizedText, so they are still
+        read on every page open.
+
+        Text inside a DataTemplate cannot be reached that way — a templated card
+        has no page namescope — so the group cards' and watch-time rows' own
+        strings go through Localizer in their ROW VMs instead (GroupRowVm,
+        PlatformGroupRowVm, WatchTimeRowVm). Same bundle, different hook.
+    -->
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- KEPT, checked type by type: after the conversions below this
+                     page still declares TextBox everywhere (queue name, verbs,
+                     numerics, the eleven reply templates, welcome and group
+                     bodies). It declares no ComboBox, no ToggleSwitch, no CheckBox
+                     and no Pivot; the twelve checkboxes in the two role gates
+                     belong to RoleCheckRow, which merges this dictionary itself. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell styles. Never merged into App.xaml. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Flush card: Padding 0 so a CoalRaised header band can run edge to
+                 edge. Used by the welcome and group cards, which both open with one. -->
+            <Style x:Key="UmCardFlush" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource CoalShellBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CoalCardBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource Radius1Corner}" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Margin" Value="0,0,0,12" />
+            </Style>
+
+            <!-- In-card group separator. -->
+            <Style x:Key="UmHairline" TargetType="Border">
+                <Setter Property="Height" Value="1" />
+                <Setter Property="Background" Value="{StaticResource CoalRaisedBrush}" />
+            </Style>
+
+            <!-- Borderless host for a converted CheckBox / ToggleSwitch. The Button
+                 owns the Click, the accessible name and the tooltip; the TogglePill
+                 inside it is display-only. -->
+            <Style x:Key="UmPillHost" TargetType="Button">
+                <Setter Property="Padding" Value="0,4,10,4" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="{StaticResource Radius1Corner}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <!-- ════════ One waiting viewer, in the 300 px live column ════════
+                 Read-only by design — the line lives in the databank, not in the
+                 config blob, so there is nothing here to edit and the row is
+                 rebuilt wholesale whenever the queue changes. Its one action is
+                 removal, and that goes through the SERVICE so it writes the same
+                 store, raises the same Queue.OnChanged and refreshes the same
+                 overlay as the chat verb.
+                 ItemsControl → ItemsRepeater host: safe, because no code-behind
+                 walks the visual tree for queue rows. -->
+            <DataTemplate x:Key="QueueRowTemplate" x:DataType="local:QueueRowVm">
+                <Grid Padding="14,7"
+                      ColumnSpacing="8"
+                      BorderBrush="{StaticResource CoalRaisedBrush}"
+                      BorderThickness="0,0,0,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="{x:Bind PositionText}"
+                               FontFamily="{StaticResource MonoFont}"
+                               FontSize="13"
+                               MinWidth="26"
+                               TextAlignment="Right"
+                               Foreground="{StaticResource EmberPrimaryBrush}"
+                               VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind Display}"
+                                   Style="{StaticResource ToolMonoBodyTextStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <!-- Secondary login line only when it differs from the
+                             display name — the difference is exactly what a
+                             moderator needs when the two disagree. -->
+                        <TextBlock Text="{x:Bind LoginHint}"
+                                   Visibility="{x:Bind LoginHintVisibility}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}" />
+                    </StackPanel>
+                    <!-- Priority badge only when the entry actually carries weight. -->
+                    <Border Grid.Column="2"
+                            Visibility="{x:Bind PriorityVisibility}"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            CornerRadius="{StaticResource Radius1Corner}"
+                            Padding="6,2" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind PriorityText}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="10"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                    </Border>
+                    <Button Grid.Column="3"
+                            Style="{StaticResource ToolDangerButtonStyle}"
+                            MinWidth="40" Padding="0"
+                            Click="OnRemoveQueueRowClick"
+                            AutomationProperties.Name="Remove this viewer from the queue"
+                            loc:Localize.AutomationKey="panel.usermgmt.queue.row.remove.a11y">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="11"
+                                  Foreground="{StaticResource ErrBrush}" />
+                    </Button>
+                </Grid>
+            </DataTemplate>
+
+            <!-- ════════ One personalized welcome ════════
+                 Raised header band, always-open settings body. ItemsControl →
+                 ItemsRepeater host: safe, no visual-tree walk on this list. -->
+            <DataTemplate x:Key="WelcomeRowTemplate" x:DataType="local:WelcomeRowVm">
+                <Border Style="{StaticResource UmCardFlush}">
+                    <StackPanel>
+
+                        <!-- Header band: icon + username eyebrow + enable pill + delete.
+                             CornerRadius 1,1,0,0 = card's Radius1 (2) minus the 1px border,
+                             so the raised band doesn't poke past the rounded top corners. -->
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                                BorderThickness="0,0,0,1"
+                                CornerRadius="1,1,0,0"
+                                Padding="14,8">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE77B;"
+                                          FontSize="12"
+                                          Foreground="{StaticResource EmberPrimaryBrush}"
+                                          VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{x:Bind TitleEyebrow, Mode=OneWay}"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                                <Button Grid.Column="2"
+                                        Style="{StaticResource UmPillHost}"
+                                        Click="OnToggleWelcomeEnabledClick"
+                                        AutomationProperties.Name="Personalized welcome enabled"
+                                        loc:Localize.AutomationKey="panel.usermgmt.welcome.row.enabled.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind Enabled, Mode=OneWay}"
+                                                    Label="{x:Bind EnabledLabel, Mode=OneWay}" />
+                                </Button>
+                                <Button Grid.Column="3"
+                                        Style="{StaticResource ToolDangerButtonStyle}"
+                                        Click="OnDeleteWelcomeClick"
+                                        AutomationProperties.Name="Delete personalized welcome"
+                                        loc:Localize.AutomationKey="panel.usermgmt.welcome.row.delete.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                                  Foreground="{StaticResource ErrBrush}" />
+                                        <TextBlock Text="DELETE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.welcome.row.delete.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Settings body -->
+                        <StackPanel Margin="14,12,14,14" Spacing="10">
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Username"
+                                           Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.usermgmt.welcome.row.username.label" />
+                                <TextBox Grid.Column="1"
+                                         Text="{x:Bind Username, Mode=TwoWay}"
+                                         PlaceholderText="viewer login"
+                                         HorizontalAlignment="Left"
+                                         Width="240"
+                                         AutomationProperties.Name="Welcome username"
+                                         loc:Localize.PlaceholderKey="panel.usermgmt.welcome.row.username.placeholder"
+                                         loc:Localize.AutomationKey="panel.usermgmt.welcome.row.username.a11y" />
+                            </Grid>
+
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="Message" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.usermgmt.welcome.row.message.label" />
+                                <TextBox Text="{x:Bind Message, Mode=TwoWay}"
+                                         PlaceholderText="Look who's here — welcome back, {user}!"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="60"
+                                         HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Personalized welcome message"
+                                         loc:Localize.PlaceholderKey="panel.usermgmt.welcome.row.message.placeholder"
+                                         loc:Localize.AutomationKey="panel.usermgmt.welcome.row.message.a11y" />
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Tokens:  {user} = display name  ·  {platform} = twitch / youtube / kick"
+                                           loc:Localize.Key="panel.usermgmt.greeting.tokens_hint" />
+                            </StackPanel>
+
+                            <!-- CheckBox → TogglePill. The VM keeps its bool? property for
+                                 the snapshot path and exposes a plain bool for the pill. -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Auto-shoutout on arrival (Twitch only)"
+                                           Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.usermgmt.welcome.row.shoutout.label" />
+                                <Button Grid.Column="1"
+                                        Style="{StaticResource UmPillHost}"
+                                        Click="OnToggleWelcomeShoutoutClick"
+                                        AutomationProperties.Name="Auto-shoutout on arrival"
+                                        loc:Localize.AutomationKey="panel.usermgmt.welcome.row.shoutout.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind AutoShoutoutOn, Mode=OneWay}"
+                                                    Label="{x:Bind AutoShoutoutLabel, Mode=OneWay}" />
+                                </Button>
+                            </Grid>
+
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- ════════ One PLATFORM-OWNED group ════════
+                 Moderator / VIP / Subscriber. Read-only by construction: no member
+                 editor, no delete, no enable — there is nothing here Phoenix decides.
+                 The card is deliberately still SHOWN rather than removed, because a
+                 streamer who used to keep names in those boxes has to be able to find
+                 out where they went; see PlatformGroupRowVm's doc.
+
+                 Flat card, not a collapsible one: there is no body to reveal, and a
+                 chevron that opens onto nothing is worse than no chevron. It is also
+                 why this list can be an ItemsRepeater while the two below cannot —
+                 nothing walks the visual tree for these rows. -->
+            <DataTemplate x:Key="PlatformGroupTemplate" x:DataType="local:PlatformGroupRowVm">
+                <Border Style="{StaticResource UmCardFlush}">
+                    <Grid ColumnSpacing="10" Padding="12,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <!-- Contact-info glyph rather than the group glyph the editable
+                             cards use: at a glance, a different KIND of card. -->
+                        <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE77B;" FontSize="12"
+                                  Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                  VerticalAlignment="Top" Margin="0,2,0,0" />
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="{x:Bind NameEyebrow}"
+                                       Style="{StaticResource ToolEyebrowTextStyle}" />
+                            <TextBlock Text="{x:Bind MembershipText}"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <!-- Sits exactly where the editable cards put their member
+                             count, so the two kinds of card read apart at a glance. -->
+                        <Border Grid.Column="2"
+                                Background="{StaticResource CoalRaisedBrush}"
+                                CornerRadius="{StaticResource Radius1Corner}"
+                                Padding="6,2" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind SourceBadge}"
+                                       Style="{StaticResource ToolSubLabelTextStyle}" />
+                        </Border>
+                    </Grid>
+                </Border>
+            </DataTemplate>
+
+            <!-- ════════ The REGULAR group ════════
+                 Hand-rolled collapsible card (Expander removed after the hard crash
+                 at first Minigames realization). No delete, no enable — membership
+                 IS the switch. The only standard group left with a membership Phoenix
+                 owns, and the only one that can also be EARNED (the watch-hour rule
+                 in the body).
+                 ⚠ This list and the custom-group list below stay on ItemsControl.
+                 Both host the GroupCard / GroupBody visual-tree walk in
+                 UserManagementView.OnToggleGroupClick, and both templates
+                 deliberately share the same x:Names, so they must never be
+                 consolidated into one repeater with a template selector. -->
+            <DataTemplate x:Key="RegularGroupTemplate" x:DataType="local:GroupRowVm">
+                <Border x:Name="GroupCard" Style="{StaticResource UmCardFlush}">
+                    <StackPanel>
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                                BorderThickness="0,0,0,1"
+                                CornerRadius="1,1,0,0"
+                                Padding="12,6">
+                            <Button Background="Transparent" BorderThickness="0"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                    Padding="0,4"
+                                    Click="OnToggleGroupClick"
+                                    ToolTipService.ToolTip="Collapse / expand"
+                                    loc:Localize.TooltipKey="panel.usermgmt.groups.card.toggle.tip"
+                                    AutomationProperties.Name="{x:Bind NameEyebrow, Mode=OneWay}">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE716;" FontSize="12"
+                                              Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind NameEyebrow, Mode=OneWay}"
+                                               Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{x:Bind MemberCountText, Mode=OneWay}"
+                                               Style="{StaticResource ToolSubLabelTextStyle}" VerticalAlignment="Center" />
+                                    <FontIcon Grid.Column="3" FontFamily="Segoe MDL2 Assets"
+                                              Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" FontSize="10"
+                                              Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                </Grid>
+                            </Button>
+                        </Border>
+                        <StackPanel x:Name="GroupBody"
+                                    Visibility="{x:Bind BodyVisibility, Mode=OneWay}"
+                                    Margin="14,10,14,14" Spacing="6">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="MEMBERS — ONE USERNAME PER LINE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                           loc:Localize.Key="panel.usermgmt.groups.members.label" />
+                                <TextBox Text="{x:Bind MembersText, Mode=TwoWay}"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="96"
+                                         FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                         HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Group members"
+                                         loc:Localize.AutomationKey="panel.usermgmt.groups.members.a11y" />
+                            </StackPanel>
+                            <Border Style="{StaticResource UmHairline}" Margin="0,4" />
+                            <!-- THE WATCH-HOUR RULE. A second, independent way into the
+                                 group, and the state line under the box is where its two
+                                 surprising properties are stated: it is evaluated live on
+                                 every check, and it never writes a name into the list
+                                 above — which is what makes raising the threshold take the
+                                 grant back instead of stranding promoted members.
+                                 LostFocus like every other clamping numeric on this page:
+                                 a parse that fights the streamer mid-keystroke eats the
+                                 first digit of a two-digit number. -->
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind WatchHoursLabel}" Style="{StaticResource ToolSubLabelTextStyle}" />
+                                <TextBox Text="{x:Bind WatchHoursText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         HorizontalAlignment="Left"
+                                         Width="120"
+                                         AutomationProperties.Name="Auto-join after hours watched"
+                                         loc:Localize.AutomationKey="panel.usermgmt.groups.watch_hours.a11y" />
+                                <TextBlock Text="{x:Bind WatchHoursStateText, Mode=OneWay}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- ════════ One CUSTOM group ════════
+                 Same collapsible card, plus an editable name in the body and a
+                 delete button in the header band (a plain SIBLING of the expand
+                 button, never nested inside it). -->
+            <DataTemplate x:Key="CustomGroupTemplate" x:DataType="local:GroupRowVm">
+                <Border x:Name="GroupCard" Style="{StaticResource UmCardFlush}">
+                    <StackPanel>
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                                BorderThickness="0,0,0,1"
+                                CornerRadius="1,1,0,0"
+                                Padding="12,6">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0"
+                                        Background="Transparent" BorderThickness="0"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                        Padding="0,4"
+                                        Click="OnToggleGroupClick"
+                                        ToolTipService.ToolTip="Collapse / expand"
+                                        loc:Localize.TooltipKey="panel.usermgmt.groups.custom.toggle.tip"
+                                        AutomationProperties.Name="{x:Bind NameEyebrow, Mode=OneWay}">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE716;" FontSize="12"
+                                                  Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind NameEyebrow, Mode=OneWay}"
+                                                   Style="{StaticResource ToolEyebrowTextStyle}"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Text="{x:Bind MemberCountText, Mode=OneWay}"
+                                                   Style="{StaticResource ToolSubLabelTextStyle}" VerticalAlignment="Center" />
+                                        <FontIcon Grid.Column="3" FontFamily="Segoe MDL2 Assets"
+                                                  Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" FontSize="10"
+                                                  Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                                <Button Grid.Column="1"
+                                        Style="{StaticResource ToolDangerButtonStyle}"
+                                        Click="OnDeleteGroupClick"
+                                        AutomationProperties.Name="Delete custom group"
+                                        loc:Localize.AutomationKey="panel.usermgmt.groups.custom.delete.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                                  Foreground="{StaticResource ErrBrush}" />
+                                        <TextBlock Text="DELETE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.groups.custom.delete.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="GroupBody"
+                                    Visibility="{x:Bind BodyVisibility, Mode=OneWay}"
+                                    Margin="14,10,14,14" Spacing="6">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="GROUP NAME" Style="{StaticResource ToolSubLabelTextStyle}"
+                                           loc:Localize.Key="panel.usermgmt.groups.custom.name.label" />
+                                <TextBox Text="{x:Bind Name, Mode=TwoWay}"
+                                         PlaceholderText="e.g. Night Crew"
+                                         HorizontalAlignment="Left"
+                                         Width="240"
+                                         AutomationProperties.Name="Custom group name"
+                                         loc:Localize.PlaceholderKey="panel.usermgmt.groups.custom.name.placeholder"
+                                         loc:Localize.AutomationKey="panel.usermgmt.groups.custom.name.a11y" />
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Becomes the {group.&lt;name&gt;} key and the node output."
+                                           loc:Localize.Key="panel.usermgmt.groups.custom.name.hint" />
+                            </StackPanel>
+                            <Border Style="{StaticResource UmHairline}" Margin="0,4" />
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="MEMBERS — ONE USERNAME PER LINE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                           loc:Localize.Key="panel.usermgmt.groups.custom.members.label" />
+                                <TextBox Text="{x:Bind MembersText, Mode=TwoWay}"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="96"
+                                         FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                         HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Group members"
+                                         loc:Localize.AutomationKey="panel.usermgmt.groups.custom.members.a11y" />
+                            </StackPanel>
+                            <Border Style="{StaticResource UmHairline}" Margin="0,4" />
+                            <!-- Same watch-hour rule the Regular card carries, bound to
+                                 this group's own UserGroup.AutoWatchHours. -->
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind WatchHoursLabel}" Style="{StaticResource ToolSubLabelTextStyle}" />
+                                <TextBox Text="{x:Bind WatchHoursText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                         HorizontalAlignment="Left"
+                                         Width="120"
+                                         AutomationProperties.Name="Auto-join after hours watched"
+                                         loc:Localize.AutomationKey="panel.usermgmt.groups.custom.watch_hours.a11y" />
+                                <TextBlock Text="{x:Bind WatchHoursStateText, Mode=OneWay}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- ════════ One TOP WATCHER ════════
+                 Read-only: the leaderboard is a view of the same rows the browser
+                 below it edits, so putting an editor on both would be two places to
+                 change one number. Rank is the row's position, which an ItemsRepeater
+                 does not hand the template — so it is deliberately absent rather than
+                 faked; the list is sorted, and the order IS the rank. -->
+            <DataTemplate x:Key="TopWatcherRowTemplate" x:DataType="local:WatchTimeRowVm">
+                <Grid Tag="{x:Bind}"
+                      Padding="0,5"
+                      ColumnSpacing="12"
+                      BorderBrush="{StaticResource CoalDividerBrush}"
+                      BorderThickness="0,0,0,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <!-- Display and its hint are OneWay, not the x:Bind default: a
+                         row can outlive the moment its viewer's real name is learned
+                         (see WatchTimeRowVm.UpdateDisplay). -->
+                    <StackPanel Grid.Column="0" Spacing="1">
+                        <TextBlock Text="{x:Bind Display, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoBodyTextStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind LoginHint}"
+                                   Visibility="{x:Bind LoginHintVisibility, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1"
+                               Text="{x:Bind WatchedText, Mode=OneWay}"
+                               FontFamily="{StaticResource MonoFont}" FontSize="12"
+                               Foreground="{StaticResource EmberPrimaryBrush}"
+                               VerticalAlignment="Center" />
+                </Grid>
+            </DataTemplate>
+
+            <!-- ════════ One BROWSED viewer, with the manual correction ════════
+                 Two number boxes and two buttons. The boxes are bound TwoWay to the
+                 ROW's edit fields, never to its stored minutes: a background sample
+                 may credit this viewer while the streamer is typing, and the two must
+                 not fight. APPLY is what moves the stored value.
+                 ★ The row VM instance is stable for the panel's life (see
+                 WatchTimeRowVm) precisely so a refresh cannot swallow a half-typed
+                 correction. -->
+            <DataTemplate x:Key="WatchTimeRowTemplate" x:DataType="local:WatchTimeRowVm">
+                <Grid Tag="{x:Bind}"
+                      Padding="0,6"
+                      ColumnSpacing="8"
+                      BorderBrush="{StaticResource CoalDividerBrush}"
+                      BorderThickness="0,0,0,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="1" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind Display, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoBodyTextStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind LoginHint}"
+                                   Visibility="{x:Bind LoginHintVisibility, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1"
+                               Text="{x:Bind WatchedText, Mode=OneWay}"
+                               FontFamily="{StaticResource MonoFont}" FontSize="11"
+                               MinWidth="70"
+                               TextAlignment="Right"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               VerticalAlignment="Center" />
+                    <TextBox Grid.Column="2"
+                             Text="{x:Bind HoursEdit, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                             Width="56"
+                             VerticalAlignment="Center"
+                             PlaceholderText="h"
+                             AutomationProperties.Name="Watch time hours"
+                             loc:Localize.PlaceholderKey="panel.usermgmt.watchtime.row.hours.placeholder"
+                             loc:Localize.AutomationKey="panel.usermgmt.watchtime.row.hours.a11y" />
+                    <TextBox Grid.Column="3"
+                             Text="{x:Bind MinutesEdit, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                             Width="56"
+                             VerticalAlignment="Center"
+                             PlaceholderText="m"
+                             AutomationProperties.Name="Watch time minutes"
+                             loc:Localize.PlaceholderKey="panel.usermgmt.watchtime.row.minutes.placeholder"
+                             loc:Localize.AutomationKey="panel.usermgmt.watchtime.row.minutes.a11y" />
+                    <Button Grid.Column="4"
+                            Style="{StaticResource ToolSecondaryButtonStyle}"
+                            VerticalAlignment="Center"
+                            Click="OnApplyWatchTimeClick"
+                            AutomationProperties.Name="Apply this watch time"
+                            loc:Localize.AutomationKey="panel.usermgmt.watchtime.row.apply.a11y">
+                        <TextBlock Text="SET" Style="{StaticResource ToolStripLabelTextStyle}"
+                                   loc:Localize.Key="panel.usermgmt.watchtime.row.apply.label" />
+                    </Button>
+                    <Button Grid.Column="5"
+                            Style="{StaticResource ToolDangerButtonStyle}"
+                            MinWidth="40" Padding="0"
+                            VerticalAlignment="Center"
+                            Click="OnResetWatchTimeClick"
+                            AutomationProperties.Name="Reset this viewer's watch time to zero"
+                            loc:Localize.AutomationKey="panel.usermgmt.watchtime.row.reset.a11y">
+                        <!-- The page's destructive glyph, same as RESET MEMORY and
+                             CLEAR: this zeroes a total that can only be re-earned in
+                             real time, so it must not read as a refresh. -->
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                  Foreground="{StaticResource ErrBrush}" />
+                    </Button>
+                </Grid>
+            </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+             Title, master switch, one state phrase. Everything is set from
+             code-behind (ApplyLocalizedText + UpdateHeaderState) because the
+             control takes plain properties, not DependencyProperties.
+
+             NO PRIMARY CTA HERE, deliberately. The band allows exactly one, and
+             this page already has two section-scoped brass CTAs that must stay
+             where the lists they add to are (ADD in WELCOMING, ADD GROUP in
+             GROUPS) — hoisting either would put two brass CTAs on one visible
+             surface and move an add-verb away from its list.
+
+             The master still writes through ViewModel.MasterEnabled, which uses
+             SaveNow (no 400 ms debounce) exactly as before, and the five SECTION
+             gates did not move. -->
+        <cmn:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ───────────── LEFT * : the settings ───────────── -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />   <!-- section nav    -->
+                    <RowDefinition Height="*" />      <!-- section bodies -->
+                </Grid.RowDefinitions>
+
+                <!-- The section nav. Labels are assigned from code-behind at
+                     Loaded so six of the seven can reuse the lang keys the page
+                     already ships; see ApplyLocalizedText.
+                     ★ Padding is HORIZONTAL ONLY: the nav is a 40 px control whose
+                     selected item is carried by a 2 px bottom edge, and that edge
+                     has to land on this border's own hairline. Vertical padding
+                     would float it in the middle of the row. -->
+                <Border Grid.Row="0"
+                        Background="{StaticResource CoalSurfaceBrush}"
+                        BorderBrush="{StaticResource CoalDividerBrush}"
+                        BorderThickness="0,0,0,1"
+                        Padding="14,0">
+                    <cmn:ToolSectionSelector x:Name="SectionSelector"
+                                             SelectedIndex="{x:Bind ViewModel.SelectedSection, Mode=TwoWay}"
+                                             AutomationProperties.Name="Section"
+                                             loc:Localize.AutomationKey="panel.usermgmt.nav.a11y" />
+                </Border>
+
+                <ScrollViewer Grid.Row="1"
+                              x:Name="DetailScroll"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Disabled">
+                    <StackPanel Spacing="12" Padding="14">
+
+                        <!-- ══════════════ 0 — WELCOMING ══════════════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.WelcomingSectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+
+                            <!-- Section gate on its rule. The eyebrow that used to
+                                 open this row said "WELCOMING", which is what the nav
+                                 chip directly above it says; the gate is what the row
+                                 was actually for. -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                                <Button Grid.Column="1"
+                                        Style="{StaticResource UmPillHost}"
+                                        Click="OnToggleWelcomingClick"
+                                        AutomationProperties.Name="Welcoming enabled"
+                                        loc:Localize.AutomationKey="panel.usermgmt.welcoming.gate.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind ViewModel.WelcomingEnabled, Mode=OneWay}"
+                                                    Label="{x:Bind ViewModel.WelcomingEnabledLabel, Mode=OneWay}" />
+                                </Button>
+                            </Grid>
+
+                            <!-- General welcome card -->
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock Text="GENERAL WELCOME" Style="{StaticResource ToolEyebrowTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.welcoming.general.eyebrow" />
+                                            <!-- Precedence, stated because the card cannot show it:
+                                                 OnChatMessageAsync picks personalized row → once-ever
+                                                 greeting → this line, and stops at the first hit. -->
+                                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       Text="Sent on a first message each stream to anyone with no personalized row · a brand-new chatter gets the first-time greeting instead"
+                                                       loc:Localize.Key="panel.usermgmt.welcoming.general.hint" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource UmPillHost}"
+                                                Click="OnToggleGeneralWelcomeClick"
+                                                AutomationProperties.Name="Greet everyone's first message"
+                                                loc:Localize.AutomationKey="panel.usermgmt.welcoming.general.gate.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.GeneralWelcomeEnabled, Mode=OneWay}"
+                                                            Label="{x:Bind ViewModel.GeneralWelcomeEnabledLabel, Mode=OneWay}" />
+                                        </Button>
+                                    </Grid>
+                                    <Border Style="{StaticResource UmHairline}" />
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="Message" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.welcoming.general.message.label" />
+                                        <TextBox Text="{x:Bind ViewModel.GeneralWelcomeMessage, Mode=TwoWay}"
+                                                 PlaceholderText="Welcome {user}! Enjoy your stay."
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="60"
+                                                 HorizontalAlignment="Stretch"
+                                                 AutomationProperties.Name="General welcome message"
+                                                 loc:Localize.PlaceholderKey="panel.usermgmt.welcoming.general.message.placeholder"
+                                                 loc:Localize.AutomationKey="panel.usermgmt.welcoming.general.message.a11y" />
+                                        <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   Text="Tokens:  {user} = display name  ·  {platform} = twitch / youtube / kick"
+                                                   loc:Localize.Key="panel.usermgmt.greeting.tokens_hint" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Section header: eyebrow + hairline + Add. -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="PERSONALIZED WELCOMES"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.welcoming.list.eyebrow" />
+                                <Border Grid.Column="1" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                                <!-- This section's one brass CTA. -->
+                                <Button Grid.Column="2"
+                                        Style="{StaticResource ToolBrassCtaStyle}"
+                                        Click="OnAddWelcomeClick"
+                                        AutomationProperties.Name="Add personalized welcome"
+                                        loc:Localize.AutomationKey="panel.usermgmt.welcoming.add.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                                  Foreground="{StaticResource CoalShellBrush}" />
+                                        <TextBlock Text="ADD" Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.welcoming.add.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Welcomes, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource WelcomeRowTemplate}"
+                                           AutomationProperties.Name="Personalized welcomes"
+                                           loc:Localize.AutomationKey="panel.usermgmt.welcoming.list.a11y" />
+
+                            <!-- Empty state (the Add button above stays). -->
+                            <StackPanel Visibility="{x:Bind ViewModel.WelcomeEmptyVisibility, Mode=OneWay}"
+                                        HorizontalAlignment="Center" Margin="0,16,0,8" Spacing="8">
+                                <TextBlock Text="No personalized welcomes yet"
+                                           FontFamily="{StaticResource DisplayFont}"
+                                           FontSize="20"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           HorizontalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.welcoming.empty.title" />
+                                <TextBlock Text="Click “Add” to give a specific viewer their own greeting."
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="12"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           HorizontalAlignment="Center" TextAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.welcoming.empty.body" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ══════════════ 1 — FIRST-TIME GREETING ══════════════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.GreetingSectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+
+                            <!-- Gate on its rule; the "GREETING" eyebrow that used to
+                                 open it duplicated the nav chip above, key and all. -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                                <Button Grid.Column="1"
+                                        Style="{StaticResource UmPillHost}"
+                                        Click="OnToggleGreetingClick"
+                                        AutomationProperties.Name="First-time greeting enabled"
+                                        loc:Localize.AutomationKey="panel.usermgmt.greeting.gate.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind ViewModel.GreetingEnabled, Mode=OneWay}"
+                                                    Label="{x:Bind ViewModel.GreetingEnabledLabel, Mode=OneWay}" />
+                                </Button>
+                            </Grid>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="GreetingCardEyebrow" Text="FIRST-TIME GREETING"
+                                                   Style="{StaticResource ToolEyebrowTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.greeting.card_eyebrow" />
+                                        <TextBlock x:Name="GreetingCardHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   Text="Chatters seen before the tool was enabled count as new once."
+                                                   loc:Localize.Key="panel.usermgmt.greeting.card_hint" />
+                                    </StackPanel>
+                                    <Border Style="{StaticResource UmHairline}" />
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="GreetingMessageLabel" Text="Message"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.greeting.message_label" />
+                                        <TextBox Text="{x:Bind ViewModel.GreetingMessage, Mode=TwoWay}"
+                                                 PlaceholderText="Welcome to the channel, {user}! Great to have you here for the first time."
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="60"
+                                                 HorizontalAlignment="Stretch"
+                                                 AutomationProperties.Name="First-time greeting message"
+                                                 loc:Localize.PlaceholderKey="panel.usermgmt.greeting.message.placeholder"
+                                                 loc:Localize.AutomationKey="panel.usermgmt.greeting.message.a11y" />
+                                        <TextBlock x:Name="GreetingTokensHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   Text="Tokens:  {user} = display name  ·  {platform} = twitch / youtube / kick"
+                                                   loc:Localize.Key="panel.usermgmt.greeting.tokens_hint" />
+                                    </StackPanel>
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   Text="{x:Bind ViewModel.KnownChattersText, Mode=OneWay}" />
+                                        <!-- Confirmed destructive op — the ContentDialog is a
+                                             sanctioned exception, not a repeatable rejection. -->
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource ToolDangerButtonStyle}"
+                                                Click="OnResetKnownChattersClick"
+                                                AutomationProperties.Name="Reset known chatters"
+                                                loc:Localize.AutomationKey="panel.usermgmt.greeting.reset.a11y">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                                          Foreground="{StaticResource ErrBrush}" />
+                                                <TextBlock x:Name="ResetMemoryButtonText" Text="RESET MEMORY"
+                                                           Style="{StaticResource ToolStripLabelTextStyle}"
+                                                           loc:Localize.Key="panel.usermgmt.greeting.reset_button" />
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- GONE: the durable FIRST SEEN feed. It was a watch
+                                 surface on a config section — a scrolling list of who
+                                 first typed and when, above nothing a streamer can act
+                                 on here. Its one actionable summary, "N chatters
+                                 remembered", is still on the card above, next to the
+                                 button that clears exactly that set. The durable
+                                 UserMgmtSeenEver store and its service read are
+                                 unchanged; only the render surface (and the VM plumbing
+                                 that fed it) is gone. -->
+                        </StackPanel>
+
+                        <!-- ══════════════ 2 — VIEWER QUEUE ══════════════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.QueueSectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+
+                            <!-- Gate on its rule; the "VIEWER QUEUE" eyebrow that used
+                                 to open it duplicated the nav chip above, key and all. -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                                <Button Grid.Column="1"
+                                        Style="{StaticResource UmPillHost}"
+                                        Click="OnToggleQueueClick"
+                                        AutomationProperties.Name="Viewer queue enabled"
+                                        loc:Localize.AutomationKey="panel.usermgmt.queue.gate.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind ViewModel.QueueEnabled, Mode=OneWay}"
+                                                    Label="{x:Bind ViewModel.QueueEnabledLabel, Mode=OneWay}" />
+                                </Button>
+                            </Grid>
+
+                            <!-- Settings card: the queue's name, its four chat verbs, size /
+                                 weighting / cooldown, and the two role gates. -->
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="QueueCardEyebrow" Text="QUEUE SETTINGS"
+                                                   Style="{StaticResource ToolEyebrowTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.queue.card_eyebrow" />
+                                        <TextBlock x:Name="QueueCardHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   Text="Survives a Hub restart · subs and VIPs can be given a head start"
+                                                   loc:Localize.Key="panel.usermgmt.queue.card_hint" />
+                                    </StackPanel>
+                                    <Border Style="{StaticResource UmHairline}" />
+
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="QueueNameLabel" Text="Queue name"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.queue.name_label" />
+                                        <TextBox Text="{x:Bind ViewModel.QueueName, Mode=TwoWay}"
+                                                 PlaceholderText="viewers"
+                                                 Width="{StaticResource ToolFieldWidthMd}"
+                                                 HorizontalAlignment="Left"
+                                                 AutomationProperties.Name="Queue name"
+                                                 loc:Localize.AutomationKey="panel.usermgmt.queue.name_label" />
+                                        <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   Text="{x:Bind ViewModel.QueueNodeHintText, Mode=OneWay}" />
+                                    </StackPanel>
+
+                                    <Border Style="{StaticResource UmHairline}" />
+
+                                    <!-- ════ FIELD GEOMETRY, THE ONE RULE THIS CARD NOW KEEPS ════
+                                         Every input below is sized by what it HOLDS, from the
+                                         ToolFieldWidth tokens — Sm for a chat verb, Xs for an
+                                         integer, Md for the name above — and the grids are
+                                         LEFT-PACKED (Auto columns, 40 px gap) instead of star.
+                                         Star columns stretched a four-character verb and a
+                                         two-digit number across ~985 px each, four across, in
+                                         two stacked rows; the card read as a spreadsheet and
+                                         no two boxes on the page agreed on a width.
+                                         ★ The numeric bindings keep UpdateSourceTrigger=LostFocus.
+                                         A clamping parse must not fight the streamer mid-keystroke —
+                                         that is what eats the first digit of a two-digit number. -->
+                                    <Grid ColumnSpacing="40" RowSpacing="10" HorizontalAlignment="Left">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueJoinLabel" Text="JOIN COMMAND" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.join_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueJoinCommand, Mode=TwoWay}"
+                                                     PlaceholderText="join"
+                                                     Width="{StaticResource ToolFieldWidthSm}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Queue join command"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.join.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueLeaveLabel" Text="LEAVE COMMAND" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.leave_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueLeaveCommand, Mode=TwoWay}"
+                                                     PlaceholderText="leave"
+                                                     Width="{StaticResource ToolFieldWidthSm}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Queue leave command"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.leave.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueListLabel" Text="LIST COMMAND" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.list_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueListCommand, Mode=TwoWay}"
+                                                     PlaceholderText="queue"
+                                                     Width="{StaticResource ToolFieldWidthSm}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Queue list command"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.list.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueuePositionLabel" Text="POSITION COMMAND" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.position_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueuePositionCommand, Mode=TwoWay}"
+                                                     PlaceholderText="position"
+                                                     Width="{StaticResource ToolFieldWidthSm}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Queue position command"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.position.a11y" />
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <!-- MODERATOR SUB-VERBS. They ride the list command
+                                         ("!queue next"), so they are second-word settings
+                                         rather than commands of their own — which is exactly
+                                         why they were string literals in the parser until this
+                                         pass and the only queue words a streamer could neither
+                                         see nor change. Blank switches one off: an empty verb
+                                         never matches (ChatVerb's empty-never-matches rule),
+                                         and the hint line below drops it from the sentence
+                                         rather than printing a shape that cannot fire. -->
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="QueueModVerbsLabel" Text="Moderator sub-verbs (typed after the list command)"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.queue.mod_verbs_label" />
+                                        <Grid ColumnSpacing="40" RowSpacing="10" HorizontalAlignment="Left">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <StackPanel Grid.Row="0" Grid.Column="0" Spacing="3">
+                                                <TextBlock x:Name="QueueNextSubLabel" Text="CALL NEXT" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                           loc:Localize.Key="panel.usermgmt.queue.next_sub_label" />
+                                                <TextBox Text="{x:Bind ViewModel.QueueNextSubCommand, Mode=TwoWay}"
+                                                         PlaceholderText="next"
+                                                         Width="{StaticResource ToolFieldWidthSm}"
+                                                         HorizontalAlignment="Left"
+                                                         AutomationProperties.Name="Queue next sub-command"
+                                                         loc:Localize.AutomationKey="panel.usermgmt.queue.next_sub.a11y" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="1" Spacing="3">
+                                                <TextBlock x:Name="QueuePickSubLabel" Text="CALL A NAME" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                           loc:Localize.Key="panel.usermgmt.queue.pick_sub_label" />
+                                                <TextBox Text="{x:Bind ViewModel.QueuePickSubCommand, Mode=TwoWay}"
+                                                         PlaceholderText="pick"
+                                                         Width="{StaticResource ToolFieldWidthSm}"
+                                                         HorizontalAlignment="Left"
+                                                         AutomationProperties.Name="Queue pick sub-command"
+                                                         loc:Localize.AutomationKey="panel.usermgmt.queue.pick_sub.a11y" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0" Spacing="3">
+                                                <TextBlock x:Name="QueueRemoveSubLabel" Text="DROP A NAME" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                           loc:Localize.Key="panel.usermgmt.queue.remove_sub_label" />
+                                                <TextBox Text="{x:Bind ViewModel.QueueRemoveSubCommand, Mode=TwoWay}"
+                                                         PlaceholderText="remove"
+                                                         Width="{StaticResource ToolFieldWidthSm}"
+                                                         HorizontalAlignment="Left"
+                                                         AutomationProperties.Name="Queue remove sub-command"
+                                                         loc:Localize.AutomationKey="panel.usermgmt.queue.remove_sub.a11y" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="1" Spacing="3">
+                                                <TextBlock x:Name="QueueClearSubLabel" Text="EMPTY THE LINE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                           loc:Localize.Key="panel.usermgmt.queue.clear_sub_label" />
+                                                <TextBox Text="{x:Bind ViewModel.QueueClearSubCommand, Mode=TwoWay}"
+                                                         PlaceholderText="clear"
+                                                         Width="{StaticResource ToolFieldWidthSm}"
+                                                         HorizontalAlignment="Left"
+                                                         AutomationProperties.Name="Queue clear sub-command"
+                                                         loc:Localize.AutomationKey="panel.usermgmt.queue.clear_sub.a11y" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                               Text="{x:Bind ViewModel.QueueModVerbsHintText, Mode=OneWay}" />
+
+                                    <!-- The one collision worth surfacing: !join is also the
+                                         Loyalty raffle's default. The built-in chat dispatch
+                                         resolves it silently (the raffle answers while one is
+                                         live, the queue answers otherwise), which reads as "my
+                                         queue randomly stops working" unless the panel says so.
+                                         Invisible in a healthy screenshot. -->
+                                    <Border Visibility="{x:Bind ViewModel.QueueJoinClashVisibility, Mode=OneWay}"
+                                            Background="{StaticResource CoalRaisedBrush}"
+                                            BorderBrush="{StaticResource WarnBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{StaticResource Radius2Corner}"
+                                            Padding="10,8">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7BA;" FontSize="12"
+                                                      Foreground="{StaticResource WarnBrush}" VerticalAlignment="Top" />
+                                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       Text="{x:Bind ViewModel.QueueJoinClashText, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Style="{StaticResource UmHairline}" />
+
+                                    <!-- The four numeric boxes are the only bindings on this
+                                         page with an explicit UpdateSourceTrigger=LostFocus:
+                                         a clamping parse must not fight the streamer mid-keystroke.
+                                         PRESERVED VERBATIM through the re-lay — only the
+                                         column count and the widths changed. -->
+                                    <Grid ColumnSpacing="40" RowSpacing="10" HorizontalAlignment="Left">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMaxLabel" Text="MAX SIZE (0 = UNLIMITED)" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.max_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueMaxSizeText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     Width="{StaticResource ToolFieldWidthXs}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Queue maximum size"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.max.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueCooldownLabel" Text="COOLDOWN (S)" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.cooldown_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueCooldownText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     Width="{StaticResource ToolFieldWidthXs}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Queue per-user cooldown seconds"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.cooldown.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueSubPrioLabel" Text="SUB HEAD START" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.sub_priority_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueSubPriorityText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     Width="{StaticResource ToolFieldWidthXs}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="Subscriber priority"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.sub_priority.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueVipPrioLabel" Text="VIP HEAD START" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.vip_priority_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueVipPriorityText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     Width="{StaticResource ToolFieldWidthXs}"
+                                                     HorizontalAlignment="Left"
+                                                     AutomationProperties.Name="VIP priority"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.vip_priority.a11y" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock x:Name="QueuePriorityHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                               Text="higher number = further forward · ties keep arrival order · 0 = plain first-come"
+                                               loc:Localize.Key="panel.usermgmt.queue.priority_hint" />
+
+                                    <Border Style="{StaticResource UmHairline}" />
+
+                                    <!-- ROLE GATES. RoleCheckRow lays out in WrapRowPanel, which
+                                         needs a finite-width measure host to fold instead of
+                                         clipping: a vertical StackPanel inside a STAR-width card
+                                         is that host. Never put one in an Auto column, a
+                                         horizontal StackPanel, or a horizontally scrolling host. -->
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="QueueJoinRolesLabel" Text="Who may join, leave and check the line"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.queue.join_roles_label" />
+                                        <cmn:RoleCheckRow Roles="{x:Bind ViewModel.QueueJoinRoles, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="QueueModRolesLabel" Text="Who may run next / pick / remove / clear"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.queue.mod_roles_label" />
+                                        <cmn:RoleCheckRow Roles="{x:Bind ViewModel.QueueModRoles, Mode=OneWay}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ══════════════ 3 — OVERLAY ══════════════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.OverlaySectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- The "OVERLAY" eyebrow that used to head this card
+                                             repeated the nav chip above it (same lang key,
+                                             literally). The hint is what the card had to say. -->
+                                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock x:Name="QueueOverlayHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       Text="Publishes the line for a List.Live widget · off = the widget goes blank"
+                                                       loc:Localize.Key="panel.usermgmt.queue.overlay_hint" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource UmPillHost}"
+                                                Click="OnToggleQueueOverlayClick"
+                                                AutomationProperties.Name="Publish queue to overlay"
+                                                loc:Localize.AutomationKey="panel.usermgmt.queue.overlay.gate.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.QueueOverlayEnabled, Mode=OneWay}"
+                                                            Label="{x:Bind ViewModel.QueueOverlayEnabledLabel, Mode=OneWay}" />
+                                        </Button>
+                                    </Grid>
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Spacing="3" MinWidth="120">
+                                            <TextBlock x:Name="QueueOverlaySizeLabel" Text="ROWS SHOWN" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.overlay_size_label" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueOverlaySizeText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     AutomationProperties.Name="Overlay rows shown"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.overlay_size.a11y" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Bottom"
+                                                   Text="{x:Bind ViewModel.QueueOverlayKeyText, Mode=OneWay}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ══════════════ 4 — REPLIES ══════════════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.RepliesSectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <!-- The "REPLIES" eyebrow that used to head this card
+                                         repeated the nav chip above it, same lang key. The
+                                         token line is the only thing the head had to say. -->
+                                    <TextBlock x:Name="QueueRepliesTokens" Style="{StaticResource ToolMonoHintTextStyle}"
+                                               Text="Tokens:  {user}  ·  {position}  ·  {count}  ·  {list}"
+                                               loc:Localize.Key="panel.usermgmt.queue.replies_tokens" />
+                                    <Border Style="{StaticResource UmHairline}" />
+                                    <Grid ColumnSpacing="10" RowSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgJoinedLabel" Text="JOINED" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_joined" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueJoinedMessage, Mode=TwoWay}" AutomationProperties.Name="Queue joined message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_joined.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="0" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgAlreadyLabel" Text="ALREADY IN LINE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_already" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueAlreadyMessage, Mode=TwoWay}" AutomationProperties.Name="Queue already-joined message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_already.a11y" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgFullLabel" Text="QUEUE FULL" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_full" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueFullMessage, Mode=TwoWay}" AutomationProperties.Name="Queue full message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_full.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgLeftLabel" Text="LEFT" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_left" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueLeftMessage, Mode=TwoWay}" AutomationProperties.Name="Queue left message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_left.a11y" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="2" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgNotQueuedLabel" Text="NOT IN LINE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_not_queued" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueNotQueuedMessage, Mode=TwoWay}" AutomationProperties.Name="Queue not-queued message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_not_queued.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="2" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgPositionLabel" Text="THEIR SPOT" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_position" />
+                                            <TextBox Text="{x:Bind ViewModel.QueuePositionMessage, Mode=TwoWay}" AutomationProperties.Name="Queue position message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_position.a11y" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="3" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgListLabel" Text="THE WHOLE LINE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_list" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueListMessage, Mode=TwoWay}" AutomationProperties.Name="Queue list message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_list.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="3" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgEmptyLabel" Text="NOBODY WAITING" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_empty" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueEmptyMessage, Mode=TwoWay}" AutomationProperties.Name="Queue empty message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_empty.a11y" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="4" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgNextLabel" Text="CALLED UP (NEXT / PICK)" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_next" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueNextMessage, Mode=TwoWay}" AutomationProperties.Name="Queue next message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_next.a11y" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="4" Grid.Column="1" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgRemovedLabel" Text="REMOVED BY A MOD" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_removed" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueRemovedMessage, Mode=TwoWay}" AutomationProperties.Name="Queue removed message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_removed.a11y" />
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="5" Grid.Column="0" Spacing="3">
+                                            <TextBlock x:Name="QueueMsgClearedLabel" Text="QUEUE CLEARED" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.queue.msg_cleared" />
+                                            <TextBox Text="{x:Bind ViewModel.QueueClearedMessage, Mode=TwoWay}" AutomationProperties.Name="Queue cleared message"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.queue.msg_cleared.a11y" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ══════════════ 5 — GROUPS ══════════════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.GroupsSectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+
+                            <!-- The "GROUPS" heading row that used to open this section
+                                 said exactly what the nav chip above it says, off the
+                                 same lang key, and carried nothing else — so the whole
+                                 row went, hairline included. The sentence below is what
+                                 this section actually opens with. -->
+
+                            <!-- ★ THE SENTENCE THIS SECTION LIVES OR DIES BY. It used to
+                                 say Moderator / VIP / Subscriber "grant that role
+                                 suite-wide without the platform rank", which is now
+                                 exactly backwards: those three are READ from the platform
+                                 and cannot be granted here at all. Every group is still
+                                 pickable everywhere a group is picked — what changed is
+                                 only who decides who is in one. -->
+                            <TextBlock x:Name="GroupsSectionHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                       TextWrapping="Wrap"
+                                       Text="Every group below is pickable on any role gate, in {user.is_regular}-style script vars and on User.GetGroups. Moderator / VIP / Subscriber are read from Twitch / YouTube / Kick — Phoenix cannot grant them. Regular and your own groups are yours: a hand-picked list, a watch-hour rule, or both."
+                                       loc:Localize.Key="panel.usermgmt.groups.section_hint" />
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="GroupsPlatformEyebrow" Grid.Column="0" Text="FROM YOUR PLATFORM"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.groups.platform_eyebrow" />
+                                <Border Grid.Column="1" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                            </Grid>
+
+                            <!-- The three platform-owned groups. ItemsRepeater is safe
+                                 here (unlike the two lists below): the card is flat, so
+                                 nothing walks the visual tree for these rows. -->
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.PlatformGroups, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource PlatformGroupTemplate}"
+                                           AutomationProperties.Name="Platform-owned groups"
+                                           loc:Localize.AutomationKey="panel.usermgmt.groups.platform_list.a11y" />
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="GroupsYoursEyebrow" Grid.Column="0" Text="YOUR GROUPS"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.groups.yours_eyebrow" />
+                                <Border Grid.Column="1" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                            </Grid>
+
+                            <!-- ⚠ Deliberately still an ItemsControl (see the template
+                                 comment): this list hosts the GroupCard / GroupBody
+                                 visual-tree walk. One row today — Regular — and a
+                                 collection rather than a lone card so it shares that
+                                 template with the custom groups. -->
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.StandardGroups, Mode=OneWay}"
+                                          ItemTemplate="{StaticResource RegularGroupTemplate}" />
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="CUSTOM GROUPS"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.groups.custom_eyebrow" />
+                                <Border Grid.Column="1" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                                <!-- This section's one brass CTA. -->
+                                <Button Grid.Column="2"
+                                        Style="{StaticResource ToolBrassCtaStyle}"
+                                        Click="OnAddGroupClick"
+                                        AutomationProperties.Name="Add custom group"
+                                        loc:Localize.AutomationKey="panel.usermgmt.groups.add.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                                  Foreground="{StaticResource CoalShellBrush}" />
+                                        <TextBlock Text="ADD GROUP" Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.groups.add.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <!-- ⚠ Also still an ItemsControl, and it must never be merged
+                                 with the Regular list above: both templates share the
+                                 GroupCard / GroupBody names on purpose. -->
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.CustomGroups, Mode=OneWay}"
+                                          ItemTemplate="{StaticResource CustomGroupTemplate}" />
+
+                            <StackPanel Visibility="{x:Bind ViewModel.CustomGroupsEmptyVisibility, Mode=OneWay}"
+                                        HorizontalAlignment="Center" Margin="0,16,0,8" Spacing="8">
+                                <TextBlock Text="No custom groups yet"
+                                           FontFamily="{StaticResource DisplayFont}"
+                                           FontSize="20"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           HorizontalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.groups.empty.title" />
+                                <TextBlock Text="Click “Add group” to create your own membership tier."
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="12"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           HorizontalAlignment="Center" TextAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.groups.empty.body" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- ══════════════ 6 — WATCH TIME ══════════════ -->
+                        <!-- ★ THE ONE HUB-WIDE SECTION ON THIS PAGE. The three settings
+                             in the first card are AppConfig, not User-Management config:
+                             watch time is a passive background data source that records
+                             with every pre-build tool switched off, and a Ranks ladder,
+                             this page's group rules and any graph's db.top("WatchTime", …)
+                             all read the same open table. They are written straight
+                             through ConfigManager.SaveDeferred and never touch this VM's
+                             debounced tool save — see the WATCH TIME block in
+                             UserManagementViewModel.
+
+                             It is surfaced HERE because this is the page where those
+                             hours are spent: the group cards two sections up are what
+                             turns them into memberships. -->
+                        <StackPanel Visibility="{x:Bind ViewModel.WatchTimeSectionVisibility, Mode=OneWay}"
+                                    Spacing="12">
+
+                            <!-- The "WATCH TIME" heading row that used to open this
+                                 section repeated the nav chip above it, off the same
+                                 lang key, and carried nothing else — row and hairline
+                                 both gone. RECORDING below is a card head, not a
+                                 duplicate, and stays. -->
+
+                            <!-- ── The sampler ── -->
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock x:Name="WatchTimeCardEyebrow" Text="RECORDING"
+                                                       Style="{StaticResource ToolEyebrowTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.watchtime.card_eyebrow" />
+                                            <TextBlock x:Name="WatchTimeCardHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       TextWrapping="Wrap"
+                                                       Text="A Hub-wide setting, not this tool's: minutes are recorded with every pre-build tool switched off, into the open “WatchTime” databank table."
+                                                       loc:Localize.Key="panel.usermgmt.watchtime.card_hint" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource UmPillHost}"
+                                                Click="OnToggleWatchTrackingClick"
+                                                AutomationProperties.Name="Record watch time"
+                                                loc:Localize.AutomationKey="panel.usermgmt.watchtime.record.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.WatchTimeTrackingEnabled, Mode=OneWay}"
+                                                            Label="{x:Bind ViewModel.WatchTimeTrackingLabel, Mode=OneWay}" />
+                                        </Button>
+                                    </Grid>
+
+                                    <Border Style="{StaticResource UmHairline}" />
+
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="WatchTimeLiveOnlyLabel" Grid.Column="0"
+                                                   VerticalAlignment="Center"
+                                                   Text="Only count while the stream is live"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.usermgmt.watchtime.live_only_label" />
+                                        <Button Grid.Column="1"
+                                                Style="{StaticResource UmPillHost}"
+                                                Click="OnToggleWatchLiveOnlyClick"
+                                                AutomationProperties.Name="Only count watch time while live"
+                                                loc:Localize.AutomationKey="panel.usermgmt.watchtime.live_only.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.WatchTimeOnlyWhenLive, Mode=OneWay}"
+                                                            Label="{x:Bind ViewModel.WatchTimeOnlyWhenLiveLabel, Mode=OneWay}" />
+                                        </Button>
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Spacing="3" MinWidth="120">
+                                            <TextBlock x:Name="WatchTimePollLabel" Text="SAMPLE EVERY (S)" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.usermgmt.watchtime.poll_label" />
+                                            <!-- Clamped to the same 15-300 band the sampler
+                                                 clamps to when it reads the value; a field
+                                                 that stored 5 while the loop ran at 15 would
+                                                 be the panel lying about the running system. -->
+                                            <TextBox Text="{x:Bind ViewModel.PresencePollSecondsText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                     AutomationProperties.Name="Presence sample interval in seconds"
+                                                     loc:Localize.AutomationKey="panel.usermgmt.watchtime.poll.a11y" />
+                                        </StackPanel>
+                                        <TextBlock x:Name="WatchTimePollHint" Grid.Column="1"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Bottom"
+                                                   TextWrapping="Wrap"
+                                                   Text="15-300 · one sample also feeds the viewer list and the Moderator / VIP / Subscriber lookup for viewers who never type"
+                                                   loc:Localize.Key="panel.usermgmt.watchtime.poll_hint" />
+                                    </Grid>
+
+                                    <TextBlock Text="{x:Bind ViewModel.WatchTimeStateText, Mode=OneWay}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ── Top watchers ── -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TopWatchersEyebrow" Grid.Column="0" Text="TOP WATCHERS"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.watchtime.top_eyebrow" />
+                                <Border Grid.Column="1" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                            </Grid>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <Grid>
+                                    <!-- No ScrollViewer: this list is ten rows and sits in
+                                         the page's own detail scroller. A nested scroll
+                                         region there is the trapped-wheel bug. -->
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.TopWatchers, Mode=OneWay}"
+                                                   cmn:RowDataContext.Supply="True"
+                                                   ItemTemplate="{StaticResource TopWatcherRowTemplate}"
+                                                   AutomationProperties.Name="Top watchers"
+                                                   loc:Localize.AutomationKey="panel.usermgmt.watchtime.top_list.a11y" />
+                                    <TextBlock x:Name="TopWatchersEmptyText"
+                                               Visibility="{x:Bind ViewModel.TopWatchersEmptyVisibility, Mode=OneWay}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               Text="Nobody has accrued watch time yet."
+                                               loc:Localize.Key="panel.usermgmt.watchtime.top_empty" />
+                                </Grid>
+                            </Border>
+
+                            <!-- ── The browser ── -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="WatchBrowserEyebrow" Grid.Column="0" Text="EVERY VIEWER"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.usermgmt.watchtime.browser_eyebrow" />
+                                <Border Grid.Column="1" Height="1"
+                                        Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                                <!-- TextChanged rather than a TwoWay binding, the
+                                     SystemLog / EventLog / Webhook search idiom: TextBox.Text
+                                     commits on LostFocus in WinUI, and a search box that only
+                                     filters once you click away is a search box nobody trusts.
+                                     The VM coalesces the re-projection. -->
+                                <TextBox x:Name="WatchSearchBox" Grid.Column="2"
+                                         Width="200"
+                                         FontFamily="{StaticResource MonoFont}"
+                                         FontSize="11"
+                                         VerticalAlignment="Center"
+                                         PlaceholderText="viewer…"
+                                         TextChanged="OnWatchSearchTextChanged"
+                                         AutomationProperties.Name="Search tracked viewers"
+                                         loc:Localize.PlaceholderKey="panel.usermgmt.watchtime.search_placeholder"
+                                         loc:Localize.AutomationKey="panel.usermgmt.watchtime.search.a11y" />
+                            </Grid>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="{x:Bind ViewModel.WatchBrowserCountText, Mode=OneWay}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock x:Name="WatchBrowserHint" Style="{StaticResource ToolMonoHintTextStyle}"
+                                               TextWrapping="Wrap"
+                                               Text="Type hours and minutes, then SET to correct a viewer's total. The reset button zeroes it."
+                                               loc:Localize.Key="panel.usermgmt.watchtime.browser_hint" />
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.Watchers, Mode=OneWay}"
+                                                   cmn:RowDataContext.Supply="True"
+                                                   ItemTemplate="{StaticResource WatchTimeRowTemplate}"
+                                                   AutomationProperties.Name="Tracked viewers"
+                                                   loc:Localize.AutomationKey="panel.usermgmt.watchtime.browser_list.a11y" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- The tool's chat verbs, rendered from the same config the
+                                 parser reads — including the four moderator sub-verbs,
+                                 which have no command of their own to be found under. -->
+                            <cmn:ToolCommandList Commands="{x:Bind ViewModel.ChatCommands, Mode=OneWay}"
+                                                 AutomationProperties.Name="User Management chat commands"
+                                                 loc:Localize.AutomationKey="panel.usermgmt.commands.a11y" />
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ───────────── RIGHT 300 : the live line ───────────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />   <!-- header            -->
+                        <RowDefinition Height="Auto" />   <!-- eyebrow + CLEAR   -->
+                        <RowDefinition Height="*" />      <!-- the line          -->
+                    </Grid.RowDefinitions>
+
+                    <!-- The one legal PanelHeader in the house shell: the right
+                         column's own header. Its RightContent is where the ONE
+                         count worth a glance survived the stat strip's removal —
+                         waiting viewers, sitting on the list it counts, still read
+                         from the SERVICE's cached total (a script's Queue.Push moves
+                         it too) rather than from the collection below. -->
+                    <cmn:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Viewer queue"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.usermgmt.queue.panel_title">
+                        <cmn:PanelHeader.RightContent>
+                            <TextBlock Text="{x:Bind ViewModel.StatQueueValue, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </cmn:PanelHeader.RightContent>
+                    </cmn:PanelHeader>
+
+                    <!-- CLEAR stays adjacent to the line it clears rather than moving
+                         to the strip's danger slot: it is the only destructive verb a
+                         streamer reaches for WHILE looking at the queue, and its label
+                         is one of the page's localized strings. -->
+                    <Border Grid.Row="1"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="14,6">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="QueueNowWaitingEyebrow" Grid.Column="0" Text="NOW WAITING"
+                                       Style="{StaticResource ToolEyebrowTextStyle}"
+                                       VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.usermgmt.queue.now_waiting" />
+                            <Button Grid.Column="2"
+                                    Style="{StaticResource ToolDangerButtonStyle}"
+                                    Click="OnClearQueueClick"
+                                    AutomationProperties.Name="Clear the viewer queue"
+                                    loc:Localize.AutomationKey="panel.usermgmt.queue.clear.a11y">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                              Foreground="{StaticResource ErrBrush}" />
+                                    <TextBlock x:Name="QueueClearButtonText" Text="CLEAR"
+                                               Style="{StaticResource ToolStripLabelTextStyle}"
+                                               loc:Localize.Key="panel.usermgmt.queue.clear_button" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="2">
+                        <ScrollViewer Visibility="{x:Bind ViewModel.QueueListVisibility, Mode=OneWay}"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Disabled">
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Queue, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource QueueRowTemplate}"
+                                           AutomationProperties.Name="Viewers waiting, front first"
+                                           loc:Localize.AutomationKey="panel.usermgmt.queue.roster.a11y" />
+                        </ScrollViewer>
+
+                        <!-- ONE line, top-aligned, in the column's own hint tier.
+                             It used to be a 20 px DisplayFont headline over a second
+                             explanatory line, centred in a full-height void — three
+                             design decisions all spent on the fact that nothing has
+                             happened yet. An absence must not outrank live content. -->
+                        <TextBlock x:Name="QueueEmptyBody"
+                                   Visibility="{x:Bind ViewModel.QueueEmptyVisibility, Mode=OneWay}"
+                                   Text="Viewers appear here as soon as they join from chat."
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   VerticalAlignment="Top"
+                                   Margin="14,12,14,0"
+                                   loc:Localize.Key="panel.usermgmt.queue.empty_body" />
+                    </Grid>
+
+                    <!-- GONE: the session ACTIVITY ring. It answered "what happened 40
+                         seconds ago" on a page whose job is changing a threshold, and
+                         it ate the bottom of the only genuinely live column here. The
+                         service still records to ToolActivityRing; only this page's
+                         render surface (and the VM plumbing that fed it) is gone. -->
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

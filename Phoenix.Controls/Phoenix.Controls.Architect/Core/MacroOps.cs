@@ -97,9 +97,10 @@ namespace Phoenix.Controls.Architect.Core
             var canonicalIds  = new HashSet<string>(canonicalList.Select(m => m.MacroId));
 
             // Step 1: remote-deletion sweep. Anything previously Hub-acked that
-            // dropped out of canonical was deleted by a peer (MACRO_REMOVE round-
-            // tripped through Hub → MACRO_SYNC). Local-only macros (not in
-            // hubAckedIds) are preserved.
+            // dropped out of canonical was deleted by a peer — deletion
+            // propagates purely by diffing against the canonical library that
+            // arrives via MACRO_SYNC; Architect never emits MACRO_REMOVE.
+            // Local-only macros (not in hubAckedIds) are preserved.
             for (int i = globalMacros.Count - 1; i >= 0; i--)
             {
                 var id = globalMacros[i].MacroId;

@@ -78,18 +78,6 @@ public sealed class ViewerServer : IAsyncDisposable
         _devices = new PairedDeviceStore(devicesPath);
     }
 
-    /// <summary>Currently-displayed 6-digit PIN. Regenerates after expiry.</summary>
-    public string CurrentPin => _pin.GetCurrent().Pin;
-
-    /// <summary>UTC time at which <see cref="CurrentPin"/> rolls over.</summary>
-    public DateTimeOffset PinExpiresAt => _pin.GetCurrent().ExpiresAt;
-
-    /// <summary>Snapshot of every non-revoked paired device.</summary>
-    public IReadOnlyList<PairedDevice> PairedDevices => _devices.List();
-
-    public event EventHandler<PairedDevice>? DevicePaired;
-    public event EventHandler<PairedDevice>? DeviceDisconnected;
-
     public Task StartAsync(CancellationToken ct)
     {
         if (Interlocked.Exchange(ref _started, 1) != 0) return Task.CompletedTask;
@@ -194,53 +182,20 @@ public sealed class ViewerServer : IAsyncDisposable
         _cts?.Dispose();
     }
 
-    public bool RevokeDevice(string deviceId)
-    {
-        bool ok = _devices.Revoke(deviceId);
-        if (ok)
-        {
-            // Drop any live sessions bound to that device. Close
-            // with the auth-class app-level code (4401) so the WebViewer's
-            // reconnect loop recognises this as a terminal "device revoked"
-            // failure and stops retrying instead of hammering the endpoint
-            // at the floor backoff forever.
-            foreach (var kv in _sessions.ToArray())
-            {
-                if (kv.Value.DeviceId == deviceId)
-                {
-                    _ = kv.Value.CloseAsync(
-                        (WebSocketCloseStatus)WsCloseCodeAuthRevoked,
-                        "device revoked");
-                    if (_sessions.TryRemove(kv.Key, out _))
-                        SafeEvent.Raise(DeviceDisconnected, this, kv.Value.Device, "ViewerServer", "DeviceDisconnected");
-                }
-            }
-        }
-        return ok;
-    }
-
-    // Application-level WebSocket close codes the WebViewer
-    // client treats as terminal (no reconnect):
-    //   • 4401 — bearer revoked / unknown post-handshake
-    //   • 4403 — forbidden (defence-in-depth, not currently emitted)
-    //   • 4404 — channel / route gone (defence-in-depth)
-    // Codes in 4000–4999 are reserved for application use per RFC 6455.
-    private const int WsCloseCodeAuthRevoked = 4401;
-
     private IEnumerable<string> BuildPrefixes()
     {
-        // HttpListener prefixes: scheme://host:port/. Honour BindAddress
-        // instead of always defaulting to loopback regardless
-        // of caller intent:
+        // HttpListener prefixes: http://host:port/ (the server is http-only).
+        // Honour BindAddress instead of always defaulting to loopback
+        // regardless of caller intent:
         //   • LAN off → loopback only (127.0.0.1 + localhost), no matter
         //     what BindAddress says. Defence-in-depth so a stale option
         //     can't accidentally expose the surface.
         //   • LAN on, BindAddress = IPAddress.Any (or IPv6Any) → wildcard
         //     "+" prefix so the LAN can reach it (needs urlacl/admin).
         //   • LAN on, BindAddress = specific NIC address → bind exactly
-        //     that interface; still keep loopback so the in-Hub UI's
-        //     loopback pin-polling endpoint stays reachable.
-        string scheme = _options.TlsCertPath == null ? "http" : "https";
+        //     that interface; still keep loopback so the viewer page stays
+        //     reachable from the streamer's own machine.
+        const string scheme = "http";
 
         if (!_options.LanModeEnabled)
         {
@@ -257,9 +212,8 @@ public sealed class ViewerServer : IAsyncDisposable
         else
         {
             // Specific interface: HttpListener prefixes use the literal
-            // host. Keep loopback alongside so the local UI's pin
-            // polling (loopback-gated) keeps working when LAN mode
-            // also points at a specific NIC.
+            // host. Keep loopback alongside so local access keeps working
+            // when LAN mode also points at a specific NIC.
             yield return $"{scheme}://{_options.BindAddress}:{_options.Port}/";
             yield return $"{scheme}://127.0.0.1:{_options.Port}/";
             yield return $"{scheme}://localhost:{_options.Port}/";
@@ -325,15 +279,6 @@ public sealed class ViewerServer : IAsyncDisposable
                 await HandleSnapshotAsync(context, ct).ConfigureAwait(false);
                 return;
             }
-            // Pin polling — surface the on-screen PIN to the in-Hub UI; do
-            // NOT expose this over LAN auth. Bound to loopback in this
-            // implementation. Hub UI calls it locally.
-            if (method == "GET" && path == "/v/api/pin" && IsLoopback(context.Request))
-            {
-                await HandlePinAsync(context).ConfigureAwait(false);
-                return;
-            }
-
             // Static: /v/{channel} → index.html ; /v/{channel}/assets/* → bundle file
             if (method == "GET" && TryMatchStaticRoute(path, out string staticRel))
             {
@@ -396,9 +341,6 @@ public sealed class ViewerServer : IAsyncDisposable
         return false;
     }
 
-    private static bool IsLoopback(HttpListenerRequest req) =>
-        req.RemoteEndPoint?.Address is { } addr && IPAddress.IsLoopback(addr);
-
     // ── pairing ────────────────────────────────────────────────────────
     private async Task HandlePairBeginAsync(HttpListenerContext ctx)
     {
@@ -420,6 +362,15 @@ public sealed class ViewerServer : IAsyncDisposable
 
         Dictionary<string, string> body;
         try { body = await ReadJsonAsync(ctx.Request).ConfigureAwait(false); }
+        catch (PayloadTooLargeException ex)
+        {
+            GlobalLogger.Log(
+                $"ViewerServer: /pair/begin body rejected for {ip?.ToString() ?? "<unknown>"} — {ex.Message}",
+                "ViewerServer", LogLevel.Communication);
+            await StaticFileResponder.WriteStatusAsync(ctx.Response,
+                HttpStatusCode.RequestEntityTooLarge, "body too large").ConfigureAwait(false);
+            return;
+        }
         catch
         {
             await StaticFileResponder.WriteStatusAsync(ctx.Response, HttpStatusCode.BadRequest,
@@ -464,7 +415,24 @@ public sealed class ViewerServer : IAsyncDisposable
             return;
         }
 
-        var body = await ReadJsonAsync(ctx.Request).ConfigureAwait(false);
+        Dictionary<string, string> body;
+        try { body = await ReadJsonAsync(ctx.Request).ConfigureAwait(false); }
+        catch (PayloadTooLargeException ex)
+        {
+            // An over-cap body on the unauthenticated /pair/complete route is
+            // a failed pairing attempt like any other: count it so a flood
+            // walks the IP into the same lockout a wrong-PIN flood does.
+            // (Malformed-but-small bodies already reach TryClaim, fail, and
+            // get counted there, so this keeps the two paths consistent.)
+            _pairLimiter.NoteCompleteFailure(ip);
+            GlobalLogger.Log(
+                $"ViewerServer: /pair/complete body rejected for {ip?.ToString() ?? "<unknown>"} — {ex.Message}",
+                "ViewerServer", LogLevel.Communication);
+            await StaticFileResponder.WriteStatusAsync(ctx.Response,
+                HttpStatusCode.RequestEntityTooLarge, "body too large").ConfigureAwait(false);
+            return;
+        }
+
         string pairingId   = body.GetValueOrDefault("pairingId", "");
         string code        = body.GetValueOrDefault("code", "");
         string devicePubId = body.GetValueOrDefault("devicePubId", "");
@@ -482,7 +450,6 @@ public sealed class ViewerServer : IAsyncDisposable
         _pairLimiter.ClearOnSuccess(ip);
 
         var device = _devices.Issue(label, out string token);
-        SafeEvent.Raise(DevicePaired, this, device, "ViewerServer", "DevicePaired");
         GlobalLogger.Log($"ViewerServer paired device '{device.Label}' ({device.DeviceId})", "ViewerServer", LogLevel.System);
 
         await WriteJsonAsync(ctx.Response, new
@@ -506,17 +473,6 @@ public sealed class ViewerServer : IAsyncDisposable
 
         var snapshot = await _hub.GetSnapshotAsync(ct).ConfigureAwait(false);
         await WriteJsonAsync(ctx.Response, snapshot).ConfigureAwait(false);
-    }
-
-    // ── pin polling (loopback-only) ────────────────────────────────────
-    private async Task HandlePinAsync(HttpListenerContext ctx)
-    {
-        var (pin, expiresAt) = _pin.GetCurrent();
-        await WriteJsonAsync(ctx.Response, new
-        {
-            pin,
-            expiresAt = expiresAt.ToUnixTimeSeconds(),
-        }).ConfigureAwait(false);
     }
 
     // ── websocket ──────────────────────────────────────────────────────
@@ -578,8 +534,7 @@ public sealed class ViewerServer : IAsyncDisposable
         }
         finally
         {
-            if (_sessions.TryRemove(session.Id, out _))
-                SafeEvent.Raise(DeviceDisconnected, this, device, "ViewerServer", "DeviceDisconnected");
+            _sessions.TryRemove(session.Id, out _);
             try { session.WebSocket.Dispose(); } catch { }
             // dispose the session itself so its send pump
             // (channel + drain task) shuts down instead of leaking per
@@ -756,11 +711,41 @@ public sealed class ViewerServer : IAsyncDisposable
         return _devices.Verify(token);
     }
 
+    // Hard cap on the request body of the two UNAUTHENTICATED pairing routes.
+    // Their payloads are a handful of short JSON fields (deviceLabel /
+    // pairingId / code / devicePubId) — well under 1 KB — so 8 KB is generous
+    // headroom. Before this cap, ReadJsonAsync did an uncapped
+    // StreamReader.ReadToEndAsync into a single string, so any LAN peer could
+    // POST a multi-hundred-MB body to /v/api/pair/complete (read BEFORE the
+    // PIN check) and force a LOH allocation — or an OutOfMemoryException —
+    // inside the Hub process that drives Streamer.bot and the OBS overlay.
+    // Mirrors the inbound-WS MaxInboundMessageBytes cap above.
+    internal const int MaxPairingBodyBytes = 8 * 1024;
+
+    /// <summary>
+    /// Thrown by <see cref="ReadJsonAsync"/> when the request body exceeds
+    /// <see cref="MaxPairingBodyBytes"/>. Callers answer 413 rather than
+    /// letting the generic handler catch turn it into a 500.
+    /// </summary>
+    private sealed class PayloadTooLargeException : Exception
+    {
+        public PayloadTooLargeException(string message) : base(message) { }
+    }
+
     private static async Task<Dictionary<string, string>> ReadJsonAsync(HttpListenerRequest req)
     {
+        // ContentLength64 is -1 for a chunked request, which declares no
+        // length at all; as before, such requests are treated as body-less
+        // rather than read (no legitimate pairing client sends chunked).
         if (req.ContentLength64 <= 0) return new();
-        using var sr = new StreamReader(req.InputStream, req.ContentEncoding);
-        string text = await sr.ReadToEndAsync().ConfigureAwait(false);
+
+        // Cheap reject on the declared length: a hostile peer announcing a
+        // multi-hundred-MB body never gets a single byte buffered.
+        if (req.ContentLength64 > MaxPairingBodyBytes)
+            throw new PayloadTooLargeException(
+                $"declared body of {req.ContentLength64} bytes exceeds the {MaxPairingBodyBytes}-byte pairing cap");
+
+        string text = await ReadCappedBodyAsync(req).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(text)) return new();
         try
         {
@@ -776,6 +761,39 @@ public sealed class ViewerServer : IAsyncDisposable
             return dict;
         }
         catch { return new(); }
+    }
+
+    /// <summary>
+    /// Reads the request body into a string, never buffering more than
+    /// <see cref="MaxPairingBodyBytes"/> + 1 bytes. The declared-length check
+    /// in <see cref="ReadJsonAsync"/> is the cheap first gate; this loop is
+    /// what actually bounds memory, so a Content-Length that under-declares
+    /// what the peer really sends still cannot escape the cap. Bytes are
+    /// counted on the wire — before any decode allocation — and the one extra
+    /// byte is how an over-cap body is detected without buffering it.
+    /// </summary>
+    private static async Task<string> ReadCappedBodyAsync(HttpListenerRequest req)
+    {
+        // Dispose the input stream on the way out, matching the StreamReader
+        // ownership this replaced.
+        using var input = req.InputStream;
+
+        byte[] buffer = new byte[MaxPairingBodyBytes + 1];
+        int total = 0;
+        while (total < buffer.Length)
+        {
+            int read = await input
+                .ReadAsync(buffer.AsMemory(total, buffer.Length - total))
+                .ConfigureAwait(false);
+            if (read <= 0) break;
+            total += read;
+        }
+
+        if (total > MaxPairingBodyBytes)
+            throw new PayloadTooLargeException(
+                $"body exceeds the {MaxPairingBodyBytes}-byte pairing cap");
+
+        return (req.ContentEncoding ?? Encoding.UTF8).GetString(buffer, 0, total);
     }
 
     private static async Task WriteJsonAsync(HttpListenerResponse resp, object body)

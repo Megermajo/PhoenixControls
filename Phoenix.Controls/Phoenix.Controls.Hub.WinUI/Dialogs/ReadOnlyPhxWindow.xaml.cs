@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
@@ -66,8 +67,12 @@ public sealed partial class ReadOnlyPhxWindow : Window
         _siblingGraphPath = ResolveSiblingGraphPath(_phxPath);
 
         Title = string.IsNullOrEmpty(_phxPath)
-            ? "Phoenix Controls — Script Viewer"
-            : $"Phoenix Controls — {Path.GetFileName(_phxPath)} (read-only)";
+            ? Localizer.T("dialog.readonly_phx.window.title", "Phoenix Controls — Script Viewer")
+            : string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                Localizer.T("dialog.readonly_phx.window.title_format",
+                    "Phoenix Controls — {0} (read-only)"),
+                Path.GetFileName(_phxPath));
 
         ConfigurePresenter();
         PopulateChrome();
@@ -122,12 +127,15 @@ public sealed partial class ReadOnlyPhxWindow : Window
     private void PopulateChrome()
     {
         FilePathText.Text = string.IsNullOrEmpty(_phxPath)
-            ? "(no path provided)"
+            ? Localizer.T("dialog.readonly_phx.path.none", "(no path provided)")
             : _phxPath;
 
         if (!string.IsNullOrEmpty(_siblingGraphPath))
         {
-            SiblingGraphPath.Text = $"Sibling graph: {_siblingGraphPath}";
+            SiblingGraphPath.Text = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                Localizer.T("dialog.readonly_phx.sibling_graph_format", "Sibling graph: {0}"),
+                _siblingGraphPath);
             SiblingGraphPath.Visibility = Visibility.Visible;
 
             // Button visibility is gated on BOTH a sibling graph file and a
@@ -147,13 +155,18 @@ public sealed partial class ReadOnlyPhxWindow : Window
         {
             if (string.IsNullOrEmpty(_phxPath))
             {
-                BodyText.Text = "(no path provided to viewer)";
+                BodyText.Text = Localizer.T("dialog.readonly_phx.body.no_path",
+                    "(no path provided to viewer)");
                 return;
             }
 
             if (!File.Exists(_phxPath))
             {
-                BodyText.Text = $"File not found:\n{_phxPath}";
+                BodyText.Text = string.Format(
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    Localizer.T("dialog.readonly_phx.body.not_found_format",
+                        "File not found:\n{0}"),
+                    _phxPath);
                 GlobalLogger.Log(
                     $"ReadOnlyPhxWindow: file not found — {_phxPath}",
                     "ReadOnlyPhxWindow", Phoenix.Controls.Shared.Models.LogLevel.System);
@@ -173,7 +186,11 @@ public sealed partial class ReadOnlyPhxWindow : Window
             // a read fault surfaces inline and via GlobalLogger, never as
             // a separate dialog. The user already opened a viewer; popping
             // a second window for the failure would be hostile UX.
-            BodyText.Text = $"Failed to read file:\n{_phxPath}\n\n{ex.GetType().Name}: {ex.Message}";
+            BodyText.Text = string.Format(
+                System.Globalization.CultureInfo.CurrentCulture,
+                Localizer.T("dialog.readonly_phx.body.read_failed_format",
+                    "Failed to read file:\n{0}\n\n{1}: {2}"),
+                _phxPath, ex.GetType().Name, ex.Message);
             GlobalLogger.Error("ReadOnlyPhxWindow", $"read failed — {_phxPath}", ex);
         }
     }
@@ -210,12 +227,12 @@ public sealed partial class ReadOnlyPhxWindow : Window
             // after Copy can drop the content (the WinRT clipboard is
             // owned by the source process until Flush hands it to the OS).
             Clipboard.Flush();
-            CopyFeedbackText.Text = "Copied.";
+            CopyFeedbackText.Text = Localizer.T("dialog.readonly_phx.copy.ok", "Copied.");
         }
         catch (Exception ex)
         {
             // Non-fatal — user can re-try, or select text manually.
-            CopyFeedbackText.Text = "Copy failed.";
+            CopyFeedbackText.Text = Localizer.T("dialog.readonly_phx.copy.failed", "Copy failed.");
             GlobalLogger.Error("ReadOnlyPhxWindow", "OnCopyClicked failed", ex);
         }
     }

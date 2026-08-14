@@ -139,13 +139,6 @@ public static class PillarBootstrap
         GlobalLogger.Log($"Startup phase: log-writer-start end (elapsed {sw.ElapsedMilliseconds}ms)", "PillarBootstrap", LogLevel.System);
 
         sw.Restart();
-        GlobalLogger.Log("Startup phase: AppDataMigrator.RunOnce begin", "PillarBootstrap", LogLevel.System);
-        // Step 2 — migrate legacy AppData layouts.
-        try { AppDataMigrator.RunOnce(); }
-        catch (Exception ex) { GlobalLogger.Error("PillarBootstrap", "AppDataMigrator.RunOnce", ex); }
-        GlobalLogger.Log($"Startup phase: AppDataMigrator.RunOnce end (elapsed {sw.ElapsedMilliseconds}ms)", "PillarBootstrap", LogLevel.System);
-
-        sw.Restart();
         GlobalLogger.Log("Startup phase: IconFontResolver begin", "PillarBootstrap", LogLevel.System);
         // Step 3 — icon font detection + one-shot warning.
         try

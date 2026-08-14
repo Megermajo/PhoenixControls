@@ -1,5 +1,6 @@
 using Phoenix.Controls.Architect.Core;
 using Phoenix.Controls.Architect.WinUI.ViewModels;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 
@@ -190,7 +191,7 @@ public sealed class SocketViewModel : ObservableObject
     public bool          PinFilled   => _pinFilled;
 
     /// <summary>
-    /// Hex string fed to the canvas's HexBrush converter for the pin's
+    /// Hex string fed to NodeView.Pins' code-behind HexBrush helper for the pin's
     /// <c>Path.Fill</c>. When <see cref="PinFilled"/> is true, this is the
     /// socket's data-type colour (filled pin); otherwise <c>#00000000</c>
     /// renders as transparent so only the outline shows. Pre-TODO sweep
@@ -246,7 +247,9 @@ public sealed class SocketViewModel : ObservableObject
     {
         get
         {
-            var dir = Direction == SocketType.Input ? "Input" : "Output";
+            var dir = Direction == SocketType.Input
+                ? Localizer.T("architect.canvas.socket.direction.input",  "Input")
+                : Localizer.T("architect.canvas.socket.direction.output", "Output");
             return $"{dir} · {DataType} · {Label}";
         }
     }
@@ -744,7 +747,7 @@ public sealed class SocketViewModel : ObservableObject
             if (_isConnected && IsFallbackPillNode())
                 return string.IsNullOrEmpty(_valuePill) ? "—" : _valuePill!;
             if (_isConnected && string.IsNullOrEmpty(_valuePill))
-                return "(wired)";
+                return Localizer.T("architect.canvas.socket.pill.wired", "(wired)");
             return string.IsNullOrEmpty(_valuePill) ? "—" : _valuePill!;
         }
     }

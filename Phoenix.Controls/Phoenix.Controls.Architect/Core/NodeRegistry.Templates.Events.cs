@@ -63,7 +63,12 @@ namespace Phoenix.Controls.Architect.Core
                     // already-saved graphs keep their existing socket order and
                     // MigrateNodes back-fills this output additively. Feeds the
                     // reply / delete-message nodes with the triggering message's id.
-                    ("MessageId",     ColString)
+                    ("MessageId",     ColString),
+                    // IsRegular (→ {user.is_regular}) appended LAST with the
+                    // User-Management tool: Regular-GROUP membership (a Phoenix
+                    // concept, no platform source). Additive — MigrateNodes
+                    // back-fills; unwired it emits nothing (goldens stable).
+                    ("IsRegular",     ColBool)
                 },
                 new Dictionary<string, string>
                 {
@@ -185,13 +190,20 @@ namespace Phoenix.Controls.Architect.Core
                 null,
                 new[] { ("Flow", ColExec) });
 
+            // EventType default is a NEUTRAL placeholder on purpose. It used to
+            // ship as "VISUAL_COMPLETE", which was harmless while Hub-origin
+            // broadcasts never reached on_bus handlers — but now that
+            // Bus.BroadcastAsync delivers locally, a freshly spawned node with
+            // untouched defaults would fire on EVERY visual completion. The
+            // placeholder makes "author must pick an event type" explicit,
+            // mirroring Event.Trigger's "MyEvent" convention.
             AddTemplate("Bus.OnMessage",       "Events", Color.SteelBlue,
                 Localizer.T("architect.node.bubble.bus_onmessage"),
                 null,
                 new[] { ("Flow", ColExec), ("Type", ColString), ("Payload", ColString) },
                 new Dictionary<string, string>
                 {
-                    { "EventType", "VISUAL_COMPLETE" },
+                    { "EventType", "MY_EVENT" },
                     { "Source",    "*" },
                     { "Target",    "*" }
                 });
@@ -357,10 +369,27 @@ namespace Phoenix.Controls.Architect.Core
             {
                 // Header colors: YouTube keeps the old YouTube.Message red;
                 // Kick uses the brand green (#53FC18).
+                //
+                // Twitch gets MediumPurple rather than the ForestGreen the
+                // hand-written Twitch event nodes above use — the two sets have
+                // different failure modes (hand-written events carry bespoke
+                // probe code in ScriptManager; catalog ones are declarative), so
+                // being able to tell them apart at a glance on the canvas is
+                // worth a distinct header.
+                //
+                // The ten donation brokers share one SeaGreen: they are a single
+                // conceptual family (money in), they all normalize through
+                // DonationIngest, and ten separate brand colors would read as
+                // noise in the palette rather than as information.
                 Color platformColor = def.Platform switch
                 {
                     "youtube" => Color.Red,
                     "kick"    => Color.FromArgb(83, 252, 24),
+                    "twitch"  => Color.MediumPurple,
+                    "streamlabs" or "streamelements" or "kofi" or "patreon"
+                        or "tipeeestream" or "treatstream" or "donordrive"
+                        or "fourthwall" or "pallygg" or "shopify"
+                              => Color.SeaGreen,
                     _ => throw new InvalidOperationException(
                         $"PlatformEventCatalog entry '{def.Title}' has unmapped platform '{def.Platform}' — add a header color to the RegisterEventsTemplates catalog loop."),
                 };

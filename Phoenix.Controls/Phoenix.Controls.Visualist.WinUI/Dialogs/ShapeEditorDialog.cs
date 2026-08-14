@@ -123,10 +123,14 @@ public sealed class ShapeEditorDialog : ContentDialog
         Title = _isBezier
             ? Localizer.T("visualist.shape.title.bezier", "Edit Bezier Shape")
             : Localizer.T("visualist.shape.title.polygon", "Edit Polygon Shape");
-        EyebrowText.Text  = _isBezier ? "VISUALIST · BEZIER" : "VISUALIST · POLYGON";
+        EyebrowText.Text  = _isBezier
+            ? Localizer.T("visualist.dialog.shape.eyebrow.bezier",  "VISUALIST · BEZIER")
+            : Localizer.T("visualist.dialog.shape.eyebrow.polygon", "VISUALIST · POLYGON");
         SubtitleText.Text = _isBezier
-            ? "Author the bezier mask. Drag a vertex to move; drag the green/yellow handles to shape the curve."
-            : "Author the polygon mask. Click empty space to add, drag a vertex to move.";
+            ? Localizer.T("visualist.dialog.shape.subtitle.bezier",
+                "Author the bezier mask. Drag a vertex to move; drag the green/yellow handles to shape the curve.")
+            : Localizer.T("visualist.dialog.shape.subtitle.polygon",
+                "Author the polygon mask. Click empty space to add, drag a vertex to move.");
 
         // Bezier-only rows.
         BezierHandlePanel.Visibility = _isBezier ? Visibility.Visible : Visibility.Collapsed;
@@ -163,8 +167,8 @@ public sealed class ShapeEditorDialog : ContentDialog
         Title = "Edit Shape";
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "OK";
-        CloseButtonText = "Cancel";
+        PrimaryButtonText = Localizer.T("common.ok", "OK");
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Primary;
 
         // <ContentDialog.Resources> — size overrides read by the default
@@ -210,7 +214,7 @@ public sealed class ShapeEditorDialog : ContentDialog
 
         VertexCountTextField.VerticalAlignment = VerticalAlignment.Center;
         VertexCountTextField.FontSize = 10;
-        VertexCountTextField.Text = "0 vertices";
+        VertexCountTextField.Text = FormatVertexCount(0);
 
         toggleRow.Children.Add(ClosedToggleField);
         toggleRow.Children.Add(VertexCountTextField);
@@ -595,8 +599,18 @@ public sealed class ShapeEditorDialog : ContentDialog
             }.At(p.X - VertexRadius, p.Y - VertexRadius));
         }
 
-        VertexCountText.Text = $"{_verts.Count} vert{(_verts.Count == 1 ? "ex" : "ices")}";
+        VertexCountText.Text = FormatVertexCount(_verts.Count);
     }
+
+    // The singular / plural split was an inline "vert" + "ex"/"ices" splice, which
+    // has no translatable shape at all — a language whose plural is not a suffix
+    // swap cannot be expressed by it. Two whole-sentence keys instead; the English
+    // rendering is byte-identical to the splice.
+    private static string FormatVertexCount(int count) => string.Format(
+        count == 1
+            ? Localizer.T("visualist.dialog.shape.vertex_count.one",   "{0} vertex")
+            : Localizer.T("visualist.dialog.shape.vertex_count.other", "{0} vertices"),
+        count);
 
     private Geometry BuildPathGeometry()
     {

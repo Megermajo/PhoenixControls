@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    ToolCommandList — the house "CHAT COMMANDS" block: one read-only section that
+    says which chat verbs the tool on this page actually answers to.
+
+    ★ WHY IT EXISTS. Every pre-build tool has chat verbs and most of them were
+    invisible: the four shapes Counters synthesizes by concatenation
+    (!deaths+ / !deaths- / !setdeaths / !resetdeaths), the viewer queue's four
+    moderator sub-verbs, Loyalty's raffle draw / cancel and duel accept / decline,
+    Automod's !permit — none of those appear in any field on any panel, because no
+    field holds them. The streamer's only way to learn them was the source. This
+    control renders BuiltInCommandCatalog's answer, which derives every one of them
+    from the tool's own config. Whether a given parser matches that config field or
+    a hard-coded literal is the catalogue's invariant to keep, not this control's —
+    see the contract note at the top of BuiltInCommandCatalog.cs, which names the
+    call sites it binds.
+
+    ═══════════════ THE GEOMETRY, AND WHY IT IS WHAT IT IS ═══════════════
+
+    Section header verbatim from UserManagementView.xaml:565-576 — eyebrow in
+    ToolEyebrowTextStyle, then a 1px CoalDividerBrush hairline filling the rest of
+    the row. Rows then sit in one ToolSectionCardStyle border, which is the house
+    grammar (a section is a header followed by cards, never a header followed by
+    loose rows).
+
+    THREE COLUMNS, TWO OF THEM FIXED, and that is deliberate. An ItemsRepeater
+    measures every row independently, so `Auto` columns do NOT align down the list —
+    each row would size its own verb column and the whole block would read as ragged
+    text instead of a table. The verb and role columns are therefore pixel-fixed
+    (the ToolActivityFeed 86/38/* precedent) and both WRAP rather than trim: a verb
+    the streamer has to type must never be shown with an ellipsis, and the widest
+    honest role summary — "Sub · VIP · Mod · Broadcaster · Regular" — does not fit
+    one line at any column width this page can spare.
+
+    NO ScrollViewer AND NO HEIGHT. The control is designed to sit inside a page's
+    existing detail scroller; a nested scroll region there is the classic trapped-
+    wheel bug, and a MaxHeight would hide rows on exactly the tools that have the
+    most verbs. It grows to its content and lets the page scroll. Virtualization is
+    given up along with the height cap, which is free at this scale — the largest
+    catalogue (Loyalty) is nineteen rows.
+
+    THE DIMMED TREATMENT IS TWO SIGNALS, not one. A disabled row drops to 45%
+    opacity AND gains an "OFF" tag under the verb. Opacity alone is a
+    contrast-only cue, which is the weakest kind and the first one lost on a
+    washed-out stream monitor; the tag says it in a word.
+-->
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.ToolCommandList"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Keyed-only shell styles, merged HERE rather than relied upon from
+                     the host page: this control is dropped into twelve pages and must
+                     not depend on which dictionaries each of them happens to merge.
+                     Never merged into App.xaml — see the ToolShellStyles header. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <StackPanel Spacing="8">
+
+        <!-- Section header: eyebrow + hairline. -->
+        <Grid ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TitleText"
+                       Grid.Column="0"
+                       Text="CHAT COMMANDS"
+                       Style="{StaticResource ToolEyebrowTextStyle}"
+                       VerticalAlignment="Center" />
+            <Border Grid.Column="1" Height="1"
+                    Background="{StaticResource CoalDividerBrush}"
+                    VerticalAlignment="Center" />
+        </Grid>
+
+        <Border Style="{StaticResource ToolSectionCardStyle}">
+            <Grid>
+                <!-- Empty state. A command list is not an activity feed: "this tool
+                     answers no chat verbs" is a real, reachable configuration (a
+                     Counters tool with no counters, a soundboard with no rows) and
+                     the catalogue also drops any verb whose word is blank, because a
+                     blank word provably matches nothing. A bare header with no rows
+                     under it reads as a broken panel; this sentence reads as the
+                     answer it is. -->
+                <TextBlock x:Name="EmptyText"
+                           Text="No chat commands are configured."
+                           Style="{StaticResource ToolMonoHintTextStyle}"
+                           Visibility="Collapsed"
+                           loc:Localize.Key="panel.common.commands.empty.body" />
+
+                <ItemsRepeater x:Name="Rows"
+                               local:RowDataContext.Supply="True">
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:ToolCommandRowVm">
+                            <!-- Tag="{x:Bind}" per the house rule for new row
+                                 templates. Nothing in this control handles a row
+                                 today (it is read-only), so this is the cheap half of
+                                 the pair that makes adding one — copy the verb,
+                                 jump to the field — a one-line change instead of a
+                                 silent null-DataContext hunt. -->
+                            <Grid Tag="{x:Bind}"
+                                  Opacity="{x:Bind RowOpacity}"
+                                  Padding="0,5"
+                                  ColumnSpacing="12"
+                                  BorderBrush="{StaticResource CoalDividerBrush}"
+                                  BorderThickness="0,0,0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="130" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Column="0" Spacing="2">
+                                    <TextBlock Text="{x:Bind DisplayVerb}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               TextWrapping="Wrap"
+                                               Foreground="{StaticResource EmberPrimaryBrush}" />
+                                    <TextBlock Text="OFF"
+                                               Visibility="{x:Bind OffVisibility}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="9"
+                                               CharacterSpacing="120"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               loc:Localize.Key="panel.common.commands.off" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="{x:Bind Label}"
+                                               Style="{StaticResource ToolMonoBodyTextStyle}"
+                                               TextWrapping="Wrap" />
+                                    <!-- The usage line is shown only when it adds
+                                         something — i.e. when the command takes
+                                         arguments. For a bare verb the shape is just
+                                         the verb column repeated with its bang, and
+                                         printing it twice per row is noise. -->
+                                    <TextBlock Text="{x:Bind Shape}"
+                                               Visibility="{x:Bind ShapeVisibility}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}" />
+                                </StackPanel>
+
+                                <TextBlock Grid.Column="2"
+                                           Text="{x:Bind Roles}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           VerticalAlignment="Top" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </Grid>
+        </Border>
+    </StackPanel>
+</UserControl>

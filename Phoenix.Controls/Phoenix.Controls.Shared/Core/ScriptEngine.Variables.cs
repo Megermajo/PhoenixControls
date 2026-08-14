@@ -49,7 +49,8 @@ namespace Phoenix.Controls.Shared.Core
             // backtrack on long inputs. Logging at Communication tier so it
             // shows up in the script-author's feed but doesn't elevate to
             // CriticalError (the engine still ships the raw token through).
-            if (text.IndexOf('{') >= 0)
+            bool hasBrace = text.IndexOf('{') >= 0;
+            if (hasBrace)
             {
                 foreach (System.Text.RegularExpressions.Match braceMatch in SuspiciousBraceRegex.Matches(text))
                 {
@@ -79,6 +80,11 @@ namespace Phoenix.Controls.Shared.Core
             DateTime? utcNowCache   = null;
             DateTime? localNowCache = null;
 
+            // VarRefRegex requires a literal '{'; for brace-free text (the common
+            // case) Replace would return the string unchanged, so skip building the
+            // MatchEvaluator closure/delegate + the whole-string scan. The bare-name
+            // loop below still runs for brace-free text. Behavior-identical.
+            if (hasBrace)
             text = VarRefRegex.Replace(text, m =>
             {
                 string key = m.Groups[1].Value;
@@ -94,11 +100,11 @@ namespace Phoenix.Controls.Shared.Core
                     var resolved = ResolveSystemVar(key, utcNowCache.Value, localNowCache.Value);
                     if (resolved != null) return resolved;
                 }
-                // {stream.*} family, anchored at HubProcessStartedAtUtc
-                // by default. The "stream start" signal is configurable via
-                // SetStreamStartedAt; the default of "Hub uptime" matches
-                // system.* and is changeable later (e.g. to first-chat) without
-                // rewriting the consumer scripts.
+                // {stream.*} family. The anchor starts at Hub-process start and
+                // is replaced with the stream's real start time by
+                // SetStreamStartedAtUtc (Hub's stream-state reconcile); the
+                // Hub-uptime default only survives on a setup that can't ask the
+                // platform. Either way the consumer scripts are unaffected.
                 if (key.StartsWith("stream.", StringComparison.OrdinalIgnoreCase))
                 {
                     utcNowCache ??= DateTime.UtcNow;
@@ -192,17 +198,23 @@ namespace Phoenix.Controls.Shared.Core
         // ─────────────────────────────────────────────────────────────────
         // {stream.*} family.
         //
-        // Anchor: the moment the ScriptEngine module first loads
-        // in the Hub process. That's "Hub uptime" — the simplest of the
-        // three candidate signals (Hub uptime / Streamer.bot connect /
-        // first chat). Hub uptime matches the existing {system.*}
-        // contract: a single process-wide reference instant set at
-        // startup, no external trigger needed.
+        // Anchor DEFAULT: the moment the ScriptEngine module first loads
+        // in the Hub process. That's "Hub uptime" — it matches the existing
+        // {system.*} contract (a single process-wide reference instant set
+        // at startup, no external trigger needed) and is the fallback for a
+        // setup that cannot ask the platform for a real answer.
         //
-        // Swap mechanic: <see cref="SetStreamStartedAtUtc"/> lets the Hub
-        // (or a future config-driven init path) re-anchor at runtime.
-        // Existing scripts keep working because the var name doesn't
-        // change — only the underlying timestamp does.
+        // Swap mechanic: <see cref="SetStreamStartedAtUtc"/> re-anchors at
+        // runtime. Its production caller is the Hub's
+        // ScriptManager.ReconcileStreamStateAsync, which reads Twitch's real
+        // started_at through the "Phoenix: Get Stream Status" action on
+        // Streamer.bot connect and on a 60s refresh — that is what makes
+        // {stream.uptime} survive starting or restarting the Hub mid-stream
+        // instead of measuring the process. The same reconcile re-anchors to
+        // "now" when it finds the stream is NOT live, because the resolver
+        // below has no live gate: an anchor left at a finished stream's start
+        // would grow for ever. Existing scripts keep working because the var
+        // names don't change — only the underlying timestamp does.
         // ─────────────────────────────────────────────────────────────────
         // Stored as ticks so Volatile.Read/Write give us atomic publishes
         // without boxing. DateTime is a struct; Interlocked.Exchange<T>
@@ -210,10 +222,10 @@ namespace Phoenix.Controls.Shared.Core
         private static long _streamStartedAtUtcTicks = DateTime.UtcNow.Ticks;
 
         /// <summary>
-        /// Re-anchors the {stream.*} var family. Call from Hub startup if
-        /// the streamer wants Streamer.bot connect / first-chat / a custom
-        /// signal as the "stream start" reference instead of Hub uptime.
-        /// Thread-safe via Interlocked on the ticks field.
+        /// Re-anchors the {stream.*} var family. Called by the Hub's
+        /// ScriptManager.ReconcileStreamStateAsync with Twitch's authoritative
+        /// <c>started_at</c> while live, and with "now" once it confirms the
+        /// stream has ended. Thread-safe via Interlocked on the ticks field.
         /// </summary>
         public static void SetStreamStartedAtUtc(DateTime utc)
         {
@@ -224,6 +236,28 @@ namespace Phoenix.Controls.Shared.Core
         /// <summary>Current "stream start" anchor. Defaults to Hub-uptime.</summary>
         public static DateTime GetStreamStartedAtUtc()
             => new DateTime(System.Threading.Interlocked.Read(ref _streamStartedAtUtcTicks), DateTimeKind.Utc);
+
+        // Ambient CURRENT stream title/game (category name), mirrored in by the
+        // Hub's StreamInfoTracker (StreamUpdate/ChannelUpdate events + setter and
+        // Get-User write-through). "" until known — a Twitch.GetStream node's LOCAL
+        // stream.title/stream.game result vars still shadow these inside their own
+        // script scope (same precedence stream.uptime already has).
+        private static volatile string _streamInfoTitle = "";
+        private static volatile string _streamInfoGame = "";
+
+        /// <summary>Publishes the ambient {stream.title}/{stream.game} values.
+        /// Null leaves a field unchanged; "" clears it. Same swap-mechanic idea as
+        /// <see cref="SetStreamStartedAtUtc"/> — the var names never change, only
+        /// the underlying cached values do.</summary>
+        public static void SetStreamInfo(string? title, string? game)
+        {
+            if (title is not null) _streamInfoTitle = title;
+            if (game is not null) _streamInfoGame = game;
+        }
+
+        /// <summary>Test hook — current ambient (title, game) pair.</summary>
+        internal static (string Title, string Game) GetStreamInfoForTest()
+            => (_streamInfoTitle, _streamInfoGame);
 
         private static string? ResolveStreamVar(string key, DateTime utcNow)
         {
@@ -239,6 +273,8 @@ namespace Phoenix.Controls.Shared.Core
                 "stream.uptime_hours"     => ((long)elapsed.TotalHours).ToString(inv),
                 "stream.uptime_formatted" => FormatStreamUptime(elapsed),
                 "stream.started_at"       => startedAt.ToString("O", inv),
+                "stream.title"            => _streamInfoTitle,
+                "stream.game"             => _streamInfoGame,
                 _                         => null,
             };
         }

@@ -5,7 +5,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Visualist.Core;
@@ -61,6 +63,10 @@ public sealed partial class WidgetGraphNodeView : UserControl
         // independently of canvas-driven mutations (e.g. when a node view
         // is re-created mid-session) so we cover both paths.
         Loaded += OnLoaded;
+        // V13 trace flash — the bus subscription is paired to the visual-tree
+        // lifetime, NOT the constructor, so a view the canvas discards on Rebuild()
+        // stops holding the bus singleton. See HookTraceFlash.
+        Unloaded += OnUnloaded;
     }
 
     /// <summary>Re-runs full layout against the current Node — call after
@@ -77,11 +83,16 @@ public sealed partial class WidgetGraphNodeView : UserControl
         {
             PreviewHost.SetSnapshot(_lastSnapshot);
         }
+        HookTraceFlash();
     }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e) => UnhookTraceFlash();
 
     private void Render()
     {
-        TitleText.Text    = string.IsNullOrEmpty(Node.Title) ? "(untitled)" : Node.Title;
+        TitleText.Text    = string.IsNullOrEmpty(Node.Title)
+            ? Localizer.T("visualist.widget.node.untitled", "(untitled)")
+            : Node.Title;
         CategoryText.Text = Node.Category ?? "";
         ApplyHeaderColor();
 
@@ -120,9 +131,15 @@ public sealed partial class WidgetGraphNodeView : UserControl
     private const string RangeSuffix       = "__Range";
     private const string KnownValuesSuffix = "__KnownValues";
 
+    // Pure runtime metadata with no "__" marker — see the matching arm in
+    // VisualistViewModel.IsCompanionKey. Without it the template back-fill's copy of
+    // this key renders a bogus pill on every Display node's body.
+    private const string AutoInjectedKey   = "IsAutoInjected";
+
     private static bool IsCompanionMetaKey(string key)
         => key.EndsWith(RangeSuffix, StringComparison.Ordinal)
-        || key.EndsWith(KnownValuesSuffix, StringComparison.Ordinal);
+        || key.EndsWith(KnownValuesSuffix, StringComparison.Ordinal)
+        || string.Equals(key, AutoInjectedKey, StringComparison.Ordinal);
 
     /// <summary>
     /// True when an INPUT socket already covers <paramref name="attrKey"/> — that
@@ -146,12 +163,18 @@ public sealed partial class WidgetGraphNodeView : UserControl
     {
         if (Node.Attributes is null || Node.Attributes.Count == 0) return;
 
+        // How many String.Select rows this BODY shows (int.MaxValue = no capping, i.e. every
+        // other node). See visibleStringSelectRows for the rule.
+        int rowCap = VisibleStringSelectRows();
+
         foreach (var kv in Node.Attributes)
         {
             string key = kv.Key;
             if (string.IsNullOrEmpty(key)) continue;
             // Skip companion-meta keys (__Range / __KnownValues) — Inspector-only.
             if (IsCompanionMetaKey(key)) continue;
+            // Trailing unconfigured String.Select rows are suppressed on the body.
+            if (IsSuppressedStringSelectRow(key, rowCap)) continue;
             // Skip params already pilled via their matching input socket. (A Flow
             // input socket would carry the key too, but Flow sockets never pill —
             // TryGetPillForSocket bails on Flow — so an attribute keyed to a Flow
@@ -161,6 +184,79 @@ public sealed partial class WidgetGraphNodeView : UserControl
 
             InputPinStack.Children.Add(BuildAttributePillRow(key, kv.Value ?? string.Empty));
         }
+    }
+
+    // ─── String.Select body-row capping ─────────────────────────────
+    //
+    // String.Select ships StringSelectRows (12) Case/Value attribute PAIRS plus When and
+    // Default, and the attribute-only pill path renders one row per key: 26 pill rows, about
+    // 600 px of node body, uncapped and inside a canvas with no scroll. In the ordinary
+    // three-kind mapping 20 of those rows are blank — a node body six times taller than the
+    // graph it sits in, mostly empty.
+    //
+    // The template row count is NOT reduced (changing it once graphs exist would strand rows
+    // an author has already filled in — the unsafe option). Instead the BODY hides TRAILING
+    // all-blank pairs and keeps exactly one blank pair as the add-the-next-row affordance, so
+    // a fresh node shows Case1/Value1 and a three-kind node shows rows 1..4. Every row stays
+    // reachable: the Inspector builds its own rows from Node.Attributes and is untouched, and
+    // filling row N here immediately reveals row N+1 on the next Rebuild.
+    //
+    // Deliberately NOT generalised to "hide any blank attribute": a blank Text.Render Content
+    // or a blank PreviewText must stay visible, because its pill is the only place to type
+    // one. This applies to a node whose rows are a numbered SEQUENCE, where "the next empty
+    // one" is unambiguous.
+
+    private const string StringSelectTitle = "String.Select";
+
+    private int VisibleStringSelectRows() => VisibleStringSelectRows(Node.Title, Node.Attributes);
+
+    /// <summary>
+    /// Number of <c>Case&lt;i&gt;</c>/<c>Value&lt;i&gt;</c> pairs to render on the body:
+    /// the highest configured row plus one blank, clamped to the template's row count.
+    /// <see cref="int.MaxValue"/> for every node that is not a String.Select, so the caller's
+    /// per-key test is a no-op there.
+    ///
+    /// Static + attribute-dictionary-driven so <c>DynamicMediaSourceV7Tests</c> can pin the
+    /// rule: a WinUI <c>UserControl</c> cannot be constructed on a headless test host, and an
+    /// instance-only helper would have been untestable.
+    /// </summary>
+    internal static int VisibleStringSelectRows(string? title, IReadOnlyDictionary<string, string>? attrs)
+    {
+        if (!string.Equals(title, StringSelectTitle, StringComparison.OrdinalIgnoreCase))
+            return int.MaxValue;
+        if (attrs is null) return int.MaxValue;
+
+        int highestUsed = 0;
+        for (int row = 1; row <= NodeTemplates.StringSelectRows; row++)
+        {
+            if (HasRowText(attrs, $"Case{row}") || HasRowText(attrs, $"Value{row}")) highestUsed = row;
+        }
+        // +1 = the add-next affordance; the clamp keeps a fully-populated node at 12.
+        int visible = highestUsed + 1;
+        return visible > NodeTemplates.StringSelectRows ? NodeTemplates.StringSelectRows : visible;
+    }
+
+    /// True when the attribute holds a non-empty value. Values are stored JSON-quoted by the
+    /// Inspector ("" for empty), so the quotes come off before the emptiness test — without
+    /// that, every row reads as configured and nothing is ever suppressed.
+    private static bool HasRowText(IReadOnlyDictionary<string, string> attrs, string key)
+        => attrs.TryGetValue(key, out var raw)
+        && (raw ?? string.Empty).Trim().Trim('"').Length > 0;
+
+    /// True for a <c>Case&lt;i&gt;</c>/<c>Value&lt;i&gt;</c> key past the visible row count.
+    /// Any other key — When, Default, or a row index that fails to parse — is never
+    /// suppressed: an unparsable key is author/hand-edit data and hiding it would make it
+    /// uneditable.
+    internal static bool IsSuppressedStringSelectRow(string key, int rowCap)
+    {
+        if (rowCap == int.MaxValue) return false;
+        string digits;
+        if (key.StartsWith("Case", StringComparison.Ordinal))       digits = key.Substring(4);
+        else if (key.StartsWith("Value", StringComparison.Ordinal)) digits = key.Substring(5);
+        else return false;
+        if (!int.TryParse(digits, System.Globalization.NumberStyles.None,
+                          System.Globalization.CultureInfo.InvariantCulture, out int row)) return false;
+        return row > rowCap;
     }
 
     /// <summary>
@@ -188,8 +284,8 @@ public sealed partial class WidgetGraphNodeView : UserControl
         var label = new TextBlock
         {
             Text       = attrKey,
-            FontFamily = new FontFamily(Application.Current.Resources["MonoFont"] as string ?? "Consolas"), // [FONTCAST] MonoFont is an <x:String>; a direct cast throws
-            FontSize   = 9,
+            FontFamily = SansFontFamily(), // attribute label = chrome text, Sans (matches socket labels)
+            FontSize   = 12,
             Foreground = (Brush)Application.Current.Resources["CoalSecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
             Margin     = new Thickness(6, 0, 0, 0),
@@ -225,35 +321,76 @@ public sealed partial class WidgetGraphNodeView : UserControl
 
     private void ApplySelectionVisual()
     {
-        if (_isSelected)
-        {
-            // Selection is §2 gold (SelectionBrush #FFD700), not the brass
-            // Ember accent. The pre-fix code painted EmberPrimaryBrush and
-            // mislabelled it "canonical"; gold is the canonical selection colour
-            // per Design_Orders §2 (yellow=editable, gold=selection).
-            NodeChrome.BorderBrush = ResolveBrush("SelectionBrush", Microsoft.UI.Colors.Gold);
-            NodeChrome.BorderThickness = new Thickness(2);
-        }
-        else
-        {
-            NodeChrome.BorderBrush = ResolveBrush("CoalCardBrush", Microsoft.UI.Colors.DimGray);
-            NodeChrome.BorderThickness = new Thickness(1);
-        }
+        // Selection paints a dedicated 2px gold ring (§2 SelectionBrush #FFD700,
+        // wired in XAML) rather than thickening NodeChrome's border. Mirrors
+        // Architect NodeView's AccentRing: the body border stays a constant 1px
+        // CoalDividerBrush and only this overlay toggles, so selecting a node
+        // never re-measures the body and the gold ring reads clearly at zoom.
+        // Gold is the canonical selection colour per Design_Orders §2
+        // (yellow=editable, green=connected, red=error, gold=selection).
+        AccentRing.Visibility = _isSelected ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // Per-node header colour. The pre-WinUI baseline coloured node header
     // strips by category/role (the Display + Audio sinks ship green / purple
     // HeaderColor); the WinUI rework flattened every header to one brass
-    // EmberShadow band, erasing the distinction. Bind TitleBar.Background to
-    // Node.HeaderColor, falling back to the neutral EmberShadow band only when
-    // the colour was never assigned (A == 0).
+    // EmberShadow band, erasing the distinction AND painting off-brand ember on
+    // every node. Every header now paints an ENGRAVED vertical gradient
+    // (top lightened ~5% / bottom darkened ~25%, Design_Orders §4.3) — a subtle
+    // per-category tint when Node.HeaderColor is assigned, else a neutral warm-
+    // coal band. Mirrors Architect's HeaderGradientBrush idiom, duplicated
+    // locally per the per-pillar paint rule (never reference Architect types).
     private void ApplyHeaderColor()
     {
         var hc = Node.HeaderColor;
         if (hc.A != 0)
-            TitleBar.Background = new SolidColorBrush(Color.FromArgb(hc.A, hc.R, hc.G, hc.B));
+            TitleBar.Background = MakeVerticalGradient(
+                ControlPaintLight(hc, 0.05),
+                ControlPaintDark(hc, 0.25));
         else
-            TitleBar.Background = ResolveBrush("EmberShadowBrush", Color.FromArgb(0xFF, 0x2D, 0x2D, 0x30));
+            // Neutral engraved header (no category colour) — warm-coal graphite
+            // gradient, lighter top / darker bottom, matching the suite's
+            // PanelHeaderGradientBrush cadence. NOT the reserved ember band.
+            TitleBar.Background = MakeVerticalGradient(
+                Color.FromArgb(0xFF, 0x33, 0x2B, 0x22),
+                Color.FromArgb(0xFF, 0x1E, 0x19, 0x15));
+    }
+
+    // ─── Engraved-header gradient helpers ───────────────────────────
+    //
+    // Duplicated from Architect's NodeViewModel.HeaderGradientBrush technique
+    // (ControlPaint.Light/Dark fade → vertical LinearGradientBrush) per the
+    // per-pillar paint rule — the idiom is copied, not lifted, and no Architect
+    // type is referenced. Node.HeaderColor is a System.Drawing.Color (shared
+    // model), so the fade helpers take that and return Windows.UI.Color.
+    private static LinearGradientBrush MakeVerticalGradient(Color top, Color bottom)
+    {
+        var gb = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, 0),
+            EndPoint   = new Point(0, 1),
+        };
+        gb.GradientStops.Add(new GradientStop { Color = top,    Offset = 0.0 });
+        gb.GradientStops.Add(new GradientStop { Color = bottom, Offset = 1.0 });
+        return gb;
+    }
+
+    // Mirror of System.Windows.Forms.ControlPaint.Light — blend toward white.
+    private static Color ControlPaintLight(System.Drawing.Color c, double factor)
+    {
+        byte r = (byte)Math.Min(255.0, c.R + (255 - c.R) * factor);
+        byte g = (byte)Math.Min(255.0, c.G + (255 - c.G) * factor);
+        byte b = (byte)Math.Min(255.0, c.B + (255 - c.B) * factor);
+        return Color.FromArgb(0xFF, r, g, b);
+    }
+
+    // Mirror of System.Windows.Forms.ControlPaint.Dark — blend toward black.
+    private static Color ControlPaintDark(System.Drawing.Color c, double factor)
+    {
+        byte r = (byte)Math.Max(0.0, c.R * (1 - factor));
+        byte g = (byte)Math.Max(0.0, c.G * (1 - factor));
+        byte b = (byte)Math.Max(0.0, c.B * (1 - factor));
+        return Color.FromArgb(0xFF, r, g, b);
     }
 
     // Resolve a theme brush by resource key without a hard cast — a missing,
@@ -292,8 +429,8 @@ public sealed partial class WidgetGraphNodeView : UserControl
         var label = new TextBlock
         {
             Text       = socket.Name,
-            FontFamily = new FontFamily(Application.Current.Resources["MonoFont"] as string ?? "Consolas"), // [FONTCAST] MonoFont is an <x:String>; a direct cast throws
-            FontSize   = 9,
+            FontFamily = SansFontFamily(), // socket label = chrome text, Sans (matches Architect)
+            FontSize   = 12,
             Foreground = (Brush)Application.Current.Resources["CoalSecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
             Margin     = isInput ? new Thickness(6, 0, 0, 0) : new Thickness(0, 0, 6, 0),
@@ -373,18 +510,22 @@ public sealed partial class WidgetGraphNodeView : UserControl
     {
         bool armed = _pillArmed?.Invoke(attrKey) == true;
 
-        var prev = MakeMicroButton("◀", "Seek to the previous keyframe on this parameter");
+        var prev = MakeMicroButton("◀", Localizer.T(
+            "visualist.widget.node.seek_prev.tip", "Seek to the previous keyframe on this parameter"));
         prev.Click += (_, __) => _pillSeekPrev?.Invoke(attrKey);
 
         var arm = MakeMicroButton(armed ? "◆" : "◇",
-            armed ? "Recording — value edits drop a keyframe at the playhead. Click to disarm."
-                  : "Arm record — value edits drop a keyframe at the playhead.");
+            armed ? Localizer.T("visualist.widget.node.record.armed.tip",
+                                "Recording — value edits drop a keyframe at the playhead. Click to disarm.")
+                  : Localizer.T("visualist.widget.node.record.disarmed.tip",
+                                "Arm record — value edits drop a keyframe at the playhead."));
         arm.Foreground = armed
             ? ResolveBrush("SelectionBrush", Microsoft.UI.Colors.Gold)
             : ResolveBrush("CoalSecondaryTextBrush", Microsoft.UI.Colors.Gray);
         arm.Click += (_, __) => _pillToggleArm?.Invoke(attrKey);
 
-        var next = MakeMicroButton("▶", "Seek to the next keyframe on this parameter");
+        var next = MakeMicroButton("▶", Localizer.T(
+            "visualist.widget.node.seek_next.tip", "Seek to the next keyframe on this parameter"));
         next.Click += (_, __) => _pillSeekNext?.Invoke(attrKey);
 
         var row = new StackPanel
@@ -455,15 +596,23 @@ public sealed partial class WidgetGraphNodeView : UserControl
     private static FontFamily MonoFontFamily()
         => new FontFamily(Application.Current.Resources["MonoFont"] as string ?? "Consolas");
 
+    // Sans companion to MonoFontFamily() — node title / category / socket +
+    // attribute labels use Sans (chrome text), only VALUE pills stay Mono.
+    // [FONTCAST] SansFont is an <x:String> resource; a direct cast throws.
+    private static FontFamily SansFontFamily()
+        => new FontFamily(Application.Current.Resources["SansFont"] as string ?? "Segoe UI");
+
     private FrameworkElement BuildValuePill(Socket socket, string rawValue)
     {
         string attrKey = ResolveAttrKey(socket);
 
         var read = new TextBlock
         {
-            Text         = string.IsNullOrEmpty(rawValue) ? "(empty)" : rawValue,
-            FontFamily   = MonoFontFamily(),
-            FontSize     = 9,
+            Text         = string.IsNullOrEmpty(rawValue)
+                ? Localizer.T("visualist.widget.node.pill.empty", "(empty)")
+                : rawValue,
+            FontFamily   = MonoFontFamily(), // VALUE pill stays Mono (values are code-like)
+            FontSize     = 11,               // bumped 9→11 to match Architect's pill
             Foreground   = ResolveBrush("AccentValueBrush", Microsoft.UI.Colors.Goldenrod),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -473,7 +622,7 @@ public sealed partial class WidgetGraphNodeView : UserControl
         {
             Visibility = Visibility.Collapsed,
             FontFamily = MonoFontFamily(),
-            FontSize   = 9,
+            FontSize   = 11, // match the read pill above
             MinWidth   = 48,
             Padding    = new Thickness(2, 0, 2, 0),
         };
@@ -497,7 +646,12 @@ public sealed partial class WidgetGraphNodeView : UserControl
             Tag             = "editpill",
             Child           = grid,
         };
-        ToolTipService.SetToolTip(border, $"{socket.Name} — click to edit");
+        // The socket NAME is an identifier and stays English (see the Visualist
+        // localization decision on socket / node-type names); only the sentence
+        // around it is translated.
+        ToolTipService.SetToolTip(border, string.Format(
+            Localizer.T("visualist.widget.node.pill.tip_format", "{0} — click to edit"),
+            socket.Name));
 
         string baseline = rawValue;
         bool finished = false;
@@ -517,7 +671,9 @@ public sealed partial class WidgetGraphNodeView : UserControl
             // edit or replay a phantom one. Live value = the only correct datum.
             string liveBaseline = Node.Attributes.TryGetValue(attrKey, out var live) ? (live ?? "") : "";
             if (string.Equals(newVal, liveBaseline, StringComparison.Ordinal)) return;
-            read.Text = string.IsNullOrEmpty(newVal) ? "(empty)" : newVal;
+            read.Text = string.IsNullOrEmpty(newVal)
+                ? Localizer.T("visualist.widget.node.pill.empty", "(empty)")
+                : newVal;
             // Routes through the canvas → PushUndo + write + MarkDirty + Rebuild
             // (which recreates this view, so post-commit local state is moot).
             _onAttrCommit?.Invoke(Node, attrKey, newVal);
@@ -771,5 +927,257 @@ public sealed partial class WidgetGraphNodeView : UserControl
             try { PreviewStrip.Visibility = Visibility.Collapsed; } catch { }
             GlobalLogger.Error("WidgetGraphNodeView", "SetPreview", ex);
         }
+    }
+
+    // ─── V13 — live-trace flash (DEBUG_WIDGET_NODE) ──────────────────────────
+    //
+    // Architect's flash DISCIPLINE, re-implemented here rather than shared. The
+    // standing rule (feedback_visualist_architect_chrome_independence) keeps the two
+    // pillars' chrome independent, so this references no Architect type and adds no
+    // Shared/UI dependency — the idiom is copied from
+    // Architect.WinUI/Canvas/NodeView.xaml.cs (storyboard cache + Stop-before-Begin)
+    // and LogicCanvasView.xaml.cs (per-frame dedupe), read and re-derived.
+    //
+    // Four discipline items and how each lands here — items 1-3 are carried over as-is,
+    // item 4 deliberately DEVIATES and says why:
+    //
+    //  1. ONE storyboard per view, built on first flash and re-Begun per pulse.
+    //     Architect's own comment records why: allocating a Storyboard + keyframes +
+    //     easing functions per trace event churned the animation pool. The timeline
+    //     is a constant, so Stop()+Begin() on a cached instance replays it exactly.
+    //  2. Stop BEFORE Begin. Re-firing mid-ramp without stopping stacks two Opacity
+    //     timelines on one property and the overlay sticks at full opacity — the node
+    //     stays lit amber for the rest of the session.
+    //  3. Coalesce a burst. Architect drains its pending set once per rendered frame;
+    //     with no render tick here the equivalent is a short monotonic-clock gate, so
+    //     a burst inside one frame interval reads as ONE pulse instead of a restart
+    //     per message.
+    //  4. NO completion callback, and that is a deliberate difference from Architect
+    //     rather than a missing item. Architect needs its FlashTick generation guard
+    //     because its expiries live in a DICTIONARY swept by one shared timer: N
+    //     expirations are pending at once, so a stale one must be able to recognise
+    //     that a re-flash superseded it. Here the pulse is ONE cached storyboard per
+    //     view whose last keyframe already returns Opacity to 0, and every pulse
+    //     re-zeroes the overlay before Begin — so the overlay always ends transparent
+    //     with no callback at all. A generation guard on a SHARED Completed handler
+    //     would in fact be decorative: the handler cannot tell which pulse it is the
+    //     completion of, so any field it compared would have been written by the newest
+    //     Begin and would always match. (An earlier draft of this file shipped exactly
+    //     that always-true guard.) The storyboard is also Stop()ed on unload so a
+    //     detached element never leaves an animation running.
+    //
+    // The overlay Border is built IN CODE rather than declared in the .xaml because
+    // this sprint's write fence covers the code-behind only. Functionally identical:
+    // it is appended last to NodeRoot.Children (topmost, so it tints the whole body
+    // the way Architect's Grid.RowSpan overlay does) and IsHitTestVisible=false so it
+    // can never eat a pointer event the canvas needs for drag / selection.
+    //
+    // Batching: the frame carries a LIST of node ids for one whole trigger activation
+    // (never one id per message — renderWidgetTrigger re-runs per animation frame, so
+    // a per-node trace would push the bus at frame rate). Each view tests membership
+    // of its own id, which also makes a duplicate id inside one frame free: the same
+    // list yields one Contains hit and one pulse.
+
+    // Architect's live-trace amber. Same value, same meaning (execution pulse) —
+    // duplicated locally per the per-pillar paint rule rather than referenced.
+    private static readonly Color TraceFlashColor = Color.FromArgb(0xFF, 0xFF, 0xB3, 0x00);
+    private const double TraceFlashPeakOpacity = 0.42;
+    private const int TraceFlashRampInMs  = 120;
+    private const int TraceFlashHoldToMs  = 300;
+    private const int TraceFlashRampOutMs = 420;
+
+    // Burst gate (discipline item 3). One display frame at 60 Hz.
+    private const long TraceFlashCoalesceMs = 16;
+
+    private Border? _traceFlashOverlay;
+    private Storyboard? _traceFlashStoryboard;
+    private long _traceFlashStartedAtMs;
+    private bool _traceFlashEverStarted;
+    private bool _traceHooked;
+    private Action<Core.VisualistBusClient.WidgetNodeTrace>? _onWidgetNodeTrace;
+
+    /// <summary>
+    /// Subscribe to the design-time trace feed. Idempotent — WinUI can raise Loaded
+    /// more than once for the same element (re-parent, tab re-entry), and a second
+    /// subscription would double-fire every pulse.
+    ///
+    /// Subscription is PER VIEW, which is the honest tradeoff of keeping this inside
+    /// the node view: Architect subscribes ONCE per canvas and dispatches through its
+    /// node dictionary, which is strictly cheaper. It is affordable here because the
+    /// feed is design-time only and fires once per trigger activation (not per frame),
+    /// so the invocation list is walked at human speed. If this ever moves to a
+    /// hotter cadence, consolidate onto WidgetGraphCanvas — it already keys every live
+    /// view by node id in its own _nodeViews map.
+    /// </summary>
+    private void HookTraceFlash()
+    {
+        if (_traceHooked) return;
+        try
+        {
+            _onWidgetNodeTrace ??= OnWidgetNodeTrace;
+            Core.VisualistBusClient.Instance.OnWidgetNodeTrace += _onWidgetNodeTrace;
+            _traceHooked = true;
+        }
+        catch (Exception ex)
+        {
+            // Never let a bus-singleton construction failure take the node view down —
+            // the graph must still render without the trace feed.
+            GlobalLogger.Error("WidgetGraphNodeView", "trace-flash hook failed", ex);
+        }
+    }
+
+    private void UnhookTraceFlash()
+    {
+        // Stop an in-flight pulse regardless of the hook state: an animation left
+        // running against a detached element is pure waste, and the next Load re-zeroes
+        // the overlay anyway.
+        if (_traceFlashStoryboard is not null)
+        {
+            try { _traceFlashStoryboard.Stop(); } catch { }
+            if (_traceFlashOverlay is not null) _traceFlashOverlay.Opacity = 0;
+        }
+
+        if (!_traceHooked) return;
+        _traceHooked = false;
+        if (_onWidgetNodeTrace is null) return;
+        try { Core.VisualistBusClient.Instance.OnWidgetNodeTrace -= _onWidgetNodeTrace; } catch { }
+    }
+
+    /// <summary>
+    /// Raised on the bus receive-loop thread, so the UI work is marshalled. The
+    /// membership test runs BEFORE the hop: with N node views subscribed, only the
+    /// nodes actually named in the batch enqueue anything, so an activation that
+    /// touched 3 nodes in a 40-node graph costs 3 dispatcher items, not 40.
+    /// </summary>
+    private void OnWidgetNodeTrace(Core.VisualistBusClient.WidgetNodeTrace trace)
+    {
+        if (trace is null) return;
+
+        string myId = Node?.Id ?? "";
+        if (string.IsNullOrEmpty(myId)) return;
+
+        bool mine = false;
+        // Ordinal, matching how node ids are keyed everywhere else (GUID strings).
+        for (int i = 0; i < trace.NodeIds.Count; i++)
+        {
+            if (string.Equals(trace.NodeIds[i], myId, StringComparison.Ordinal)) { mine = true; break; }
+        }
+        if (!mine) return;
+
+        var queue = DispatcherQueue;
+        if (queue is null) return;
+        if (!queue.TryEnqueue(TriggerTraceFlash))
+        {
+            // Queue shut down (window closing) — nothing to draw into, and this is a
+            // routine race on teardown, not an error worth a log line.
+        }
+    }
+
+    /// <summary>
+    /// Play one pulse. UI thread only. Public-adjacent (internal) so a future
+    /// canvas-level dispatcher can drive it directly without going through the bus.
+    /// </summary>
+    internal void TriggerTraceFlash()
+    {
+        try
+        {
+            long now = Environment.TickCount64;
+
+            // Discipline item 3 — collapse a burst arriving inside one frame interval
+            // into the pulse already running, instead of restarting the ramp per
+            // message. Gated on a pulse having EVER started, so the very first flash of
+            // the session is never swallowed by a zero start stamp (TickCount64 is time
+            // since boot, so `now - 0` is huge in practice — but relying on that would
+            // be relying on uptime).
+            if (_traceFlashEverStarted && now - _traceFlashStartedAtMs < TraceFlashCoalesceMs)
+                return;
+
+            var overlay = EnsureTraceFlashOverlay();
+            if (overlay is null) return;
+            var sb = EnsureTraceFlashStoryboard(overlay);
+            if (sb is null) return;
+
+            _traceFlashStartedAtMs = now;
+            _traceFlashEverStarted = true;
+
+            // Discipline item 2 — Stop before Begin so opacity timelines never stack.
+            // The explicit re-zero is what makes the no-completion-callback design (item
+            // 4) safe: whatever value a stopped or held animation left behind, the next
+            // pulse starts from transparent.
+            try { sb.Stop(); } catch { /* element left the tree mid-pulse */ }
+            overlay.Opacity = 0;
+            try { sb.Begin(); }
+            catch (Exception ex)
+            {
+                // Pre-realised / detached tree: leave the overlay transparent rather
+                // than stranding it lit.
+                overlay.Opacity = 0;
+                GlobalLogger.Error("WidgetGraphNodeView", "trace-flash begin failed", ex);
+            }
+        }
+        catch (Exception ex)
+        {
+            GlobalLogger.Error("WidgetGraphNodeView", "TriggerTraceFlash", ex);
+        }
+    }
+
+    // Built on FIRST flash only — a node that never appears in a trace adds zero
+    // elements and zero animation objects to the tree.
+    private Border? EnsureTraceFlashOverlay()
+    {
+        if (_traceFlashOverlay is not null) return _traceFlashOverlay;
+        if (NodeRoot is null) return null;
+
+        var overlay = new Border
+        {
+            Background       = new SolidColorBrush(TraceFlashColor),
+            CornerRadius     = new CornerRadius(6),   // matches NodeChrome
+            Opacity          = 0,
+            IsHitTestVisible = false,
+        };
+        // Appended last ⇒ topmost within NodeRoot, so the tint reads across the
+        // header + body the way Architect's RowSpan overlay does.
+        NodeRoot.Children.Add(overlay);
+        _traceFlashOverlay = overlay;
+        return overlay;
+    }
+
+    private Storyboard? EnsureTraceFlashStoryboard(Border overlay)
+    {
+        if (_traceFlashStoryboard is not null) return _traceFlashStoryboard;
+
+        var anim = new DoubleAnimationUsingKeyFrames();
+        Storyboard.SetTarget(anim, overlay);
+        Storyboard.SetTargetProperty(anim, "Opacity");
+        anim.KeyFrames.Add(new LinearDoubleKeyFrame
+        {
+            KeyTime = KeyTime.FromTimeSpan(TimeSpan.Zero),
+            Value   = 0,
+        });
+        anim.KeyFrames.Add(new EasingDoubleKeyFrame
+        {
+            KeyTime        = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(TraceFlashRampInMs)),
+            Value          = TraceFlashPeakOpacity,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        });
+        anim.KeyFrames.Add(new LinearDoubleKeyFrame
+        {
+            KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(TraceFlashHoldToMs)),
+            Value   = TraceFlashPeakOpacity,
+        });
+        anim.KeyFrames.Add(new EasingDoubleKeyFrame
+        {
+            KeyTime        = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(TraceFlashRampOutMs)),
+            Value          = 0.0,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+        });
+
+        // No Completed handler — see discipline item 4. The last keyframe holds 0 and
+        // every pulse re-zeroes before Begin, so the overlay is transparent at rest in
+        // both the completed and the stopped case.
+        var sb = new Storyboard();
+        sb.Children.Add(anim);
+        _traceFlashStoryboard = sb;
+        return sb;
     }
 }

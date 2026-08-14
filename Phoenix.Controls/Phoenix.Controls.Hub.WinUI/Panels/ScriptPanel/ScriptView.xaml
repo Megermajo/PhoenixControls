@@ -13,6 +13,21 @@
     AutomationProperties.HelpText="One row per script in the active data/logic folder, with traffic-light status, CPU and RAM cost, and run count. Right-click a row for open, reload, reveal, and last-error actions.">
 
     <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- House ember/coal re-skin for the per-row enable CheckBox — the
+                     only stock Fluent control on this panel. PhoenixDark.xaml's only
+                     implicit styles target the MenuFlyout family (PhoenixDark.xaml
+                     :961-999, which is what paints this panel's own right-click row
+                     menu) — it ships no CheckBox style, so without this merge the box
+                     paints itself in the viewer's OS accent colour. Nothing else here is a
+                     type the dictionary touches (the rest is Border / Grid /
+                     TextBlock / Button / PathIcon plus PanelHeader and
+                     ScriptStatusDot, both of which are Border/TextBlock/Ellipse
+                     only), so the merge is confined to that checkbox. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
         <Style x:Key="ScriptPanelColumnHeaderText" TargetType="TextBlock">
             <Setter Property="FontFamily"        Value="{StaticResource SansFont}" />
             <Setter Property="FontSize"          Value="9" />
@@ -20,6 +35,7 @@
             <Setter Property="CharacterSpacing"  Value="120" />
             <Setter Property="Foreground"        Value="{StaticResource CoalSecondaryTextBrush}" />
         </Style>
+        </ResourceDictionary>
     </UserControl.Resources>
 
     <Border Background="{StaticResource CoalSurfaceBrush}"
@@ -106,6 +122,7 @@
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
                 <ItemsRepeater x:Name="ScriptRepeater"
+                               hdr:RowDataContext.Supply="True"
                                ItemsSource="{x:Bind ViewModel.Rows, Mode=OneWay}"
                                ElementPrepared="OnRowElementPrepared"
                                ElementClearing="OnRowElementClearing">

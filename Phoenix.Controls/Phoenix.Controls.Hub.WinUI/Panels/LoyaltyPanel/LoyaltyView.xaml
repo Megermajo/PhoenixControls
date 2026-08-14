@@ -1,0 +1,1177 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.LoyaltyPanel.LoyaltyView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.LoyaltyPanel"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Loyalty page"
+    AutomationProperties.HelpText="Configure the viewer points economy: currency, earn rules, commands, minigames, rewards, and per-viewer balances."
+    loc:Localize.AutomationKey="panel.loyalty.page.a11y"
+    loc:Localize.HelpTextKey="panel.loyalty.page.help">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- ToolControlStyles is still required. After the conversions below the
+                     page holds no ToggleSwitch, no CheckBox and no Pivot, but it is by
+                     far the most TEXTBOX-heavy of the twelve (every currency, earn,
+                     multiplier, anti-abuse, command, minigame, reward and overlay
+                     field, plus the two merge boxes, the lookup pair and the per-row
+                     "set to" draft), and those draw their coal/ember chrome from the
+                     implicit styles in that dictionary. RoleCheckRow merges it for
+                     itself, so the six role boxes are covered either way. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell recipes (cards, bands, strip buttons, text tiers). -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- ══════════════════ Page-local literals only ══════════════════ -->
+
+            <!-- Flush card: Padding 0 so a CoalRaised header band runs edge-to-edge.
+                 Everything else comes from the shared ToolSectionCardStyle (shell
+                 fill DARKER than the page, opaque CoalCard border, Radius1). -->
+            <Style x:Key="LoyCardFlush" TargetType="Border" BasedOn="{StaticResource ToolSectionCardStyle}">
+                <Setter Property="Padding" Value="0" />
+            </Style>
+
+            <!-- ★ The Margin is load-bearing on this one. LoyCardFlushRow is the item
+                 root inside the two ItemsControls that survive (Minigames, Rewards),
+                 and an ItemsControl has no Spacing — this setter IS the gap between
+                 cards. The repeater-hosted lists get their gap from a StackLayout
+                 instead and therefore use the bare flush style. -->
+            <Style x:Key="LoyCardFlushRow" TargetType="Border" BasedOn="{StaticResource LoyCardFlush}">
+                <Setter Property="Margin" Value="0,0,0,10" />
+            </Style>
+
+            <!-- In-card group separator. -->
+            <Style x:Key="LoyHairline" TargetType="Border">
+                <Setter Property="Height" Value="1" />
+                <Setter Property="Background" Value="{StaticResource CoalRaisedBrush}" />
+            </Style>
+
+            <Style x:Key="LoyEntry" TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+                <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="MinWidth" Value="140" />
+                <Setter Property="MaxWidth" Value="440" />
+            </Style>
+
+            <!-- Borderless host for a display-only TogglePill. The pill owns no input:
+                 the Click and the accessible name both live on this Button. -->
+            <Style x:Key="LoyToggleHost" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="0,2" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+            </Style>
+
+            <!-- ★ LoyEmptySub is gone with the four two-line empty states it dressed.
+                 Every empty state on this page is now ONE line in
+                 ToolMonoHintTextStyle, top-aligned: an absence is a hint, not a
+                 headline, and the DisplayFont title over a centred sub-line was
+                 the loudest thing on a fresh install's screen. -->
+
+            <!-- ══════════════════ Row templates ══════════════════ -->
+
+            <!-- One label + input row. The boolean arm is a TogglePill in a borderless
+                 Button (converted from CheckBox); the pill is display-only, so the flip
+                 happens in OnFieldToggleClick off this Button's DataContext. -->
+            <DataTemplate x:Key="LabeledFieldTemplate" x:DataType="local:LoyaltyLabeledField">
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{x:Bind Label}"
+                               Style="{StaticResource ToolSettingsLabelTextStyle}" Margin="0,0,12,0" />
+                    <StackPanel Grid.Column="1" Spacing="3">
+                        <Button Style="{StaticResource LoyToggleHost}"
+                                Visibility="{x:Bind ToggleVisibility}"
+                                Click="OnFieldToggleClick"
+                                AutomationProperties.Name="{x:Bind Label}">
+                            <cmn:TogglePill IsOn="{x:Bind Toggle.IsOn, Mode=OneWay}" />
+                        </Button>
+                        <TextBox Visibility="{x:Bind EntryVisibility}"
+                                 Style="{StaticResource LoyEntry}"
+                                 Text="{x:Bind Entry.Text, Mode=TwoWay}"
+                                 AutomationProperties.Name="{x:Bind Label}" />
+                        <TextBlock Visibility="{x:Bind HintVisibility}"
+                                   Text="{x:Bind Hint}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+
+            <!-- A group card holding a list of labelled fields.
+                 ★ The inner host stays an ItemsControl. It sits inside another
+                 repeater's DataTemplate, where an ItemsRepeater would virtualize
+                 against the outer ScrollViewer's viewport rather than its own host —
+                 measure behaviour the build spec flags as verifiable only by running
+                 the app. These are 4-18 fixed rows; virtualization buys nothing. -->
+            <DataTemplate x:Key="FieldGroupTemplate" x:DataType="local:LoyaltyFieldGroup">
+                <Border Style="{StaticResource ToolSectionCardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="{x:Bind TitleEyebrow}" Style="{StaticResource ToolEyebrowTextStyle}" />
+                        <Border Style="{StaticResource LoyHairline}" Margin="0,8,0,6" />
+                        <ItemsControl ItemsSource="{x:Bind Fields}" ItemTemplate="{StaticResource LabeledFieldTemplate}" />
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- One chat command: raised header band (enable + name + blurb), body below. -->
+            <DataTemplate x:Key="CommandRowTemplate" x:DataType="local:LoyaltyCommandRowVm">
+                <Border Style="{StaticResource LoyCardFlush}">
+                    <StackPanel>
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="12,8">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Style="{StaticResource LoyToggleHost}"
+                                        VerticalAlignment="Center"
+                                        Click="OnCommandEnabledClick"
+                                        AutomationProperties.Name="{x:Bind Label}">
+                                    <cmn:TogglePill IsOn="{x:Bind EnabledField.IsOn, Mode=OneWay}" />
+                                </Button>
+                                <TextBlock Grid.Column="1" Text="{x:Bind LabelEyebrow}"
+                                           Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="2" Text="{x:Bind Blurb}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <StackPanel Margin="14,10,14,12" Spacing="10">
+                            <StackPanel Orientation="Horizontal" Spacing="16">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="TRIGGER" Style="{StaticResource ToolSubLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.command_row.trigger.label" />
+                                    <TextBox Width="180" FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             Text="{x:Bind TriggerField.Text, Mode=TwoWay}"
+                                             AutomationProperties.Name="Command trigger"
+                                             loc:Localize.AutomationKey="panel.loyalty.command_row.trigger.a11y" />
+                                </StackPanel>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="COOLDOWN (S)" Style="{StaticResource ToolSubLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.command_row.cooldown.label" />
+                                    <TextBox Width="90" FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             TextAlignment="Right"
+                                             Text="{x:Bind CooldownField.Text, Mode=TwoWay}"
+                                             AutomationProperties.Name="Command cooldown in seconds"
+                                             loc:Localize.AutomationKey="panel.loyalty.command_row.cooldown.a11y" />
+                                </StackPanel>
+                            </StackPanel>
+                            <Border Style="{StaticResource LoyHairline}" />
+                            <!-- RoleCheckRow lays out in WrapRowPanel, which needs a finite-width
+                                 measure host: a VERTICAL StackPanel inside a star column. Do not
+                                 move it into an Auto column or a horizontal stack. -->
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="WHO CAN USE IT" Style="{StaticResource ToolSubLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.command_row.roles.label" />
+                                <cmn:RoleCheckRow Roles="{x:Bind Roles, Mode=OneWay}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- One minigame - hand-rolled collapsible card (Expander removed after the
+                 hard crash at first Minigames realization; house pattern per Giveaway/Timer).
+                 ★ GameCard / GameBody are the literals the bounded ascend-then-descend
+                 walk in the code-behind keys on. Renaming either kills the expand
+                 animation silently. -->
+            <DataTemplate x:Key="GameTemplate" x:DataType="local:LoyaltyGameVm">
+                <Border x:Name="GameCard" Style="{StaticResource LoyCardFlushRow}">
+                    <StackPanel>
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="12,6">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <!-- Enable toggle: plain sibling of the expand button, never nested in it. -->
+                                <Button Grid.Column="0" Style="{StaticResource LoyToggleHost}"
+                                        VerticalAlignment="Center"
+                                        Click="OnGameEnabledClick"
+                                        AutomationProperties.Name="{x:Bind Title}">
+                                    <cmn:TogglePill IsOn="{x:Bind EnabledField.IsOn, Mode=OneWay}" />
+                                </Button>
+                                <Button Grid.Column="1"
+                                        Background="Transparent" BorderThickness="0"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                        Padding="0,4"
+                                        Click="OnToggleGameClick"
+                                        ToolTipService.ToolTip="Collapse / expand"
+                                        loc:Localize.TooltipKey="panel.loyalty.game.expand.tip"
+                                        AutomationProperties.Name="{x:Bind Title}">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE7FC;" FontSize="12"
+                                                  Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind TitleEyebrow}"
+                                                   Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center" />
+                                        <!-- ★ The verbs, read-only, on the COLLAPSED row. The 19-row
+                                             CHAT COMMANDS block that used to print every one of them
+                                             above the section gate is gone; a game's words now live
+                                             on the game. NoWrap + ellipsis because this row is a
+                                             summary — the editable boxes are the first thing in the
+                                             expansion below. -->
+                                        <TextBlock Grid.Column="2" Text="{x:Bind VerbSummary, Mode=OneWay}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center" />
+                                        <FontIcon Grid.Column="3" FontFamily="Segoe MDL2 Assets"
+                                                  Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" FontSize="10"
+                                                  Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="GameBody"
+                                    Visibility="{x:Bind BodyVisibility, Mode=OneWay}"
+                                    Margin="14,10,14,14" Spacing="6">
+                            <!-- ★ THE VERB BOXES COME FIRST. Every word this game answers
+                                 to — its command, plus the raffle's join / draw / cancel
+                                 and the duel's accept / decline — is split out of Fields
+                                 by LoyaltyGameVm and rendered here, at the top of the
+                                 expansion. The rest of the tunables follow below the
+                                 role gates, unchanged. -->
+                            <ItemsControl ItemsSource="{x:Bind VerbFields}" ItemTemplate="{StaticResource LabeledFieldTemplate}" />
+                            <Border Style="{StaticResource LoyHairline}" Margin="0,8,0,2" />
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="WHO CAN PLAY" Style="{StaticResource ToolSubLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.game.who_can_play.label" />
+                                <cmn:RoleCheckRow Roles="{x:Bind WhoCanPlay, Mode=OneWay}" />
+                            </StackPanel>
+                            <!-- Raffle alone carries a second role set. A generic game
+                                 template would silently drop it. -->
+                            <StackPanel Visibility="{x:Bind WhoCanStartVisibility}" Spacing="4" Margin="0,6,0,0">
+                                <TextBlock Text="WHO CAN START" Style="{StaticResource ToolSubLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.game.who_can_start.label" />
+                                <cmn:RoleCheckRow Roles="{x:Bind WhoCanStart, Mode=OneWay}" />
+                            </StackPanel>
+                            <Border Style="{StaticResource LoyHairline}" Margin="0,8,0,2" />
+                            <ItemsControl ItemsSource="{x:Bind Fields}" ItemTemplate="{StaticResource LabeledFieldTemplate}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- One reward - same hand-rolled collapsible card (no Expander).
+                 ★ RewardCard / RewardBody are walk literals. Do not rename. -->
+            <DataTemplate x:Key="RewardTemplate" x:DataType="local:LoyaltyRewardRowVm">
+                <Border x:Name="RewardCard" Style="{StaticResource LoyCardFlushRow}">
+                    <StackPanel>
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerSubtleBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="12,6">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <!-- Enable toggle: plain sibling of the expand button, never nested in it. -->
+                                <Button Grid.Column="0" Style="{StaticResource LoyToggleHost}"
+                                        VerticalAlignment="Center"
+                                        Click="OnRewardEnabledClick"
+                                        AutomationProperties.Name="Reward enabled"
+                                        loc:Localize.AutomationKey="panel.loyalty.reward.enabled.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind EnabledField.IsOn, Mode=OneWay}" />
+                                </Button>
+                                <Button Grid.Column="1"
+                                        Background="Transparent" BorderThickness="0"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                        Padding="0,4"
+                                        Click="OnToggleRewardClick"
+                                        ToolTipService.ToolTip="Collapse / expand"
+                                        loc:Localize.TooltipKey="panel.loyalty.reward.expand.tip"
+                                        AutomationProperties.Name="{x:Bind NameEyebrow, Mode=OneWay}">
+                                    <Grid ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="&#xE719;" FontSize="12"
+                                                  Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind NameEyebrow, Mode=OneWay}"
+                                                   Style="{StaticResource ToolEyebrowTextStyle}"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                        <FontIcon Grid.Column="2" FontFamily="Segoe MDL2 Assets"
+                                                  Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" FontSize="10"
+                                                  Foreground="{StaticResource CoalSecondaryTextBrush}" VerticalAlignment="Center" />
+                                    </Grid>
+                                </Button>
+                            </Grid>
+                        </Border>
+                        <StackPanel x:Name="RewardBody"
+                                    Visibility="{x:Bind BodyVisibility, Mode=OneWay}"
+                                    Margin="14,10,14,14" Spacing="6">
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Name" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.name.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind NameField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward name"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.name.a11y" />
+                            </Grid>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Cost" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.cost.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind CostField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward cost"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.cost.a11y" />
+                            </Grid>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Quantity (0 = unlimited)" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.quantity.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind QuantityField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward quantity"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.quantity.a11y" />
+                            </Grid>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Per-user cooldown (s)" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.per_user_cd.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind PerUserCdField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward per-user cooldown in seconds"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.per_user_cd.a11y" />
+                            </Grid>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Global cooldown (s)" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.global_cd.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind GlobalCdField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward global cooldown in seconds"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.global_cd.a11y" />
+                            </Grid>
+                            <Border Style="{StaticResource LoyHairline}" Margin="0,6,0,2" />
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Layer id" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.layer_id.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind LayerIdField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward overlay layer id"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.layer_id.a11y" />
+                            </Grid>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Trigger name" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.trigger_name.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" Text="{x:Bind TriggerNameField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward overlay trigger name"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.trigger_name.a11y" />
+                            </Grid>
+                            <Grid Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Announce message" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.reward.announce.label" />
+                                <TextBox Grid.Column="1" Style="{StaticResource LoyEntry}" TextWrapping="Wrap" AcceptsReturn="True"
+                                         Text="{x:Bind AnnounceField.Text, Mode=TwoWay}"
+                                         AutomationProperties.Name="Reward announce message"
+                                         loc:Localize.AutomationKey="panel.loyalty.reward.announce.a11y" />
+                            </Grid>
+                            <!-- Per-card DELETE stays on the card: rewards are multi-open
+                                 collapsibles with no selection concept, so there is no
+                                 "selected reward" for a strip-side danger slot to act on. -->
+                            <Button Style="{StaticResource ToolDangerButtonStyle}"
+                                    Click="OnDeleteRewardClick"
+                                    HorizontalAlignment="Left" Margin="0,6,0,0"
+                                    AutomationProperties.Name="Delete reward"
+                                    loc:Localize.AutomationKey="panel.loyalty.reward.delete.a11y">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                              Foreground="{StaticResource ErrBrush}" />
+                                    <TextBlock Text="DELETE REWARD" Style="{StaticResource ToolStripLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.reward.delete.label" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- Editable balance row.
+                 ★ TWO-LINE, and deliberately so. The five-across form (rank / name /
+                 balance / "set to" box / SET) needed ~430px of fixed width and cannot
+                 fit the 0.9* live column. The inline editor is a real affordance with a
+                 mid-edit draft guard behind it, so it moves to a second line rather than
+                 being deleted. Line 1 = rank / viewer / balance, line 2 = the editor. -->
+            <DataTemplate x:Key="BalanceRowTemplate" x:DataType="local:LoyaltyBalanceRowVm">
+                <Grid BorderBrush="{StaticResource CoalRaisedBrush}" BorderThickness="0,0,0,1">
+                    <!-- Ember weight bar (balance / max) behind the row -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{x:Bind BarColumnLength}" />
+                            <ColumnDefinition Width="{x:Bind RestColumnLength}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{x:Bind BarBrush}" />
+                    </Grid>
+                    <Grid Padding="14,6" RowSpacing="5">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="42" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{x:Bind RankLabel}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalMutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Name}"
+                                       FontFamily="{StaticResource SansFont}" FontSize="12"
+                                       Foreground="{StaticResource CoalPrimaryTextBrush}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="2" Text="{x:Bind BalanceLabel}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                       Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center"
+                                       HorizontalTextAlignment="Right" />
+                        </Grid>
+                        <Grid Grid.Row="1" ColumnSpacing="8" Margin="42,0,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" MinWidth="0" PlaceholderText="set to…"
+                                     FontFamily="{StaticResource MonoFont}" FontSize="11" TextAlignment="Right"
+                                     Text="{x:Bind SetDraft, Mode=TwoWay}" VerticalAlignment="Center"
+                                     AutomationProperties.Name="Set this viewer's balance to"
+                                     loc:Localize.PlaceholderKey="panel.loyalty.balances.set.placeholder"
+                                     loc:Localize.AutomationKey="panel.loyalty.balances.set.a11y" />
+                            <Button Grid.Column="1" Style="{StaticResource ToolSecondaryButtonStyle}"
+                                    Click="OnSetBalanceClick" VerticalAlignment="Center"
+                                    AutomationProperties.Name="Apply the new balance"
+                                    loc:Localize.AutomationKey="panel.loyalty.balances.apply.a11y">
+                                <TextBlock Text="SET" Style="{StaticResource ToolStripLabelTextStyle}"
+                                           loc:Localize.Key="panel.loyalty.balances.apply.label" />
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </DataTemplate>
+
+            <!-- Ledger row (display only).
+                 ★ TWO-LINE, and deliberately so. TIME / TO / FROM / AMOUNT / REASON is
+                 five columns and does not fit 0.9*. Nothing is dropped: line 1 carries
+                 TO ← FROM plus the signed amount, line 2 carries TIME and REASON, and
+                 the column band above the list repeats both lines' headers. -->
+            <DataTemplate x:Key="LedgerRowTemplate" x:DataType="local:LoyaltyLedgerRowVm">
+                <Grid Padding="14,6" RowSpacing="3"
+                      BorderBrush="{StaticResource CoalRaisedBrush}" BorderThickness="0,0,0,1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" ColumnSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{x:Bind Recipient}"
+                                   FontFamily="{StaticResource SansFont}" FontSize="12"
+                                   Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="←"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                   Foreground="{StaticResource CoalMutedTextBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2" Text="{x:Bind Sender}"
+                                   FontFamily="{StaticResource SansFont}" FontSize="12"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="3" Text="{x:Bind AmountLabel}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                   Foreground="{StaticResource EmberPrimaryBrush}"
+                                   HorizontalTextAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid Grid.Row="1" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{x:Bind Time}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                   Foreground="{StaticResource CoalMutedTextBrush}" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind Reason}"
+                                   FontFamily="{StaticResource SansFont}" FontSize="11"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                </Grid>
+            </DataTemplate>
+
+            <!-- Leaderboard row (display only) - three columns still fit 0.9*. -->
+            <DataTemplate x:Key="StandingRowTemplate" x:DataType="local:LoyaltyStandingRowVm">
+                <Grid BorderBrush="{StaticResource CoalRaisedBrush}" BorderThickness="0,0,0,1">
+                    <!-- Ember weight bar (balance / max) behind the row -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{x:Bind BarColumnLength}" />
+                            <ColumnDefinition Width="{x:Bind RestColumnLength}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{x:Bind BarBrush}" />
+                    </Grid>
+                    <Grid Padding="14,7" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="42" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{x:Bind RankLabel}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                   Foreground="{StaticResource CoalMutedTextBrush}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind Name}"
+                                   FontFamily="{StaticResource SansFont}" FontSize="12"
+                                   Foreground="{StaticResource CoalPrimaryTextBrush}" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="2" Text="{x:Bind BalanceLabel}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                   Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center"
+                                   HorizontalTextAlignment="Right" />
+                    </Grid>
+                </Grid>
+            </DataTemplate>
+
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- 48 px header band -->
+            <RowDefinition Height="*" />      <!-- two-column body   -->
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 - HEADER BAND ══════════════════
+             ONE row where four used to stack. It replaces, in order: the
+             action strip (master chip + status pill + ADD REWARD + REFRESH),
+             the pinned state-sentence band under it, and — with the stat strip
+             and the 19-row CHAT COMMANDS block below — 874 px of chrome that
+             stood between opening this page and changing a setting.
+
+             Everything the strip did is wired in code-behind: the switch, the
+             one brass CTA (ADD REWARD, which still jumps to the Rewards
+             section) and the refresh.
+
+             ★ The state PHRASE is rendered here; the PREDICATE behind it is
+             unchanged and still lives in the VM (MasterEnabled / StatusPulsing,
+             i.e. Enabled && Streamer.bot connected). ToolStatusPill and
+             PreBuildStatusPillTests are untouched — only the render site moved. -->
+        <cmn:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 - TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />     <!-- LEFT: config detail -->
+                <!-- The live column is a FIXED 300 px, not a share of the window:
+                     it holds one mono line per wallet / ledger row / standing, so
+                     a proportional width grew whitespace on a wide monitor and
+                     squeezed the config column — the half a streamer came to edit. -->
+                <ColumnDefinition Width="300" />   <!-- RIGHT: viewer lists -->
+            </Grid.ColumnDefinitions>
+            <!-- No ColumnSpacing. The right column's left border IS the divider. -->
+
+            <!-- ───────────── LEFT: the six former Pivot sections ─────────────
+                 TWO rows now: the section nav, then the scroller. The pinned
+                 state sentence and the stat strip that used to sit above them
+                 are gone — the header band says the state once, and three tiles
+                 reading 0 on a fresh install are not a reason to push the first
+                 editable field 200 px down the page. -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />  <!-- section nav -->
+                    <RowDefinition Height="*" />     <!-- scroller    -->
+                </Grid.RowDefinitions>
+
+                <!-- Section nav - the retired Pivot's six tabs. One section shows
+                     at a time: ~150 discrete inputs stacked would bury Minigames and
+                     Rewards below any reasonable scroll.
+                     ★ Padding is 14,0: ToolSectionSelector is a 40 px text nav whose
+                     selected item is marked by a 2 px ember underline, and the
+                     underline is meant to sit ON this row's own hairline. Vertical
+                     padding floats it above the line and re-adds the chrome the
+                     restyle removed. -->
+                <Border Grid.Row="0"
+                        Background="{StaticResource CoalSurfaceBrush}"
+                        BorderBrush="{StaticResource CoalDividerBrush}"
+                        BorderThickness="0,0,0,1"
+                        Padding="14,0">
+                    <cmn:ToolSectionSelector Sections="{x:Bind ViewModel.SectionNames}"
+                                             SelectedIndex="{x:Bind ViewModel.SelectedSection, Mode=TwoWay}"
+                                             AutomationProperties.Name="Loyalty section"
+                                             loc:Localize.AutomationKey="panel.loyalty.nav.sections.a11y" />
+                </Border>
+
+                <!-- ★ NO IsEnabled GATE HERE, and that is deliberate. Loyalty has never
+                     gated its config surface on the master switch (there is not one
+                     IsEnabled binding in the pre-rebuild file), and gating it now would
+                     stop a streamer configuring the economy BEFORE switching it on -
+                     which is the normal order of work. The header band's state phrase
+                     says the tool is off; nothing here needs disabling to say it.
+
+                     If a gate is ever wanted, it belongs on THIS ScrollViewer and
+                     nowhere else: IsEnabled is declared on Control, so binding it on
+                     the band's Border, the selector's Border or any inner Grid /
+                     StackPanel kills XamlCompiler with a bare non-zero exit and no
+                     diagnostic at any verbosity. -->
+                <ScrollViewer Grid.Row="1" x:Name="DetailScroll"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Spacing="12" Padding="14">
+
+                        <!-- ★ REMOVED HERE, and deliberately not replaced:
+                             ° the three-tile stat strip (VIEWERS TRACKED / TOP
+                               BALANCE / REWARDS). A config page is where you go to
+                               change a setting; it is not a dashboard, and on a
+                               fresh install all three read 0. The one count worth a
+                               glance is the live column's own header, which already
+                               says "N wallets / N entries / N standings".
+                             ° the 19-row read-only CHAT COMMANDS block, ~700 px that
+                               printed on EVERY section because it sat above the
+                               section gate. Its content did not vanish: each game's
+                               verbs are on the game (collapsed summary + editable
+                               boxes first in its expansion), and the economy verbs
+                               are in the CURRENCY section below, with the four
+                               moderator ones folded behind a disclosure row.
+                             ° the ACTIVITY feed at the foot of the live column.
+                             ToolStatTile / ToolCommandList / ToolActivityFeed are all
+                             still in Panels/Common — this page just stopped using them.
+                             The VM members that fed the stat strip and the feed were
+                             removed in the orphan-cleanup pass; ChatCommands is the one
+                             survivor, LEFT IN PLACE for a later, deliberate pass. -->
+
+                        <!-- ══════ SECTION 1 - CURRENCY ══════
+                             The nav already says CURRENCY, so the card no longer
+                             repeats it in an eyebrow. -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.CurrencyVisibility, Mode=OneWay}">
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.CurrencyFields, Mode=OneWay}"
+                                               cmn:RowDataContext.Supply="True"
+                                               ItemTemplate="{StaticResource LabeledFieldTemplate}"
+                                               AutomationProperties.Name="Currency settings"
+                                               loc:Localize.AutomationKey="panel.loyalty.currency.fields.a11y" />
+                            </Border>
+
+                            <!-- ══════ THE ECONOMY VERBS, WITH THE ECONOMY ══════
+                                 !points / !give / !top / !watchtime / !redeem — the five
+                                 commands that spend, move and report the currency defined
+                                 directly above them. They used to live one section over,
+                                 under a heading that had to explain how it differed from
+                                 the read-only block at the top of the page; both are gone.
+
+                                 EconomyCommands / ModeratorCommands are split in the
+                                 code-behind from the VM's single Commands collection —
+                                 the rows are the SAME LoyaltyCommandRowVm instances, so
+                                 every edit still funnels through the one debounced save. -->
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="ECONOMY COMMANDS"
+                                           Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.loyalty.currency.economy_commands.eyebrow" />
+                                <Border Grid.Column="1" Height="1" Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                            </Grid>
+                            <ItemsRepeater ItemsSource="{x:Bind EconomyCommands}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource CommandRowTemplate}"
+                                           AutomationProperties.Name="Loyalty economy commands"
+                                           loc:Localize.AutomationKey="panel.loyalty.currency.economy_commands.a11y">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Orientation="Vertical" Spacing="10" />
+                                </ItemsRepeater.Layout>
+                            </ItemsRepeater>
+
+                            <!-- Set-once by definition: !addpoints / !setpoints /
+                                 !removepoints / !pointswipe are moderator repair verbs,
+                                 not something a streamer reaches for mid-stream. Folded,
+                                 never hidden — the row names its contents and carries the
+                                 count. (The equivalent live surface is LOOK UP / ADJUST in
+                                 the Viewers section, which needs no chat at all.) -->
+                            <cmn:ToolDisclosureRow x:Name="ModeratorFold" Label="Moderator commands"
+                                                   loc:Localize.Key="panel.loyalty.currency.moderator_fold.label">
+                                <ItemsRepeater ItemsSource="{x:Bind ModeratorCommands}"
+                                               cmn:RowDataContext.Supply="True"
+                                               ItemTemplate="{StaticResource CommandRowTemplate}"
+                                               AutomationProperties.Name="Loyalty moderator commands"
+                                               loc:Localize.AutomationKey="panel.loyalty.currency.moderator_commands.a11y">
+                                    <ItemsRepeater.Layout>
+                                        <StackLayout Orientation="Vertical" Spacing="10" />
+                                    </ItemsRepeater.Layout>
+                                </ItemsRepeater>
+                            </cmn:ToolDisclosureRow>
+
+                            <!-- Opt-in wallet repair. Loyalty used to key the wallet on the
+                                 lowercased DISPLAY name for chat commands while the watch-time
+                                 sweep credited the LOGIN, so a viewer whose display name differs
+                                 from their login accrued into two rows. The keying is fixed, but
+                                 pre-existing rows can only be folded by the streamer: the suite
+                                 has no display-name -> login map, so nothing can pair them
+                                 automatically. Nothing here runs on its own.
+                                 ★ Both boxes are UpdateSourceTrigger=PropertyChanged - the only
+                                 two on the page that do not commit on LostFocus - because
+                                 PREVIEW must read what is typed without a focus change first. -->
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="MERGE DUPLICATE WALLETS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.merge.eyebrow" />
+                                    <Border Style="{StaticResource LoyHairline}" Margin="0,8,0,6" />
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Margin="0,0,0,8"
+                                               Text="Folds one wallet row into another and deletes the source. Not undoable."
+                                               loc:Localize.Key="panel.loyalty.merge.hint" />
+                                    <TextBox Header="Merge from (row that will be removed)"
+                                             Text="{x:Bind ViewModel.MergeFromName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Margin="0,0,0,6"
+                                             loc:Localize.HeaderKey="panel.loyalty.merge.from.label" />
+                                    <TextBox Header="Merge into (row that will be kept)"
+                                             Text="{x:Bind ViewModel.MergeIntoName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Margin="0,0,0,6"
+                                             loc:Localize.HeaderKey="panel.loyalty.merge.into.label" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,0">
+                                        <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                Click="OnPreviewWalletMerge"
+                                                AutomationProperties.Name="Preview the wallet merge"
+                                                loc:Localize.AutomationKey="panel.loyalty.merge.preview.a11y">
+                                            <TextBlock Text="PREVIEW" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                       loc:Localize.Key="panel.loyalty.merge.preview.label" />
+                                        </Button>
+                                        <Button Style="{StaticResource ToolDangerButtonStyle}"
+                                                Click="OnApplyWalletMerge"
+                                                AutomationProperties.Name="Merge the two wallets"
+                                                loc:Localize.AutomationKey="panel.loyalty.merge.apply.a11y">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8AB;" FontSize="11"
+                                                          Foreground="{StaticResource ErrBrush}" />
+                                                <TextBlock Text="MERGE WALLETS" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                           loc:Localize.Key="panel.loyalty.merge.apply.label" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                    <!-- ★ The merge's ONLY feedback surface. It carries four
+                                         distinct refusals (blank pair, same row, nothing merged,
+                                         failure) as well as the success line. -->
+                                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap"
+                                               Style="{StaticResource ToolMonoBodyTextStyle}"
+                                               Text="{x:Bind ViewModel.MergePreviewText, Mode=OneWay}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 2 - EARN ══════ -->
+                        <StackPanel Visibility="{x:Bind ViewModel.EarnVisibility, Mode=OneWay}">
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.EarnGroups, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource FieldGroupTemplate}"
+                                           AutomationProperties.Name="Earn rules"
+                                           loc:Localize.AutomationKey="panel.loyalty.earn.groups.a11y">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Orientation="Vertical" Spacing="12" />
+                                </ItemsRepeater.Layout>
+                            </ItemsRepeater>
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 3 - COMMANDS ══════
+                             What is left here is command HANDLING — how the parser
+                             behaves — not the verbs. Every verb moved to the feature
+                             that runs it: the economy commands to CURRENCY (with the
+                             moderator four folded), each game's words onto the game. -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.CommandsVisibility, Mode=OneWay}">
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="COMMAND HANDLING" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.commands.handling.eyebrow" />
+                                    <Border Style="{StaticResource LoyHairline}" Margin="0,8,0,6" />
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.CommandOptions, Mode=OneWay}"
+                                                   cmn:RowDataContext.Supply="True"
+                                                   ItemTemplate="{StaticResource LabeledFieldTemplate}"
+                                                   AutomationProperties.Name="Command handling options"
+                                                   loc:Localize.AutomationKey="panel.loyalty.commands.handling.a11y" />
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Text="The verbs themselves live with what they run — economy commands under Currency, each game's words on the game."
+                                       loc:Localize.Key="panel.loyalty.commands.verbs_hint" />
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 4 - MINIGAMES ══════
+                             ★ Stays an ItemsControl. Its DataTemplate hosts the
+                             GameCard/GameBody ascend-then-descend walk and the expand
+                             FadeSlideIn, and an ItemsRepeater recycles containers - a
+                             recycled row can arrive already-expanded carrying a stale
+                             RenderTransform from an interrupted slide. Deferred with the
+                             other two collapsible-card lists rather than done blind. -->
+                        <!-- The "MINIGAMES" eyebrow that used to head this section is
+                             gone: the nav directly above it already says MINIGAMES. -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.MinigamesVisibility, Mode=OneWay}">
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.Games}"
+                                          ItemTemplate="{StaticResource GameTemplate}" />
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 5 - REWARDS ══════
+                             ★ Also stays an ItemsControl, same reason (RewardCard /
+                             RewardBody walk + expand animation). -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.RewardsVisibility, Mode=OneWay}">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="REWARD STORE"
+                                           Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.loyalty.rewards.store.eyebrow" />
+                                <Border Grid.Column="1" Height="1" Background="{StaticResource CoalDividerBrush}"
+                                        VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Text="A reward with a Layer id and Trigger name fires that overlay trigger on redeem."
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       loc:Localize.Key="panel.loyalty.rewards.overlay_hint" />
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.Rewards}"
+                                          ItemTemplate="{StaticResource RewardTemplate}" />
+                            <TextBlock Visibility="{x:Bind ViewModel.RewardsEmptyVisibility, Mode=OneWay}"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Margin="0,6,0,0"
+                                       Text="No rewards yet — ADD REWARD is in the header band."
+                                       loc:Localize.Key="panel.loyalty.rewards.empty.body" />
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 6 - VIEWERS (the write half) ══════
+                             The three read-only lists moved to the live column; the
+                             lookup/adjust card and the overlay fields stayed here,
+                             because both are writes and both belong beside the rest of
+                             the configuration. -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.ViewersVisibility, Mode=OneWay}">
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="LOOK UP / ADJUST A VIEWER" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.viewers.lookup.eyebrow" />
+                                    <Border Style="{StaticResource LoyHairline}" Margin="0,2,0,0" />
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <TextBox Width="180" PlaceholderText="username"
+                                                 Text="{x:Bind ViewModel.LookupUser, Mode=TwoWay}"
+                                                 AutomationProperties.Name="Viewer to look up"
+                                                 loc:Localize.PlaceholderKey="panel.loyalty.viewers.lookup.user.placeholder"
+                                                 loc:Localize.AutomationKey="panel.loyalty.viewers.lookup.user.a11y" />
+                                        <TextBox Width="120" PlaceholderText="amount"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11" TextAlignment="Right"
+                                                 Text="{x:Bind ViewModel.LookupAmount, Mode=TwoWay}"
+                                                 AutomationProperties.Name="Amount"
+                                                 loc:Localize.PlaceholderKey="panel.loyalty.viewers.lookup.amount.placeholder"
+                                                 loc:Localize.AutomationKey="panel.loyalty.viewers.lookup.amount.a11y" />
+                                        <!-- Secondary, not brass: the page's one brass CTA is
+                                             ADD REWARD in the header band. A mid-card button
+                                             cannot outrank the page's primary verb. -->
+                                        <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                Click="OnLookupClick" VerticalAlignment="Center"
+                                                AutomationProperties.Name="Look up balance"
+                                                loc:Localize.AutomationKey="panel.loyalty.viewers.lookup.a11y">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE721;" FontSize="11"
+                                                          Foreground="{StaticResource CoalBodyTextBrush}" />
+                                                <TextBlock Text="LOOK UP" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                           loc:Localize.Key="panel.loyalty.viewers.lookup.label" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                Click="OnLookupAddClick" VerticalAlignment="Center"
+                                                AutomationProperties.Name="Add the amount to this viewer"
+                                                loc:Localize.AutomationKey="panel.loyalty.viewers.add.a11y">
+                                            <TextBlock Text="ADD" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                       loc:Localize.Key="panel.loyalty.viewers.add.label" />
+                                        </Button>
+                                        <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                Click="OnLookupSetClick" VerticalAlignment="Center"
+                                                AutomationProperties.Name="Set this viewer to the amount"
+                                                loc:Localize.AutomationKey="panel.loyalty.viewers.set.a11y">
+                                            <TextBlock Text="SET" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                       loc:Localize.Key="panel.loyalty.viewers.set.label" />
+                                        </Button>
+                                        <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                Click="OnLookupRemoveClick" VerticalAlignment="Center"
+                                                AutomationProperties.Name="Remove the amount from this viewer"
+                                                loc:Localize.AutomationKey="panel.loyalty.viewers.remove.a11y">
+                                            <TextBlock Text="REMOVE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                       loc:Localize.Key="panel.loyalty.viewers.remove.label" />
+                                        </Button>
+                                    </StackPanel>
+                                    <!-- ★ LookupResult is the only surface on the page that
+                                         reports the disabled-tool refusal for an adjustment. -->
+                                    <TextBlock Text="{x:Bind ViewModel.LookupResult, Mode=OneWay}"
+                                               Style="{StaticResource ToolMonoBodyTextStyle}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="Adjustments require the tool to be enabled."
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.viewers.lookup.hint" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Leaderboard size silently drives the LEADERBOARD preview's
+                                 fetch count (falling back to 10 when it is 0). -->
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="OVERLAY / LEADERBOARD" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.viewers.overlay.eyebrow" />
+                                    <Border Style="{StaticResource LoyHairline}" Margin="0,8,0,6" />
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.OverlayFields, Mode=OneWay}"
+                                                   cmn:RowDataContext.Supply="True"
+                                                   ItemTemplate="{StaticResource LabeledFieldTemplate}"
+                                                   AutomationProperties.Name="Overlay settings"
+                                                   loc:Localize.AutomationKey="panel.loyalty.viewers.overlay.a11y" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ───────────── RIGHT: the three viewer lists ───────────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />  <!-- header          -->
+                        <RowDefinition Height="Auto" />  <!-- list selector   -->
+                        <RowDefinition Height="*" />     <!-- the three lists -->
+                    </Grid.RowDefinitions>
+
+                    <cmn:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Viewers"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.loyalty.viewers_list.title">
+                        <cmn:PanelHeader.RightContent>
+                            <TextBlock Text="{x:Bind ViewModel.ViewerListCountText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </cmn:PanelHeader.RightContent>
+                    </cmn:PanelHeader>
+
+                    <Border Grid.Row="1"
+                            Background="{StaticResource CoalSurfaceBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="14,0">
+                        <cmn:ToolSectionSelector Sections="{x:Bind ViewModel.ViewerListNames}"
+                                                 SelectedIndex="{x:Bind ViewModel.SelectedViewerList, Mode=TwoWay}"
+                                                 AutomationProperties.Name="Viewer list"
+                                                 loc:Localize.AutomationKey="panel.loyalty.viewers_list.nav.a11y" />
+                    </Border>
+
+                    <!-- ─── BALANCES ─── -->
+                    <Grid Grid.Row="2" Visibility="{x:Bind ViewModel.BalancesListVisibility, Mode=OneWay}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <!-- Two-line band, matching the two-line row. All four of the
+                             original headers survive. -->
+                        <Border Grid.Row="0"
+                                Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="14,6" >
+                            <StackPanel Spacing="3">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="42" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="#" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.balances.column.rank" />
+                                    <TextBlock Grid.Column="1" Text="VIEWER" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.balances.column.viewer" />
+                                    <TextBlock Grid.Column="2" Text="BALANCE" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.balances.column.balance" />
+                                </Grid>
+                                <TextBlock Text="SET TO" Style="{StaticResource ToolColumnLabelTextStyle}" Margin="42,0,0,0"
+                                           loc:Localize.Key="panel.loyalty.balances.column.set_to" />
+                            </StackPanel>
+                        </Border>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Balances, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource BalanceRowTemplate}"
+                                           AutomationProperties.Name="Viewer balances by rank"
+                                           loc:Localize.AutomationKey="panel.loyalty.balances.list.a11y" />
+                        </ScrollViewer>
+                        <!-- ONE line, top-aligned. An empty list is a fact, not an
+                             announcement: the DisplayFont headline over a second
+                             sentence, centred in a full-height column, was the
+                             loudest thing on a fresh install's screen. -->
+                        <TextBlock Grid.Row="1"
+                                   Visibility="{x:Bind ViewModel.BalancesEmptyVisibility, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   VerticalAlignment="Top" Margin="14,12,14,0"
+                                   Text="No balances yet — viewers appear as they earn."
+                                   loc:Localize.Key="panel.loyalty.balances.empty.body" />
+                    </Grid>
+
+                    <!-- ─── LEDGER ─── -->
+                    <Grid Grid.Row="2" Visibility="{x:Bind ViewModel.LedgerListVisibility, Mode=OneWay}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0"
+                                Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="14,6">
+                            <StackPanel Spacing="3">
+                                <Grid ColumnSpacing="6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="TO ← FROM" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.ledger.column.to_from" />
+                                    <TextBlock Grid.Column="1" Text="AMOUNT" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.ledger.column.amount" />
+                                </Grid>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="TIME" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.ledger.column.time" />
+                                    <TextBlock Grid.Column="1" Text="REASON" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.ledger.column.reason" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Ledger, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource LedgerRowTemplate}"
+                                           AutomationProperties.Name="Points ledger"
+                                           loc:Localize.AutomationKey="panel.loyalty.ledger.list.a11y" />
+                        </ScrollViewer>
+                        <!-- ★ An empty ledger is legitimate, not a broken feed: the
+                             ledger table is only written while "Write a ledger" is on,
+                             and this line is still the only place the page says so —
+                             folded into the one line rather than dropped. -->
+                        <TextBlock Grid.Row="1"
+                                   Visibility="{x:Bind ViewModel.LedgerEmptyVisibility, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   VerticalAlignment="Top" Margin="14,12,14,0"
+                                   Text="No transactions — nothing is written while Write a ledger is off."
+                                   loc:Localize.Key="panel.loyalty.ledger.empty.body" />
+                    </Grid>
+
+                    <!-- ─── LEADERBOARD (overlay preview) ─── -->
+                    <Grid Grid.Row="2" Visibility="{x:Bind ViewModel.LeaderboardListVisibility, Mode=OneWay}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0"
+                                Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalDividerBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="14,6">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="OVERLAY PREVIEW" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                           Foreground="{StaticResource EmberPrimaryBrush}"
+                                           loc:Localize.Key="panel.loyalty.leaderboard.preview.label" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="42" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="#" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.leaderboard.column.rank" />
+                                    <TextBlock Grid.Column="1" Text="VIEWER" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.leaderboard.column.viewer" />
+                                    <TextBlock Grid.Column="2" Text="BALANCE" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                               loc:Localize.Key="panel.loyalty.leaderboard.column.balance" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Leaderboard, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource StandingRowTemplate}"
+                                           AutomationProperties.Name="Leaderboard overlay preview"
+                                           loc:Localize.AutomationKey="panel.loyalty.leaderboard.list.a11y" />
+                        </ScrollViewer>
+                        <TextBlock Grid.Row="1"
+                                   Visibility="{x:Bind ViewModel.LeaderboardEmptyVisibility, Mode=OneWay}"
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   VerticalAlignment="Top" Margin="14,12,14,0"
+                                   Text="No standings yet — top balances appear as viewers earn."
+                                   loc:Localize.Key="panel.loyalty.leaderboard.empty.body" />
+                    </Grid>
+
+                    <!-- ★ THE ACTIVITY FEED IS GONE FROM THIS PAGE.
+                         It is a watch surface: what happened forty seconds ago does
+                         not help someone editing a payout threshold, and it took the
+                         foot of the live column on every section. ToolActivityFeed
+                         stays in Panels/Common, and LoyaltyService.RaiseActivity still
+                         records into ToolActivityRing (the ring is process-wide, so
+                         nothing stops filling); the VM's Activity members were removed
+                         with the feed in the orphan-cleanup pass. -->
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

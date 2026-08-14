@@ -14,7 +14,8 @@
     x:Class="Phoenix.Controls.Architect.WinUI.Controls.LogicInspector"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:cv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters">
+    xmlns:cv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <UserControl.Resources>
         <cv:BoolToVisibilityConverter x:Key="BoolVis" />
@@ -24,18 +25,26 @@
          (feedback_node_ui_inline_sockets.md) holds regardless of whatever
          host splitter sets the column width.
 
-         MinHeight gives the body visible presence even with no selection.
-         Pre-fix the empty-state TextBlock auto-sized the panel down to
-         ~16-30 px of text, which combined with the chevron strip made
-         the expanded inspector look identical to the rolled-up state
-         (Majo 2026-05-24: "inspector is hidden by default"). 280 px is
-         enough to surface the empty hint centred with breathing room AND
-         to give a single-row selection a stable layout cell; when the
-         body is rolled up via the chevron,
-         InspectorRegion.Visibility=Collapsed in MainView elides the
-         whole LogicInspector subtree so this MinHeight only applies to
-         the expanded state. -->
-    <Grid MaxWidth="320" MinHeight="280">
+         ★ 2026-08-14 — MinHeight="280" REMOVED.
+
+         It was added on 2026-05-24 (bb705f86) for a real reason: the
+         empty-state TextBlock auto-sized the body to ~16-30 px, and beside
+         the chevron strip an expanded inspector looked identical to a
+         rolled-up one. That reasoning held WHILE BOTH STATES WERE THE SAME
+         WIDTH — height was the only axis left to tell them apart, so
+         height had to carry it, and the cost was that a card with nothing
+         selected was still a 280 px slab over the graph.
+
+         The host is a floating fixed-width card now: expanded is 320 px
+         with a border and a corner radius, rolled up is a 32 px tab. A 10x
+         width difference plus a different silhouette does the
+         disambiguation, so the body no longer buys it with dead space.
+         The empty state below still carries deliberate presence (glyph +
+         caption, ~96 px) instead of collapsing to one line; those two
+         signals together are what replaces the floor. If an open-empty
+         card ever reads as the rolled-up tab again, THIS is the thing to
+         restore — not the column. -->
+    <Grid MaxWidth="320">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -84,16 +93,34 @@
                        LineHeight="18" />
         </ScrollViewer>
 
-        <!-- Empty state — shows when nothing is selected. -->
-        <TextBlock Grid.Row="1"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Margin="16,0,16,0"
-                   FontSize="12"
-                   Foreground="{StaticResource CoalSecondaryTextBrush}"
-                   TextAlignment="Center"
-                   TextWrapping="Wrap"
-                   Text="Select a node or wire to inspect."
-                   Visibility="{Binding HasSelection, Converter={StaticResource BoolVis}, ConverterParameter=invert}" />
+        <!-- Empty state — shows when nothing is selected.
+
+             Carries the card's "I am open" signal now that the 280 px
+             MinHeight is gone: a glyph over a caption inside ~96 px of
+             padded stack, rather than one centred line that would let an
+             open card collapse to the height of the rolled-up tab. Sized
+             by its own MinHeight so it never stretches a card that has a
+             real selection to show. -->
+        <StackPanel Grid.Row="1"
+                    MinHeight="96"
+                    Padding="16,22,16,22"
+                    Spacing="10"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Top"
+                    Visibility="{Binding HasSelection, Converter={StaticResource BoolVis}, ConverterParameter=invert}">
+            <TextBlock HorizontalAlignment="Center"
+                       FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                       FontSize="24"
+                       Opacity="0.55"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       Text="&#xE7C4;" />
+            <TextBlock HorizontalAlignment="Center"
+                       FontSize="12"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       Text="Select a node or wire to inspect."
+                       loc:Localize.Key="architect.inspector.empty.body" />
+        </StackPanel>
     </Grid>
 </UserControl>

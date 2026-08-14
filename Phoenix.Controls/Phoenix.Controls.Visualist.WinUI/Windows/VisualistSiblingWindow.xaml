@@ -31,10 +31,12 @@
 <Window
     x:Class="Phoenix.Controls.Visualist.WinUI.Hosting.VisualistSiblingWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization">
 
     <Grid Background="{StaticResource CoalShellBrush}"
-          AutomationProperties.Name="Visualist Sibling Window">
+          AutomationProperties.Name="Visualist Sibling Window"
+          loc:Localize.AutomationKey="visualist.window.sibling.a11y">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -53,30 +55,36 @@
             <MenuBar Background="Transparent"
                      VerticalAlignment="Center"
                      Padding="6,0,0,0"
-                     AutomationProperties.Name="Visualist Menu">
-                <MenuBarItem x:Name="MenuFile" Title="File">
+                     AutomationProperties.Name="Visualist Menu"
+                     loc:Localize.AutomationKey="visualist.window.sibling.menu.a11y">
+                <MenuBarItem x:Name="MenuFile" Title="File"
+                             loc:Localize.Key="visualist.window.sibling.menu.file">
                     <!-- New Layer — restored to parity with the pre-T15 MainForm
                          File menu (was dropped in the Lane E rewrite). Routes to
                          MainView.NewLayer() (Hub token visualist.file.newLayer),
                          the same entry point the embedded HubChrome dispatches. -->
-                    <MenuFlyoutItem x:Name="MenuFileNew" Text="New Layer" Click="OnFileNewClicked">
+                    <MenuFlyoutItem x:Name="MenuFileNew" Text="New Layer" Click="OnFileNewClicked"
+                                    loc:Localize.Key="visualist.window.sibling.file.new">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control" Key="N" />
                         </MenuFlyoutItem.KeyboardAccelerators>
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="MenuFileOpen" Text="Open Layer…" Click="OnFileOpenClicked">
+                    <MenuFlyoutItem x:Name="MenuFileOpen" Text="Open Layer…" Click="OnFileOpenClicked"
+                                    loc:Localize.Key="visualist.window.sibling.file.open">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control" Key="O" />
                         </MenuFlyoutItem.KeyboardAccelerators>
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="MenuFileSave" Text="Save" Click="OnFileSaveClicked">
+                    <MenuFlyoutItem x:Name="MenuFileSave" Text="Save" Click="OnFileSaveClicked"
+                                    loc:Localize.Key="visualist.window.sibling.file.save">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control" Key="S" />
                         </MenuFlyoutItem.KeyboardAccelerators>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="MenuFileSaveAs" Text="Save As…" Click="OnFileSaveAsClicked">
+                    <MenuFlyoutItem x:Name="MenuFileSaveAs" Text="Save As…" Click="OnFileSaveAsClicked"
+                                    loc:Localize.Key="visualist.window.sibling.file.save_as">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control,Shift" Key="S" />
                         </MenuFlyoutItem.KeyboardAccelerators>
@@ -88,7 +96,8 @@
                          visualist.file.importMedia), the same fast-import path
                          the embedded HubChrome dispatches; layerSource is null
                          for siblings but the import does not depend on it. -->
-                    <MenuFlyoutItem x:Name="MenuFileImportMedia" Text="Import Media…" Click="OnFileImportMediaClicked">
+                    <MenuFlyoutItem x:Name="MenuFileImportMedia" Text="Import Media…" Click="OnFileImportMediaClicked"
+                                    loc:Localize.Key="visualist.window.sibling.file.import_media">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control" Key="I" />
                         </MenuFlyoutItem.KeyboardAccelerators>
@@ -97,30 +106,36 @@
                     <!-- Recent — children rebuilt on Opening from
                          Services.RecentFiles (parity with the pre-T15
                          MainForm DropDownOpening rebuild). -->
-                    <MenuFlyoutSubItem x:Name="MenuFileRecent" Text="Recent" />
+                    <MenuFlyoutSubItem x:Name="MenuFileRecent" Text="Recent"
+                                       loc:Localize.Key="visualist.window.sibling.file.recent" />
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutItem x:Name="MenuFileClose" Text="Close Window" Click="OnFileCloseClicked">
+                    <MenuFlyoutItem x:Name="MenuFileClose" Text="Close Window" Click="OnFileCloseClicked"
+                                    loc:Localize.Key="visualist.window.sibling.file.close_window">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control" Key="W" />
                         </MenuFlyoutItem.KeyboardAccelerators>
                     </MenuFlyoutItem>
                 </MenuBarItem>
 
-                <MenuBarItem x:Name="MenuEdit" Title="Edit">
-                    <MenuFlyoutItem x:Name="MenuEditUndo" Text="Undo" Click="OnEditUndoClicked">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Modifiers="Control" Key="Z" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="MenuEditRedo" Text="Redo" Click="OnEditRedoClicked">
-                        <MenuFlyoutItem.KeyboardAccelerators>
-                            <KeyboardAccelerator Modifiers="Control" Key="Y" />
-                        </MenuFlyoutItem.KeyboardAccelerators>
-                    </MenuFlyoutItem>
+                <MenuBarItem x:Name="MenuEdit" Title="Edit"
+                             loc:Localize.Key="visualist.window.sibling.menu.edit">
+                    <!-- Accelerator TEXT only (no functional KeyboardAccelerator):
+                         window-wide Ctrl+Z / Ctrl+Y are owned by the code-behind root
+                         accelerators (MirrorUndoRedoAccelerators). A second accelerator
+                         here double-fired undo (jumped two steps) once the flyout had
+                         opened once. -->
+                    <MenuFlyoutItem x:Name="MenuEditUndo" Text="Undo"
+                                    KeyboardAcceleratorTextOverride="Ctrl+Z" Click="OnEditUndoClicked"
+                                    loc:Localize.Key="visualist.window.sibling.edit.undo" />
+                    <MenuFlyoutItem x:Name="MenuEditRedo" Text="Redo"
+                                    KeyboardAcceleratorTextOverride="Ctrl+Y" Click="OnEditRedoClicked"
+                                    loc:Localize.Key="visualist.window.sibling.edit.redo" />
                 </MenuBarItem>
 
-                <MenuBarItem x:Name="MenuView" Title="View">
-                    <MenuFlyoutItem x:Name="MenuViewMediaLibrary" Text="Media Library" Click="OnViewMediaLibraryClicked">
+                <MenuBarItem x:Name="MenuView" Title="View"
+                             loc:Localize.Key="visualist.window.sibling.menu.view">
+                    <MenuFlyoutItem x:Name="MenuViewMediaLibrary" Text="Media Library" Click="OnViewMediaLibraryClicked"
+                                    loc:Localize.Key="visualist.window.sibling.view.media_library">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control" Key="M" />
                         </MenuFlyoutItem.KeyboardAccelerators>
@@ -130,14 +145,17 @@
                 <!-- Window — New spawns a sibling; "Switch To" is rebuilt on
                      Opening from VisualistWindowRegistry (parity with the
                      pre-T15 MainForm RebuildWindowsMenu over MdiChildren). -->
-                <MenuBarItem x:Name="MenuWindow" Title="Window">
-                    <MenuFlyoutItem x:Name="MenuWindowNew" Text="New Visualist Window" Click="OnWindowNewClicked">
+                <MenuBarItem x:Name="MenuWindow" Title="Window"
+                             loc:Localize.Key="visualist.window.sibling.menu.window">
+                    <MenuFlyoutItem x:Name="MenuWindowNew" Text="New Visualist Window" Click="OnWindowNewClicked"
+                                    loc:Localize.Key="visualist.window.sibling.window.new">
                         <MenuFlyoutItem.KeyboardAccelerators>
                             <KeyboardAccelerator Modifiers="Control,Shift" Key="N" />
                         </MenuFlyoutItem.KeyboardAccelerators>
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator />
-                    <MenuFlyoutSubItem x:Name="MenuWindowSwitch" Text="Switch To" />
+                    <MenuFlyoutSubItem x:Name="MenuWindowSwitch" Text="Switch To"
+                                       loc:Localize.Key="visualist.window.sibling.window.switch_to" />
                 </MenuBarItem>
             </MenuBar>
         </Border>
@@ -150,14 +168,16 @@
                 Background="{StaticResource CoalRaisedBrush}"
                 BorderBrush="{StaticResource CoalCardBrush}"
                 BorderThickness="0,1,0,0"
-                AutomationProperties.Name="Status Strip">
+                AutomationProperties.Name="Status Strip"
+                loc:Localize.AutomationKey="visualist.window.sibling.status_strip.a11y">
             <TextBlock x:Name="StatusLeft"
                        VerticalAlignment="Center"
                        Margin="10,0,0,0"
                        FontFamily="{StaticResource MonoFont}"
                        FontSize="11"
                        Foreground="{StaticResource CoalPrimaryTextBrush}"
-                       Text="Ready" />
+                       Text="Ready"
+                       loc:Localize.Key="visualist.window.sibling.status.ready" />
         </Border>
     </Grid>
 </Window>

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.ToolPageHeader"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        The 48 px header band — one row that replaces THREE.
+
+        A Pre-Build page is a config surface: the streamer opens it to change a
+        setting. The stack above the first editable control had grown to
+        ~210 px on eight panels (and 986 px on Loyalty): an action strip, a
+        state-sentence banner, a status pill, and a strip of hero stat tiles
+        reading 0 0 0 0 on a fresh install. Three of those four said the same
+        thing — whether the tool is enabled — in three different vocabularies
+        (DISABLED / OFF / dormant).
+
+        This band says it once: name, switch, one lowercase mono phrase that
+        carries the state AND its consequence ("live · earning", "armed · queue
+        open", "off"), then verbs on the right.
+
+        ─ Resource self-sufficiency ─
+        This control merges ToolShellStyles itself. A UserControl resolves its
+        StaticResources during InitializeComponent, BEFORE it is parented, so it
+        cannot borrow the host panel's merged dictionaries — a shared control
+        that relies on its host crashes in one panel and works in another.
+        PanelResourceKeyTests pins this.
+    -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Border Height="48"
+            Padding="24,0"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="0,0,0,1">
+        <Grid ColumnSpacing="14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Tool name. The ONE place DisplayFont is legitimate on a config
+                 page — it is identity, not data. -->
+            <TextBlock x:Name="TitleText"
+                       Grid.Column="0"
+                       VerticalAlignment="Center"
+                       FontFamily="{StaticResource DisplayFont}"
+                       FontSize="19"
+                       CharacterSpacing="20"
+                       Foreground="{StaticResource CoalPaperBrush}" />
+
+            <!-- Master switch. Deliberately a bare ToggleSwitch with its
+                 On/Off content blanked: the state text beside it carries the
+                 wording, so the switch's own label would be the second of the
+                 three redundant renderings this band exists to remove. -->
+            <ToggleSwitch x:Name="MasterSwitch"
+                          Grid.Column="1"
+                          MinWidth="0"
+                          VerticalAlignment="Center"
+                          OnContent=""
+                          OffContent=""
+                          Toggled="OnMasterToggled" />
+
+            <TextBlock x:Name="StateText"
+                       Grid.Column="2"
+                       VerticalAlignment="Center"
+                       FontFamily="{StaticResource MonoFont}"
+                       FontSize="11"
+                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+
+            <!-- Right-hand verbs. Icon buttons first, then at most ONE brass
+                 CTA — and only where the section has a genuine add-verb.
+                 ToolShellStyles states one brass CTA per visible surface. -->
+            <StackPanel x:Name="VerbPanel"
+                        Grid.Column="4"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        VerticalAlignment="Center">
+                <Button x:Name="RefreshButton"
+                        Width="28"
+                        Height="28"
+                        Padding="0"
+                        Visibility="Collapsed"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{StaticResource CoalSecondaryTextBrush}"
+                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                        FontSize="13"
+                        Content="&#xE72C;"
+                        Click="OnRefreshClicked" />
+                <Button x:Name="PrimaryCta"
+                        Height="28"
+                        Padding="12,0"
+                        Visibility="Collapsed"
+                        Style="{StaticResource ToolBrassCtaStyle}"
+                        Click="OnPrimaryCtaClicked">
+                    <TextBlock x:Name="PrimaryCtaLabel"
+                               Style="{StaticResource ToolBrassCtaLabelTextStyle}" />
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Border>
+</UserControl>

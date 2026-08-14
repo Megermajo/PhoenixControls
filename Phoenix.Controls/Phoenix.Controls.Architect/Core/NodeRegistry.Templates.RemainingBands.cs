@@ -18,7 +18,7 @@ namespace Phoenix.Controls.Architect.Core
     //   * PLATFORM DATA     — YouTube.GetUser / Kick.GetUser (result-var
     //     mapping in ScriptExporter.ResolveOutputFromNode's "Platform
     //     Data" arm).
-    //   * VISUALS           — Visual.Trigger, Chat.Overlay.Push / Clear.
+    //   * VISUALS           — Visual.Trigger, Overlay.Publish / Get.
     //   * PLATFORM ACTIONS  — Twitch.SendChat / Timeout / Ban /
     //     CreateClip / Shoutout / Announcement; plus the YouTube.* / Kick.*
     //     action sub-bands.
@@ -74,17 +74,24 @@ namespace Phoenix.Controls.Architect.Core
                         ("DisplayName", ColString), ("ProfileImage", ColString),
                         ("AccountCreated", ColString), ("Game", ColString),
                         ("ChannelTitle", ColString), ("IsMod", ColBool),
-                        ("IsSub", ColBool), ("IsVip", ColBool) },
+                        ("IsSub", ColBool), ("IsVip", ColBool),
+                        // IsRegular appended LAST (User-Management tool): Regular-
+                        // GROUP membership — comes from the Hub's group store, not
+                        // the SB payload. Additive; unwired emits nothing.
+                        ("IsRegular", ColBool) },
                 new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             // IsLive (bool) — a request-time companion to the Stream.GoingLive /
             // Stream.SessionEnd events: the events fire WHEN live-state flips; this
             // lets a graph ask for the current state on demand. Resolves to
             // {stream.is_live} (see the Twitch Data arm in
-            // ScriptExporter.ResolveOutputFromNode). For the broadcaster's OWN
-            // channel it answers from the StreamOnline/Offline-tracked flag; an
-            // arbitrary channel has no SB live path and reports false (honest) —
-            // exactly the semantics twitch.get_stream already writes. Placed first
+            // ScriptExporter.ResolveOutputFromNode). Answered for ANY channel from
+            // the "Phoenix: Get Stream Status" data action (Twitch Helix /streams
+            // via Streamer.bot's credentials), which also carries the real
+            // ViewerCount and the start time behind Uptime; without that action in
+            // the pack the handler falls back to the broadcaster-only
+            // StreamOnline/Offline latch — exactly the semantics twitch.get_stream
+            // writes (see ScriptManager.Twitch.cs). Placed first
             // so the three headline outputs (IsLive / Title / Category) read top-to-
             // bottom; existing graphs heal to this order via ReorderSocketsToTemplate.
             AddTemplate("Twitch.GetStream",     "Twitch Data", Color.FromArgb(100, 65, 165),
@@ -96,14 +103,18 @@ namespace Phoenix.Controls.Architect.Core
             AddTemplate("Twitch.CheckRole",     "Twitch Data", Color.FromArgb(100, 65, 165),
                 Localizer.T("architect.node.bubble.twitch_checkrole"),
                 new[] { ("Flow", ColExec), ("Username", ColString) },
-                new[] { ("Flow", ColExec), ("IsMod", ColBool), ("IsSub", ColBool), ("IsVip", ColBool), ("IsBroadcaster", ColBool) },
+                // IsRegular appended LAST (User-Management tool): Regular-GROUP
+                // membership from the Hub's group store. Additive; unwired emits nothing.
+                new[] { ("Flow", ColExec), ("IsMod", ColBool), ("IsSub", ColBool), ("IsVip", ColBool), ("IsBroadcaster", ColBool), ("IsRegular", ColBool) },
                 new Dictionary<string, string> { { "Username", "{user.name}" } });
 
             // Twitch.IsOnline — flow probe: is the stream live? Channel is
             // optional; blank checks the configured broadcaster's own channel.
             // The IsLive output resolves to {stream.is_live} (see the Twitch Data
-            // arm in ScriptExporter.ResolveOutputFromNode); the Hub command sends
-            // GetStreamInfo and writes that var. Modelled on Twitch.CheckRole.
+            // arm in ScriptExporter.ResolveOutputFromNode); the Hub command answers
+            // the broadcaster's own channel from the live latch and any other
+            // channel from the "Phoenix: Get Stream Status" data action.
+            // Modelled on Twitch.CheckRole.
             AddTemplate("Twitch.IsOnline",      "Twitch Data", Color.FromArgb(100, 65, 165),
                 "Check whether the stream is currently live. Leave Channel empty to check your own (broadcaster) channel.",
                 new[] { ("Flow", ColExec), ("Channel", ColString) },
@@ -166,55 +177,48 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Flow", ColExec), ("LayerID", ColString), ("WidgetID", ColString), ("TriggerName", ColString), ("Args", ColList) },
                 new[] { ("Done", ColExec) });
 
-            // Surface the chat-overlay broadcast (a silent-no-op fix made this
-            // work end-to-end at runtime; this template + the matching
-            // SimpleEmitDescriptor in ExporterRegistry.cs make it authorable from a
-            // .phxg graph instead of only from hand-written .phx.
+            // There is deliberately NO per-widget mutation node in this band.
+            // Chat.Overlay.Push / Chat.Overlay.Clear and Visual.SetText /
+            // SetVisible / SetProperty used to sit here and were deleted in V4
+            // part C: compositor.js never grew a handler for a single one of
+            // their wire types (STEP/chat_push, STEP/chat_clear, SET_TEXT,
+            // VISUAL_SET_VISIBLE, VISUAL_SET_PROPERTY), so every graph that
+            // used them had been silently doing nothing since they shipped.
+            // The replacement is the channel below plus a widget-side Var.Live
+            // binding — publish a key, bind it to the parameter you wanted to
+            // set. Re-adding them would mean maintaining a second addressing
+            // model (compositor element id) alongside the channel's (layer,
+            // widget, key), which is the split this rework removes.
+
+            // Overlay Live Channel — the author-facing publish surface. One key/value
+            // channel carries every piece of ambient data a widget can bind to, and an
+            // author's key rides the exact same rails as a Hub tool's ("no special
+            // treatment"). Deliberately in this EXISTING band rather than a new
+            // category: Overlay.Publish emits flow like its Visual.* neighbours, and
+            // keeping "Visuals" out of ScriptExporter._pureDataCategories is what lets
+            // the no-flow Overlay.Get sit beside it under a title route.
             //
-            // WidgetID targets a chat-overlay widget on any active layer (HUDServer
-            // fans out to every connected /hud/<id> WS; compositor.js's chat_push
-            // STEP renders into the matching widget). Color is a hex string; the
-            // ScriptManager handler defaults to "#7fff7f" when blank.
-            AddTemplate("Chat.Overlay.Push", "Visuals", Color.DarkMagenta,
-                Localizer.T("architect.node.bubble.chat_overlay_push"),
-                new[] { ("Flow", ColExec), ("WidgetID", ColString), ("Username", ColString), ("Message", ColString), ("Color", ColString) },
+            // Both keys are LITERAL by contract. The browser derives its subscriptions
+            // from the literal attribute text at graph-scan time, so a key built from a
+            // variable is written and read fine but can never be bound by a widget —
+            // stated in the bubble text, not fought.
+            //
+            // No inline property defaults on purpose: a present-but-EMPTY attribute is
+            // returned verbatim by ResolveInputValue, which would emit a bare
+            // `overlay.publish(, )`. Leaving the attributes absent lets the descriptor's
+            // own "\"\"" fallback apply, and typing in the pill still creates the
+            // attribute (IsEditablePill needs no template property).
+            AddTemplate("Overlay.Publish", "Visuals", Color.DarkMagenta,
+                Localizer.T("architect.node.bubble.overlay_publish"),
+                new[] { ("Flow", ColExec), ("Key", ColString), ("Value", ColString) },
                 new[] { ("Done", ColExec) });
 
-            AddTemplate("Chat.Overlay.Clear", "Visuals", Color.DarkMagenta,
-                Localizer.T("architect.node.bubble.chat_overlay_clear"),
-                new[] { ("Flow", ColExec), ("WidgetID", ColString) },
-                new[] { ("Done", ColExec) });
-
-            // Low-level HUD mutation nodes. The runtime handlers
-            // (ScriptManager.Visual.cs visual.set_text / set_visible /
-            // set_property) and CommandManifest entries already exist; these
-            // templates + the matching SimpleEmitDescriptors in
-            // ExporterRegistry.Handlers1.cs make them authorable from a .phxg
-            // graph instead of only from hand-written .phx. Each broadcasts a
-            // single HUDServer message (SET_TEXT / VISUAL_SET_VISIBLE /
-            // VISUAL_SET_PROPERTY) that compositor.js applies to the addressed
-            // widget; unlike Visual.Trigger they don't run a trigger graph, so
-            // the "Id"/"Widget" socket is the compositor element id, not a
-            // (layer, widget, trigger) triple. Sockets/fallbacks mirror the
-            // manifest arg order exactly (CommandManifest.cs visual.set_*).
-            AddTemplate("Visual.SetText", "Visuals", Color.DarkMagenta,
-                Localizer.T("architect.node.bubble.visual_set_text",
-                    "Sets the text of a HUD element. Id is the compositor element id; Value is the new text. Broadcast live to every connected OBS browser source."),
-                new[] { ("Flow", ColExec), ("Id", ColString), ("Value", ColString) },
-                new[] { ("Done", ColExec) });
-
-            AddTemplate("Visual.SetVisible", "Visuals", Color.DarkMagenta,
-                Localizer.T("architect.node.bubble.visual_set_visible",
-                    "Shows or hides a HUD widget. Widget is the compositor element id; Visible toggles display. Broadcast live to every connected OBS browser source."),
-                new[] { ("Flow", ColExec), ("Widget", ColString), ("Visible", ColBool) },
-                new[] { ("Done", ColExec) },
-                new Dictionary<string, string> { { "Visible", "true" } });
-
-            AddTemplate("Visual.SetProperty", "Visuals", Color.DarkMagenta,
-                Localizer.T("architect.node.bubble.visual_set_property",
-                    "Sets an arbitrary property on a HUD widget. Widget is the compositor element id; Key is the property name; Value is the new value. Broadcast live to every connected OBS browser source."),
-                new[] { ("Flow", ColExec), ("Widget", ColString), ("Key", ColString), ("Value", ColString) },
-                new[] { ("Done", ColExec) });
+            // Overlay.Get — the read-back half. Pure data: no flow pins, resolved
+            // inline as overlay.get(<Key>) by ScriptExporter's inline-title route.
+            AddTemplate("Overlay.Get", "Visuals", Color.DarkMagenta,
+                Localizer.T("architect.node.bubble.overlay_get"),
+                new[] { ("Key", ColString) },
+                new[] { ("Value", ColString) });
 
             // ─────────────────────────────────────────────────────────────
             // PLATFORM ACTIONS

@@ -1,0 +1,637 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.CountersPanel.CountersView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.CountersPanel"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Counters page"
+    AutomationProperties.HelpText="Named tally counters: pick one from the roster on the right to edit its chat command, roles and step, and to set, reset or step its live count."
+    loc:Localize.AutomationKey="panel.counters.page.a11y"
+    loc:Localize.HelpTextKey="panel.counters.page.help">
+
+    <!--
+        ══════════════════ THE HOUSE TOOL-PAGE SHELL ══════════════════
+
+        Row 0  ToolPageHeader — the 48 px band: name · master switch · ONE state
+               phrase · the page's single brass CTA. It replaces THREE rows this
+               page used to stack: the action strip, the status pill inside it,
+               and the pinned master-state banner at the top of the left column.
+               All three rendered the same boolean in three vocabularies
+               (DISABLED / dormant / "no chat command…") and cost ~94 px before a
+               setting was visible.
+        Row 1  two-column body: the detail column takes the star, the live column
+               is a FIXED 300 px. No ColumnSpacing — the right column's left
+               border IS the divider.
+
+               LEFT  *    the SELECTED counter's detail scroller. Its first child
+                          is now the LIVE COUNT card: the stat strip that used to
+                          head it (COUNTERS / ACTIVE / TOTAL COUNT) is gone. Two
+                          of those three read 0 on a fresh install, and the one
+                          worth a glance — how many counters exist — is already
+                          in the live column's own header (RosterCountText).
+               RIGHT 300  the tool-wide roster and the source note.
+
+        WHERE THE ACTIVITY FEED WENT. Removed. It is a watch surface: what a
+        counter did 40 seconds ago does not help someone editing a step size or a
+        role gate, and it was the tallest thing in a 300 px column. The session
+        ring behind it (CountersService's RecordActivity → ToolActivityRing) is
+        untouched and still records; only this page's rendering of it is gone.
+
+        NO IsEnabled GATE ON THE COUNT CONTROLS, and that is deliberate. The
+        house shell gates the detail scroller on the master switch; Counters must
+        not. Its count controls (− / + / RESET / SET) are documented as working
+        while the tool is dormant — the databank stays writable and the numbers
+        keep moving — so greying them would be a behaviour regression dressed up
+        as a layout change. The header's state phrase says so in three words
+        instead of a paragraph: "off · databank writable".
+
+        NO ENTRANCE ANIMATION. the Pre-Builds rail already runs FadeSlideIn on every tool
+        activation; the page-side entrance this file used to run was the second
+        of two.
+    -->
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- KEPT, checked type by type: after the conversions below this
+                     page still declares TextBox (name, step, cooldown, command,
+                     reply template, set-value). It declares no ComboBox, no
+                     ToggleSwitch, no CheckBox and no Pivot — the six checkboxes
+                     visible in the roles card belong to RoleCheckRow, and the
+                     master ToggleSwitch belongs to ToolPageHeader; both merge
+                     this same dictionary themselves. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell styles. Never merged into App.xaml. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+             Title, master switch, state phrase and the ONE brass CTA are all set
+             from code-behind (ToolPageHeader is deliberately plain properties,
+             not DPs). The master flip still routes through ViewModel.MasterEnabled
+             → SaveNow, so it keeps bypassing the 400 ms debounce exactly as the
+             old chip did.
+
+             DELETE COUNTER is NOT here. The band has no danger slot, and the verb
+             was never tool-wide to begin with: it acts on the SELECTED counter.
+             It now sits at the foot of that counter's own detail column, which is
+             the surface it destroys. -->
+        <cmn:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ───────────── LEFT * : the selected counter ─────────────
+                 One cell, two overlaid siblings: the detail scroller and its
+                 empty state. The pinned master-state band that used to sit above
+                 them is gone — its sentence is the header band's state phrase
+                 now, and its consequence half ("the open Counters table still
+                 answers db.* nodes") survives verbatim in the source note under
+                 the roster, which is where the streamer is already looking when
+                 that question comes up. -->
+            <Grid Grid.Column="0">
+
+                <!-- The detail pane's VISIBILITY is bound; its content is never
+                     swapped or virtualized, so a focused TextBox stays in the
+                     tree and commits its LostFocus edit before a roster click
+                     changes the selection. -->
+                <ScrollViewer x:Name="DetailScroll"
+                              Visibility="{x:Bind ViewModel.DetailVisibility, Mode=OneWay}"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Disabled">
+                    <StackPanel Spacing="12" Padding="14">
+
+                        <!-- ── LIVE COUNT ─────────────────────────────────
+                             The scroller's FIRST child now. The three stat
+                             tiles that used to head it (COUNTERS / ACTIVE /
+                             TOTAL COUNT) are gone: on a fresh install two of
+                             them read 0, and the third — how many counters
+                             exist — is already the live column's header
+                             value. A config surface does not open with a
+                             dashboard.
+
+                             THIS number stays, and is not a stat tile: it is
+                             the value the four buttons beside it edit.
+                             NOT gated on the master switch, by design: these
+                             controls keep working while the tool is dormant,
+                             because the databank does. -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Column="0" Spacing="2">
+                                    <TextBlock Text="LIVE COUNT" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.counters.live.eyebrow" />
+                                    <TextBlock Text="{x:Bind ViewModel.SelectedCounter.CountText, Mode=OneWay}"
+                                               FontFamily="{StaticResource DisplayFont}"
+                                               FontSize="26" CharacterSpacing="20"
+                                               Foreground="{StaticResource CoalPaperBrush}"
+                                               MinWidth="64"
+                                               AutomationProperties.LiveSetting="Polite" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center">
+                                    <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                            MinWidth="36" Padding="0"
+                                            Click="OnStepDownClick"
+                                            AutomationProperties.Name="Step count down"
+                                            loc:Localize.AutomationKey="panel.counters.live.step_down.a11y">
+                                        <TextBlock Text="&#x2212;" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   HorizontalAlignment="Center" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                            MinWidth="36" Padding="0"
+                                            Click="OnStepUpClick"
+                                            AutomationProperties.Name="Step count up"
+                                            loc:Localize.AutomationKey="panel.counters.live.step_up.a11y">
+                                        <TextBlock Text="+" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   HorizontalAlignment="Center" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                            Click="OnResetClick"
+                                            AutomationProperties.Name="Reset count to zero"
+                                            loc:Localize.AutomationKey="panel.counters.live.reset.a11y">
+                                        <TextBlock Text="RESET" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.counters.live.reset.label" />
+                                    </Button>
+                                    <TextBox Text="{x:Bind ViewModel.SelectedCounter.SetValueText, Mode=TwoWay}"
+                                             Width="80" PlaceholderText="0"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             TextAlignment="Right" VerticalAlignment="Center"
+                                             AutomationProperties.Name="Value to set"
+                                             loc:Localize.AutomationKey="panel.counters.live.set_value.a11y" />
+                                    <!-- Neutral, like its three neighbours. The page's
+                                         one brass CTA is + ADD COUNTER in the header
+                                         band; a brass button mid-card would read as the
+                                         page's primary action when it is one of four
+                                         equal count controls. -->
+                                    <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                            Click="OnSetClick"
+                                            AutomationProperties.Name="Set count to the value on the left"
+                                            loc:Localize.AutomationKey="panel.counters.live.set.a11y">
+                                        <TextBlock Text="SET" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.counters.live.set.label" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- ── CHAT COMMANDS ──────────────────────────────
+                             ★ The five shapes one counter answers to. Four of
+                             them exist in no field on this page: the parser mints
+                             !deaths+ / !deaths- / !setdeaths / !resetdeaths by
+                             concatenation off the single command word below.
+
+                             The page was not silent about them — the
+                             EffectiveCommandHint line inside the settings card
+                             lists the five words, and the ROLES card names its
+                             two gates "WHO CAN VIEW" and "WHO CAN MODIFY
+                             (+/-/SET/RESET)". What no surface did was put the two
+                             together: which of those five words each gate governs
+                             is something the streamer had to reassemble from the
+                             parenthesis in a header. Here every word carries its
+                             own gate on its own row, and its own dimming when the
+                             counter's chat toggle is off.
+
+                             SCOPED TO THE SELECTED COUNTER, which is why it sits
+                             in this column at all — see ChatCommands on the
+                             ViewModel for why a tool-wide rendering (five rows
+                             per counter) does not belong over a per-counter
+                             editor. It re-renders as the name, the command word,
+                             the roles and the chat toggle below are edited.
+
+                             BELOW LIVE COUNT, ABOVE the fields. Below, because
+                             the count readout and its four buttons are the one
+                             thing on this page a streamer touches mid-stream and
+                             they stay the first card in the scroller. Above,
+                             because this is the ANSWER the card underneath is
+                             configuring, and an answer printed after its inputs
+                             reads as a footnote. -->
+                        <cmn:ToolCommandList Commands="{x:Bind ViewModel.ChatCommands, Mode=OneWay}"
+                                             AutomationProperties.Name="Chat commands for the selected counter"
+                                             loc:Localize.AutomationKey="panel.counters.commands.a11y" />
+
+                        <!-- ── SETTINGS ─────────────────────────────────── -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="COUNTER" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           loc:Localize.Key="panel.counters.settings.eyebrow" />
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Name"
+                                               Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.counters.settings.name.label" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{x:Bind ViewModel.SelectedCounter.Name, Mode=TwoWay}"
+                                             PlaceholderText="deaths"
+                                             HorizontalAlignment="Left"
+                                             Width="320"
+                                             AutomationProperties.Name="Counter name"
+                                             loc:Localize.PlaceholderKey="panel.counters.settings.name.placeholder"
+                                             loc:Localize.AutomationKey="panel.counters.settings.name.a11y" />
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Floor at zero"
+                                               Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.counters.settings.floor.label" />
+                                    <!-- CheckBox → TogglePill in a borderless Button host.
+                                         The Button owns the Click and the accessible name;
+                                         the pill is display-only. -->
+                                    <Button Grid.Column="1"
+                                            HorizontalAlignment="Left"
+                                            Padding="0,4,10,4"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            CornerRadius="{StaticResource Radius1Corner}"
+                                            Click="OnFloorAtZeroClick"
+                                            AutomationProperties.Name="Floor this counter at zero"
+                                            ToolTipService.ToolTip="Never let this counter go below 0."
+                                            loc:Localize.AutomationKey="panel.counters.settings.floor.a11y"
+                                            loc:Localize.TooltipKey="panel.counters.settings.floor.tip">
+                                        <cmn:TogglePill IsOn="{x:Bind ViewModel.SelectedCounter.FloorAtZero, Mode=OneWay}"
+                                                        Label="{x:Bind ViewModel.SelectedCounter.FloorAtZeroLabel, Mode=OneWay}" />
+                                    </Button>
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Step"
+                                               Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.counters.settings.step.label" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{x:Bind ViewModel.SelectedCounter.StepText, Mode=TwoWay}"
+                                             Width="80"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             TextAlignment="Right"
+                                             AutomationProperties.Name="Step size"
+                                             loc:Localize.AutomationKey="panel.counters.settings.step.a11y" />
+                                    <TextBlock Grid.Column="2" Text="how far &#x2212; and + move it"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.counters.settings.step.hint" />
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cooldown (s)"
+                                               Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.counters.settings.cooldown.label" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{x:Bind ViewModel.SelectedCounter.CooldownText, Mode=TwoWay}"
+                                             Width="80"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             TextAlignment="Right"
+                                             AutomationProperties.Name="Chat command cooldown in seconds"
+                                             loc:Localize.AutomationKey="panel.counters.settings.cooldown.a11y" />
+                                    <TextBlock Grid.Column="2" Text="per-viewer wait between chat uses"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.counters.settings.cooldown.hint" />
+                                </Grid>
+
+                                <Border Height="1" Background="{StaticResource CoalRaisedBrush}" />
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Chat command"
+                                               Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.counters.settings.command.label" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12"
+                                                VerticalAlignment="Center">
+                                        <Button Padding="0,4,10,4"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                CornerRadius="{StaticResource Radius1Corner}"
+                                                Click="OnChatEnabledClick"
+                                                AutomationProperties.Name="Answer this counter in chat"
+                                                VerticalAlignment="Center"
+                                                loc:Localize.AutomationKey="panel.counters.settings.chat_enabled.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.SelectedCounter.ChatEnabled, Mode=OneWay}"
+                                                            Label="{x:Bind ViewModel.SelectedCounter.ChatEnabledLabel, Mode=OneWay}" />
+                                        </Button>
+                                        <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                        <TextBox Text="{x:Bind ViewModel.SelectedCounter.Command, Mode=TwoWay}"
+                                                 PlaceholderText="defaults to Name" Width="180"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 VerticalAlignment="Center"
+                                                 AutomationProperties.Name="Chat command word"
+                                                 loc:Localize.PlaceholderKey="panel.counters.settings.command.placeholder"
+                                                 loc:Localize.AutomationKey="panel.counters.settings.command.a11y" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- The Command → Name fallback, resolved: the
+                                     word the parser will really match, echoed
+                                     beside the field that sets it. The CHAT
+                                     COMMANDS block above now spells the five
+                                     shapes out per gate, so this line is no
+                                     longer the page's only enumeration of them —
+                                     it stays for the one thing that block cannot
+                                     say. A counter with neither a command word
+                                     nor a name mints NO rows at all, so the
+                                     block goes quietly empty while this line
+                                     says "(name a counter)", which is the
+                                     actionable half. -->
+                                <TextBlock Text="{x:Bind ViewModel.SelectedCounter.EffectiveCommandHint, Mode=OneWay}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}" />
+
+                                <Border Height="1" Background="{StaticResource CoalRaisedBrush}" />
+
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Reply template &#xB7; {name} / {count} &#xB7; empty = default"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               loc:Localize.Key="panel.counters.settings.reply.label" />
+                                    <TextBox Text="{x:Bind ViewModel.SelectedCounter.ReplyTemplate, Mode=TwoWay}"
+                                             PlaceholderText="{}{name} count: {count}"
+                                             HorizontalAlignment="Stretch"
+                                             AutomationProperties.Name="Chat reply template"
+                                             loc:Localize.PlaceholderKey="panel.counters.settings.reply.placeholder"
+                                             loc:Localize.AutomationKey="panel.counters.settings.reply.a11y" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ── ROLES ────────────────────────────────────────
+                             Stacked vertically, one gate per full-width row.
+                             RoleCheckRow lays out in WrapRowPanel, which needs
+                             a finite-width measure host to fold instead of
+                             clipping: a vertical StackPanel inside a STAR-width
+                             card is that host. Never put one in an Auto column
+                             or a horizontal StackPanel. -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="WHO CAN USE IT" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           loc:Localize.Key="panel.counters.roles.eyebrow" />
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="WHO CAN VIEW"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="10" CharacterSpacing="120"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               loc:Localize.Key="panel.counters.roles.view.label" />
+                                    <cmn:RoleCheckRow Roles="{x:Bind ViewModel.SelectedCounter.ViewRoles, Mode=OneWay}" />
+                                </StackPanel>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="WHO CAN MODIFY (+/-/SET/RESET)"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="10" CharacterSpacing="120"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               loc:Localize.Key="panel.counters.roles.modify.label" />
+                                    <cmn:RoleCheckRow Roles="{x:Bind ViewModel.SelectedCounter.ModifyRoles, Mode=OneWay}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ── DELETE ───────────────────────────────────────
+                             Re-homed from the old action strip, unchanged in
+                             chrome, handler, tooltip and accessible name. It
+                             belongs here: it destroys the SELECTED counter,
+                             so it sits at the foot of that counter's own
+                             column rather than in a tool-wide band. The
+                             HasSelection gate is kept as-is — the scroller is
+                             already collapsed without a selection, so the
+                             binding is now belt-and-braces rather than the
+                             only guard, and removing it would be a behaviour
+                             change for no gain. -->
+                        <Button x:Name="DeleteCounterButton"
+                                HorizontalAlignment="Right"
+                                Style="{StaticResource ToolDangerButtonStyle}"
+                                IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}"
+                                Click="OnDeleteCounterClick"
+                                AutomationProperties.Name="Delete the selected counter"
+                                ToolTipService.ToolTip="Removes the counter and drops its row from the open Counters table, so a re-added counter starts at 0."
+                                loc:Localize.AutomationKey="panel.counters.delete.a11y"
+                                loc:Localize.TooltipKey="panel.counters.delete.tip">
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                          Foreground="{StaticResource ErrBrush}" />
+                                <TextBlock Text="DELETE COUNTER" Style="{StaticResource ToolStripLabelTextStyle}"
+                                           loc:Localize.Key="panel.counters.delete.label" />
+                            </StackPanel>
+                        </Button>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Empty state — a SIBLING of the scroller in the same cell,
+                     never inside it. Two lines, no icon. -->
+                <StackPanel Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="8">
+                    <TextBlock Text="No counter selected"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="20"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               HorizontalAlignment="Center"
+                               loc:Localize.Key="panel.counters.empty.title" />
+                    <TextBlock Text="Pick one from the list, or add a new counter."
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               HorizontalAlignment="Center"
+                               loc:Localize.Key="panel.counters.empty.body" />
+                </StackPanel>
+            </Grid>
+
+            <!-- ───────────── RIGHT 300 : the roster ───────────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />   <!-- header       -->
+                        <RowDefinition Height="Auto" />   <!-- column band  -->
+                        <RowDefinition Height="*" />      <!-- roster       -->
+                        <RowDefinition Height="Auto" />   <!-- source note  -->
+                    </Grid.RowDefinitions>
+
+                    <!-- The one legal PanelHeader in the house shell: the right
+                         column's own header. -->
+                    <cmn:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Counters"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.counters.roster.title">
+                        <cmn:PanelHeader.RightContent>
+                            <TextBlock Text="{x:Bind ViewModel.RosterCountText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </cmn:PanelHeader.RightContent>
+                    </cmn:PanelHeader>
+
+                    <Border Grid.Row="1"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="14,6">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="26" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="#"
+                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
+                                       CharacterSpacing="140"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="COUNTER"
+                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
+                                       CharacterSpacing="140"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       loc:Localize.Key="panel.counters.roster.column.counter" />
+                            <TextBlock Grid.Column="2" Text="!CMD"
+                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
+                                       CharacterSpacing="140"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       loc:Localize.Key="panel.counters.roster.column.cmd" />
+                            <TextBlock Grid.Column="3" Text="COUNT"
+                                       FontFamily="{StaticResource SansFont}" FontSize="9" FontWeight="Bold"
+                                       CharacterSpacing="140"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       loc:Localize.Key="panel.counters.roster.column.count" />
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="2">
+                        <ScrollViewer Visibility="{x:Bind ViewModel.RosterListVisibility, Mode=OneWay}"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollMode="Disabled">
+                            <!-- ItemsControl → ItemsRepeater. Nothing in this page's
+                                 code-behind walks the visual tree for rows, so the
+                                 swap is safe here; the row's own Click carries the
+                                 selection (ItemsRepeater has no selection model). -->
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Counters, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           AutomationProperties.Name="Counters, newest last"
+                                           loc:Localize.AutomationKey="panel.counters.roster.list.a11y">
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="local:CounterRowVm">
+                                        <Button Background="Transparent"
+                                                BorderThickness="0"
+                                                Padding="0"
+                                                CornerRadius="0"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Stretch"
+                                                Click="OnCounterRowClick"
+                                                AutomationProperties.Name="{x:Bind NameEyebrow, Mode=OneWay}">
+                                            <Grid Padding="14,7"
+                                                  ColumnSpacing="8"
+                                                  Background="{x:Bind RowBackground, Mode=OneWay}"
+                                                  BorderBrush="{StaticResource CoalRaisedBrush}"
+                                                  BorderThickness="0,0,0,1">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="26" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{x:Bind IndexText, Mode=OneWay}"
+                                                           FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                           FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{x:Bind NameEyebrow, Mode=OneWay}"
+                                                           FontFamily="{StaticResource SansFont}" FontSize="10"
+                                                           FontWeight="SemiBold" CharacterSpacing="180"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{StaticResource EmberPrimaryBrush}" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{x:Bind CommandBadgeText, Mode=OneWay}"
+                                                           FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{StaticResource Ember200Brush}" />
+                                                <TextBlock Grid.Column="3"
+                                                           Text="{x:Bind CountText, Mode=OneWay}"
+                                                           FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                                           FontWeight="SemiBold"
+                                                           MinWidth="44"
+                                                           TextAlignment="Right"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{StaticResource CoalPrimaryTextBrush}" />
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </ScrollViewer>
+
+                        <!-- ONE line, top-aligned, mono hint. Was two lines in
+                             DisplayFont 20 floating in the vertical middle of a
+                             tall empty column — a heading-sized announcement that
+                             nothing exists yet. The column is 300 px now and the
+                             sentence names the verb that fixes it. -->
+                        <TextBlock Visibility="{x:Bind ViewModel.RosterEmptyVisibility, Mode=OneWay}"
+                                   Text="no counters yet &#xB7; + ADD COUNTER, top right"
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   VerticalAlignment="Top"
+                                   Padding="14,10"
+                                   loc:Localize.Key="panel.counters.roster.empty" />
+                    </Grid>
+
+                    <!-- Where the numbers actually live. Kept from the old body
+                         hint; it belongs under the roster it describes — and
+                         since the master-state banner went, this is the page's
+                         one written statement that the open table keeps answering
+                         db.* nodes while the tool is off. -->
+                    <Border Grid.Row="3"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="14,6">
+                        <TextBlock Text="Counts live in the open Counters databank table, shared with the db.* nodes."
+                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                   loc:Localize.Key="panel.counters.roster.source_note" />
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

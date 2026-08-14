@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Phoenix.Controls.Architect.WinUI.Controls;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Core;
 using Windows.Foundation;
@@ -55,9 +56,16 @@ public sealed partial class NodeView
     // Three new layers
     // sit alongside the existing pin chrome:
     //   • SelectionRing — gold focus halo when this socket is the selected one.
+    //     Nullable: built only when the socket is ALREADY the selected one at
+    //     pin-build time, because per-socket selection has no live caller (see
+    //     the Layer 6 note in AddPinElement).
     //   • AnimatedBadge — small yellow dot when the destination var has a
-    //     keyframe in the Visualist timeline registry (currently a stub; see
-    //     IsPinAnimatedExternally below).
+    //     keyframe in the Visualist timeline registry (see
+    //     IsPinAnimatedExternally below). Non-nullable / always built, starting
+    //     Collapsed when the var isn't animated, because the state flips at
+    //     runtime and ApplyAnimatedBadgeVisibility can only toggle an Ellipse
+    //     that already exists — same always-present contract as DropHalo /
+    //     Wildcard / Arity.
     // The Pin shape itself gains a connected-vs-unconnected differentiation
     // via Fill opacity so unconnected pins read as outlines and
     // connected pins read as filled glyphs.
@@ -70,7 +78,7 @@ public sealed partial class NodeView
         public Ellipse    Wildcard  = null!;
         public TextBlock  Arity     = null!;
         public Ellipse?   SelectionRing;
-        public Ellipse?   AnimatedBadge;
+        public Ellipse    AnimatedBadge = null!;
         public Ellipse    HitTarget = null!;
         public int        RowIndex;
         public SocketType Direction;
@@ -122,9 +130,21 @@ public sealed partial class NodeView
     // Animated-pin badge brush.
     // Yellow dot mirrors the Visualist marker for an animated pin
     // (AnimatedPinRegistry indicates a destination variable has keyframes).
-    // The Architect-side surface is conditional on a registry lookup that
-    // currently falls back to false (see IsPinAnimatedExternally below) —
-    // when the cross-pillar plumbing lands, the brush is already wired.
+    // The Architect-side surface is gated on IsPinAnimatedExternally below,
+    // which resolves the socket's candidate variable names against the shared
+    // AnimatedVarTracker.
+    //
+    // COVERAGE LIMIT — the mirror is partial, so the badge can lag. The only
+    // writers into AnimatedVarTracker are AnimatedPinRegistry's own pin-level
+    // animate / un-animate routes (MirrorMarkAnimated at AnimatedPinRegistry
+    // :327-328, MirrorMarkNotAnimated at :360-361). Visualist's Inspector
+    // keyframe edits compute a local per-parameter IsAnimated and never touch
+    // the shared tracker, and AnimatedVarTracker.Clear has no caller anywhere,
+    // so nothing rebuilds the tracker from timeline truth on document load or
+    // close. Net effect: the badge is correct for the pin-level routes and may
+    // show stale state for the others. Closing that gap means widening the
+    // mirror on the Visualist side — deliberately out of scope here, because
+    // this file must not reach across the pillar boundary to do it.
     private static readonly SolidColorBrush s_animatedBadgeBrush =
         new(Color.FromArgb(0xFF, 0xE5, 0xA2, 0x4E));
 
@@ -367,9 +387,11 @@ public sealed partial class NodeView
 
     private void ApplyAnimatedBadgeVisibility()
     {
+        // No null-guard needed: AddPinElement builds the badge for EVERY pin
+        // (Collapsed when the var isn't animated), which is precisely what
+        // makes this live toggle reachable — see Layer 7 there.
         foreach (var (sock, ele) in _pinElements)
         {
-            if (ele.AnimatedBadge is null) continue;
             ele.AnimatedBadge.Visibility = IsPinAnimatedExternally(sock)
                 ? Visibility.Visible : Visibility.Collapsed;
         }
@@ -660,33 +682,37 @@ public sealed partial class NodeView
         // Layer 7 — animated-pin badge.
         // A 6×6 yellow dot in the bottom-right of the pin chrome surfaces
         // "this socket's destination variable has Visualist keyframes".
-        // The cross-pillar registry isn't wired yet (IsPinAnimatedExternally
-        // is a TODO stub returning false), so the badge currently never
-        // paints — but the layer is in place so the activation is a one-line
-        // change inside that helper once Phoenix.Controls.Shared grows a
-        // shared AnimatedVarTracker.
-        // IsPinAnimatedExternally is a stub returning
-        // false (the cross-pillar AnimatedVarTracker isn't wired), so this badge
-        // never paints. Create it ONLY when the socket is actually animated (never,
-        // currently), saving one element per pin × every socket. When the registry
-        // is wired, the activation must (re)create this layer + rebuild; the in-place
-        // toggles (the DropState pass / OnAnimatedVarStateChanged) are null-guarded.
-        Ellipse? animatedBadge = null;
-        if (IsPinAnimatedExternally(sock))
+        // IsPinAnimatedExternally resolves the socket's candidate variable
+        // names against the shared AnimatedVarTracker — a live query, not a
+        // placeholder, though only Visualist's pin-level animate / un-animate
+        // routes feed that tracker (see the coverage-limit note on
+        // s_animatedBadgeBrush above).
+        //
+        // The badge is built UNCONDITIONALLY (Collapsed when the var isn't
+        // animated) because the animated state flips AFTER the pins exist:
+        // keyframing a var in Visualist raises
+        // AnimatedVarTracker.AnimationStateChanged → OnAnimatedVarStateChanged
+        // → ApplyAnimatedBadgeVisibility, and that pass can only toggle an
+        // Ellipse that is already in the tree. Building the badge lazily saved
+        // one element per pin × every socket, but it made the whole cross-pillar
+        // flow unreachable — a pin built while the var was un-animated could
+        // never light up short of a full node rebuild. One always-present
+        // Collapsed Ellipse per pin is the honest cost of the feature working;
+        // a Collapsed child is skipped by the Grid's measure / arrange pass, so
+        // what we pay is allocation + visual-tree size, not per-frame layout.
+        var animatedBadge = new Ellipse
         {
-            animatedBadge = new Ellipse
-            {
-                Width = 6, Height = 6,
-                Fill = s_animatedBadgeBrush,
-                Stroke = null,
-                IsHitTestVisible = false,
-                // Bottom-right corner of the 14×14 chrome.
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment   = VerticalAlignment.Bottom,
-                Visibility = Visibility.Visible,
-            };
-            pinChrome.Children.Add(animatedBadge);
-        }
+            Width = 6, Height = 6,
+            Fill = s_animatedBadgeBrush,
+            Stroke = null,
+            IsHitTestVisible = false,
+            // Bottom-right corner of the 14×14 chrome.
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment   = VerticalAlignment.Bottom,
+            Visibility = IsPinAnimatedExternally(sock)
+                ? Visibility.Visible : Visibility.Collapsed,
+        };
+        pinChrome.Children.Add(animatedBadge);
 
         // Layer 8 — 24×24 transparent WCAG hit-target. The 24-px-wide hit
         // box is centred via Margin=-5 over the 14×14 pin footprint, so the
@@ -710,9 +736,9 @@ public sealed partial class NodeView
         // idiom the canvas models (pins are pure wire endpoints; only nodes
         // and wires carry selection). The press is left unhooked here so the
         // canvas's wire-drop path still starts a drag on the same press; the
-        // SelectionRing layer below stays in the tree but is now only ever
-        // shown if something explicitly calls SetSelectedSocket (nothing on
-        // the plain-click path does anymore).
+        // SelectionRing layer (Layer 6, above) is consequently only built when
+        // something has explicitly called SetSelectedSocket with this socket's
+        // id — nothing on the plain-click path does anymore.
         // Hover-anchored
         // TooltipPopup on the pin's hit target. PointerEntered starts a
         // ~600 ms delay timer; expiry positions the shared TooltipPopup at
@@ -1032,7 +1058,7 @@ public sealed partial class NodeView
     private void OnDatabankPickerLoaded(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement fe)
-            TooltipPopup.Attach(fe, "Pick from databank");
+            TooltipPopup.Attach(fe, Localizer.T("architect.canvas.node.databank_picker.tip", "Pick from databank"));
     }
 
     /// <summary>
@@ -1148,13 +1174,14 @@ public sealed partial class NodeView
                 // wire is added or removed, so the glyph picks up the
                 // outline-vs-solid state without a full overlay rebuild.
                 ApplyPinConnectedOpacity(ele.Pin, sock);
-                // Animated-pin badge is currently gated on a stub that
-                // returns false, but re-evaluate here so the badge flips
-                // immediately once the cross-pillar tracker is wired and
-                // IsPinAnimatedExternally starts returning true.
-                if (ele.AnimatedBadge is not null)
-                    ele.AnimatedBadge.Visibility = IsPinAnimatedExternally(sock)
-                        ? Visibility.Visible : Visibility.Collapsed;
+                // Opportunistic re-sync of the animated-pin badge. The
+                // authoritative live path is AnimatedVarTracker.
+                // AnimationStateChanged → ApplyAnimatedBadgeVisibility; this
+                // extra query just folds a badge refresh into a repaint pass
+                // that is already running, and costs a handful of dictionary
+                // lookups (see IsPinAnimatedExternally).
+                ele.AnimatedBadge.Visibility = IsPinAnimatedExternally(sock)
+                    ? Visibility.Visible : Visibility.Collapsed;
                 break;
             case nameof(SocketViewModel.ColorHex):
             case nameof(SocketViewModel.PinPathData):
@@ -1446,8 +1473,8 @@ public sealed partial class NodeView
 
     private static SolidColorBrush BuildHexBrush(string? hex)
     {
-        // Mirrors HexStringToBrushConverter — accepts "#RGB" / "#RRGGBB" /
-        // "#AARRGGBB" / 8-char "#ARGB"-ish; falls back to transparent.
+        // Accepts "#RGB" / "#RRGGBB" / "#AARRGGBB" / 8-char "#ARGB"-ish;
+        // falls back to transparent.
         if (string.IsNullOrEmpty(hex)) return s_transparentBrush;
         try
         {

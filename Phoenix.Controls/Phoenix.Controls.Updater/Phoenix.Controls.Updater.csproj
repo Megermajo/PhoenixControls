@@ -3,27 +3,29 @@
   <!--
     Phoenix.Controls.Updater — console executable (auto-update bootstrapper).
 
-    The .exe handles Track 8 + legacy flows:
-      a. Stops the running suite (Hub/Architect/Visualist, WinForms + WinUI).
-      b. Verifies the .phxupdate archive (SHA-256 + Authenticode).
+    The .exe handles the GitHub-Releases update flow (the only shipped
+    update path):
+      a. Stops the running suite.
+      b. Downloads the Releases zip and verifies its SHA-256. Integrity
+         only — there is NO Authenticode/signature check; archive signing
+         is a future rollout (TODO §3).
       c. Atomically swaps the install root (rename-aside backup + extract).
-      d. Optionally per-file verifies via the archive's manifest.json.
-      e. Writes last-update-result.json so the next Hub launch surfaces it.
-      f. Relaunches Hub (WinUI preferred, WinForms fallback).
+      d. Writes last-update-result.json so the next Hub launch surfaces it.
+      e. Relaunches Hub (WinUI).
 
     The Hub-side periodic poller (6 h cadence by default) that talks to the
-    GitHub Releases API and hands a verified archive off to the .exe in
-    update mode lives in Phoenix.Controls.Hub/Core/UpdateChecker.cs — Track 4
+    GitHub Releases API and spawns the .exe with the asset-url/asset-sha256
+    arguments lives in Phoenix.Controls.Hub/Core/UpdateChecker.cs — Track 4
     (Hub.WinUI services) wires it into the chrome status surface.
 
     Self-contained on purpose — no Phoenix.Controls.Shared reference, BCL
     only. Hub copies the build output into its own bin folder so
-    Phoenix.Controls.Updater.exe ships next to Phoenix.Controls.Hub.exe.
+    Phoenix.Controls.Updater.exe ships next to the Hub exe.
     Suite-wide version comes from Phoenix.Controls/Directory.Build.props.
 
     The legacy `git fetch + dotnet build` flow was retired in the 0.6.2
     cleanup — the runner refuses that mode now and points the user at the
-    new update / Releases-mode flows. The CLI parser still accepts the
+    Releases-mode flow. The CLI parser still accepts the
     legacy argv shape for back-compat with the test suite.
   -->
 

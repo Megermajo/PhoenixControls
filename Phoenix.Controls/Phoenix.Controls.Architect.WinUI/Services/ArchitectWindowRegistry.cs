@@ -262,6 +262,27 @@ public static class ArchitectWindowRegistry
     }
 
     /// <summary>
+    /// Snapshot of the currently open Architect sibling windows. Mirrors
+    /// <c>VisualistWindowRegistry.Snapshot()</c> so cross-pillar shutdown paths
+    /// — Hub's close gate — can walk every open graph editor and give a dirty
+    /// one the chance to run its own save / discard / cancel prompt before the
+    /// process is hard-terminated.
+    ///
+    /// Taken under <c>s_registryLock</c>, the same gate the compound
+    /// Register / Rebind / Unregister updates hold, so the copy can never
+    /// observe a half-applied key swap. The returned list is a fresh copy —
+    /// callers can close windows while iterating it without mutating the
+    /// backing store mid-enumeration.
+    /// </summary>
+    public static IReadOnlyCollection<ArchitectSiblingWindow> Snapshot()
+    {
+        lock (s_registryLock)
+        {
+            return new List<ArchitectSiblingWindow>(s_open.Values);
+        }
+    }
+
+    /// <summary>
     /// Internal — sibling window calls this from its Closed handler so a
     /// fresh OpenFile of the same path spawns a new window instead of
     /// trying to activate a corpse.

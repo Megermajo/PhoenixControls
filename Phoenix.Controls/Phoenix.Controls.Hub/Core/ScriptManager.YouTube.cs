@@ -79,6 +79,10 @@ namespace Phoenix.Controls.Hub.Core
                     return null;
                 }
                 DispatchNamedAction("youtube.set_title", PhxSbActions.YtSetTitle, new { title });
+                // Write-through into the ambient {title}/stream.title cache.
+                // Connected-gated: a dropped dispatch changed nothing.
+                if (WS.Instance.IsConnected)
+                    StreamInfoTracker.Set(title, null, "youtube.set_title");
                 return null;
             });
 

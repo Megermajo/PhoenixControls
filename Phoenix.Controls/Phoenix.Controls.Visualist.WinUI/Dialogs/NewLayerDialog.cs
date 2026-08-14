@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 
@@ -70,11 +71,11 @@ public sealed class NewLayerDialog : ContentDialog
     public NewLayerDialog()
     {
         // Root properties that were attributes on <ContentDialog …>.
-        Title = "New Layer";
+        Title = Localizer.T("visualist.rail.new_layer", "New Layer");
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        PrimaryButtonText = "Create";
-        CloseButtonText = "Cancel";
+        PrimaryButtonText = Localizer.T("common.button.create", "Create");
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Primary;
 
         // ── Visual tree (1:1 with the old XAML) ───────────────────────────
@@ -105,7 +106,8 @@ public sealed class NewLayerDialog : ContentDialog
         SubtitleLabel = new TextBlock
         {
             FontSize = 13,
-            Text = "Pick the resolution preset for the new layer.",
+            Text = Localizer.T("visualist.dialog.new_layer.subtitle",
+                "Pick the resolution preset for the new layer."),
         };
         headerPanel.Children.Add(EyebrowLabel);
         headerPanel.Children.Add(SubtitleLabel);
@@ -118,7 +120,7 @@ public sealed class NewLayerDialog : ContentDialog
 
         NameLabel = new TextBlock
         {
-            Text = "NAME",
+            Text = Localizer.T("visualist.dialog.new_layer.name.label", "NAME"),
             // NewLayerFieldLabel style setters.
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
@@ -129,7 +131,7 @@ public sealed class NewLayerDialog : ContentDialog
 
         PresetLabel = new TextBlock
         {
-            Text = "PRESET",
+            Text = Localizer.T("visualist.dialog.new_layer.preset.label", "PRESET"),
             // NewLayerFieldLabel style setters.
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
@@ -148,7 +150,7 @@ public sealed class NewLayerDialog : ContentDialog
 
         WidthLabel = new TextBlock
         {
-            Text = "WIDTH",
+            Text = Localizer.T("visualist.dialog.new_layer.width.label", "WIDTH"),
             // NewLayerFieldLabel style setters.
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
@@ -160,7 +162,7 @@ public sealed class NewLayerDialog : ContentDialog
 
         HeightLabel = new TextBlock
         {
-            Text = "HEIGHT",
+            Text = Localizer.T("visualist.dialog.new_layer.height.label", "HEIGHT"),
             // NewLayerFieldLabel style setters.
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
@@ -341,7 +343,8 @@ public sealed class NewLayerDialog : ContentDialog
         if (p == LayerPreset.Custom)
         {
             CustomSizeRow.Visibility = Visibility.Visible;
-            PresetHint.Text = "custom — pick width and height";
+            PresetHint.Text = Localizer.T("visualist.dialog.new_layer.custom.hint",
+                "custom — pick width and height");
         }
         else
         {

@@ -8,6 +8,14 @@
 //    already owns the permit, so script handlers can chain DB calls without
 //    seizing up. NEVER call _lock.WaitAsync/Release directly inside this
 //    file — go through AcquireLockAsync/ReleaseLock to keep the guard intact.
+//    AcquireLockAsync MUST stay a non-`async` method (see its own comment):
+//    an AsyncLocal written inside an async method never reaches that method's
+//    caller, so an `async` acquire silently turns the guard into a no-op.
+//    Corollary: never start fire-and-forget work that itself calls a
+//    lock-taking DB.* method from INSIDE a lock body — a task created there
+//    inherits the "this context owns the permit" flag and would run
+//    unserialized against the shared connection. Queue such work after the
+//    ReleaseLock instead.
 // 2. `EventLog` / `SystemHistory` are append-only and grow unbounded; the
 //    Initialize sweep deletes rows older than AppConfig.LogRetentionDays
 //    once per process start, and EventLog is additionally capped to the
@@ -53,6 +61,52 @@ namespace Phoenix.Controls.Shared.Services
             }
         }
 
+        /// <summary>
+        /// True when the singleton has been created by SOME consumer. Lets
+        /// best-effort readers (e.g. Architect's UserGroupCatalog) probe without
+        /// side effects — touching <see cref="Instance"/> constructs the DB and
+        /// can create/initialize the on-disk databank, which a design-time cache
+        /// refresh (or a unit test spawning a node) must never do.
+        /// </summary>
+        public static bool HasInstance => _instance != null;
+
+        /// <summary>
+        /// The one production databank every shipped process shares.
+        /// </summary>
+        private static string ProductionDbPath
+            => Phoenix.Controls.Shared.Core.Paths.RoamingAppData("phoenix_v3.db");
+
+        /// <summary>
+        /// Sticky, process-wide redirect of the databank, set ONCE by the test
+        /// assembly's ModuleInitializer via <see cref="PinTestDatabasePath"/>.
+        /// Null in every shipped process, so production behaviour is unchanged.
+        /// </summary>
+        /// <remarks>
+        /// It has to be a static that OUTLIVES the singleton. <see cref="Dispose"/>
+        /// nulls <c>_instance</c> (the per-class temp-file seam depends on that), so
+        /// a pin stored on the instance dies with it: the next <c>DB.Instance</c>
+        /// constructs a fresh object, the next no-arg <see cref="Initialize"/> resolves
+        /// the DEFAULT path, and from that point every test — plus every
+        /// <c>GlobalLogger</c> write, which rides the same connection — lands in the
+        /// user's live databank. That is not hypothetical: it put 81 fixture tables,
+        /// 48 fixture rows in <c>Counters</c>, three fixture timers (one of them
+        /// flagged IsDefault) and 50k+ stress-log rows into a real install.
+        /// </remarks>
+        private static string? s_testDbPathPin;
+
+        /// <summary>
+        /// Pins the databank to <paramref name="path"/> for the lifetime of the
+        /// process and makes <see cref="ProductionDbPath"/> unreachable. Internal —
+        /// only Phoenix.Controls.Tests can reach it (InternalsVisibleTo), and it is
+        /// called exactly once, from that assembly's ModuleInitializer.
+        /// </summary>
+        internal static void PinTestDatabasePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Test databank pin cannot be blank.", nameof(path));
+            s_testDbPathPin = path;
+        }
+
         private string _dbPath;
         private string _connectionString;
 
@@ -77,7 +131,19 @@ namespace Phoenix.Controls.Shared.Services
         // awaits in the same logical call so the inner acquire sees the flag
         // set by the outer and skips both WaitAsync and Release.
         // Use only via AcquireLockAsync / ReleaseLock — never read directly.
-        private static readonly AsyncLocal<bool> _heldByThisAsyncCtx = new();
+        //
+        // INSTANCE-scoped, not static: the semaphore it tracks (`_lock`) is an
+        // instance field, so a static flag would let a nested call made while
+        // instance A holds ITS permit skip the (independent) permit of
+        // instance B. Only one DB normally exists, but the test seam
+        // (Dispose + re-Initialize) and any future second databank must not
+        // inherit a "lock held" claim across instances.
+        private readonly AsyncLocal<bool> _heldByThisAsyncCtx = new();
+
+        // Cached results for the two non-suspending AcquireLockAsync outcomes,
+        // so the common (uncontended / re-entrant) paths allocate nothing.
+        private static readonly Task<bool> LockTakenTask    = Task.FromResult(true);
+        private static readonly Task<bool> LockNotTakenTask = Task.FromResult(false);
 
         // Periodic WAL checkpoint. SQLite only auto-
         // checkpoints when the WAL reaches ~1000 pages (~4MB) so a quiet but
@@ -119,7 +185,11 @@ namespace Phoenix.Controls.Shared.Services
             // confirmed no installed clients on the legacy sovereign_v2.db naming, so
             // the rename ships without a migration shim — fresh installs and existing
             // dev installs alike just get a new DB next to the old one if any).
-            _dbPath = Phoenix.Controls.Shared.Core.Paths.RoamingAppData("phoenix_v3.db");
+            // A pinned test path wins here, in the CONSTRUCTOR, because that is the
+            // path Dispose() re-enters: it nulls _instance, so the very next
+            // DB.Instance access lands on this line. Resolving the pin anywhere
+            // later would leave that window pointing at the production databank.
+            _dbPath = s_testDbPathPin ?? ProductionDbPath;
             _connectionString = $"Data Source={_dbPath};";
         }
 
@@ -136,6 +206,25 @@ namespace Phoenix.Controls.Shared.Services
                 // fresh object. Throw rather than silently resurrect.
                 if (_disposed)
                     throw new ObjectDisposedException(nameof(DB));
+
+                // Hard stop: once the test assembly has pinned a databank, the
+                // production file is off-limits — no path, no accident, no
+                // ordering-dependent leak. Throwing (rather than silently
+                // redirecting) is deliberate: a test that asks for the real
+                // databank is a defect in that test, and it should fail loudly on
+                // the developer's machine instead of quietly writing into a user's
+                // install. Test classes that supply their OWN temp file are
+                // unaffected — only the production path is refused.
+                if (s_testDbPathPin is not null)
+                {
+                    string target = string.IsNullOrWhiteSpace(customPath) ? _dbPath : customPath!;
+                    if (string.Equals(target, ProductionDbPath, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException(
+                            "DB.Initialize: the production databank is off-limits to the test " +
+                            $"assembly (target '{target}'). Tests run against the pinned file " +
+                            $"'{s_testDbPathPin}'. Pass an explicit temp path, or drop the " +
+                            "no-arg Initialize() call — never open the user's live databank.");
+                }
 
                 // If the connection is already open and the caller
                 // wants to redirect the singleton to a NEW path, that is a
@@ -337,6 +426,104 @@ namespace Phoenix.Controls.Shared.Services
                     cmd.ExecuteNonQuery();
                 // Column migration for pre-existing databanks (SubBonusFactor).
                 EnsureGiveawaySchemaMigrations();
+
+                // Timer system tables (Timers / TimerActivity) — DDL + CRUD live
+                // in DB.Timer.cs. Backs the subathon-countdown TimerService.
+                using (var cmd = new SqliteCommand(TimerTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                // Column migration for pre-existing (partial) Timers tables.
+                EnsureTimerSchemaMigrations();
+
+                // Loyalty tool — ONLY the private config blob (LoyaltyConfig). The
+                // balance + ledger are OPEN user tables created on demand by the
+                // LoyaltyService (EnsureLoyaltyWalletTablesAsync), never here.
+                using (var cmd = new SqliteCommand(LoyaltyConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureLoyaltySchemaMigrations();
+
+                // Counters tool — ONLY the private config blob (CountersConfig). The
+                // live counts are an OPEN "Counters" user table created on demand by
+                // CountersService (EnsureCountersTableAsync), never here.
+                using (var cmd = new SqliteCommand(CountersConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureCountersSchemaMigrations();
+
+                // Scheduling tool — ONLY the private config blob (SchedulingConfig). No
+                // open user table: the schedule list lives entirely in the blob. See
+                // DB.Scheduling.cs.
+                using (var cmd = new SqliteCommand(SchedulingConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureSchedulingSchemaMigrations();
+
+                // Automod tool — the private config blob (AutomodConfig) AND the
+                // append-only audit log (AutomodLog) are system tables. The per-user
+                // strike count is an OPEN "AutomodStrikes" table created on demand by
+                // AutomodService (EnsureAutomodStrikesTableAsync), never here.
+                using (var cmd = new SqliteCommand(AutomodTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureAutomodSchemaMigrations();
+
+                // Quotes tool — ONLY the private config blob (QuotesConfig). The
+                // quotes live in an OPEN "Quotes" user table created on demand by
+                // QuotesService (EnsureQuotesTableAsync), never here.
+                using (var cmd = new SqliteCommand(QuotesConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureQuotesSchemaMigrations();
+
+                // Custom Chat Commands tool — ONLY the private config blob (the SYSTEM
+                // table "CustomCommands"). No open data table: {count}/{count.next}
+                // consume the Counters tool's OPEN "Counters" table. See DB.CustomCommands.cs.
+                using (var cmd = new SqliteCommand(CustomCommandsTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureCustomCommandsSchemaMigrations();
+
+                // User-Management tool — the private config blob (UserMgmtConfig), the
+                // welcomed-this-stream set (UserMgmtSeen) and the lifetime known-
+                // chatters set (UserMgmtSeenEver) are system tables. See
+                // DB.UserManagement.cs.
+                using (var cmd = new SqliteCommand(UserMgmtConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureUserMgmtSchemaMigrations();
+
+                // Alerts tool — ONLY the private config blob (AlertsConfig). No open
+                // user table: the alert rules live entirely in the blob. See DB.Alerts.cs.
+                using (var cmd = new SqliteCommand(AlertsConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureAlertsSchemaMigrations();
+
+                // Song Request tool — ONLY the private config blob (SongRequestConfig).
+                // No open user table, and deliberately so: the request QUEUE is session
+                // state naming a track the overlay player is part-way through, and a
+                // restart cannot restore playback position. See DB.SongRequest.cs.
+                using (var cmd = new SqliteCommand(SongRequestConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureSongRequestSchemaMigrations();
+
+                // Polls & Betting tool — ONLY the private config blob (PollsConfig). No
+                // open user table, and deliberately so: the live poll is a wall-clock
+                // countdown a restart cannot resume, and every points move goes through
+                // the Loyalty tool's own OPEN balance + ledger tables. See DB.Polls.cs.
+                using (var cmd = new SqliteCommand(PollsConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsurePollsSchemaMigrations();
+
+                // Ranks tool — the private config blob (RanksConfig) is the ONLY system
+                // table here. Its two DATA tables ("WatchTime" and "Ranks") are OPEN user
+                // tables created lazily by RanksService.InitializeAsync, exactly like the
+                // Loyalty wallet and the Counters / Quotes tables: an open, db.*-writable
+                // table has no business on the synchronous boot path for a tool that is
+                // off by default. See DB.Ranks.cs.
+                using (var cmd = new SqliteCommand(RanksConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureRanksSchemaMigrations();
+
+                // Soundboard tool — ONLY the private config blob (SoundboardConfig). No
+                // open user table and no lazily-created one either: the tool owns no data,
+                // because its clips are FILES in data/media and its rows are configuration.
+                // See DB.Soundboard.cs.
+                using (var cmd = new SqliteCommand(SoundboardConfigTablesDdl, _connection))
+                    cmd.ExecuteNonQuery();
+                EnsureSoundboardSchemaMigrations();
 
                 // Retention sweep for the unbounded append-
                 // only tables. `EventLog` (every external trigger + audit
@@ -663,27 +850,255 @@ namespace Phoenix.Controls.Shared.Services
 
         private const int CommandTimeoutSeconds = 5;
 
-        private static readonly HashSet<string> _systemTables =
+        // ═══════════════════════════════════════════════════════════════════
+        //  TABLE PROTECTION REGISTRIES  —  read THE RULE before adding a name
+        // ═══════════════════════════════════════════════════════════════════
+        //
+        // THE RULE (the only test; do not substitute another one):
+        //
+        //     A table is protected ONLY when a user write to it can break the
+        //     STABILITY or FUNCTIONALITY of the tool, or forge/erase a security
+        //     record. Nothing else qualifies.
+        //
+        // NOT a reason: "my tool created it."
+        // NOT a reason: "the other tools locked theirs."
+        // NOT a reason: "the panel would then show wrong data." A streamer
+        //     editing their own counter value, quote text, points balance,
+        //     ticket count or activity feed and seeing that change take effect
+        //     is the FEATURE this app exists for. The databank belongs to the
+        //     streamer; assigning and owning it is their job, not ours.
+        //
+        // If your tool's READ would crash on a hand-edited cell, that is a
+        // defect in the read, not a reason to lock the table. Coerce it and
+        // leave the table open — CoerceBalance / CoerceReal (DB.Giveaway.cs)
+        // and DB.Quotes.ReadEntry are the reference posture.
+        //
+        // History: this used to be ONE list of 25 names, grown by the "is it
+        // ours?" test — every pre-built tool added its tables on shipping. That
+        // is the wrong question and it was rolled back in the 2026-08 unlock.
+        // 23 of those 25 names failed THE RULE and are open again.
+        //
+        // ── Two registries, because there are two different questions ──────
+        //
+        //  (1) _writeLockedTables — "may a script change the DATA?"
+        //      Blocks db.insert_row / db.delete_row / db.clear_table /
+        //      db.set_cell and the db.top read. TWO names, both security.
+        //      Each carries the reason it survives THE RULE, and the refusal
+        //      log PRINTS that reason — a streamer must never be left guessing
+        //      why a write did nothing.
+        //
+        //  (2) _appOwnedTables — "does the APP own this table's SHAPE?"
+        //      Blocks DDL only (create/drop table, add/drop/rename/retype
+        //      column) and refuses the name when the streamer is asked to PICK
+        //      a data table for a tool (Loyalty balance + ledger, Ranks value
+        //      table, Giveaway currency table). Row and cell writes to these
+        //      are OPEN — only the columns are reserved.
+        //
+        //      Why the shape stays reserved: every one of these tables is read
+        //      and written by SQL that names its columns literally (e.g.
+        //      "INSERT INTO AutomodLog (Time, Name, Platform, Rule, Action,
+        //      Detail)"). Dropping or renaming a column makes that statement
+        //      throw "no such column" on the next chat message — that IS a
+        //      functionality break under THE RULE, so the DDL surface is the
+        //      one thing that stays ours. And a wallet pointed at one of these
+        //      would have EnsureLoyaltyWalletTablesAsync ALTER it, which is the
+        //      same break by another door.
+        //
+        //      A NEW TOOL'S TABLES BELONG IN (2), NEVER IN (1) — unless a write
+        //      to them is a security event, which for a local streaming tool it
+        //      essentially never is.
+
+        /// <summary>
+        /// Tables whose DATA no <c>db.*</c> script may change, with the reason
+        /// each one survives THE RULE above. The reason string is surfaced
+        /// verbatim in the refusal log line.
+        /// </summary>
+        private static readonly Dictionary<string, string> _writeLockedTables =
             new(StringComparer.OrdinalIgnoreCase)
             {
+                // SECURITY — bearer credentials for paired Viewer devices.
+                // Setting Revoked back to 0 re-authorises a device the streamer
+                // deliberately revoked (RemoteAuthManager.VerifyTokenAsync's only
+                // revocation check is `row.Revoked`), and writing TokenHash /
+                // TokenSalt would let a script mint a pairing whose token it
+                // chose. Separately, those two columns are read as BLOBs with an
+                // unguarded cast, and db.set_cell binds TEXT — one edited row
+                // wedges pairing for EVERY device, not just the edited one.
+                ["PairedDevices"] =
+                    "it holds the bearer credentials of your paired remote devices. " +
+                    "A write here can un-revoke a device you revoked, or break pairing for all devices. " +
+                    "Manage devices from the Viewer pairing panel instead.",
+
+                // SECURITY — the record of what a REMOTE device did to the
+                // databank. A writable audit log answers nothing: a remote
+                // device that reaches script execution could erase or forge its
+                // own trail. Reading it is unrestricted.
+                ["RemoteAuditLog"] =
+                    "it is the tamper-evident record of what your paired remote devices did to the databank. " +
+                    "If a script could edit it, it would no longer be evidence of anything. " +
+                    "You can read it freely — only writes are refused.",
+            };
+
+        /// <summary>
+        /// Tables whose SCHEMA the app owns: DDL is refused and they cannot be
+        /// picked as a tool's user-configured data table. Their rows and cells
+        /// are OPEN to <c>db.*</c> — see THE RULE above.
+        /// </summary>
+        private static readonly HashSet<string> _appOwnedTables =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                // Core stores. Data-open: SystemHistory and EventLog are plain
+                // logs whose every consumer read is string-shaped or defensively
+                // parsed, and Vars reads are string-only with null guards. Vars
+                // additionally carries a per-ROW carve-out (see
+                // VarsRowWriteAllowedAsync) because its engine-bookkeeping rows
+                // are not the streamer's data.
                 "SystemHistory", "Vars", "EventLog",
-                // Viewer-roadmap Slice 0 — these are Hub-managed and must NEVER be
-                // mutated via remote-bridge `/api/db/*` writes. The bridge guards at
-                // the request layer too (only User_* tables accept writes), but
-                // listing them here gives defense in depth at the persistence layer.
+                // Viewer-roadmap Slice 0. These are ALSO in _writeLockedTables —
+                // the only two names that appear in both registries.
                 "PairedDevices", "RemoteAuditLog",
-                // Giveaway system — Hub-managed via the giveaway.* commands and
-                // the Hub Giveaway page only; never mutate through generic db.*
-                // script commands or the remote bridge. See DB.Giveaway.cs.
+                // Giveaway system. Data-open since the 2026-08 unlock: hand-
+                // granting tickets or pruning the activity feed is a legitimate
+                // streamer action. ReadGiveaway / GetGiveawayEntrantsAsync /
+                // UpsertTicketAsync were hardened to coerce their numeric reads
+                // first — see DB.Giveaway.cs.
                 "Giveaways", "GiveawayTickets", "GiveawayActivity",
+                // Timer system. Data-open; ReadTimer already tolerated a
+                // hand-edited Json blob and its IsDefault read was coerced in the
+                // same pass. See DB.Timer.cs.
+                "Timers", "TimerActivity",
+                // Per-tool private config blobs. Data-open: every one of them is
+                // loaded exactly once through a try/catch that falls back to a
+                // valid default, so a malformed blob makes the tool run on
+                // defaults — it cannot crash anything. Be honest with users
+                // though: the service caches the config and only re-reads at
+                // startup, so an external write is invisible until the next Hub
+                // start and is overwritten by the next panel save.
+                "LoyaltyConfig",
+                "CountersConfig",
+                "AutomodConfig", "AutomodLog",
+                "QuotesConfig",
+                "CustomCommands",
+                "SchedulingConfig",
+                "UserMgmtConfig", "UserMgmtSeen", "UserMgmtSeenEver",
+                "AlertsConfig",
+                "SongRequestConfig",
+                "PollsConfig",
+                "RanksConfig",
+                "SoundboardConfig",
+                // ★ Tables deliberately absent from BOTH registries, because a
+                // streamer is meant to build on them: AutomodStrikes, Counters,
+                // Quotes, Queues, WatchTime, Ranks, and every Loyalty balance /
+                // ledger table. Adding one here would be the bug.
             };
 
         private static bool IsValidIdentifier(string name) =>
             !string.IsNullOrWhiteSpace(name) &&
             Regex.IsMatch(name, @"^[A-Za-z_][A-Za-z0-9_]*$");
 
-        private static bool IsSystemTable(string tableName) =>
-            !string.IsNullOrWhiteSpace(tableName) && _systemTables.Contains(tableName);
+        /// <summary>True when no <c>db.*</c> script may write this table's DATA.</summary>
+        private static bool IsWriteLockedTable(string tableName) =>
+            !string.IsNullOrWhiteSpace(tableName) && _writeLockedTables.ContainsKey(tableName);
+
+        /// <summary>True when the app owns this table's SCHEMA (DDL refused; not
+        /// pickable as a tool's data table). Says nothing about row/cell writes.</summary>
+        private static bool IsAppOwnedTable(string tableName) =>
+            !string.IsNullOrWhiteSpace(tableName) && _appOwnedTables.Contains(tableName);
+
+        /// <summary>The reason a table is write-locked, or <c>null</c> when it is open.</summary>
+        private static string? WriteLockReason(string tableName) =>
+            !string.IsNullOrWhiteSpace(tableName) && _writeLockedTables.TryGetValue(tableName, out var why)
+                ? why : null;
+
+        // ── Honest refusal ─────────────────────────────────────────────────
+        // Every guard below funnels through these two so a refused write always
+        // produces ONE System Log line that names the operation, the table and
+        // WHY. The old guards logged a bare "is a protected system table", which
+        // told a streamer nothing actionable and — worse — several callers then
+        // returned success-shaped values, so the script could not tell either.
+        // House rule: log it, never a modal; a rejection that can repeat must
+        // not be a dialog.
+
+        private static void LogWriteRefusal(string operation, string tableName, string reason)
+        {
+            GlobalLogger.Log(
+                $"Databank write REFUSED — {operation} on [{tableName}] did NOT happen. " +
+                $"Reason: {reason}",
+                "DB", LogLevel.CriticalError);
+        }
+
+        private static void LogSchemaRefusal(string operation, string tableName)
+        {
+            GlobalLogger.Log(
+                $"Databank schema change REFUSED — {operation} on [{tableName}] did NOT happen. " +
+                $"Reason: [{tableName}] is created and maintained by Phoenix Controls, and its own SQL names " +
+                "these columns literally — dropping, renaming or retyping one would break the tool mid-stream. " +
+                "The ROWS are yours: db.insert_row / db.set_cell / db.delete_row / db.clear_table all work on this table.",
+                "DB", LogLevel.CriticalError);
+        }
+
+        // ── The Vars carve-out ─────────────────────────────────────────────
+        //
+        // Vars is DATA-OPEN like every other core store: a streamer editing
+        // their own persistent variable and seeing it take effect is the point
+        // of the table. But Vars is not purely the streamer's data — the script
+        // engine keeps its own bookkeeping in the SAME table under reserved key
+        // prefixes (global._*, state.*, leading underscore: DoOnce / DoN /
+        // FlipFlop arming, the internal event queue).
+        //
+        // DeleteVariableAsync already refuses those keys BY NAME (that gate is
+        // the project's own answer to "what in Vars is engine-owned"). The
+        // rowid-addressed db.* paths — delete_row / set_cell — never saw a key,
+        // so they walked straight past it. Deleting `global._event_queue` out
+        // from under a running script, or renaming a persisted DoOnce's VarKey
+        // so it silently re-arms, are functionality breaks under THE RULE.
+        //
+        // So the gate moves to the ROW, not the table: everything in Vars is
+        // writable except the engine's own rows, and you cannot rename a row
+        // INTO an engine key either.
+
+        private const string VarsTableName = "Vars";
+
+        private static bool IsVarsTable(string tableName) =>
+            string.Equals(tableName, VarsTableName, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Per-row gate for rowid-addressed writes to <c>Vars</c>. Returns
+        /// <c>true</c> when the write may proceed; logs the refusal and returns
+        /// <c>false</c> when the target row (or the proposed new key) is
+        /// engine-internal. A rowid that matches no row passes — the write is
+        /// then a harmless no-op at the SQL layer.
+        /// </summary>
+        /// <param name="columnName">Column being written, or <c>null</c> for a delete.</param>
+        /// <param name="newValue">Proposed value, used only when writing <c>VarKey</c>.</param>
+        private async Task<bool> VarsRowWriteAllowedAsync(
+            string operation, long rowId, string? columnName = null, string? newValue = null)
+        {
+            string? key = await GetVarKeyByRowIdAsync(rowId).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(key) && IsReservedVarKey(key))
+            {
+                LogWriteRefusal(operation, VarsTableName,
+                    $"row {rowId} is the script engine's own variable '{key}'. Keys starting with " +
+                    "global._ , state. or _ are engine bookkeeping (DoOnce / DoN / FlipFlop arming, " +
+                    "the internal event queue) — changing them mid-run breaks the script that owns them. " +
+                    "Every other row in Vars is yours to edit or delete.");
+                return false;
+            }
+
+            if (columnName is not null
+                && string.Equals(columnName, "VarKey", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(newValue)
+                && IsReservedVarKey(newValue))
+            {
+                LogWriteRefusal(operation, VarsTableName,
+                    $"renaming row {rowId} to '{newValue}' would claim a reserved engine key " +
+                    "(global._ , state. and _ prefixes belong to the script engine). " +
+                    "Pick any other name and the rename goes through.");
+                return false;
+            }
+
+            return true;
+        }
 
         private async Task ExecuteAsync(string query, Action<SqliteCommand> parameterize)
         {
@@ -787,14 +1202,58 @@ namespace Phoenix.Controls.Shared.Services
         // This replaces every previous `_lock.WaitAsync()` / `_lock.Release()`
         // pair in this file. Never call _lock.WaitAsync / _lock.Release
         // directly — the AsyncLocal flag must be set/cleared symmetrically.
-        private async Task<bool> AcquireLockAsync()
+        //
+        // DELIBERATELY NOT `async`. An async method runs its body under a copy
+        // of the caller's ExecutionContext — AsyncMethodBuilder restores the
+        // caller's context when the state machine yields and when it returns —
+        // so an AsyncLocal write made *inside* an async method is invisible to
+        // that method's caller. This helper used to be `async` and set the flag
+        // after the await, which meant the check below always read `false`: the
+        // guard never engaged, and a nested DB.* call would have parked on the
+        // non-reentrant semaphore forever (permanent self-deadlock stranding
+        // the shared connection). Writing the flag from this plain method
+        // publishes it into the CALLER's context, which is exactly the context
+        // every nested call inside the lock body then runs under.
+        private Task<bool> AcquireLockAsync()
         {
-            if (_heldByThisAsyncCtx.Value) return false;
-            await _lock.WaitAsync().ConfigureAwait(false);
+            if (_heldByThisAsyncCtx.Value) return LockNotTakenTask;
+
+            // Set before the permit is actually granted. That is safe: the only
+            // flow that can observe this flag while we are still waiting is the
+            // very async flow suspended on this acquire, so no real nested call
+            // can slip through on a not-yet-owned permit.
             _heldByThisAsyncCtx.Value = true;
+            Task wait;
+            try
+            {
+                wait = _lock.WaitAsync();
+            }
+            catch
+            {
+                // Semaphore disposed mid-shutdown — undo the optimistic set so
+                // the caller's context isn't left claiming a permit we never got.
+                _heldByThisAsyncCtx.Value = false;
+                throw;
+            }
+            return wait.IsCompletedSuccessfully ? LockTakenTask : AwaitLockAsync(wait);
+        }
+
+        // Contended-path continuation only. The flag is set by the caller frame
+        // in AcquireLockAsync above and must NOT be (re-)set here — a write from
+        // inside this async method would not reach the caller, which is the very
+        // bug the split exists to avoid. A fault on `wait` (only reachable when
+        // the semaphore is disposed by Dispose() while we queue) propagates out
+        // of the caller's `await AcquireLockAsync()`, i.e. out of that DB method
+        // entirely, so the optimistic flag dies with the unwinding frame.
+        private static async Task<bool> AwaitLockAsync(Task wait)
+        {
+            await wait.ConfigureAwait(false);
             return true;
         }
 
+        // Must also stay non-async for the ExecutionContext reason above: the
+        // clear has to land in the caller's context so the next top-level DB
+        // call from that same frame acquires the semaphore again.
         private void ReleaseLock(bool taken)
         {
             if (!taken) return;
@@ -1096,32 +1555,6 @@ namespace Phoenix.Controls.Shared.Services
             return result;
         }
 
-        public async Task<List<KeyValuePair<string, string>>> GetAllVariablesAsync()
-        {
-            var vars = new List<KeyValuePair<string, string>>();
-
-            bool taken = await AcquireLockAsync().ConfigureAwait(false);
-            try
-            {
-                EnsureConnected();
-                using var cmd = new SqliteCommand(
-                    "SELECT VarKey, VarValue FROM Vars ORDER BY VarKey ASC", _connection);
-                using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-                while (await reader.ReadAsync().ConfigureAwait(false))
-                {
-                    string k = reader.IsDBNull(0) ? "" : reader.GetString(0);
-                    string v = reader.IsDBNull(1) ? "" : reader.GetString(1);
-                    vars.Add(new KeyValuePair<string, string>(k, v));
-                }
-            }
-            finally
-            {
-                ReleaseLock(taken);
-            }
-
-            return vars;
-        }
-
         public async Task LogEventAsync(string source, string type, string user, string payload)
         {
             await ExecuteAsync(
@@ -1312,34 +1745,13 @@ namespace Phoenix.Controls.Shared.Services
             key.StartsWith("state.",   StringComparison.OrdinalIgnoreCase) ||
             key.StartsWith("_",        StringComparison.Ordinal);
 
-        public async Task<List<string>> GetUserTablesAsync()
-        {
-            var tables = new List<string>();
-            bool taken = await AcquireLockAsync().ConfigureAwait(false);
-            try
-            {
-                EnsureConnected();
-                using var cmd = new SqliteCommand(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name ASC", _connection);
-                using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-                while (await reader.ReadAsync().ConfigureAwait(false))
-                {
-                    string name = reader.GetString(0);
-                    if (!_systemTables.Contains(name))
-                        tables.Add(name);
-                }
-            }
-            finally { ReleaseLock(taken); }
-            return tables;
-        }
-
         /// <summary>
         /// All tables in the databank — both system (<c>Vars</c> / <c>EventLog</c> /
         /// <c>SystemHistory</c> / paired-device tables) and user. The Architect
         /// Databank Browser needs the union so it can render the System / User
-        /// grouping; everything else keeps using <see cref="GetUserTablesAsync"/>.
+        /// grouping (callers split the list themselves via <see cref="IsSystemTableName"/>).
         /// SQLite-internal tables (anything starting with <c>sqlite_</c>) are
-        /// still filtered out — they aren't useful surface for the user.
+        /// filtered out — they aren't useful surface for the user.
         /// </summary>
         public async Task<List<string>> GetAllTableNamesAsync()
         {
@@ -1363,13 +1775,39 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// True when <paramref name="tableName"/> is on the protected system
-        /// list (<c>Vars</c> / <c>EventLog</c> / <c>SystemHistory</c> + the
-        /// Viewer remote-bridge tables). Public so the Architect Databank
-        /// toolbar can flip destructive buttons off without re-encoding the
-        /// list — the same identifier list every internal write guard checks.
+        /// True when NO caller may change this table's DATA — the two security
+        /// tables (<c>PairedDevices</c> / <c>RemoteAuditLog</c>). Public so the
+        /// Architect Databank toolbar can flip destructive buttons off without
+        /// re-encoding the list.
         /// </summary>
-        public static bool IsSystemTableName(string tableName) => IsSystemTable(tableName);
+        public static bool IsWriteLockedTableName(string tableName) => IsWriteLockedTable(tableName);
+
+        /// <summary>
+        /// True when Phoenix Controls owns this table's SCHEMA: DDL is refused
+        /// and it cannot be picked as a tool's user-configured data table. Its
+        /// rows and cells are still fully open to <c>db.*</c>. Public so the
+        /// Architect Databank column context menu / drop-table button can gate
+        /// on the same list the persistence layer enforces.
+        /// </summary>
+        public static bool IsAppOwnedTableName(string tableName) => IsAppOwnedTable(tableName);
+
+        /// <summary>
+        /// The user-facing reason a table is write-locked, or <c>null</c> when
+        /// its data is open. Lets a UI explain a refusal in the same words the
+        /// System Log uses instead of inventing its own.
+        /// </summary>
+        public static string? GetWriteLockReason(string tableName) => WriteLockReason(tableName);
+
+        /// <summary>
+        /// Legacy name for <see cref="IsWriteLockedTableName"/>.
+        /// <para>★ Its MEANING CHANGED in the 2026-08 unlock. It used to mean
+        /// "one of the 25 app-owned tables" and gated every write; it now means
+        /// only "data is locked", which is true of just <c>PairedDevices</c> and
+        /// <c>RemoteAuditLog</c>. Callers that want the old, wider set — a DDL
+        /// gate, or "may the streamer point a wallet at this table" — must use
+        /// <see cref="IsAppOwnedTableName"/> instead.</para>
+        /// </summary>
+        public static bool IsSystemTableName(string tableName) => IsWriteLockedTable(tableName);
 
         public async Task CreateUserTableAsync(string tableName, List<(string ColName, string ColType)> columns)
         {
@@ -1381,18 +1819,14 @@ namespace Phoenix.Controls.Shared.Services
                 throw new ArgumentException($"Invalid table name: {tableName}");
             }
 
-            // Symmetric guard with DeleteRow/ClearTable/UpdateCell/SetCell: a
-            // script that interpolates a user-controlled var into the table-name
-            // position must not be able to author a CREATE that would later be
-            // picked up by Architect Databank as a 'user' table.
-            if (IsSystemTable(tableName))
+            // Schema guard: a script that interpolates a user-controlled var
+            // into the table-name position must not be able to author a CREATE
+            // that shadows a table Phoenix Controls maintains.
+            if (IsAppOwnedTable(tableName))
             {
-                GlobalLogger.Log(
-                    $"DB.CreateUserTable BLOCKED: '{tableName}' is a protected system table. " +
-                    "Script-driven schema operations on system tables are denied.",
-                    "DB", LogLevel.CriticalError);
+                LogSchemaRefusal("CREATE TABLE", tableName);
                 throw new InvalidOperationException(
-                    $"Create on system table '{tableName}' denied.");
+                    $"Create on app-owned table '{tableName}' denied.");
             }
 
             var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TEXT", "INTEGER", "REAL", "BOOLEAN" };
@@ -1420,90 +1854,6 @@ namespace Phoenix.Controls.Shared.Services
                 await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
             }
             finally { ReleaseLock(taken); }
-        }
-
-        // Dedicated bulk-read connection, used only by GetTableDataAsync.
-        //
-        // That method streams an ENTIRE table (no LIMIT — RemoteBridgeServer
-        // expects full tables) into a DataTable; doing it on the shared
-        // connection held `_lock` for the whole load, so the live script
-        // engine's DB access queued behind a remote-device table fetch. WAL
-        // supports concurrent readers alongside the single writer, so a
-        // second connection — same lazy-open + _initLock coordination as the
-        // dedicated log connection above — lets the bulk read run without
-        // seizing the write serializer. _bulkReadLock keeps one bulk read in
-        // flight at a time (defensive, mirrors _logDbLock); it never contends
-        // with `_lock`.
-        private static SqliteConnection? _bulkReadConnection;
-        private static readonly SemaphoreSlim _bulkReadLock = new SemaphoreSlim(1, 1);
-        private static readonly object _bulkReadInitLock = new();
-
-        private static void EnsureBulkReadConnection()
-        {
-            if (_bulkReadConnection is { State: System.Data.ConnectionState.Open }) return;
-
-            lock (_bulkReadInitLock)
-            {
-                if (_bulkReadConnection is { State: System.Data.ConnectionState.Open }) return;
-
-                // Same Initialize-coordination story as EnsureLogDbConnection:
-                // take the singleton's _initLock so this connection can't open
-                // against a file mid-quarantine, and read _dbPath under it so a
-                // half-completed Initialize(customPath) swap is unobservable.
-                var inst = Instance;
-                lock (inst._initLock)
-                {
-                    if (inst._disposed)
-                        throw new ObjectDisposedException(nameof(DB));
-
-                    if (_bulkReadConnection is { State: System.Data.ConnectionState.Open }) return;
-
-                    string path = inst._dbPath;
-                    string cs = $"Data Source={path};";
-
-                    try { _bulkReadConnection?.Dispose(); } catch { /* best effort */ }
-                    _bulkReadConnection = new SqliteConnection(cs);
-                    _bulkReadConnection.Open();
-                }
-            }
-        }
-
-        public async Task<DataTable> GetTableDataAsync(string tableName)
-        {
-            if (!IsValidIdentifier(tableName))
-            {
-                GlobalLogger.Log(
-                    $"DB.GetTableData rejected: invalid table identifier '{tableName}'.",
-                    "DB", LogLevel.CriticalError);
-                throw new ArgumentException($"Invalid table name: {tableName}");
-            }
-
-            var dt = new DataTable();
-            await _bulkReadLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                // Slow path (first call / post-dispose) takes nested blocking
-                // locks — hop to the pool so they can't pin this async caller,
-                // mirroring WriteLogDedicatedAsync's rationale.
-                if (_bulkReadConnection is not { State: ConnectionState.Open })
-                    await Task.Run(EnsureBulkReadConnection).ConfigureAwait(false);
-
-                using var checkCmd = new SqliteCommand(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=@name", _bulkReadConnection);
-                checkCmd.Parameters.AddWithValue("@name", tableName);
-                long exists = Convert.ToInt64(await checkCmd.ExecuteScalarAsync().ConfigureAwait(false)!);
-                if (exists == 0)
-                    throw new InvalidOperationException($"Table '{tableName}' does not exist.");
-
-                using var cmd = new SqliteCommand($"SELECT * FROM [{tableName}]", _bulkReadConnection);
-                using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-                dt.Load(reader);
-            }
-            finally
-            {
-                try { _bulkReadLock.Release(); } catch (ObjectDisposedException) { }
-            }
-            return dt;
         }
 
         /// <summary>
@@ -1609,21 +1959,31 @@ namespace Phoenix.Controls.Shared.Services
                 throw new ArgumentException($"Invalid table name: {tableName}");
             }
 
-            // Symmetric guard with the other destructive paths (DeleteRowAsync,
-            // ClearTableAsync, UpdateCellAsync, SetCellAsync). InsertUserRowAsync
-            // used to skip this check, so a script that substituted a user-
-            // controlled var into the table-name position could write rows into
-            // Vars/EventLog/SystemHistory/PairedDevices/RemoteAuditLog. Vars in
-            // particular is structurally `name`/`value` and would have accepted
-            // the insert.
-            if (IsSystemTable(tableName))
+            // Data guard. The THROW (rather than the silent return the other
+            // mutators used to take) is deliberate and stays: an insert is the
+            // one db.* write whose result a script reads back, so aborting the
+            // run is the least confusing outcome.
+            if (WriteLockReason(tableName) is { } lockReason)
             {
-                GlobalLogger.Log(
-                    $"DB.InsertUserRow BLOCKED: '{tableName}' is a protected system table. " +
-                    "Script-driven inserts into system tables are denied.",
-                    "DB", LogLevel.CriticalError);
+                LogWriteRefusal("INSERT", tableName, lockReason);
                 throw new InvalidOperationException(
-                    $"Insert into system table '{tableName}' denied.");
+                    $"Insert into write-locked table '{tableName}' denied: {lockReason}");
+            }
+
+            // Vars carve-out: rows are open, but a script must not be able to
+            // mint an engine-bookkeeping key. Degrades to the same "0" the
+            // caller already gets from a constraint violation.
+            if (IsVarsTable(tableName)
+                && values is not null
+                && values.TryGetValue("VarKey", out var newVarKey)
+                && !string.IsNullOrWhiteSpace(newVarKey)
+                && IsReservedVarKey(newVarKey))
+            {
+                LogWriteRefusal("INSERT", VarsTableName,
+                    $"'{newVarKey}' is a reserved engine key (global._ , state. and _ prefixes belong " +
+                    "to the script engine). Insert any other key and it goes through — or use " +
+                    "db.set_var, which owns this table's write path.");
+                return 0;
             }
 
             // Iterate keys and values together as KeyValuePairs and skip BOTH
@@ -1668,7 +2028,15 @@ namespace Phoenix.Controls.Shared.Services
             }).ConfigureAwait(false);
         }
 
-        public async Task DeleteRowAsync(string tableName, long rowid)
+        /// <summary>
+        /// Deletes one row by rowid. Returns <c>true</c> when the DELETE ran,
+        /// <c>false</c> when a protection guard refused it (a logged System Log
+        /// line always accompanies the <c>false</c>). The bool exists so callers
+        /// can report the refusal instead of returning a success-shaped value —
+        /// the guards used to <c>return</c> silently and every caller read that
+        /// as "done".
+        /// </summary>
+        public async Task<bool> DeleteRowAsync(string tableName, long rowid)
         {
             if (!IsValidIdentifier(tableName))
             {
@@ -1678,19 +2046,21 @@ namespace Phoenix.Controls.Shared.Services
                 throw new ArgumentException($"Invalid table name: {tableName}");
             }
 
-            if (IsSystemTable(tableName))
+            if (WriteLockReason(tableName) is { } lockReason)
             {
-                GlobalLogger.Log(
-                    $"DB.DeleteRow BLOCKED: '{tableName}' is a protected system table. " +
-                    "Script-driven destructive operations on system tables are denied.",
-                    "DB", LogLevel.CriticalError);
-                return;
+                LogWriteRefusal("DELETE row", tableName, lockReason);
+                return false;
             }
+
+            if (IsVarsTable(tableName)
+                && !await VarsRowWriteAllowedAsync("DELETE row", rowid).ConfigureAwait(false))
+                return false;
 
             await ExecuteAsync(
                 $"DELETE FROM [{tableName}] WHERE rowid = @rid",
                 cmd => cmd.Parameters.AddWithValue("@rid", rowid))
                 .ConfigureAwait(false);
+            return true;
         }
 
         /// <summary>
@@ -1701,9 +2071,9 @@ namespace Phoenix.Controls.Shared.Services
         /// of one per row on the shared connection. Atomic: any failure rolls
         /// the whole batch back and rethrows.
         /// </summary>
-        public async Task DeleteRowsAsync(string tableName, IReadOnlyList<long> rowIds)
+        public async Task<bool> DeleteRowsAsync(string tableName, IReadOnlyList<long> rowIds)
         {
-            if (rowIds == null || rowIds.Count == 0) return;
+            if (rowIds == null || rowIds.Count == 0) return false;
 
             if (!IsValidIdentifier(tableName))
             {
@@ -1713,13 +2083,22 @@ namespace Phoenix.Controls.Shared.Services
                 throw new ArgumentException($"Invalid table name: {tableName}");
             }
 
-            if (IsSystemTable(tableName))
+            if (WriteLockReason(tableName) is { } lockReason)
             {
-                GlobalLogger.Log(
-                    $"DB.DeleteRows BLOCKED: '{tableName}' is a protected system table. " +
-                    "Script-driven destructive operations on system tables are denied.",
-                    "DB", LogLevel.CriticalError);
-                return;
+                LogWriteRefusal("DELETE rows", tableName, lockReason);
+                return false;
+            }
+
+            // Vars: screen the batch per row so one engine-owned row refuses the
+            // whole batch rather than being swept up in it. All-or-nothing keeps
+            // the caller's mental model intact (the delete is one transaction).
+            if (IsVarsTable(tableName))
+            {
+                foreach (long rid in rowIds)
+                {
+                    if (!await VarsRowWriteAllowedAsync("DELETE rows", rid).ConfigureAwait(false))
+                        return false;
+                }
             }
 
             // SQLite's default host-parameter ceiling is 999; 500 per statement
@@ -1763,9 +2142,10 @@ namespace Phoenix.Controls.Shared.Services
             {
                 ReleaseLock(taken);
             }
+            return true;
         }
 
-        public async Task ClearTableAsync(string tableName)
+        public async Task<bool> ClearTableAsync(string tableName)
         {
             if (!IsValidIdentifier(tableName))
             {
@@ -1775,22 +2155,34 @@ namespace Phoenix.Controls.Shared.Services
                 throw new ArgumentException($"Invalid table name: {tableName}");
             }
 
-            if (IsSystemTable(tableName))
+            if (WriteLockReason(tableName) is { } lockReason)
             {
-                GlobalLogger.Log(
-                    $"DB.ClearTable BLOCKED: '{tableName}' is a protected system table. " +
-                    "Script-driven destructive operations on system tables are denied.",
-                    "DB", LogLevel.CriticalError);
-                return;
+                LogWriteRefusal("CLEAR TABLE", tableName, lockReason);
+                return false;
             }
 
-            // Audit trail before truncate (system-table path already returned above)
+            // Vars: a bulk truncate cannot honour the per-row engine-key gate —
+            // it would take global._* / state.* rows with it. Refuse the whole
+            // wipe and point at the paths that CAN do it row by row, rather than
+            // half-clearing the table behind the caller's back.
+            if (IsVarsTable(tableName))
+            {
+                LogWriteRefusal("CLEAR TABLE", VarsTableName,
+                    "wiping Vars wholesale would also delete the script engine's own bookkeeping rows " +
+                    "(global._ , state. and _ keys — DoOnce / DoN / FlipFlop arming and the internal " +
+                    "event queue), which a running script cannot survive. Delete your own variables " +
+                    "individually with db.delete_var or db.delete_row instead — both work on Vars.");
+                return false;
+            }
+
+            // Audit trail before truncate (refusal paths already returned above)
             await LogEventAsync(
                 "ScriptEngine", "DbClearTable", "",
                 $"{{\"tableName\":\"{tableName}\"}}").ConfigureAwait(false);
 
             await ExecuteAsync($"DELETE FROM [{tableName}]", _ => { })
                 .ConfigureAwait(false);
+            return true;
         }
 
         public async Task<int> GetRowCountAsync(string tableName)
@@ -2001,46 +2393,45 @@ namespace Phoenix.Controls.Shared.Services
         /// is selected, but if a bug ever bypasses that guard the DROP still
         /// won't land.
         /// </summary>
-        public async Task DropUserTableAsync(string tableName)
+        public async Task<bool> DropUserTableAsync(string tableName)
         {
             if (!IsValidIdentifier(tableName))
             {
                 GlobalLogger.Log(
                     $"DB.DropUserTable rejected: invalid table identifier '{tableName}'.",
                     "DB", LogLevel.CriticalError);
-                return;
+                return false;
             }
-            if (IsSystemTable(tableName))
+            if (IsAppOwnedTable(tableName))
             {
-                GlobalLogger.Log(
-                    $"DB.DropUserTable BLOCKED: '{tableName}' is a protected system table.",
-                    "DB", LogLevel.CriticalError);
-                return;
+                LogSchemaRefusal("DROP TABLE", tableName);
+                return false;
             }
             await ExecuteAsync($"DROP TABLE IF EXISTS [{tableName}]", _ => { });
+            return true;
         }
 
-        public async Task AddColumnAsync(string tableName, string columnName, string columnType)
+        public async Task<bool> AddColumnAsync(string tableName, string columnName, string columnType)
         {
             if (!IsValidIdentifier(tableName) || !IsValidIdentifier(columnName))
             {
                 GlobalLogger.Log(
                     $"DB.AddColumn rejected: invalid identifier(s) — table='{tableName}', column='{columnName}'.",
                     "DB", LogLevel.CriticalError);
-                return;
+                return false;
             }
-            // System-table protection (parity with DeleteRowAsync / ClearTableAsync).
-            // Adding a column to SystemHistory / EventLog / Vars from script-driven
-            // db.* commands could break the schema invariants other Hub paths depend on.
-            if (IsSystemTable(tableName))
+            // Schema guard. Widening an app-owned table is the least harmful DDL
+            // of the set, but it still puts the on-disk shape out of step with
+            // the schema-migration probes that back-fill these tables on start,
+            // so it rides the same gate as the destructive column ops.
+            if (IsAppOwnedTable(tableName))
             {
-                GlobalLogger.Log(
-                    $"DB.AddColumn BLOCKED: '{tableName}' is a protected system table.",
-                    "DB", LogLevel.CriticalError);
-                return;
+                LogSchemaRefusal("ADD COLUMN", tableName);
+                return false;
             }
             string safeType = columnType switch { "INTEGER" => "INTEGER", "REAL" => "REAL", "BOOLEAN" => "BOOLEAN", _ => "TEXT" };
             await ExecuteAsync($"ALTER TABLE [{tableName}] ADD COLUMN [{columnName}] {safeType}", _ => { });
+            return true;
         }
 
         // Column-level mutations on the Architect Databank Browser.
@@ -2091,11 +2482,9 @@ namespace Phoenix.Controls.Shared.Services
                     "DB", LogLevel.CriticalError);
                 return false;
             }
-            if (IsSystemTable(tableName))
+            if (IsAppOwnedTable(tableName))
             {
-                GlobalLogger.Log(
-                    $"DB.DropColumn BLOCKED: '{tableName}' is a protected system table.",
-                    "DB", LogLevel.CriticalError);
+                LogSchemaRefusal("DROP COLUMN", tableName);
                 return false;
             }
 
@@ -2182,11 +2571,9 @@ namespace Phoenix.Controls.Shared.Services
                     "DB", LogLevel.CriticalError);
                 return false;
             }
-            if (IsSystemTable(tableName))
+            if (IsAppOwnedTable(tableName))
             {
-                GlobalLogger.Log(
-                    $"DB.RenameColumn BLOCKED: '{tableName}' is a protected system table.",
-                    "DB", LogLevel.CriticalError);
+                LogSchemaRefusal("RENAME COLUMN", tableName);
                 return false;
             }
             if (_reservedColumnAliases.Contains(newName))
@@ -2286,11 +2673,9 @@ namespace Phoenix.Controls.Shared.Services
                     "DB", LogLevel.CriticalError);
                 return false;
             }
-            if (IsSystemTable(tableName))
+            if (IsAppOwnedTable(tableName))
             {
-                GlobalLogger.Log(
-                    $"DB.ChangeColumnType BLOCKED: '{tableName}' is a protected system table.",
-                    "DB", LogLevel.CriticalError);
+                LogSchemaRefusal("CHANGE COLUMN TYPE", tableName);
                 return false;
             }
             if (string.IsNullOrWhiteSpace(newAffinityType) ||
@@ -2636,47 +3021,31 @@ namespace Phoenix.Controls.Shared.Services
                 cmd => cmd.Parameters.AddWithValue("@id", deviceId)).ConfigureAwait(false);
         }
 
-        public async Task AppendRemoteAuditAsync(
-            string deviceId,
-            string action,
-            string targetTable,
-            string targetKey,
-            string? before,
-            string? after,
-            string result)
-        {
-            const string sql = @"
-                INSERT INTO RemoteAuditLog (DeviceId, Action, TargetTable, TargetKey, Before, After, Result)
-                VALUES (@dev, @action, @table, @key, @before, @after, @result)";
-            await ExecuteAsync(sql, cmd =>
-            {
-                cmd.Parameters.AddWithValue("@dev",    deviceId    ?? "");
-                cmd.Parameters.AddWithValue("@action", action      ?? "");
-                cmd.Parameters.AddWithValue("@table",  targetTable ?? "");
-                cmd.Parameters.AddWithValue("@key",    targetKey   ?? "");
-                cmd.Parameters.AddWithValue("@before", (object?)before ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@after",  (object?)after  ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@result", result      ?? "");
-            }).ConfigureAwait(false);
-        }
-
-        public async Task SetCellAsync(string tableName, long rowId, string columnName, string value)
+        /// <summary>
+        /// Writes one cell by rowid. Returns <c>true</c> when the UPDATE ran,
+        /// <c>false</c> when a protection guard refused it (always paired with a
+        /// System Log line saying which table and why). Callers MUST honour the
+        /// <c>false</c> — <c>db.increment_cell</c> used to ignore the refusal and
+        /// hand its script the incremented number it never managed to store.
+        /// </summary>
+        public async Task<bool> SetCellAsync(string tableName, long rowId, string columnName, string value)
         {
             if (!IsValidIdentifier(tableName) || !IsValidIdentifier(columnName))
             {
                 GlobalLogger.Log(
                     $"DB.SetCell rejected: invalid identifier(s) — table='{tableName}', column='{columnName}'.",
                     "DB", LogLevel.CriticalError);
-                return;
+                return false;
             }
-            // System-table protection (parity with DeleteRowAsync / ClearTableAsync).
-            if (IsSystemTable(tableName))
+            if (WriteLockReason(tableName) is { } lockReason)
             {
-                GlobalLogger.Log(
-                    $"DB.SetCell BLOCKED: '{tableName}' is a protected system table.",
-                    "DB", LogLevel.CriticalError);
-                return;
+                LogWriteRefusal("SET cell", tableName, lockReason);
+                return false;
             }
+            if (IsVarsTable(tableName)
+                && !await VarsRowWriteAllowedAsync("SET cell", rowId, columnName, value).ConfigureAwait(false))
+                return false;
+
             await ExecuteAsync(
                 $"UPDATE [{tableName}] SET [{columnName}] = @val WHERE rowid = @rid",
                 cmd =>
@@ -2684,6 +3053,7 @@ namespace Phoenix.Controls.Shared.Services
                     cmd.Parameters.AddWithValue("@val", value);
                     cmd.Parameters.AddWithValue("@rid", rowId);
                 }).ConfigureAwait(false);
+            return true;
         }
 
         public void Dispose()
@@ -2769,25 +3139,6 @@ namespace Phoenix.Controls.Shared.Services
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[DB] log connection dispose failed: {ex}");
-                }
-
-                // Same teardown for the dedicated bulk-read connection
-                // (GetTableDataAsync) — close under its own init lock so a
-                // concurrent EnsureBulkReadConnection can't race the dispose,
-                // and null it so a fresh singleton re-opens against the
-                // (possibly re-targeted) _dbPath.
-                try
-                {
-                    lock (_bulkReadInitLock)
-                    {
-                        _bulkReadConnection?.Close();
-                        _bulkReadConnection?.Dispose();
-                        _bulkReadConnection = null;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[DB] bulk-read connection dispose failed: {ex}");
                 }
             }
             finally

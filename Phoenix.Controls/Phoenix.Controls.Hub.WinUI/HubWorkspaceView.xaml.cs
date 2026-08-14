@@ -103,17 +103,17 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
             failureLabel: "Status Strip",
             failureKey: "panel.failure.statusstrip");
         StatusStripRegion.Content = statusStrip
-            ?? BuildPlaceholderPanel("Status Strip", "panel.failure.statusstrip");
+            ?? BuildPlaceholderPanel("panel.statusstrip.title", "Status Strip", "panel.failure.statusstrip");
 
         _liveFeed  = SafeCreate(() => (LiveFeedView)  factory.CreateLiveFeedPanel(services),  "Live Feed",  "panel.failure.livefeed");
         _chat      = SafeCreate(() => (ChatView)      factory.CreateChatPanel(services),      "Chat",       "panel.failure.chat");
         _script    = SafeCreate(() => (ScriptView)    factory.CreateScriptPanel(services),    "Scripts",    "panel.failure.scripts");
         _systemLog = SafeCreate(() => (SystemLogView) factory.CreateSystemLogPanel(services), "System Log", "panel.failure.systemlog");
 
-        LiveFeedRegion.Content  = (UserControl?)_liveFeed  ?? BuildPlaceholderPanel("Live Feed",  "panel.failure.livefeed");
-        ChatRegion.Content      = (UserControl?)_chat      ?? BuildPlaceholderPanel("Chat",       "panel.failure.chat");
-        ScriptRegion.Content    = (UserControl?)_script    ?? BuildPlaceholderPanel("Scripts",    "panel.failure.scripts");
-        SystemLogRegion.Content = (UserControl?)_systemLog ?? BuildPlaceholderPanel("System Log", "panel.failure.systemlog");
+        LiveFeedRegion.Content  = (UserControl?)_liveFeed  ?? BuildPlaceholderPanel("panel.livefeed.title", "Live Feed", "panel.failure.livefeed");
+        ChatRegion.Content      = (UserControl?)_chat      ?? BuildPlaceholderPanel("panel.chat.title", "Chat", "panel.failure.chat");
+        ScriptRegion.Content    = (UserControl?)_script    ?? BuildPlaceholderPanel("panel.scripts.title", "Scripts", "panel.failure.scripts");
+        SystemLogRegion.Content = (UserControl?)_systemLog ?? BuildPlaceholderPanel("panel.systemlog.title", "System Log", "panel.failure.systemlog");
 
         // Pop-out wiring is panel-specific: a panel that fell back to a
         // placeholder has no PopOutRequested event to subscribe to, so
@@ -155,8 +155,13 @@ public sealed partial class HubWorkspaceView : UserControl, IDisposable
     /// The text flows through Localizer so DE/FR/ES bundles can replace
     /// the verbatim English fallback later.
     /// </summary>
-    private static UserControl BuildPlaceholderPanel(string panelLabel, string localizationKey)
+    /// <param name="panelLabelKey">Localizer key for the panel's own name. The
+    /// heading interpolates it, so passing a bare English literal here would
+    /// render a translated sentence around an English panel name.</param>
+    private static UserControl BuildPlaceholderPanel(string panelLabelKey, string panelLabelFallback, string localizationKey)
     {
+        string panelLabel = Localizer.T(panelLabelKey, panelLabelFallback);
+
         var res = Application.Current?.Resources;
         Brush surface = res?.TryGetValue("CoalSurfaceBrush", out var s) == true && s is Brush sb ? sb : new SolidColorBrush(Microsoft.UI.Colors.Black);
         Brush divider = res?.TryGetValue("CoalDividerBrush", out var d) == true && d is Brush db ? db : new SolidColorBrush(Microsoft.UI.Colors.DimGray);

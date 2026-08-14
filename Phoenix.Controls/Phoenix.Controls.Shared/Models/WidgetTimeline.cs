@@ -12,11 +12,11 @@ namespace Phoenix.Controls.Shared.Models
     /// cref="SortedKeyframes"/> lazily caches that projection so we stop
     /// re-sorting on every sample call.
     ///
-    /// Cache invalidation is automatic on the common mutation paths (list
+    /// Cache invalidation is automatic on the mutation paths (list
     /// reference change, count delta, or any in-place TimeMs edit) via a
-    /// cheap (count, time-fingerprint, instance-id) signature; callers can
-    /// also bump <see cref="InvalidateSortCache"/> explicitly when they've
-    /// done something exotic. The cache filters NaN/Infinity TimeMs via
+    /// cheap (count, time-fingerprint, instance-id) signature — no
+    /// explicit invalidation call exists or is needed.
+    /// The cache filters NaN/Infinity TimeMs via
     /// <see cref="NumericGuards.FilterFiniteKeyframes"/> so the sort+filter
     /// behaviour introduced in KeyframeInterpolation is preserved.
     /// </summary>
@@ -29,8 +29,8 @@ namespace Phoenix.Controls.Shared.Models
         // The cache is keyed on a (reference, count, time-fingerprint)
         // signature so direct mutations of the underlying list (Add /
         // Insert / Remove / Clear / property reassignment / in-place
-        // TimeMs edits) all invalidate without requiring callers to
-        // explicitly call InvalidateSortCache. The fingerprint scan is
+        // TimeMs edits) all self-invalidate — callers never issue an
+        // explicit invalidation. The fingerprint scan is
         // O(n) over a value-type accumulator; rebuilding the sort is the
         // expensive O(n log n) step we are saving, so the trade is net
         // positive once a track is sampled more than once between edits.
@@ -85,21 +85,6 @@ namespace Phoenix.Controls.Shared.Models
                 _sortedSourceFingerprint = fingerprint;
                 return _sortedCache;
             }
-        }
-
-        /// <summary>
-        /// Force the next <see cref="SortedKeyframes"/> access to rebuild.
-        /// The cache signature already covers count-changing and TimeMs-
-        /// changing edits, so most callers don't need this — it exists for
-        /// exotic mutations (e.g. swapping keyframe instances at the same
-        /// time / index) and for unit tests asserting cache behaviour.
-        /// </summary>
-        public void InvalidateSortCache()
-        {
-            _sortedCache             = null;
-            _sortedSourceRef         = null;
-            _sortedSourceCount       = 0;
-            _sortedSourceFingerprint = 0;
         }
 
         private static long ComputeTimeFingerprint(List<Keyframe> kfs)

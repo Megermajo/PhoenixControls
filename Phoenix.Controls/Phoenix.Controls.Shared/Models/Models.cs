@@ -153,14 +153,36 @@ namespace Phoenix.Controls.Shared.Models
         // Defaults to twitch so every pre-multi-platform construction site and
         // test keeps its original meaning without edits.
         public string Platform { get; set; } = Phoenix.Controls.Shared.Core.ChatPlatforms.Twitch;
-        // Per-message id of the triggering chat message (Twitch/YouTube/Kick),
-        // populated by the per-platform WS mappers. Defaults to "" so every
-        // pre-existing construction site and test keeps working unchanged —
-        // same additive pattern as Platform. Surfaced to scripts as
-        // {event.message_id} (BuildChatVars) and as the Chat.Message node's
-        // MessageId output socket; consumed by twitch.reply / kick.reply /
-        // *.delete_message.
+        // Per-message id of the triggering chat message (Twitch/YouTube/Kick).
+        // Defaults to "" so every pre-existing construction site and test keeps
+        // working unchanged — same additive pattern as Platform. Surfaced to
+        // scripts as {event.message_id} (BuildChatVars) and as the Chat.Message
+        // node's MessageId output socket; consumed by twitch.reply / kick.reply /
+        // *.delete_message and by the Automod tool's Delete ladder rung.
+        //
+        // ★ NOTHING POPULATES IT IN THIS BUILD, and every consumer above is dark
+        // because of it. This comment claimed "populated by the per-platform WS
+        // mappers" until 2026-08-03; no mapper does. WS.cs builds every ChatMessage
+        // without touching this property — the Twitch chat arm's inline initializer,
+        // TryBuildYouTubeChatMessage and TryBuildKickChatMessage are the only three
+        // build sites — so the value a consumer reads is always "". They are written to
+        // degrade honestly rather than to pretend: twitch.reply / kick.reply log
+        // "empty messageId — skipping", and Automod's capability gate refuses the
+        // Delete rung and says why once (ScriptManager.Automod.cs,
+        // ResolveAutomodDeleteAction). Wiring this up is a WS.cs mapper change and
+        // nothing else — the moment a mapper fills it, all of those light up with no
+        // edit anywhere downstream. Do not "fix" a dark consumer by making it
+        // optimistic; fix the mapper.
         public string MessageId { get; set; } = "";
+        // Platform LOGIN of the chatter (Twitch: the lowercase ASCII handle;
+        // YouTube/Kick: whatever login/handle the payload carries, else "").
+        // Distinct from Username, which Twitch fills with the DISPLAY name —
+        // possibly localized/non-ASCII and entirely different from the login
+        // (the QC06-03 bot-guard lesson). Defaults "" so every pre-existing
+        // construction site and test keeps working unchanged — same additive
+        // pattern as Platform/MessageId. Consumed by the User-Management tool,
+        // whose group members / personalized rows are keyed by login.
+        public string Login { get; set; } = "";
         public bool IsBroadcaster { get; set; } = false;
         public bool IsMod { get; set; } = false;
         public bool IsSub { get; set; } = false;

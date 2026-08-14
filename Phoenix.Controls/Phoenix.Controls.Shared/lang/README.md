@@ -73,6 +73,79 @@ visualist.timeline.transport.play
 
 Two strings that share English text but appear in different places get different keys. The cost is one duplicate value; the gain is per-context translatability (e.g. a "Save" button vs a "Save changes?" dialog can diverge).
 
+## How a UI string reaches the Localizer
+
+Three mechanisms, in the order you should reach for them.
+
+### 1. `Localizer.T(key, englishFallback)` — C# surfaces
+
+The original and still the right tool for anything set from code: dialog text, state
+phrases, `string.Format` templates, code-behind that already holds a reference to the
+element.
+
+```csharp
+PageHeader.Title = Localizer.T("panel.scheduling.header.title", "Scheduling");
+```
+
+Always pass the English fallback. It is what renders if the key is missing from every
+bundle, so a typo degrades to correct English rather than to `[panel.x.y]`.
+
+### 2. `loc:Localize.*` attached properties — XAML surfaces
+
+One attribute beside the literal, no `x:Name`, no code-behind:
+
+```xml
+xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+…
+<TextBlock Text="Chat line" loc:Localize.Key="panel.scheduling.message.line.label" />
+<TextBox PlaceholderText="e.g. hello"
+         AutomationProperties.Name="Greeting"
+         loc:Localize.PlaceholderKey="panel.x.greeting.placeholder"
+         loc:Localize.AutomationKey="panel.x.greeting.a11y" />
+```
+
+| attribute | writes |
+|---|---|
+| `Localize.Key` | the element's primary text slot — `TextBlock.Text`, `ContentControl.Content`, `ToggleSwitch.Header`, `ContentDialog.Title`, or a custom control's `Text`/`Title`/`Label`/`Caption`/`Eyebrow` |
+| `Localize.Property` | names the target member explicitly when the default would pick the wrong one |
+| `Localize.HeaderKey` | `Header` |
+| `Localize.PlaceholderKey` | `PlaceholderText` |
+| `Localize.TooltipKey` | `ToolTipService.ToolTip` |
+| `Localize.AutomationKey` | `AutomationProperties.Name` |
+| `Localize.HelpTextKey` | `AutomationProperties.HelpText` |
+
+**The English literal stays and is the fallback** — every setter resolves through
+`Localizer.T(key, currentValue)`, reading the current value first. **Resolution happens at
+`Loaded`**, because XAML applies attributes in document order and writing at parse time
+would lose a race with a `Text=` that follows the key attribute in the same tag.
+
+`TextBox.Text` is never localized: it holds the streamer's data.
+
+The class is deliberately **duplicated in all three WinUI projects** — a `DependencyProperty`
+needs `Microsoft.UI.Xaml`, and `Phoenix.Controls.Shared.WinUI` carries no WindowsAppSDK
+reference by design. `LocalizeAttachedPropertyTests` fails the build if the three copies
+drift, or if a view declares another pillar's namespace.
+
+### 3. Control-owned `*Key` properties
+
+`PanelHeader` resolves `TitleKey` → `Title` and `EyebrowKey` → `Eyebrow` itself, in its own
+`Loaded`. Use these rather than the attached property on that control.
+
+### What guards it
+
+| test | catches |
+|---|---|
+| `LocalizationBundleParityTests` | a key present in one bundle and missing from another; lost BOM; empty values |
+| `LocalizationParityTests` | a translated value whose `{placeholder}` set differs from English |
+| `LocalizationKeyCoverageTests` | a key the code asks for that no bundle defines — including keys passed through helper APIs (`Tip`, `PopOutWindowFactory.Create`, `MenuEntry`, `ToolRow`/`ToolGroup`, `SafeCreate`, `BuildPlaceholderPanel`) and keys living only in XAML attributes. Its backstop fails on any key-shaped literal that is neither a bundle key nor documented as a non-key |
+| `XamlLiteralLocalizationTests` | a hardcoded user-facing literal in shipped XAML with no key beside it — the only test that can see a surface which never calls the Localizer at all |
+| `LocalizationBundleIntegrityTests` | mojibake regression in de/fr/es |
+
+The fourth one exists because every other test starts from something that *exists* — a
+bundle entry or a found call site. A panel with zero call sites contributes zero rows to
+every harvest and is indistinguishable from a fully localized one; thirteen Pre-Build panels
+shipped 100% hardcoded at 4382/4382 green before it was written.
+
 ## Format-string placeholders
 
 Keys whose runtime value comes from `string.Format(Localizer.T("key"), arg)` use positional `{0}`, `{1}`, `{2}` placeholders:
@@ -121,8 +194,9 @@ Captured here so future translators (PT-BR, IT, NL, …) have the same conventio
    - German: **du / dich / dir**, lowercase pronoun (modern convention, not the formal capitalized "Du").
    - French: **tu / toi / te**.
    - Spanish: **tú / te / ti** (Latin American neutral; avoid voseo).
-7. **Output is exactly one valid JSON object.** UTF-8 without BOM, double-quoted keys and values, escape `\\`, `\"`, `\n`, `\r`, `\t` correctly. No trailing commas. No comments.
-8. **Sanity-check before declaring done:** JSON round-trips through `JsonSerializer.Deserialize<Dictionary<string,string>>`, same key count as `en.json` (currently ~950), every `{N}` / `{name}` placeholder from the source appears in the translated value with the same indices / names. `pwsh ./check-keys.ps1` is the canonical audit.
+7. **Output is exactly one valid JSON object.** **UTF-8 *with* BOM** (`EF BB BF`) — double-quoted keys and values, escape `\\`, `\"`, `\n`, `\r`, `\t` correctly. No trailing commas. No comments.
+   > This rule read "UTF-8 without BOM" until 2026-08-03 and was wrong about the very files it describes: all four shipped bundles start `EF BB BF`, and stripping it is how the `Ã`-mojibake regression gets reintroduced — `LanguageBundle.LoadFromFile` reads either form, but an editor or re-encoding tool with no BOM to go on guesses the codepage and guesses wrong. Save **with** BOM. `LocalizationBundleParityTests.Every_Bundle_Starts_With_The_Utf8_Bom` fails the build if a bundle loses it, and `LocalizationBundleIntegrityTests` is what catches the mojibake once it lands.
+8. **Sanity-check before declaring done:** JSON round-trips through `JsonSerializer.Deserialize<Dictionary<string,string>>`, same key count as `en.json` (**880 at this tip** — `LocalizationBundleParityTests.Every_Bundle_Has_Exactly_The_Same_Key_Set_As_English` is the authority, and it compares key SETS, not counts), every `{N}` / `{name}` placeholder from the source appears in the translated value with the same indices / names. `pwsh ./check-keys.ps1` is the canonical audit.
 
 ### Domain glossary (vocabulary the shipped bundles use)
 
@@ -183,6 +257,14 @@ Localizer: missing key 'hub.foo.bar' in 'de' — using 'en' fallback
 ```
 
 These surface in the Hub's System Log window at Debug level. Filter by source `"Localizer"` to see them.
+
+> This warning was **documented here from the start and did not actually exist** until the
+> localization retrofit: `Localizer._missingKeysLogged` was declared and cleared on `Init`,
+> and nothing ever added to it. So a de/fr/es gap produced English text with no exception,
+> no log line and no failing test — invisible from every direction at once. It is live now.
+> It only ever fires for a *translation* gap (the key is in `en.json` but not in the active
+> bundle); a key missing from **all** bundles never reaches the Localizer at all, which is
+> what the build-time guards below are for.
 
 ## Live-switching (deferred)
 

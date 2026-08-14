@@ -47,9 +47,16 @@ namespace Phoenix.Controls.Hub.Core
             IReadOnlyCollection<string> missing =
                 CommandManifest.VerifyAllHubCommandsRegistered(_engine.RegisteredCommandNames);
 
-            if (missing.Count == 0) return;
+            // The 2026-08 tool-node cut's 22 retired shims are engine-registered but
+            // deliberately have NO manifest entry — the manifest describes the LIVE
+            // surface only. They are exempted by the shim file's own ledger rather
+            // than by name here, so the two can never drift apart; every name outside
+            // that ledger still hard-stops the boot. (The five V4 overlay shims kept
+            // their manifest entries instead, so they never reach this filter.)
+            var drift = missing.Where(n => !RetiredToolCommandNames.Contains(n)).ToList();
+            if (drift.Count == 0) return;
 
-            var ordered = missing.OrderBy(n => n, StringComparer.Ordinal).ToList();
+            var ordered = drift.OrderBy(n => n, StringComparer.Ordinal).ToList();
             string detail = string.Join("\n  ", ordered);
             string message =
                 "ScriptManager: the following commands are registered on the engine "

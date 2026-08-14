@@ -296,9 +296,19 @@ public sealed partial class ScriptView : UserControl, IDisposable,
     // fires when a container is (re)bound to a row VM; we resolve the row's
     // SelectionOverlay Border, register it in _realizedOverlays, and apply the
     // current selection state so a recycled row shows the right tint.
+    //
+    // ★ The row is resolved from args.Index, NOT from fe.DataContext. WinUI leaves
+    // DataContext null on any x:Bind template (see Panels/Common/RowDataContext.cs);
+    // RowDataContext.Supply fills it in from its own ElementPrepared handler, and
+    // two handlers on one event have no guaranteed order — so at THIS point in
+    // realization only the index is authoritative. The interaction handlers above
+    // fire long after realization and read DataContext safely.
     private void OnRowElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {
-        if (args.Element is not FrameworkElement fe || fe.DataContext is not ScriptRowVm row) return;
+        if (args.Element is not FrameworkElement fe) return;
+        var source = sender.ItemsSourceView;
+        if (source is null || args.Index < 0 || args.Index >= source.Count) return;
+        if (source.GetAt(args.Index) is not ScriptRowVm row) return;
         var overlay = FindDescendantByName(fe, "SelectionOverlay") as Border;
         if (overlay is null) return;
         _realizedOverlays[row] = overlay;

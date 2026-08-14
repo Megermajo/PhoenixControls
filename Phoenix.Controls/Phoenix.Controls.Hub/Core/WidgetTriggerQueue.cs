@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
@@ -71,11 +71,56 @@ namespace Phoenix.Controls.Hub.Core
     /// next pump on VISUAL_COMPLETE arriving back from the browser. A hard timeout (default 10 s)
     /// frees the queue if the browser hangs or disconnects mid-trigger so successive triggers
     /// don't pile up indefinitely.
+    ///
+    /// B4 — the hard timeout is now per-INVOCATION, not per-queue. The browser holds a
+    /// trigger for its authored timeline duration plus two dip-to-blank transitions before
+    /// it acks, and an authored duration may legally reach 600 000 ms, so a single flat
+    /// per-queue constant fired this queue's timeout on every timeline longer than ~10 s —
+    /// logging WIDGET_TIMEOUT at System tier, broadcasting it to the debug panels, tearing
+    /// down Bus's pending visual wait early and advancing the pump — while the widget was in
+    /// fact rendering perfectly. The queue is per-widget and long-lived (LayerRuntime keeps one
+    /// per (layer, widget) key), so a constructor value cannot vary per trigger —
+    /// <see cref="EnqueueAsync"/> therefore accepts an optional override that travels with the
+    /// invocation and is read at the timeout site.
+    /// <see cref="LayerRuntime.ComputeCompletionTimeoutMs"/> derives it from the addressed
+    /// trigger's timeline; every other caller keeps the queue default.
+    ///
+    /// B3 — this timeout is NOT the script's wait budget. `Async.WaitForVisual`'s TimeoutMS is
+    /// a second, independent, author-owned budget that still defaults to a flat 10 000 ms
+    /// (node template default, the `wait_for_visual` fallback, and
+    /// Bus.TriggerVisualAndWaitAsync's default parameter), so a 20 s timeline left on that
+    /// default still returns false at 10 s and takes the node's Timeout branch even though
+    /// nothing here times out. Raising it is a hand edit;
+    /// LayerRuntime.WarnIfScriptWaitBudgetIsShort makes the mismatch visible.
     /// </summary>
     public sealed class WidgetTriggerQueue
     {
         /// <summary>Default hard-timeout for a single trigger's VISUAL_COMPLETE return path (ms).</summary>
         public const int DefaultCompletionTimeoutMs = 10000;
+
+        /// <summary>
+        /// Upper bound on a per-invocation completion-timeout override (ms).
+        ///
+        /// Sanity guard, not a tuning knob: compositor.js clamps its own on-screen hold to
+        /// 60 000 ms and each of its two dip-to-blank transitions to 1 000 ms, so no real
+        /// render can occupy the browser for two minutes. Without the clamp a caller passing
+        /// (say) int.MaxValue would wedge this widget's FIFO for ~24 days — precisely the
+        /// pile-up the hard timeout exists to prevent. The only production caller
+        /// (<see cref="LayerRuntime.ComputeCompletionTimeoutMs"/>) is bounded well below this,
+        /// so the clamp never fires live; it fires only on a programming error, which is why
+        /// it is logged once per queue rather than per trigger.
+        ///
+        /// B2 — COUPLING, stated here as well as at
+        /// <see cref="LayerRuntime.CompletionGraceMs"/> so the two files cannot drift: that
+        /// caller's worst case is the 60 000 ms hold ceiling + 2 × the 1 000 ms transition clamp
+        /// + LayerRuntime.CompletionGraceMs (10 000, itself derived from compositor.js's 5 000 ms
+        /// per-render stall tolerance × 2 plausibly-cold renders) = 72 000 ms. That leaves ~48 s
+        /// of headroom under this ceiling. Anyone raising the grace, the hold ceiling or the
+        /// transition clamp must re-check that sum against this constant — if the derived worst
+        /// case ever reaches it, the clamp starts silently truncating real budgets and B4's
+        /// defect returns for the longest timelines only.
+        /// </summary>
+        public const int MaxCompletionTimeoutMs = 120000;
 
         /// <summary>
         /// Phase 2 — default inactivity window before the idle-loop watchdog re-enqueues
@@ -119,6 +164,10 @@ namespace Phoenix.Controls.Hub.Core
         // monitor across the pop+write makes the eviction-or-write decision atomic.
         private readonly object _enqueueLock = new();
 
+        // B4 — 0/1 latch (Interlocked) so the MaxCompletionTimeoutMs clamp logs at most
+        // once per queue instead of once per enqueue. See NormalizeTimeoutOverride.
+        private int _timeoutClampLogged;
+
         // ──────────────────────────────────────────────────────────────────────────
         // Phase 2 — idle-loop watchdog
         //
@@ -129,8 +178,22 @@ namespace Phoenix.Controls.Hub.Core
         //
         // OPT-IN by design — defaults to FALSE so existing widgets that do NOT
         // tolerate spontaneous onStartup re-fires (one-shot intros, etc.) are not
-        // surprised. Flip via <see cref="EnableIdleLoop"/> per-widget, typically
-        // from a widget preset / `.phxlayer` flag.
+        // surprised. <see cref="EnableIdleLoop"/> is the only switch.
+        //
+        // D12 — the truth about that switch, because this comment used to claim a
+        // capability the product does not have: there is NO widget-preset field and
+        // NO `.phxlayer` flag that turns this on (no `idleLoop` key exists anywhere
+        // in Shared's models or serializer), and `EnableIdleLoop` has no production
+        // caller at all — the only callers live in the test project. So in every
+        // shipped build this watchdog is permanently dormant.
+        //
+        // It is kept because the mechanism is sound and cheap, but nothing depends
+        // on it: the Hub-side revert-to-idle behaviour authors actually see is
+        // implemented BROWSER-side, in compositor.js's handleRunTrigger, which after
+        // holding a non-onStartup trigger for its timeline duration re-renders the
+        // widget's `onStartup` trigger before acking VISUAL_COMPLETE. If a
+        // .phxlayer-driven opt-in is ever wanted, wiring it is new work — do not
+        // assume it already exists because this block once said so.
         // ──────────────────────────────────────────────────────────────────────────
         private volatile bool _idleLoopEnabled = false;
         private int _idleLoopSeconds = DefaultIdleLoopSeconds;
@@ -200,6 +263,9 @@ namespace Phoenix.Controls.Hub.Core
         /// has been empty for <paramref name="inactivitySeconds"/>, an `onStartup`
         /// trigger is re-enqueued automatically. Pass any value &lt;= 0 to disable.
         /// Safe to call multiple times — re-arms with the new window.
+        ///
+        /// D12 — currently called from the test project only; see the Phase 2 comment
+        /// block above for why no production path reaches it.
         /// </summary>
         public void EnableIdleLoop(int inactivitySeconds = DefaultIdleLoopSeconds)
         {
@@ -233,11 +299,24 @@ namespace Phoenix.Controls.Hub.Core
         /// hanging. The only TryWrite-false path now is "writer completed" (Stop()
         /// has been called); in that case we fault the awaiter with a clear
         /// InvalidOperationException.
+        ///
+        /// B4 — <paramref name="completionTimeoutMsOverride"/> replaces the queue's own
+        /// completion timeout for THIS invocation only. Pass null (the default) to keep the
+        /// per-queue value, which makes every pre-existing call site byte-identical to before
+        /// the override existed. A non-positive override is ignored rather than thrown on:
+        /// the constructor throws for a bad timeout because that is a wiring-time programming
+        /// error surfaced once, whereas an enqueue happens per chat message on a live stream,
+        /// and dropping a trigger because a computed number came out wrong is strictly worse
+        /// than falling back to the queue default. Values above
+        /// <see cref="MaxCompletionTimeoutMs"/> are clamped.
         /// </summary>
-        public Task<bool> EnqueueAsync(string triggerName, JsonElement eventData, string waitId = "")
+        public Task<bool> EnqueueAsync(string triggerName, JsonElement eventData, string waitId = "",
+            int? completionTimeoutMsOverride = null)
         {
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var invocation = new TriggerInvocation(triggerName, eventData, waitId, tcs);
+            var invocation = new TriggerInvocation(
+                triggerName, eventData, waitId, tcs,
+                NormalizeTimeoutOverride(completionTimeoutMsOverride));
 
             // When the channel is at capacity, DropOldest would
             // silently evict the head invocation on the next TryWrite — but
@@ -287,8 +366,48 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
+        /// B4 — validates a per-invocation completion-timeout override at the ENQUEUE boundary
+        /// so the pump's timeout site can trust the value it reads. Non-positive overrides
+        /// collapse to null ("use the queue default"); oversized ones clamp to
+        /// <see cref="MaxCompletionTimeoutMs"/> and log once per queue, because a repeat
+        /// offender firing at chat rate must not turn a diagnostic into a log flood.
+        /// </summary>
+        private int? NormalizeTimeoutOverride(int? requested)
+        {
+            if (requested is not int ms) return null;
+            if (ms <= 0) return null;
+            if (ms <= MaxCompletionTimeoutMs) return ms;
+
+            if (Interlocked.Exchange(ref _timeoutClampLogged, 1) == 0)
+            {
+                GlobalLogger.Log(
+                    $"WidgetTriggerQueue: completion-timeout override {ms} ms for {_layerId}/{_widgetId} " +
+                    $"exceeds the {MaxCompletionTimeoutMs} ms ceiling — clamping (logged once per queue).",
+                    "WidgetTriggerQueue", LogLevel.System);
+            }
+            return MaxCompletionTimeoutMs;
+        }
+
+        /// <summary>
         /// Resolves the in-flight invocation if its (triggerName, waitId) matches. Idempotent —
         /// repeated calls (e.g. multiple browsers echoing the same VISUAL_COMPLETE) are no-ops.
+        ///
+        /// <para>V13 §8.1 — this method takes NO completion payload, on purpose, and the
+        /// once-per-waitId "later ack dropped" report does NOT live here. Two reasons, and the
+        /// second is the load-bearing one:</para>
+        /// <list type="number">
+        /// <item>The queue arbitrates the INVOCATION (may the widget's FIFO advance?), not the
+        /// script's wait. It has no consumer for a payload, so accepting one would be an unused
+        /// parameter on the hottest completion path.</item>
+        /// <item>The report cannot be anchored to `_inFlight`. The pump's `finally` clears
+        /// `_inFlight` asynchronously the moment the FIRST ack resolves the invocation's TCS, so
+        /// a second socket's ack arriving microseconds later usually hits the `current is null`
+        /// early-return below and is indistinguishable from an ack for a trigger that was never
+        /// queued. A fan-out of eight would then log 0 or 1 lines depending purely on
+        /// thread-pool scheduling. The per-waitId ledger in <c>Bus.ResolveVisualWait</c> is the
+        /// one first-wins record that outlives the invocation — see the
+        /// <c>_resolvedVisualWaits</c> comment in Bus.cs. Do not "consolidate" it back here.</item>
+        /// </list>
         /// </summary>
         public bool NotifyComplete(string triggerName, string waitId)
         {
@@ -340,7 +459,19 @@ namespace Phoenix.Controls.Hub.Core
                         // was enqueued while the layer was active can find that the
                         // layer went inactive (OBS scene flip) before its turn — fast-
                         // succeed instead of waiting the full hard timeout.
-                        if (_registry is not null && !_registry.IsLayerActive(_layerId))
+                        //
+                        // Mirrors LayerRuntime.EnqueueTriggerAsync's design-time carve-out:
+                        // a FIRE-AND-FORGET trigger on a layer that still has a Visualist
+                        // preview attached must be dispatched, not fast-succeeded, or a
+                        // queued "Test Run" is dropped here instead of at the entry gate.
+                        // A trigger carrying a WaitId keeps the original behaviour — an
+                        // editor socket cannot ack it (HUDServer refuses VISUAL_COMPLETE
+                        // from editor clients), so dispatching it would stall the waiter.
+                        bool previewOnlyFireAndForget =
+                            string.IsNullOrEmpty(inv.WaitId)
+                            && _registry is not null
+                            && _registry.HasAnyConnection(_layerId);
+                        if (_registry is not null && !_registry.IsLayerActive(_layerId) && !previewOnlyFireAndForget)
                         {
                             // Route through the same NotifyComplete
                             // matcher a real browser-side echo would use, so any
@@ -361,11 +492,18 @@ namespace Phoenix.Controls.Hub.Core
                         };
                         await _dispatch(_layerId, payload, _cts.Token).ConfigureAwait(false);
 
+                        // B4 — the invocation's own budget wins over the per-queue default.
+                        // Resolved ONCE here and reused by the Task.Delay, the log line and the
+                        // WIDGET_TIMEOUT payload, so those three can never disagree about which
+                        // limit was actually applied (pre-fix the log and the payload both
+                        // reported the flat per-queue constant regardless).
+                        int effectiveTimeoutMs = inv.CompletionTimeoutMsOverride ?? _completionTimeoutMs;
+
                         // L63 — Task.Delay timeout disposed promptly when the wait completes
                         // by a different path. Without the linked CTS the timer ran to
                         // completion even after VISUAL_COMPLETE arrived.
                         using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-                        var delayTask = Task.Delay(_completionTimeoutMs, delayCts.Token);
+                        var delayTask = Task.Delay(effectiveTimeoutMs, delayCts.Token);
                         var completed = await Task.WhenAny(inv.Done.Task, delayTask).ConfigureAwait(false);
                         try { delayCts.Cancel(); } catch { }
                         if (completed != inv.Done.Task)
@@ -378,7 +516,7 @@ namespace Phoenix.Controls.Hub.Core
                             // can flag the offending widget. Both signals are best-effort —
                             // failures here MUST NOT prevent the pump from advancing.
                             GlobalLogger.Log(
-                                $"WidgetTriggerQueue: trigger '{inv.TriggerName}' on {_layerId}/{_widgetId} timed out after {_completionTimeoutMs} ms — advancing queue.",
+                                $"WidgetTriggerQueue: trigger '{inv.TriggerName}' on {_layerId}/{_widgetId} timed out after {effectiveTimeoutMs} ms — advancing queue.",
                                 "WidgetTriggerQueue", LogLevel.System);
 
                             try
@@ -388,7 +526,7 @@ namespace Phoenix.Controls.Hub.Core
                                     layerId     = _layerId,
                                     widgetId    = _widgetId,
                                     triggerName = inv.TriggerName,
-                                    timeoutMs   = _completionTimeoutMs,
+                                    timeoutMs   = effectiveTimeoutMs,
                                 };
                                 // Route through AsyncErrorBoundary — the
                                 // bare _ = Bus.Instance.BroadcastAsync(...) outlier was
@@ -552,10 +690,18 @@ namespace Phoenix.Controls.Hub.Core
             try { _cts.Dispose(); } catch { }
         }
 
+        /// <summary>
+        /// B4 — <see cref="CompletionTimeoutMsOverride"/> is the per-invocation completion
+        /// budget in ms, or null to use the queue's own <c>_completionTimeoutMs</c>. Already
+        /// validated + clamped by <see cref="NormalizeTimeoutOverride"/> at enqueue time, so
+        /// the pump can hand it straight to Task.Delay. The record is private + nested, so
+        /// widening it is an internal change with no public surface.
+        /// </summary>
         private sealed record TriggerInvocation(
             string TriggerName,
             JsonElement EventData,
             string WaitId,
-            TaskCompletionSource<bool> Done);
+            TaskCompletionSource<bool> Done,
+            int? CompletionTimeoutMsOverride = null);
     }
 }

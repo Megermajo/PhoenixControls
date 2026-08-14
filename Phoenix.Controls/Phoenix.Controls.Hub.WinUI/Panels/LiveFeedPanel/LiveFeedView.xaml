@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.LiveFeedPanel"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
@@ -40,13 +41,27 @@
                                       Click="OnChipAllClick">
                             <TextBlock x:Name="ChipAllLabel" />
                         </ToggleButton>
-                        <!--  CHAT chip retired — LiveFeedSource never
-                             emits Kind=Chat (every chat line would flood the
-                             curated feed; chat lives in the Chat panel via
-                             IChatSource). Keeping the chip just to filter to
-                             an unreachable kind was a dead UI surface. The
-                             LiveFeedFilter.Chat enum value stays — it's part
-                             of the shared Records.cs contract. -->
+                        <!--  CHAT chip retired. The original reason —
+                             plain chat lines never reach this feed (they live
+                             in the Chat panel via IChatSource) and would flood
+                             it — still holds.
+                             ★ CORRECTION: Kind=Chat is NO LONGER unreachable.
+                             Chat COMMANDS route here (LiveFeedSource.cs:161),
+                             because they used to be mis-bucketed as SUB / RAID
+                             by an unanchored probe over a string embedding the
+                             username. So command rows are real, and today they
+                             are reachable only under the All chip — which is
+                             strictly better than being painted as the wrong
+                             event, but is not the end state.
+                             Giving them a chip of their own is deliberately
+                             left to TODO CR5, because the useful chip filters
+                             to REGISTERED commands and no command registry
+                             exists yet (CR0). Adding one here would list every
+                             stray `!word` a viewer types.
+                             The LiveFeedFilter.Chat enum value stays — it's
+                             part of the shared Records.cs contract, and its VM
+                             filter case (LiveFeedViewModel.cs:462) is live and
+                             correct, just unreachable from the UI. -->
                         <ToggleButton x:Name="ChipSubs"
                                       Style="{StaticResource LiveFeedChipStyle}"
                                       IsChecked="{x:Bind ViewModel.IsSubsSelected, Mode=OneWay}"
@@ -178,8 +193,10 @@
                               HorizontalScrollBarVisibility="Disabled"
                               VerticalScrollBarVisibility="Auto">
                 <ItemsRepeater ItemsSource="{x:Bind ViewModel.Rows, Mode=OneWay}"
+                               hdr:RowDataContext.Supply="True"
                                AutomationProperties.LiveSetting="Polite"
-                               AutomationProperties.Name="Live event feed">
+                               AutomationProperties.Name="Live event feed"
+                               loc:Localize.AutomationKey="panel.livefeed.list.a11y">
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate x:DataType="local:LiveFeedRowVm">
                             <Border BorderBrush="{StaticResource CoalRaisedBrush}"

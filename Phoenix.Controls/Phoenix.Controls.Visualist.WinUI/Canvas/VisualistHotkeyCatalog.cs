@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Phoenix.Controls.Shared.Localization;
 
 namespace Phoenix.Controls.Visualist.WinUI.Canvas;
 
@@ -54,48 +55,63 @@ public static class VisualistHotkeyCatalog
         VisualistHotkeyContext[] DragWire   = { VisualistHotkeyContext.WidgetGraphDraggingWire };
         VisualistHotkeyContext[] PanOnly    = { VisualistHotkeyContext.WidgetGraphPanning };
 
+        // Chords are NEVER translated — "Ctrl+Shift+S" reads the same in every
+        // language and the keyboard does not remap. Only the action description
+        // beside the chord goes through Localizer. Layer-canvas rows carry the
+        // visualist.canvas.hotkey.* family, widget-graph rows visualist.widget.hotkey.*,
+        // so the two vocabularies stay independently translatable even where the
+        // English happens to coincide ("Undo", "Delete selection", …).
         return new VisualistHotkeyEntry[]
         {
             // ── Layer canvas vocabulary ──────────────────────────────────
-            new("Ctrl+Z",       "Undo",                                  AnyLayer),
-            new("Ctrl+Y",       "Redo",                                  AnyLayer),
-            new("Ctrl+Shift+Z", "Redo (alt)",                            AnyLayer),
-            new("Ctrl+S",       "Save layer",                            AnyLayer),
-            new("Ctrl+Shift+S", "Save layer as…",                        AnyLayer),
-            new("Ctrl+A",       "Select all widgets",                    AnyLayer),
-            new("Ctrl+C",       "Copy selection",                        LayerWithSelection),
-            new("Ctrl+V",       "Paste",                                 AnyLayer),
-            new("Ctrl+X",       "Cut selection",                         LayerWithSelection),
-            new("Del",          "Delete selection",                      LayerWithSelection),
+            new("Ctrl+Z",       Localizer.T("visualist.canvas.hotkey.undo", "Undo"),                                  AnyLayer),
+            new("Ctrl+Y",       Localizer.T("visualist.canvas.hotkey.redo", "Redo"),                                  AnyLayer),
+            new("Ctrl+Shift+Z", Localizer.T("visualist.canvas.hotkey.redo_alt", "Redo (alt)"),                        AnyLayer),
+            new("Ctrl+S",       Localizer.T("visualist.canvas.hotkey.save", "Save layer"),                            AnyLayer),
+            new("Ctrl+Shift+S", Localizer.T("visualist.canvas.hotkey.save_as", "Save layer as…"),                     AnyLayer),
+            new("Ctrl+A",       Localizer.T("visualist.canvas.hotkey.select_all", "Select all widgets"),              AnyLayer),
+            new("Ctrl+C",       Localizer.T("visualist.canvas.hotkey.copy", "Copy selection"),                        LayerWithSelection),
+            new("Ctrl+V",       Localizer.T("visualist.canvas.hotkey.paste", "Paste"),                                AnyLayer),
+            new("Ctrl+X",       Localizer.T("visualist.canvas.hotkey.cut", "Cut selection"),                          LayerWithSelection),
+            new("Del",          Localizer.T("visualist.canvas.hotkey.delete", "Delete selection"),                    LayerWithSelection),
+            new("Enter",        Localizer.T("visualist.canvas.hotkey.edit_widget", "Edit selected widget"),           LayerWithSelection),
+            new("Arrows",       Localizer.T("visualist.canvas.hotkey.nudge_1px", "Nudge selection 1px"),              LayerWithSelection),
+            new("Shift+Arrows", Localizer.T("visualist.canvas.hotkey.nudge_8px", "Nudge selection 8px"),              LayerWithSelection),
+            new("Ctrl+] / Ctrl+[",   Localizer.T("visualist.canvas.hotkey.reorder_step", "Bring forward / send backward"),  LayerWithSelection),
+            new("Ctrl+Shift+] / [",  Localizer.T("visualist.canvas.hotkey.reorder_ends", "Bring to front / send to back"),  LayerWithSelection),
+            new("Ctrl+I",       Localizer.T("visualist.canvas.hotkey.import_media", "Import media…"),                 AnyLayer),
+            new("Esc",          Localizer.T("visualist.canvas.hotkey.clear_selection", "Clear selection"),            LayerWithSelection),
+            new("Ctrl+wheel",   Localizer.T("visualist.canvas.hotkey.zoom_cursor", "Cursor-anchored zoom"),           AnyLayer),
+            new("MMB drag",     Localizer.T("visualist.canvas.hotkey.pan", "Pan canvas"),                             AnyLayer),
 
             // ── Widget-graph vocabulary ──────────────────────────────────
-            new("Ctrl+Z",       "Undo",                                  AnyGraph),
-            new("Ctrl+Shift+Z", "Redo",                                  AnyGraph),
-            new("Ctrl+S",       "Save layer",                            AnyGraph),
-            new("Ctrl+Shift+S", "Save layer as…",                        AnyGraph),
-            new("Ctrl+A",       "Select all nodes",                      AnyGraph),
-            new("Ctrl+C",       "Copy node selection",                   GraphWithSelection),
-            new("Ctrl+V",       "Paste node selection",                  AnyGraph),
-            new("Ctrl+X",       "Cut node selection",                    GraphWithSelection),
-            new("Del",          "Delete selection",                      GraphWithSelection),
-            new("Ctrl+0",       "Reset zoom to 100%",                    AnyGraph),
-            new("Ctrl++ / Ctrl+=", "Zoom in",                            AnyGraph),
-            new("Ctrl+-",       "Zoom out",                              AnyGraph),
-            new("MMB drag",     "Pan canvas",                            AnyGraph),
-            new("Mouse wheel",  "Cursor-anchored zoom",                  AnyGraph),
-            new("Alt + drag",   "Suspend grid snap while dragging",      GraphWithSelection),
+            new("Ctrl+Z",       Localizer.T("visualist.widget.hotkey.undo", "Undo"),                                  AnyGraph),
+            new("Ctrl+Shift+Z", Localizer.T("visualist.widget.hotkey.redo", "Redo"),                                  AnyGraph),
+            new("Ctrl+S",       Localizer.T("visualist.widget.hotkey.save", "Save layer"),                            AnyGraph),
+            new("Ctrl+Shift+S", Localizer.T("visualist.widget.hotkey.save_as", "Save layer as…"),                     AnyGraph),
+            new("Ctrl+A",       Localizer.T("visualist.widget.hotkey.select_all", "Select all nodes"),                AnyGraph),
+            new("Ctrl+C",       Localizer.T("visualist.widget.hotkey.copy", "Copy node selection"),                   GraphWithSelection),
+            new("Ctrl+V",       Localizer.T("visualist.widget.hotkey.paste", "Paste node selection"),                 AnyGraph),
+            new("Ctrl+X",       Localizer.T("visualist.widget.hotkey.cut", "Cut node selection"),                     GraphWithSelection),
+            new("Del",          Localizer.T("visualist.widget.hotkey.delete", "Delete selection"),                    GraphWithSelection),
+            new("Ctrl+0",       Localizer.T("visualist.widget.hotkey.zoom_reset", "Reset zoom to 100%"),              AnyGraph),
+            new("Ctrl++ / Ctrl+=", Localizer.T("visualist.widget.hotkey.zoom_in", "Zoom in"),                         AnyGraph),
+            new("Ctrl+-",       Localizer.T("visualist.widget.hotkey.zoom_out", "Zoom out"),                          AnyGraph),
+            new("MMB drag",     Localizer.T("visualist.widget.hotkey.pan", "Pan canvas"),                             AnyGraph),
+            new("Mouse wheel",  Localizer.T("visualist.widget.hotkey.zoom_cursor", "Cursor-anchored zoom"),           AnyGraph),
+            new("Alt + drag",   Localizer.T("visualist.widget.hotkey.suspend_snap", "Suspend grid snap while dragging"), GraphWithSelection),
 
             // ── Mode-specific pointer affordances ────────────────────────
-            new("LMB drag",     "Move selected widget",                  LayerWithSelection),
-            new("Shift+LMB",    "Add / remove from multi-selection",     AnyLayer),
-            new("RMB",          "Open context menu",                     AnyLayer),
-            new("Shift+LMB",    "Add / remove node from selection",      AnyGraph),
-            new("RMB",          "Open context menu",                     AnyGraph),
+            new("LMB drag",     Localizer.T("visualist.canvas.hotkey.move_widget", "Move selected widget"),           LayerWithSelection),
+            new("Shift+LMB",    Localizer.T("visualist.canvas.hotkey.multi_toggle", "Add / remove from multi-selection"), AnyLayer),
+            new("RMB",          Localizer.T("visualist.canvas.hotkey.context_menu", "Open context menu"),             AnyLayer),
+            new("Shift+LMB",    Localizer.T("visualist.widget.hotkey.multi_toggle", "Add / remove node from selection"), AnyGraph),
+            new("RMB",          Localizer.T("visualist.widget.hotkey.context_menu", "Open context menu"),             AnyGraph),
 
             // ── In-flight (drag / pan) ───────────────────────────────────
-            new("LMB release",  "Drop wire onto target socket",          DragWire),
-            new("Esc",          "Cancel wire drag",                      DragWire),
-            new("Release MMB",  "Stop panning",                          PanOnly),
+            new("LMB release",  Localizer.T("visualist.widget.hotkey.wire_drop", "Drop wire onto target socket"),     DragWire),
+            new("Esc",          Localizer.T("visualist.widget.hotkey.wire_cancel", "Cancel wire drag"),               DragWire),
+            new("Release MMB",  Localizer.T("visualist.widget.hotkey.stop_pan", "Stop panning"),                      PanOnly),
         };
     }
 

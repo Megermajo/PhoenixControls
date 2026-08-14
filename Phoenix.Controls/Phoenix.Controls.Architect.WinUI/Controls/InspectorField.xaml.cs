@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Phoenix.Controls.Shared.Localization;
 using Windows.System;
 
 namespace Phoenix.Controls.Architect.WinUI.Controls;
@@ -109,7 +110,9 @@ public sealed partial class InspectorField : UserControl
     private void RenderBool(bool on)
     {
         BoolGlyph.Text     = on ? BoolCheckedGlyph : BoolUncheckedGlyph;
-        BoolStateText.Text = on ? "on" : "off";
+        BoolStateText.Text = on
+            ? Localizer.T("architect.inspector.field.bool.on",  "on")
+            : Localizer.T("architect.inspector.field.bool.off", "off");
     }
 
     private void OnBoolHitTapped(object sender, TappedRoutedEventArgs e)
@@ -133,7 +136,7 @@ public sealed partial class InspectorField : UserControl
             // (feedback_no_modal_dialogs_for_repeatable_rejections).
             BoolValue = !next;
             ErrorMessageText.Text       = string.IsNullOrEmpty(ErrorMessageText.Text)
-                ? "Invalid value."
+                ? Localizer.T("architect.inspector.field.invalid", "Invalid value.")
                 : ErrorMessageText.Text;
             ErrorMessageText.Visibility = Visibility.Visible;
             VisualStateManager.GoToState(this, "ErrorState", false);
@@ -206,8 +209,10 @@ public sealed partial class InspectorField : UserControl
         bool accept = WriteBack?.Invoke(candidate) ?? true;
         if (!accept)
         {
+            // Same key as the bool-commit rejection above: one control, one
+            // "the commit was refused" phrase, so a translator writes it once.
             ErrorMessageText.Text       = string.IsNullOrEmpty(ErrorMessageText.Text)
-                ? "Invalid value."
+                ? Localizer.T("architect.inspector.field.invalid", "Invalid value.")
                 : ErrorMessageText.Text;
             ErrorMessageText.Visibility = Visibility.Visible;
             VisualStateManager.GoToState(this, "ErrorState", false);

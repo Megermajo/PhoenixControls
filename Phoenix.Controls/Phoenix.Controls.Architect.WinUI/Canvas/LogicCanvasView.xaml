@@ -5,10 +5,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Phoenix.Controls.Architect.WinUI.Canvas"
     xmlns:conv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization"
     xmlns:win2d="using:Microsoft.Graphics.Canvas.UI.Xaml">
 
     <UserControl.Resources>
-        <conv:HexStringToBrushConverter x:Key="HexBrush" />
         <conv:BoolToVisibilityConverter x:Key="BoolVis" />
     </UserControl.Resources>
 
@@ -224,7 +224,8 @@
                        VerticalAlignment="Center"
                        Foreground="{StaticResource TextLabelBrush}"
                        FontSize="16"
-                       FontWeight="SemiBold" />
+                       FontWeight="SemiBold"
+                       loc:Localize.Key="architect.canvas.drop_overlay.hint" />
         </Border>
 
         <!--  (P1-A27) — transient banner surfaced when a .phx file is
@@ -295,19 +296,22 @@
                        FontSize="22"
                        CharacterSpacing="160"
                        Foreground="{StaticResource CoalSecondaryTextBrush}"
-                       HorizontalAlignment="Center" />
+                       HorizontalAlignment="Center"
+                       loc:Localize.Key="architect.canvas.empty.title" />
             <TextBlock Text="Right-click empty space to spawn a node — Ctrl+O to open a graph"
                        FontFamily="{StaticResource MonoFont}"
                        FontSize="11"
                        Foreground="{StaticResource CoalMutedTextBrush}"
-                       HorizontalAlignment="Center" />
+                       HorizontalAlignment="Center"
+                       loc:Localize.Key="architect.canvas.empty.body" />
             <!--  surface the otherwise-undiscoverable
                  wheel + Home navigation chords. -->
             <TextBlock Text="Ctrl+Wheel zoom · Wheel / Shift+Wheel pan · Home to fit"
                        FontFamily="{StaticResource MonoFont}"
                        FontSize="11"
                        Foreground="{StaticResource CoalMutedTextBrush}"
-                       HorizontalAlignment="Center" />
+                       HorizontalAlignment="Center"
+                       loc:Localize.Key="architect.canvas.empty.nav_hint" />
         </StackPanel>
 
         <!-- 0.10.0 — Welcome card for the no-file-loaded first-launch case.
@@ -340,26 +344,31 @@
                            CharacterSpacing="60"
                            Foreground="{StaticResource CoalPaperBrush}"
                            HorizontalAlignment="Center"
-                           TextWrapping="Wrap" />
+                           TextWrapping="Wrap"
+                           loc:Localize.Key="architect.canvas.welcome.title" />
                 <TextBlock Text="Start a new graph, open an existing .phxg, or pick a recent one."
                            FontFamily="{StaticResource SansFont}"
                            FontSize="12"
                            Foreground="{StaticResource CoalSecondaryTextBrush}"
                            HorizontalAlignment="Center"
                            TextWrapping="Wrap"
-                           TextAlignment="Center" />
+                           TextAlignment="Center"
+                           loc:Localize.Key="architect.canvas.welcome.body" />
                 <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Margin="0,4,0,0">
                     <Button x:Name="WelcomeNewButton"
                             Content="New Graph"
                             Padding="14,6,14,6"
+                            loc:Localize.Key="architect.canvas.welcome.new"
                             Click="OnWelcomeNewClicked" />
                     <Button x:Name="WelcomeOpenButton"
                             Content="Open .phxg…"
                             Padding="14,6,14,6"
+                            loc:Localize.Key="architect.canvas.welcome.open"
                             Click="OnWelcomeOpenClicked" />
                     <Button x:Name="WelcomeRecentButton"
                             Content="Recent…"
                             Padding="14,6,14,6"
+                            loc:Localize.Key="architect.canvas.welcome.recent"
                             Click="OnWelcomeRecentClicked" />
                 </StackPanel>
 
@@ -383,7 +392,8 @@
                                    FontWeight="SemiBold"
                                    CharacterSpacing="220"
                                    Foreground="{StaticResource CoalSecondaryTextBrush}"
-                                   HorizontalAlignment="Center" />
+                                   HorizontalAlignment="Center"
+                                   loc:Localize.Key="architect.canvas.welcome.samples.eyebrow" />
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -401,21 +411,24 @@
                                        FontSize="11"
                                        FontWeight="SemiBold"
                                        Foreground="{StaticResource CoalPaperBrush}"
-                                       Margin="0,0,8,4" />
+                                       Margin="0,0,8,4"
+                                       loc:Localize.Key="architect.canvas.welcome.samples.tier.starter" />
                             <TextBlock Grid.Column="1" Grid.Row="0"
                                        Text="Intermediate"
                                        FontFamily="{StaticResource SansFont}"
                                        FontSize="11"
                                        FontWeight="SemiBold"
                                        Foreground="{StaticResource CoalPaperBrush}"
-                                       Margin="4,0,4,4" />
+                                       Margin="4,0,4,4"
+                                       loc:Localize.Key="architect.canvas.welcome.samples.tier.intermediate" />
                             <TextBlock Grid.Column="2" Grid.Row="0"
                                        Text="Advanced"
                                        FontFamily="{StaticResource SansFont}"
                                        FontSize="11"
                                        FontWeight="SemiBold"
                                        Foreground="{StaticResource CoalPaperBrush}"
-                                       Margin="8,0,0,4" />
+                                       Margin="8,0,0,4"
+                                       loc:Localize.Key="architect.canvas.welcome.samples.tier.advanced" />
 
                             <ListView x:Name="WelcomeStarterList"
                                       Grid.Column="0" Grid.Row="1"
@@ -538,7 +551,8 @@
                            FontSize="10"
                            Foreground="{StaticResource CoalMutedTextBrush}"
                            HorizontalAlignment="Center"
-                           Margin="0,6,0,0" />
+                           Margin="0,6,0,0"
+                           loc:Localize.Key="architect.canvas.welcome.tip" />
             </StackPanel>
         </Border>
     </Grid>

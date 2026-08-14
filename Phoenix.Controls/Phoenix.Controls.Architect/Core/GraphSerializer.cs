@@ -456,6 +456,27 @@ namespace Phoenix.Controls.Architect.Core
                         {
                             case JsonTokenType.StartObject:
                             {
+                                if (pendingAttrKey != null && attrsBuffer != null)
+                                {
+                                    // Object-valued attribute — JSON-stringify it into the
+                                    // buffer (the documented contract) instead of falling
+                                    // through to the pass-through WriteStartObject below.
+                                    // That write happens with the writer parked INSIDE the
+                                    // Attributes object with no pending property name (every
+                                    // attribute key is buffered, not written), so
+                                    // Utf8JsonWriter threw InvalidOperationException, the
+                                    // outer catch returned the UN-normalized JSON, and the
+                                    // Dictionary<string,string> binder then failed the whole
+                                    // load — dropping the user onto an empty canvas.
+                                    // Checked BEFORE the "Attributes" peek so an attribute
+                                    // literally KEYED "Attributes" is captured as a value
+                                    // rather than re-entering buffering mode.
+                                    CaptureNonScalarAttributeValue(
+                                        ref reader, attrsBuffer, pendingAttrKey, activeNodeTitle, fileNameForLog);
+                                    if (nameStack.Count > 0) nameStack.Pop();
+                                    pendingAttrKey = null;
+                                    break;
+                                }
                                 if (nameStack.Count > 0 && nameStack.Peek() == "Attributes")
                                 {
                                     // Enter Attributes-buffering mode.
@@ -496,6 +517,16 @@ namespace Phoenix.Controls.Architect.Core
                             }
 
                             case JsonTokenType.StartArray:
+                                if (pendingAttrKey != null && attrsBuffer != null)
+                                {
+                                    // Array-valued attribute — same capture as the
+                                    // object case above (identical writer hole).
+                                    CaptureNonScalarAttributeValue(
+                                        ref reader, attrsBuffer, pendingAttrKey, activeNodeTitle, fileNameForLog);
+                                    if (nameStack.Count > 0) nameStack.Pop();
+                                    pendingAttrKey = null;
+                                    break;
+                                }
                                 writer.WriteStartArray();
                                 break;
 
@@ -633,6 +664,41 @@ namespace Phoenix.Controls.Architect.Core
             }
 
             return System.Text.Encoding.UTF8.GetString(output.ToArray());
+        }
+
+        /// <summary>
+        /// Buffer an object- or array-valued node attribute as compact JSON TEXT — the
+        /// stringification <see cref="NormalizeAttributesInJson"/>'s contract promises,
+        /// so the value still binds through the <c>Dictionary&lt;string,string&gt;</c>
+        /// model instead of failing the whole graph load.
+        /// <para/>
+        /// <see cref="JsonDocument.ParseValue(ref Utf8JsonReader)"/> consumes the entire
+        /// nested value and leaves <paramref name="reader"/> on its final token, so the
+        /// caller's loop resumes AFTER the sub-tree (its End tokens must not reach the
+        /// pass-through cases). Re-serialized through a scratch writer rather than
+        /// <c>GetRawText()</c> so the stored text is compact and independent of the
+        /// source file's indentation.
+        /// </summary>
+        private static void CaptureNonScalarAttributeValue(
+            ref Utf8JsonReader          reader,
+            Dictionary<string, string>  attrsBuffer,
+            string                      attrKey,
+            string?                     activeNodeTitle,
+            string                      fileNameForLog)
+        {
+            using var doc = JsonDocument.ParseValue(ref reader);
+            using var scratch = new MemoryStream();
+            using (var scratchWriter = new Utf8JsonWriter(scratch))
+            {
+                doc.RootElement.WriteTo(scratchWriter);
+            }
+
+            attrsBuffer[attrKey] = System.Text.Encoding.UTF8.GetString(scratch.ToArray());
+
+            GlobalLogger.Log(
+                $"GraphSerializer ({fileNameForLog}): non-scalar attribute value for key '{attrKey}' on node '{activeNodeTitle ?? "(unknown)"}' — stored as JSON text.",
+                "GraphSerializer",
+                LogLevel.Communication);
         }
 
         /// <summary>
@@ -901,6 +967,54 @@ namespace Phoenix.Controls.Architect.Core
                 }
             }
 
+            // Retired per-widget mutation nodes (V4 part C). Visual.SetText /
+            // Visual.SetVisible / Visual.SetProperty and Chat.Overlay.Push /
+            // Chat.Overlay.Clear were deleted outright — template, exporter
+            // descriptor, manifest entry and Hub command all gone — because
+            // compositor.js never handled a single one of their wire types
+            // (SET_TEXT, VISUAL_SET_VISIBLE, VISUAL_SET_PROPERTY, STEP/chat_push,
+            // STEP/chat_clear), so every graph using them had been silently doing
+            // nothing at runtime since they shipped.
+            //
+            // Without a migration arm the deletion is far worse than the dead node
+            // it removes: the .phxg still LOADS (the missing template is only
+            // logged), but on the next save ScriptExporter finds no handler,
+            // "Visuals" is not a pure-data category and AllowPlaceholderFallback
+            // defaults off — so Export() THROWS. The .phxg writes successfully
+            // while the .phx is never regenerated, which means Hub keeps executing
+            // the OLD compiled logic for that graph and every later edit to it,
+            // until the user finds and deletes the node by hand. Silent behaviour
+            // divergence, announced only by a status-bar line quoting internal API
+            // names.
+            //
+            // DROP, never retitle. Overlay.Publish is the successor surface but the
+            // argument shapes do not correspond — chat-overlay took
+            // WidgetID/Username/Message/Colour and the Visual.Set* trio took a
+            // compositor element id, while Overlay.Publish takes Key/Value — so a
+            // retitle would bind the old wires to the wrong pins and produce
+            // confidently wrong arguments. And because these five never did
+            // anything at runtime, dropping them removes no working behaviour.
+            //
+            // Runs BEFORE the template back-fill below so the doomed nodes never
+            // reach the "no registered template" warning, and per-graph inside the
+            // migration recursion so nested macro / process bodies are healed too.
+            // Idempotent: a graph with none of the five is left byte-identical.
+            DropRetiredVisualNodes(graph);
+
+            // Retired tool-band wrapper nodes (the 2026-08 tool-node cut). Same drop
+            // mechanics and the same export-throw reasoning as the V4 arm above —
+            // but a DIFFERENT story: these 22 nodes DID work. They wrapped OPEN
+            // tables (Counters / Quotes / the Loyalty balance + ledger / WatchTime)
+            // or state the generic surface reaches directly, so the palette now
+            // points at the generic DB.* band (incl. the new DB.Top), the signed
+            // Timer.Add, and Overlay.Get on the live-channel keys instead. The log
+            // line names that recipe because, unlike the V4 five, a dropped node
+            // here means the author must re-wire the replacement to keep the
+            // behaviour — silently losing a points credit would be worse than the
+            // node it removes, so the message is the loudest non-modal signal the
+            // repeatable-rejection rule allows.
+            DropRetiredToolNodes(graph);
+
             // Giveaway.Ticket role rework: the free-text Role badge input was
             // replaced by the IsSub/IsMod Bool pair (wire them from
             // Chat.Message's outputs). Drop the retired Role socket — a wire
@@ -1047,10 +1161,41 @@ namespace Phoenix.Controls.Architect.Core
                 // DB.FetchRow: synthesize per-column output sockets
                 // matching KnownColumns. Runs before the generic template
                 // back-fill below so the user-declared columns are present
-                // before the back-fill walks the socket list.
+                // before the back-fill walks the socket list — and the column
+                // names are captured here so the template prune further down
+                // EXEMPTS them. Without that exemption the prune deleted every
+                // synthesized socket in this same loop iteration (they are
+                // non-template Outputs by construction), which made the whole
+                // per-column-socket feature a guaranteed no-op in production:
+                // the sockets never reached the canvas and could never be wired.
+                HashSet<string>? fetchRowColumns = null;
                 if (node.Title == "DB.FetchRow")
                 {
                     NodeRegistry.EnsureFetchRowColumnSockets(node, graph);
+                    fetchRowColumns = ParseFetchRowColumnNames(node);
+                }
+
+                // User.GetGroups: dynamic per-custom-group Bool outputs — the generic
+                // template prune below would strip them (they're not in the template),
+                // so this node takes the Event.*-style bypass: refresh the Groups
+                // attribute from the cached Hub group store (best-effort), then
+                // EnsureUserGroupSockets heals the FIXED shape, synthesizes the
+                // custom sockets and owns the offsets/size; the node skips template
+                // migration entirely.
+                if (node.Title == "User.GetGroups")
+                {
+                    // Union-merge only — a stale/empty cache must never strip the
+                    // persisted groups (that would cut their wires on load).
+                    string? cachedGroupsCsv = UserGroupCatalog.CachedCsv;
+                    if (!string.IsNullOrWhiteSpace(cachedGroupsCsv))
+                    {
+                        node.Attributes["Groups"] = UserGroupCatalog.MergeCsv(
+                            node.Attributes.TryGetValue("Groups", out var existingGroupsCsv) ? existingGroupsCsv : "",
+                            cachedGroupsCsv);
+                    }
+                    UserGroupCatalog.BeginRefresh();
+                    NodeRegistry.EnsureUserGroupSockets(node, graph);
+                    continue;
                 }
 
                 // Dynamic event nodes: variable sockets are saved state, not template drift — preserve them.
@@ -1112,6 +1257,35 @@ namespace Phoenix.Controls.Architect.Core
                 // managed at macro-edit time, not via template back-fill.
                 if (node.Title == "Macro.Entry" || node.Title == "Macro.Exit") continue;
 
+                // ── Process.Entry / Process.Start / Process.Spawn ────────────────
+                // The same bypass, for the same reason, and its absence was a real
+                // data-loss bug: a process's START PARAMS did not survive a reload.
+                //
+                // Process.Entry is built by the very same CreateMacroEntryExitNode
+                // factory as Macro.Entry (NodeRegistry.CreateNode) — you declare a
+                // start param by dragging its "+ output" placeholder, and
+                // PlaceholderActivator clears IsPlaceholder on activation. That leaves a
+                // real, named, NON-template output socket… which is precisely what the
+                // prune below deletes, and the dangling-link sweep at the end of this
+                // method then deletes every wire that fed from it. The param and its
+                // plumbing were gone by the time the graph was next saved, so from the
+                // author's side the editor simply "did not save" the connection.
+                //
+                // Process.Start (and its deprecated Process.Spawn ancestor) mirror the
+                // referenced process's Entry signature as extra pins — the same
+                // relationship Macro.Call has to its macro, which is why Macro.Call is
+                // skipped just above. They must be skipped for the identical reason: the
+                // pins are rebuilt from the process DEFINITION, never from the template.
+                //
+                // ★ The two failures compound. SyncProcessSpawnNodeSockets derives
+                // Process.Start's inputs FROM Process.Entry's outputs, so once the prune
+                // has emptied Entry, that sync sees an empty signature and drops every
+                // param pin on Start plus every link touching them. Exempting only one of
+                // the two would leave the other still able to cut the wires.
+                if (node.Title == "Process.Entry"
+                 || node.Title == "Process.Start"
+                 || node.Title == "Process.Spawn") continue;
+
                 var tmpl = NodeRegistry.GetTemplate(node.Title);
                 if (tmpl == null)
                 {
@@ -1136,7 +1310,17 @@ namespace Phoenix.Controls.Architect.Core
                 var templateOutputNames = tmpl.OutputNames;
                 node.Sockets.RemoveAll(s => !s.IsPlaceholder
                     && ((s.Type == SocketType.Input  && !templateInputNames.Contains(s.Name))
-                     || (s.Type == SocketType.Output && !templateOutputNames.Contains(s.Name))));
+                     || (s.Type == SocketType.Output && !templateOutputNames.Contains(s.Name)
+                         // …except DB.FetchRow's synthesized KnownColumns outputs, which
+                         // are legitimately non-template (see the
+                         // EnsureFetchRowColumnSockets call at the top of this loop).
+                         // Pruning them here killed the feature outright, and — now that
+                         // they survive to be saved — would also cut every wire attached
+                         // to them via the dangling-link sweep at the end of this method.
+                         // A name colliding with a template INPUT is never a column socket.
+                         && !(fetchRowColumns != null
+                              && fetchRowColumns.Contains(s.Name)
+                              && !templateInputNames.Contains(s.Name)))));
 
                 // Pre-build name sets for the
                 // existing input/output sockets so the missing-socket back-fill below
@@ -1288,6 +1472,230 @@ namespace Phoenix.Controls.Architect.Core
             // rest of the session, churning CPU on every canvas paint until the next
             // legit MarkStructuralChange landing.
             graph.MarkStructuralChange();
+        }
+
+        /// <summary>
+        /// The column names a <c>DB.FetchRow</c> node's <c>KnownColumns</c> attribute
+        /// declares — i.e. the synthesized output sockets
+        /// <see cref="NodeRegistry.EnsureFetchRowColumnSockets"/> maintains. Mirrors that
+        /// method's split rules (comma-separated, entries trimmed, optional surrounding
+        /// quotes stripped); the extra filters it applies (built-in name collisions,
+        /// duplicates) can only make its socket set NARROWER, and the caller intersects
+        /// this set with the node's real sockets, so a wider parse here can never exempt
+        /// a socket that isn't actually a column socket.
+        /// </summary>
+        private static HashSet<string> ParseFetchRowColumnNames(Node node)
+        {
+            var cols = new HashSet<string>(StringComparer.Ordinal);
+            if (node.Attributes is null) return cols;
+            if (!node.Attributes.TryGetValue("KnownColumns", out var raw) || string.IsNullOrWhiteSpace(raw))
+                return cols;
+
+            foreach (var rawCol in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string col = rawCol.Trim('"');
+                if (col.Length == 0) continue;
+                cols.Add(col);
+            }
+            return cols;
+        }
+
+        /// <summary>
+        /// The five node titles V4 part C retired. Ordinal — node titles are literal
+        /// registry keys everywhere else in this file (the Process.Spawn / Twitch.ChatMessage
+        /// retitles above compare the same way), so a hand-edited "visual.settext" is a
+        /// different node, not a case variant of this one.
+        /// </summary>
+        private static readonly HashSet<string> RetiredVisualNodeTitles = new(StringComparer.Ordinal)
+        {
+            "Visual.SetText",
+            "Visual.SetVisible",
+            "Visual.SetProperty",
+            "Chat.Overlay.Push",
+            "Chat.Overlay.Clear",
+        };
+
+        /// <summary>
+        /// Removes every <see cref="RetiredVisualNodeTitles"/> node from
+        /// <paramref name="graph"/>, re-stitching each one's Flow → Done continuation so the
+        /// rest of the chain keeps exporting. See the call site in <see cref="MigrateNodes"/>
+        /// for why these are dropped rather than retitled.
+        ///
+        /// Logs ONCE per graph, at System level (not Communication): a node vanishing from
+        /// the user's canvas is something they must be able to find an explanation for, and
+        /// the alternative — say nothing — is the "why did my node disappear" report with no
+        /// answer in the log. No modal, per the repeatable-rejection rule.
+        /// </summary>
+        private static void DropRetiredVisualNodes(Graph graph)
+        {
+            // Pre-scan first: the overwhelmingly common graph contains none of the five, and
+            // this way that graph pays one pass over Nodes and allocates nothing.
+            List<Node>? doomed = null;
+            foreach (var node in graph.Nodes)
+            {
+                if (node is null) continue;
+                if (RetiredVisualNodeTitles.Contains(node.Title ?? string.Empty))
+                    (doomed ??= new List<Node>()).Add(node);
+            }
+            if (doomed is null) return;
+
+            var removed = new List<string>(doomed.Count);
+            foreach (var node in doomed)
+            {
+                // One node at a time, against the LIVE link list — that is what makes a
+                // chain of retired nodes collapse correctly. Re-stitching A→Push1→Push2→B
+                // node-by-node leaves A→Push2→B, then A→B, in either processing order,
+                // because each pass sees the previous pass's replacement link.
+                RestitchFlowAround(graph, node);
+                graph.Nodes.Remove(node);
+                removed.Add($"{node.Title} (id {node.Id})");
+            }
+
+            GlobalLogger.Log(
+                $"Graph '{graph.Name}': removed {removed.Count} retired overlay node(s) — {string.Join(", ", removed)}. " +
+                "These nodes never reached the browser (compositor.js has no handler for their messages) and were " +
+                "deleted from the node palette; their flow connections were re-joined so the rest of the graph is " +
+                "unchanged. Publish a key with Overlay.Publish and bind it widget-side (Var.Live) to drive a widget " +
+                "parameter from a script.",
+                "GraphSerializer", LogLevel.System);
+        }
+
+        /// <summary>
+        /// The 22 tool-band wrapper node titles the 2026-08 tool-node cut retired.
+        /// Ordinal, same reasoning as <see cref="RetiredVisualNodeTitles"/>. The
+        /// surviving band members (Counter.OnChanged / Quote.OnAdded / the Loyalty.On*
+        /// roots / Rank.Get / Rank.Evaluate / Rank.OnRankUp / the Timer control nodes +
+        /// GetRemaining + GetState) are deliberately absent.
+        /// </summary>
+        private static readonly HashSet<string> RetiredToolNodeTitles = new(StringComparer.Ordinal)
+        {
+            "Quote.Get", "Quote.Count", "Quote.Add", "Quote.Edit", "Quote.Delete",
+            "Counter.Get", "Counter.Set", "Counter.Add", "Counter.Reset", "Counter.Delete",
+            "Loyalty.GetBalance", "Loyalty.Top", "Loyalty.Add", "Loyalty.Deduct", "Loyalty.Set", "Loyalty.Transfer",
+            "Rank.Value", "Rank.Top",
+            "Timer.Subtract", "Timer.GetFormatted", "Timer.GetPaused", "Timer.GetProgress",
+        };
+
+        /// <summary>
+        /// Removes every <see cref="RetiredToolNodeTitles"/> node from
+        /// <paramref name="graph"/>, re-stitching each one's Flow → Done continuation
+        /// (the value nodes have no flow sockets — their data wires are simply purged).
+        /// See the call site in <see cref="MigrateNodes"/> for the story; logging
+        /// mirrors <see cref="DropRetiredVisualNodes"/> — once per graph, System level,
+        /// no modal.
+        /// </summary>
+        private static void DropRetiredToolNodes(Graph graph)
+        {
+            List<Node>? doomed = null;
+            foreach (var node in graph.Nodes)
+            {
+                if (node is null) continue;
+                if (RetiredToolNodeTitles.Contains(node.Title ?? string.Empty))
+                    (doomed ??= new List<Node>()).Add(node);
+            }
+            if (doomed is null) return;
+
+            var removed = new List<string>(doomed.Count);
+            foreach (var node in doomed)
+            {
+                RestitchFlowAround(graph, node);
+                graph.Nodes.Remove(node);
+                removed.Add($"{node.Title} (id {node.Id})");
+            }
+
+            GlobalLogger.Log(
+                $"Graph '{graph.Name}': removed {removed.Count} retired tool node(s) — {string.Join(", ", removed)}. " +
+                "The per-tool wrapper nodes were retired because their data lives in OPEN databank tables: rebuild the " +
+                "same behaviour with the generic Databank nodes (DB.FindRow / DB.GetCell / DB.SetCell / DB.Increment / " +
+                "DB.InsertRow / DB.DeleteRow, DB.Top for leaderboards), a signed Timer.Add amount for subtraction, and " +
+                "Overlay.Get on the timer.<name>.* keys for the timer readouts. Flow connections were re-joined so the " +
+                "rest of the graph is unchanged.",
+                "GraphSerializer", LogLevel.System);
+        }
+
+        /// <summary>
+        /// Bridges <paramref name="node"/>'s incoming Flow wire(s) straight to whatever its
+        /// Done output fed, then deletes every link that touched the node.
+        ///
+        /// Data inputs (WidgetID / Message / Value / …) are simply dropped — whatever fed
+        /// them stays on the canvas as an unreferenced pure-data node, which the exporter
+        /// ignores. Only the EXEC continuation is load-bearing: severing it would strand
+        /// every node downstream of the removed one, i.e. silently delete working logic,
+        /// which is the outcome this whole arm exists to avoid.
+        /// </summary>
+        private static void RestitchFlowAround(Graph graph, Node node)
+        {
+            string? flowInId  = FindFlowSocketId(node, SocketType.Input,  "Flow");
+            string? doneOutId = FindFlowSocketId(node, SocketType.Output, "Done");
+
+            // Snapshot both endpoint sets BEFORE the purge below, since the purge is what
+            // destroys the links we are reading them out of.
+            var upstream   = new List<(string NodeId, string SocketId)>();
+            var downstream = new List<(string NodeId, string SocketId)>();
+            foreach (var link in graph.Links)
+            {
+                if (link is null) continue;
+                if (flowInId != null && link.ToNodeId == node.Id && link.ToSocketId == flowInId)
+                {
+                    // A self-wire (the node's own Done looped into its own Flow) would
+                    // otherwise contribute the doomed node as a replacement endpoint.
+                    if (link.FromNodeId != node.Id) upstream.Add((link.FromNodeId, link.FromSocketId));
+                }
+                else if (doneOutId != null && link.FromNodeId == node.Id && link.FromSocketId == doneOutId)
+                {
+                    if (link.ToNodeId != node.Id) downstream.Add((link.ToNodeId, link.ToSocketId));
+                }
+            }
+
+            // Everything touching the node goes, exec and data alike. The dangling-link
+            // sweep at the end of MigrateNodes would catch these too, but doing it here
+            // keeps this arm correct on its own — and keeps the sweep from having to run
+            // before the new links are added.
+            graph.Links.RemoveAll(l => l != null && (l.FromNodeId == node.Id || l.ToNodeId == node.Id));
+
+            // A head or tail node has nothing to bridge; removing it is the whole fix.
+            if (upstream.Count == 0 || downstream.Count == 0) return;
+
+            // Cross product. In every real graph this is 1×1; the general form is what keeps
+            // a convergent Flow input (several exec outputs feeding one node — legal and
+            // common) from losing all but one of its upstreams.
+            foreach (var from in upstream)
+            {
+                foreach (var to in downstream)
+                {
+                    if (from.NodeId == to.NodeId) continue;   // would-be self-link
+                    bool exists = graph.Links.Exists(l => l != null
+                        && l.FromNodeId   == from.NodeId && l.FromSocketId == from.SocketId
+                        && l.ToNodeId     == to.NodeId   && l.ToSocketId   == to.SocketId);
+                    if (exists) continue;                     // idempotent re-stitch
+                    graph.Links.Add(new Link
+                    {
+                        FromNodeId   = from.NodeId,
+                        FromSocketId = from.SocketId,
+                        ToNodeId     = to.NodeId,
+                        ToSocketId   = to.SocketId,
+                    });
+                }
+            }
+        }
+
+        /// <summary>
+        /// The id of <paramref name="node"/>'s exec pin on one side: the template name
+        /// first (<c>Flow</c> / <c>Done</c>), then any flow pin on that side as a fallback.
+        ///
+        /// The fallback matters for the same reason the Sent→Done rename below exists — a
+        /// graph saved before a socket rename carries the continuation under another name,
+        /// and re-stitching through an unexpectedly-named exec pin is strictly better than
+        /// severing the chain. Returns null when the node has no usable pin on that side,
+        /// which the caller reads as "nothing to bridge".
+        /// </summary>
+        private static string? FindFlowSocketId(Node node, SocketType side, string templateName)
+        {
+            if (node.Sockets is null) return null;
+            var socket = node.Sockets.Find(s => s != null && s.Type == side
+                && string.Equals(s.Name, templateName, StringComparison.OrdinalIgnoreCase));
+            socket ??= node.Sockets.Find(s => s != null && s.Type == side && SocketTypeHelper.IsFlowPin(s));
+            return string.IsNullOrEmpty(socket?.Id) ? null : socket!.Id;
         }
 
         /// <summary>
@@ -1474,144 +1882,6 @@ namespace Phoenix.Controls.Architect.Core
                 throw;
             }
         }
-
-        private static readonly HashSet<string> _columnValueNodes =
-            new() { "DB.GetCell", "DB.SetCell", "DB.FindRow", "DB.InsertRow" };
-
-        public static async Task ApplyColumnTypesAsync(Graph graph)
-        {
-            // Collect unique table names from DB nodes that have resolvable literal attributes.
-            var tableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var node in graph.Nodes)
-            {
-                if (!_columnValueNodes.Contains(node.Title)) continue;
-                string table = StripQuotes(node.Attributes.GetValueOrDefault("TableName", ""));
-                if (!string.IsNullOrEmpty(table) && !table.Contains('{'))
-                    tableNames.Add(table);
-            }
-
-            // Fetch column types per table (one DB round-trip each).
-            var schemaCache = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var table in tableNames)
-            {
-                try { schemaCache[table] = await Phoenix.Controls.Shared.Services.DB.Instance.GetTableColumnTypesAsync(table).ConfigureAwait(false); }
-                catch { /* DB offline — skip */ }
-            }
-            if (schemaCache.Count == 0) return; // no resolvable table — nothing to apply
-
-            // FromSocketId / ToSocketId → links indexes, built once so each
-            // reroute hop in PropagateSocketTypeChange is a bucket lookup instead
-            // of a full graph.Links walk. Propagation only mutates socket
-            // Color/DataType — never links — so the indexes stay valid across it.
-            var linksBySourceSocket = new Dictionary<string, List<Link>>(StringComparer.Ordinal);
-            var linksByTargetSocket = new Dictionary<string, List<Link>>(StringComparer.Ordinal);
-            foreach (var link in graph.Links)
-            {
-                if (!string.IsNullOrEmpty(link.FromSocketId))
-                {
-                    if (!linksBySourceSocket.TryGetValue(link.FromSocketId, out var bySrc))
-                        linksBySourceSocket[link.FromSocketId] = bySrc = new List<Link>(2);
-                    bySrc.Add(link);
-                }
-                if (!string.IsNullOrEmpty(link.ToSocketId))
-                {
-                    if (!linksByTargetSocket.TryGetValue(link.ToSocketId, out var byDst))
-                        linksByTargetSocket[link.ToSocketId] = byDst = new List<Link>(2);
-                    byDst.Add(link);
-                }
-            }
-
-            foreach (var node in graph.Nodes)
-            {
-                if (!_columnValueNodes.Contains(node.Title)) continue;
-                string table  = StripQuotes(node.Attributes.GetValueOrDefault("TableName", ""));
-                string column = StripQuotes(node.Attributes.GetValueOrDefault("Column", ""));
-                if (string.IsNullOrEmpty(table) || string.IsNullOrEmpty(column)) continue;
-                if (table.Contains('{') || column.Contains('{')) continue;
-                if (!schemaCache.TryGetValue(table, out var colTypes)) continue;
-                if (!colTypes.TryGetValue(column, out string? sqlType)) continue;
-
-                Color valueColor = NodeRegistry.ColumnTypeToSocketColor(sqlType ?? "TEXT");
-                NodeRegistry.ApplyColumnTypeToNode(node, valueColor);
-
-                // Find the socket we just updated and propagate its type through reroutes.
-                // Both DB.GetCell and DB.SetCell expose the typed cell socket as "Value";
-                // only the direction differs (GetCell outputs it, the others consume it).
-                // (Previously `node.Title == "DB.GetCell" ? "Value" : "Value"` — a no-op
-                // ternary that masked the fact that the name is shared.)
-                const string socketName = "Value";
-                var direction = node.Title == "DB.GetCell" ? Phoenix.Controls.Shared.Models.SocketType.Output
-                                                           : Phoenix.Controls.Shared.Models.SocketType.Input;
-                var updatedSocket = node.Sockets.Find(s => s.Name == socketName && s.Type == direction);
-                if (updatedSocket != null)
-                    PropagateSocketTypeChange(graph, updatedSocket, node,
-                        linksBySourceSocket, linksByTargetSocket, new HashSet<string>());
-            }
-        }
-
-        private static void PropagateSocketTypeChange(
-            Graph graph,
-            Socket changedSocket,
-            Node ownerNode,
-            Dictionary<string, List<Link>> linksBySourceSocket,
-            Dictionary<string, List<Link>> linksByTargetSocket,
-            HashSet<string> visited)
-        {
-            if (!visited.Add(changedSocket.Id)) return;
-            if (string.IsNullOrEmpty(changedSocket.Id)) return; // load-time sweep pruned any link to an id-less socket
-
-            bool isOutput = changedSocket.Type == Phoenix.Controls.Shared.Models.SocketType.Output;
-
-            if (isOutput)
-            {
-                // Walk links where changedSocket is the source — the bucket already
-                // guarantees FromSocketId matches; only the owner check remains.
-                if (!linksBySourceSocket.TryGetValue(changedSocket.Id, out var outgoing)) return;
-                foreach (var link in outgoing)
-                {
-                    if (link.FromNodeId != ownerNode.Id) continue;
-                    var targetNode = graph.FindNodeById(link.ToNodeId);
-                    if (targetNode == null) continue;
-
-                    if (targetNode.Title == "Flow.Reroute")
-                    {
-                        foreach (var s in targetNode.Sockets)
-                        {
-                            s.Color    = changedSocket.Color;
-                            s.DataType = changedSocket.DataType;
-                        }
-                        var rerouteOut = targetNode.Sockets.Find(s => s.Type == Phoenix.Controls.Shared.Models.SocketType.Output);
-                        if (rerouteOut != null)
-                            PropagateSocketTypeChange(graph, rerouteOut, targetNode,
-                                linksBySourceSocket, linksByTargetSocket, visited);
-                    }
-                }
-            }
-            else
-            {
-                // Input socket: walk links where changedSocket is the destination and update upstream reroutes.
-                if (!linksByTargetSocket.TryGetValue(changedSocket.Id, out var incoming)) return;
-                foreach (var link in incoming)
-                {
-                    if (link.ToNodeId != ownerNode.Id) continue;
-                    var sourceNode = graph.FindNodeById(link.FromNodeId);
-                    if (sourceNode?.Title != "Flow.Reroute") continue;
-
-                    foreach (var s in sourceNode.Sockets)
-                    {
-                        s.Color    = changedSocket.Color;
-                        s.DataType = changedSocket.DataType;
-                    }
-                    var rerouteIn = sourceNode.Sockets.Find(s => s.Type == Phoenix.Controls.Shared.Models.SocketType.Input);
-                    if (rerouteIn != null)
-                        PropagateSocketTypeChange(graph, rerouteIn, sourceNode,
-                            linksBySourceSocket, linksByTargetSocket, visited);
-                }
-            }
-        }
-
-        private static string StripQuotes(string s)
-            => s.Length >= 2 && s[0] == '"' && s[^1] == '"' ? s[1..^1] : s;
 
         /// <summary>
         /// Intra-node socket-id collision repair. See the call-site

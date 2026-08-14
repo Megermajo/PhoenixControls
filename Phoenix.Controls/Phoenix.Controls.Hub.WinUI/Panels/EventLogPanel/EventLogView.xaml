@@ -5,12 +5,15 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:hdr="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
     xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.EventLogPanel"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
     HorizontalAlignment="Stretch"
     VerticalAlignment="Stretch"
     HorizontalContentAlignment="Stretch"
     VerticalContentAlignment="Stretch"
     AutomationProperties.Name="Event Log panel"
-    AutomationProperties.HelpText="Live tail of the last 250 rows from the SQLite EventLog table (external triggers + audit events). Polls at 2 Hz; newest entries on top.">
+    AutomationProperties.HelpText="Live tail of the last 250 rows from the SQLite EventLog table (external triggers + audit events). Polls at 2 Hz; newest entries on top."
+    loc:Localize.AutomationKey="panel.eventlog.aria.name"
+    loc:Localize.HelpTextKey="panel.eventlog.aria.help">
 
     <UserControl.Resources>
         <!-- Dense per-row template — strip the default Fluent ListViewItem padding
@@ -53,6 +56,7 @@
                                  Padding="6,1"
                                  VerticalAlignment="Center"
                                  PlaceholderText="search…"
+                                 loc:Localize.PlaceholderKey="panel.eventlog.search.placeholder"
                                  TextChanged="OnSearchTextChanged" />
                         <Button x:Name="PopOutButton"
                                 Background="Transparent"
@@ -68,7 +72,8 @@
                                 <TextBlock Text="pop-out"
                                            FontFamily="{StaticResource SansFont}"
                                            FontSize="11"
-                                           VerticalAlignment="Center" />
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.common.button.popout" />
                             </StackPanel>
                         </Button>
                     </StackPanel>
@@ -88,7 +93,8 @@
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                       ScrollViewer.VerticalScrollBarVisibility="Visible"
                       AutomationProperties.LiveSetting="Polite"
-                      AutomationProperties.Name="Event log entries">
+                      AutomationProperties.Name="Event log entries"
+                      loc:Localize.AutomationKey="panel.eventlog.list.a11y">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:EventLogRowVm">
                         <Border Padding="14,2,14,2"

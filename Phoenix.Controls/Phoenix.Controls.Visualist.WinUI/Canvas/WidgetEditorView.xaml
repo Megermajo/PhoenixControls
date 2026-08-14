@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:canvas="using:Phoenix.Controls.Visualist.WinUI.Canvas"
     xmlns:controls="using:Phoenix.Controls.Visualist.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Visualist.WinUI.Localization"
     IsTabStop="True"
     UseSystemFocusVisuals="False"><!-- R28 — focusable so a selected keyframe can be removed with Delete. -->
 
@@ -31,7 +32,7 @@
         <Border
             Grid.Row="0"
             Background="{StaticResource CoalRaisedBrush}"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="0,0,0,1"
             Padding="8,5">
             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
@@ -39,14 +40,16 @@
                     x:Name="TestRunButton"
                     Click="OnTestRunClicked"
                     ToolTipService.ToolTip="Run this trigger on the live OBS source (Hub bus)"
+                    loc:Localize.TooltipKey="visualist.widget.toolbar.test_run.tip"
                     Padding="12,4"
-                    Background="#FF3C5A3C"
+                    Background="{StaticResource OkBrush}"
                     BorderBrush="{StaticResource CoalCardBrush}"
                     BorderThickness="1"
                     Foreground="{StaticResource CoalPaperBrush}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Text="&#x25B6;" FontSize="11" VerticalAlignment="Center" />
-                        <TextBlock Text="Test Run" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="Test Run" FontSize="12" VerticalAlignment="Center"
+                                   loc:Localize.Key="visualist.widget.toolbar.test_run.label" />
                     </StackPanel>
                 </Button>
 
@@ -56,56 +59,65 @@
                     Width="9" Height="9"
                     VerticalAlignment="Center"
                     Fill="{StaticResource ErrBrush}"
-                    ToolTipService.ToolTip="Hub bus offline" />
+                    ToolTipService.ToolTip="Hub bus offline"
+                    loc:Localize.TooltipKey="visualist.widget.toolbar.bus.offline.tip" />
 
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
 
                 <Button
                     x:Name="PreviewLayerButton"
                     Click="OnPreviewLayerClicked"
                     ToolTipService.ToolTip="Open a popout preview of the whole layer"
+                    loc:Localize.TooltipKey="visualist.widget.toolbar.preview_layer.tip"
                     Padding="10,4"
                     Background="{StaticResource CoalCardBrush}"
                     BorderThickness="0"
                     Foreground="{StaticResource CoalBodyTextBrush}"
-                    Content="Preview Layer" />
+                    Content="Preview Layer"
+                    loc:Localize.Key="visualist.widget.toolbar.preview_layer" />
 
                 <Button
                     x:Name="PreviewWidgetButton"
                     Click="OnPreviewWidgetClicked"
                     ToolTipService.ToolTip="Open a popout preview of just this widget"
+                    loc:Localize.TooltipKey="visualist.widget.toolbar.preview_widget.tip"
                     Padding="10,4"
                     Background="{StaticResource CoalCardBrush}"
                     BorderThickness="0"
                     Foreground="{StaticResource CoalBodyTextBrush}"
-                    Content="Preview Widget" />
+                    Content="Preview Widget"
+                    loc:Localize.Key="visualist.widget.toolbar.preview_widget" />
 
                 <!-- R16 — show/hide the docked media library rail. -->
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
                 <ToggleButton
                     x:Name="MediaToggle"
                     IsChecked="True"
                     Click="OnMediaToggleClick"
                     Content="Media"
+                    loc:Localize.Key="visualist.widget.toolbar.media"
                     Padding="10,4" MinWidth="0"
-                    ToolTipService.ToolTip="Show / hide the media library" />
+                    ToolTipService.ToolTip="Show / hide the media library"
+                    loc:Localize.TooltipKey="visualist.widget.toolbar.media.tip" />
 
                 <!-- Track E — per-trigger simple volume mixer. A small toolbar
                      button opens a Flyout with a Master fader (WidgetTrigger.Volume)
                      plus one fader per Audio.Play node in the active trigger. Rows
                      are rebuilt in code-behind on Opening so the mixer always
                      reflects the live active trigger. -->
-                <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
                 <Button
                     x:Name="AudioMixerButton"
                     Padding="10,4" MinWidth="0"
                     Background="{StaticResource CoalCardBrush}"
                     BorderThickness="0"
                     Foreground="{StaticResource CoalBodyTextBrush}"
-                    ToolTipService.ToolTip="Audio mixer — master + per-source volume for this trigger">
+                    ToolTipService.ToolTip="Audio mixer — master + per-source volume for this trigger"
+                    loc:Localize.TooltipKey="visualist.widget.toolbar.audio.tip">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Text="&#x1F509;" FontSize="12" VerticalAlignment="Center" />
-                        <TextBlock Text="Audio" FontSize="12" VerticalAlignment="Center" />
+                        <FontIcon Glyph="&#xE767;" FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="Audio" FontSize="12" VerticalAlignment="Center"
+                                   loc:Localize.Key="visualist.widget.toolbar.audio" />
                     </StackPanel>
                     <Button.Flyout>
                         <Flyout x:Name="AudioMixerFlyout" Placement="Bottom">
@@ -120,7 +132,7 @@
         <Border
             Grid.Row="1"
             Background="{StaticResource CoalRaisedBrush}"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="0,0,0,1"
             Padding="10,0,0,0">
             <!-- Canvas overlay sibling hosts the drag insertion marker (Area 1 P2)
@@ -170,28 +182,61 @@
                     <TextBlock Text="No widget selected"
                                HorizontalAlignment="Center"
                                FontSize="15"
-                               Foreground="{StaticResource CoalBodyTextBrush}" />
+                               Foreground="{StaticResource CoalBodyTextBrush}"
+                               loc:Localize.Key="visualist.widget.empty.title" />
                     <TextBlock Text="Double-click a widget on the Layer Canvas to edit its trigger graphs, or pick one from the Widgets list."
                                HorizontalAlignment="Center"
                                TextAlignment="Center"
                                TextWrapping="Wrap"
                                FontSize="12"
-                               Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               loc:Localize.Key="visualist.widget.empty.body" />
                     <Button x:Name="EmptyStateBackButton"
                             Content="&#x2190; Back to Layer Canvas"
+                            loc:Localize.Key="visualist.widget.empty.back"
                             HorizontalAlignment="Center"
                             Click="OnEmptyStateBackClicked" />
                 </StackPanel>
             </Grid>
         </Grid>
 
-        <!-- Timeline strip -->
-        <Border
-            Grid.Row="3"
-            Padding="12,8"
-            Background="{StaticResource CoalSurfaceBrush}"
-            BorderBrush="{StaticResource CoalCardBrush}"
-            BorderThickness="0,1,0,0">
+        <!-- Timeline strip. Wrapped in a Grid so a thin N/S resize handle can
+             sit on the TOP edge (the graph|timeline boundary) — drag it to make
+             the timeline track area taller / shorter (Change 2). The two rows
+             are both Auto, so the timeline body's height (driven from the
+             TimelineSurface Height in code) grows the whole Row-3 region. -->
+        <Grid Grid.Row="3">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" /> <!-- N/S resize handle -->
+                <RowDefinition Height="Auto" /> <!-- timeline body -->
+            </Grid.RowDefinitions>
+
+            <!-- Hand-rolled N/S resize handle. WinUI 3 ships no GridSplitter; the
+                 button-held guard + capture-lost teardown live in the
+                 OnTimelineResize* handlers, mirroring MainView's rail splitters.
+                 Background="Transparent" so the whole 6px strip is hit-testable
+                 (a null-Background panel is not). -->
+            <Border x:Name="TimelineResizeHandle"
+                    Grid.Row="0"
+                    Height="6"
+                    Background="Transparent"
+                    PointerEntered="OnTimelineResizeEntered"
+                    PointerExited="OnTimelineResizeExited"
+                    PointerPressed="OnTimelineResizePressed"
+                    PointerMoved="OnTimelineResizeMoved"
+                    PointerReleased="OnTimelineResizeReleased"
+                    PointerCaptureLost="OnTimelineResizeCaptureLost">
+                <Border Height="2" Width="46" CornerRadius="1"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{StaticResource CoalDividerBrush}" />
+            </Border>
+
+            <Border
+                Grid.Row="1"
+                Padding="12,8"
+                Background="{StaticResource CoalSurfaceBrush}"
+                BorderBrush="{StaticResource CoalDividerBrush}"
+                BorderThickness="0,1,0,0">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -211,18 +256,21 @@
                     <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                         <Button x:Name="PlayPauseButton" Click="OnPlayPauseClicked"
                                 ToolTipService.ToolTip="Play / Pause"
+                                loc:Localize.TooltipKey="visualist.widget.transport.play_pause.tip"
                                 Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
                                 Foreground="{StaticResource CoalPaperBrush}">
                             <TextBlock x:Name="PlayPauseGlyph" Text="&#x25B6;" FontSize="11" />
                         </Button>
                         <Button x:Name="StopButton" Click="OnStopClicked"
                                 ToolTipService.ToolTip="Stop (reset to 0)"
+                                loc:Localize.TooltipKey="visualist.widget.transport.stop.tip"
                                 Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
                                 Foreground="{StaticResource CoalPaperBrush}">
                             <TextBlock Text="&#x25A0;" FontSize="10" />
                         </Button>
                         <ToggleButton x:Name="LoopToggle" Click="OnLoopToggled"
                                 ToolTipService.ToolTip="Loop playback"
+                                loc:Localize.TooltipKey="visualist.widget.transport.loop.tip"
                                 Padding="6,2" MinWidth="0">
                             <TextBlock Text="&#x21BB;" FontSize="12" />
                         </ToggleButton>
@@ -231,15 +279,17 @@
                              to the previous / next keyframe time across the whole
                              timeline (shares the keyframe-time scan with the
                              per-pill ◀▶ seek). -->
-                        <Border Width="1" Margin="4,2" Background="{StaticResource CoalCardBrush}" />
+                        <Border Width="1" Margin="4,2" Background="{StaticResource CoalDividerBrush}" />
                         <Button x:Name="PrevKeyButton" Click="OnPrevKeyframeClicked"
                                 ToolTipService.ToolTip="Previous keyframe"
+                                loc:Localize.TooltipKey="visualist.widget.transport.prev_key.tip"
                                 Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
                                 Foreground="{StaticResource CoalPaperBrush}">
                             <TextBlock Text="|&#x25C0;" FontSize="10" />
                         </Button>
                         <Button x:Name="NextKeyButton" Click="OnNextKeyframeClicked"
                                 ToolTipService.ToolTip="Next keyframe"
+                                loc:Localize.TooltipKey="visualist.widget.transport.next_key.tip"
                                 Padding="6,2" Background="{StaticResource CoalCardBrush}" BorderThickness="0"
                                 Foreground="{StaticResource CoalPaperBrush}">
                             <TextBlock Text="&#x25B6;|" FontSize="10" />
@@ -253,22 +303,26 @@
                              Fit sizes it to the last keyframe + a 200ms tail.
                              Restores the pre-WinUI TimelinePanel _numDuration /
                              _btnFitDuration controls. -->
-                        <Border Width="1" Margin="6,2" Background="{StaticResource CoalCardBrush}" />
+                        <Border Width="1" Margin="6,2" Background="{StaticResource CoalDividerBrush}" />
                         <TextBlock Text="Dur" VerticalAlignment="Center" FontSize="10"
-                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   loc:Localize.Key="visualist.widget.timeline.duration.label" />
                         <NumberBox x:Name="DurationBox"
                                    ValueChanged="OnDurationChanged"
                                    Minimum="0" Maximum="600000"
                                    SmallChange="100" LargeChange="1000"
                                    SpinButtonPlacementMode="Compact"
                                    MinWidth="96" VerticalAlignment="Center"
-                                   ToolTipService.ToolTip="Trigger duration (ms)" />
+                                   ToolTipService.ToolTip="Trigger duration (ms)"
+                                   loc:Localize.TooltipKey="visualist.widget.timeline.duration.tip" />
                         <Button x:Name="FitButton" Click="OnFitDurationClicked"
                                 Content="Fit" Padding="8,2"
+                                loc:Localize.Key="visualist.widget.timeline.fit"
                                 Background="{StaticResource CoalCardBrush}" BorderThickness="0"
                                 Foreground="{StaticResource CoalPaperBrush}"
                                 VerticalAlignment="Center"
-                                ToolTipService.ToolTip="Fit duration to the last keyframe (+200ms)" />
+                                ToolTipService.ToolTip="Fit duration to the last keyframe (+200ms)"
+                                loc:Localize.TooltipKey="visualist.widget.timeline.fit.tip" />
                     </StackPanel>
 
                     <TextBlock
@@ -286,7 +340,7 @@
                         Padding="6,1"
                         CornerRadius="3"
                         BorderThickness="1"
-                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderBrush="{StaticResource CoalDividerBrush}"
                         Background="{StaticResource CoalRaisedBrush}"
                         VerticalAlignment="Center"
                         Visibility="Collapsed">
@@ -302,7 +356,7 @@
                 <Border
                     Grid.Row="1"
                     Background="{StaticResource CoalShellBrush}"
-                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderBrush="{StaticResource CoalDividerBrush}"
                     BorderThickness="1"
                     CornerRadius="6">
                     <!-- R4 — Background="Transparent" so the scrub/zoom pointer
@@ -317,15 +371,25 @@
                     <Grid x:Name="TimelineSurface" Background="Transparent" SizeChanged="OnTimelineSizeChanged" />
                 </Border>
             </Grid>
-        </Border>
+            </Border>
+        </Grid>
 
         <!-- ── Status bar (Area 5 P2) ─────────────────────────────────────
-             Bottom strip carrying transient feedback from canvas / VM status
-             events; auto-clears to "Ready" after ~5s. -->
+             T11-9 — COLLAPSED to remove the double status strip in Widget-Editor
+             mode. This editor is hosted inside MainView's centre column, whose own
+             persistent 3-zone strip (Saved/Modified · filename · widget-count) sits
+             directly below, so both rendered as two stacked bars. MainView's strip
+             is the single canonical status surface; the transient feedback that used
+             to paint here (Test Run / keyframe / fit / errors) is now routed into it
+             via WidgetEditorView.ExternalStatusSink, so nothing is lost. StatusLabel
+             is kept (not deleted) so SetStatus + its auto-clear timer stay intact and
+             this strip can be re-enabled by flipping Visibility if the host chrome
+             ever changes. -->
         <Border
             Grid.Row="4"
+            Visibility="Collapsed"
             Background="{StaticResource CoalSurfaceBrush}"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="0,1,0,0"
             Padding="10,3">
             <TextBlock
@@ -343,7 +407,7 @@
             Grid.Column="1"
             Grid.Row="0"
             Grid.RowSpan="5"
-            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderBrush="{StaticResource CoalDividerBrush}"
             BorderThickness="1,0,0,0" />
     </Grid>
 </UserControl>

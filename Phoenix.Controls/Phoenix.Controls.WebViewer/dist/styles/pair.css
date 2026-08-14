@@ -139,5 +139,4 @@
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
 }
-.pair-foot .countdown { color: var(--ember-200); }
 .pair-foot .err { color: var(--err); }

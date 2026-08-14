@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Tool control re-skin (T11-3) — house-grammar (ember / coal) styling for the
+    stock Fluent controls the config tools use. It was written for the five that
+    are built entirely from stock Fluent (Automod / Counters / Quotes / Custom
+    Commands / Loyalty): those reach for real <ToggleSwitch>, <CheckBox>,
+    <ComboBox>, <TextBox>, <Pivot> and <Expander>, so without this dictionary they
+    render in the viewer's OS accent colour + Segoe UI — off-palette next to the
+    ember/coal house tools.
+
+    The hand-rolled Giveaway / Timer pages paint their own chrome and were
+    originally outside that set. Timer has since grown two stock <ComboBox>es and
+    Script one stock <CheckBox>, so both now merge this dictionary as well —
+    checked type by type first, because a page that paints its own chrome must not
+    have it restyled out from under it. Giveaway still needs nothing from here.
+
+    SCOPING (critical): this dictionary is merged into EACH consuming view's
+    <UserControl.Resources> — subtree-scoped, NOT app-wide. Hub.WinUI hosts the
+    embedded Architect + Visualist pillar views in the same process; an app-wide
+    implicit style would restyle their controls too (forbidden by the per-pillar
+    chrome-independence rule). Merging per-view keeps the re-skin inside the
+    consuming subtrees only.
+
+    APPROACH: each implicit Style is `BasedOn` the framework Default<Type>Style so
+    the control keeps its full template + behaviour; we only add a SansFont base
+    and (for ToggleSwitch content) a coal foreground. All colour work is done by
+    overriding the WinUI lightweight-styling theme-resource brush keys to
+    Ember/Coal tokens (verified against WindowsAppSDK 1.5 generic.xaml) — no
+    ControlTemplate is rewritten. The app is theme-locked to Dark (App.xaml
+    RequestedTheme="Dark"), so plain-resource overrides are sufficient and win
+    over the framework's ThemeDictionaries entries at this nearer scope.
+
+    COLOUR SOURCING: the framework keys we override are typed
+    <SolidColorBrush x:Key="…" Color="…"/>, so each override has to declare its
+    own brush and therefore needs a *Color* — a {StaticResource …Brush} would be
+    the wrong type. Every one of those Colors is pulled from the Ember/Coal
+    <Color> token block in PhoenixDark.xaml (merged app-wide), which carries the
+    same values as the corresponding *Brush tokens. No hardcoded hex lives in
+    this file, so a palette edit in PhoenixDark.xaml reaches these controls the
+    same way it reaches the hand-rolled tool pages. StaticResource resolves at
+    parse time against the merge chain (this dict → the tool view → app
+    resources), which is the same path {StaticResource SansFont} below already
+    takes; a mistyped key is therefore a hard XAML parse failure when the tool
+    view is realized, not a build error.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ══════════════════════════════ ToggleSwitch ══════════════════════════════
+         ON track = ember, OFF track = coal, knob light-on-ember / grey-off. -->
+    <SolidColorBrush x:Key="ToggleSwitchFillOn"            Color="{StaticResource EmberShadowColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchFillOnPressed"     Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOn"            Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed"     Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOn"            Color="{StaticResource CoalPaperColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="{StaticResource CoalPaperColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed"     Color="{StaticResource CoalPaperColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOff"            Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchStrokeOffPointerOver" Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOff"            Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOffPointerOver" Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchContentForeground"            Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchContentForegroundPointerOver" Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchContentForegroundPressed"     Color="{StaticResource CoalBodyTextColor}" />
+
+    <!-- ══════════════════════════════ CheckBox ══════════════════════════════
+         Checked box = ember, glyph coal-shell (reads dark on ember). Unchecked
+         stroke = coal-divider. Indeterminate glyph = ember (bound bool? rows). -->
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillChecked"            Color="{StaticResource EmberShadowColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver" Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPressed"     Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeChecked"            Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed"     Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked"            Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed"     Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked"            Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver" Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed"     Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminate"            Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePointerOver" Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminate"            Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminatePointerOver" Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminatePressed"     Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundUnchecked"            Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundUncheckedPointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundUncheckedPressed"     Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundChecked"            Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundCheckedPointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundCheckedPressed"     Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundIndeterminate"            Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="CheckBoxForegroundIndeterminatePointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+
+    <!-- ══════════════════════════════ ComboBox ══════════════════════════════
+         Coal surface + coal border, ember border on focus; dropdown coal. -->
+    <SolidColorBrush x:Key="ComboBoxBackground"            Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="{StaticResource CoalHoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundPressed"     Color="{StaticResource CoalRaisedColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundFocused"     Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundUnfocused"   Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrush"            Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPressed"     Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushFocused"   Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="ComboBoxBackgroundBorderBrushUnfocused" Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ComboBoxForeground"            Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxForegroundPressed"     Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxForegroundFocused"     Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownBackground"  Color="{StaticResource CoalRaisedColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownForeground"  Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver"         Color="{StaticResource CoalHoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundPressed"             Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected"            Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="{StaticResource CoalHoverColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed"     Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForeground"                    Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver"         Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelected"            Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+
+    <!-- ══════════════════════════════ TextBox (TextControl) ══════════════════════
+         Coal-shell field, coal-divider border, ember focus underline, ember
+         selection highlight, coal placeholder. -->
+    <SolidColorBrush x:Key="TextControlBackground"            Color="{StaticResource CoalShellColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="{StaticResource CoalRaisedColor}" />
+    <SolidColorBrush x:Key="TextControlBackgroundFocused"     Color="{StaticResource CoalSurfaceColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrush"            Color="{StaticResource CoalDividerColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlBorderBrushFocused"     Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="TextControlForeground"            Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlForegroundFocused"     Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForeground"            Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused"     Color="{StaticResource CoalMutedTextColor}" />
+    <SolidColorBrush x:Key="TextControlSelectionHighlightColor" Color="{StaticResource EmberShadowColor}" />
+    <SolidColorBrush x:Key="TextControlButtonForeground"            Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="TextControlButtonBackgroundPointerOver" Color="{StaticResource CoalHoverColor}" />
+    <SolidColorBrush x:Key="TextControlButtonForegroundPointerOver" Color="{StaticResource CoalPrimaryTextColor}" />
+
+    <!-- ══════════════════════════════ Pivot ══════════════════════════════
+         Unselected tab = coal-secondary text; selected = ember text + ember
+         selection pipe (underline). -->
+    <SolidColorBrush x:Key="PivotHeaderItemForegroundUnselected"            Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemForegroundUnselectedPointerOver" Color="{StaticResource CoalBodyTextColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemForegroundUnselectedPressed"     Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemForegroundSelected"            Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemForegroundSelectedPointerOver" Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemForegroundSelectedPressed"     Color="{StaticResource EmberDeepColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemBackgroundUnselectedPointerOver" Color="{StaticResource CoalHoverColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemBackgroundSelectedPointerOver"   Color="{StaticResource CoalHoverColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemSelectedPipeFill" Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="PivotHeaderItemFocusPipeFill"    Color="{StaticResource EmberDeepColor}" />
+
+    <!-- Tab-word typography. The word is painted by PivotHeaderItem, and
+         DefaultPivotHeaderItemStyle hard-sets FontFamily / FontSize / FontWeight /
+         CharacterSpacing from these four keys (WinAppSDK 1.5 generic.xaml). A Style
+         setter on the container beats an inherited value, so the FontFamily setter
+         on the Pivot style below can never reach them — left alone every tab word
+         renders at the framework default of 24px SemiLight XamlAutoFontFamily, in
+         neither of the type scales the tool pages use. Overriding the keys is the
+         same lightweight-styling technique the brushes above use, and it is why
+         this is NOT a `BasedOn` implicit PivotHeaderItem Style — see the Expander
+         note at the bottom of this file.
+
+         The values are the suite's tab typography, taken from the hand-rolled tool
+         tab strip (HubChrome's pillar tab strip — DisplayFont / 14 / CS 80),
+         so a Pivot sub-tab reads as the same kind of thing as the tool tab above
+         it. Unlike the Color overrides, the FontFamily one has to be a literal: the
+         framework key is FontFamily-typed while the house token is an x:String font
+         URI, so {StaticResource DisplayFont} would be the wrong type here. It is a
+         copy of PhoenixDark.xaml's DisplayFont — a font swap there must be mirrored
+         here. -->
+    <FontFamily x:Key="PivotHeaderItemFontFamily">ms-appx:///Assets/Fonts/CormorantGaramond-Regular.ttf#Cormorant Garamond, Cormorant Garamond, Trajan Pro, Cinzel, Georgia, serif</FontFamily>
+    <x:Double x:Key="PivotHeaderItemFontSize">14</x:Double>
+    <FontWeight x:Key="PivotHeaderItemThemeFontWeight">Normal</FontWeight>
+    <x:Int32 x:Key="PivotHeaderItemCharacterSpacing">80</x:Int32>
+
+    <!-- ══════════════════════════════ Expander ══════════════════════════════
+         Coal card header + coal-surface content, coal-subtle borders, ember
+         chevron on hover. -->
+    <SolidColorBrush x:Key="ExpanderHeaderBackground"      Color="{StaticResource CoalCardColor}" />
+    <SolidColorBrush x:Key="ExpanderDropDownBackground"    Color="{StaticResource CoalCardColor}" />
+    <SolidColorBrush x:Key="ExpanderHeaderForeground"      Color="{StaticResource CoalPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ExpanderContentBackground"     Color="{StaticResource CoalSurfaceColor}" />
+    <SolidColorBrush x:Key="ExpanderContentBorderBrush"    Color="{StaticResource CoalDividerSubtleColor}" />
+    <SolidColorBrush x:Key="ExpanderHeaderBorderBrush"     Color="{StaticResource CoalDividerSubtleColor}" />
+    <SolidColorBrush x:Key="ExpanderBorderBrush"           Color="{StaticResource CoalDividerSubtleColor}" />
+    <SolidColorBrush x:Key="ExpanderDropDownBorderBrush"   Color="{StaticResource CoalDividerSubtleColor}" />
+    <SolidColorBrush x:Key="ExpanderChevronForeground"            Color="{StaticResource CoalSecondaryTextColor}" />
+    <SolidColorBrush x:Key="ExpanderChevronPointerOverForeground" Color="{StaticResource EmberPrimaryColor}" />
+    <SolidColorBrush x:Key="ExpanderChevronPressedForeground"     Color="{StaticResource EmberDeepColor}" />
+
+    <!-- ══════════════════════════════ Implicit styles ══════════════════════════════
+         BasedOn the framework Default<Type>Style so the full template + visual
+         states survive; we only add a SansFont base (and coal content foreground
+         where the control renders its own text). All colour is carried by the
+         theme-resource overrides above. -->
+    <Style TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    </Style>
+
+    <Style TargetType="CheckBox" BasedOn="{StaticResource DefaultCheckBoxStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    </Style>
+
+    <Style TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    </Style>
+
+    <Style TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    </Style>
+
+    <Style TargetType="Pivot" BasedOn="{StaticResource DefaultPivotStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    </Style>
+
+    <Style TargetType="PivotItem" BasedOn="{StaticResource DefaultPivotItemStyle}">
+        <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    </Style>
+
+    <!-- No implicit Expander style. The lone Expander consumer (Loyalty
+         Minigames/Rewards) hard-crashed on first tab realization — the only
+         element unique to that tab was the Expander + this BasedOn implicit
+         style materializing lazily right there (every other candidate was
+         ruled out at the generated-binding level). The tabs now use the
+         hand-rolled collapsible-card pattern (house grammar, like Giveaway /
+         Timer), so no Expander exists in the tool subtrees; the Expander*
+         brush overrides above stay for any future lightweight-styled use. -->
+
+</ResourceDictionary>

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Phoenix.Controls.Hub.WinUI.Panels.Common;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 
@@ -127,10 +128,10 @@ public sealed class ChatViewModel : ObservableObject, IDisposable
     public string ConnectionHintText => _streamerBotState switch
     {
         ConnectionState.Connected    => string.Empty,
-        ConnectionState.Connecting   => "reconnecting…",
-        ConnectionState.Degraded     => "reconnecting…",
-        ConnectionState.Errored      => "Streamer.bot disconnected",
-        ConnectionState.Disconnected => "Streamer.bot disconnected",
+        ConnectionState.Connecting   => Localizer.T("panel.chat.hint.reconnecting", "reconnecting…"),
+        ConnectionState.Degraded     => Localizer.T("panel.chat.hint.reconnecting", "reconnecting…"),
+        ConnectionState.Errored      => Localizer.T("panel.chat.hint.disconnected", "Streamer.bot disconnected"),
+        ConnectionState.Disconnected => Localizer.T("panel.chat.hint.disconnected", "Streamer.bot disconnected"),
         _                            => string.Empty,
     };
 

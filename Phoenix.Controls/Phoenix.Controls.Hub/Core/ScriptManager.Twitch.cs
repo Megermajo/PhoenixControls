@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Phoenix.Controls.Shared.Core;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 
@@ -70,12 +71,30 @@ namespace Phoenix.Controls.Hub.Core
             // Data actions — unlike the fire-and-forget actions above, these write
             // their result into shared phx_* globals that Hub reads back via the
             // DoAction → poll GetGlobals(persisted:false) round-trip (see
-            // FetchActionGlobalsAsync). Get User is reused by check_role and
-            // get_stream (it carries the channel's mod/sub/vip flags + last
+            // FetchActionGlobalsAsync). Get User is reused by check_role and by
+            // get_stream / is_online as their FALLBACK once Get Stream Status
+            // can't answer (it carries the channel's mod/sub/vip flags + last
             // game/title). CreateClip (above) is also a data action — its C#
             // sub-action writes phx_clip_url / phx_clip_ok.
             public const string GetUser           = "Phoenix: Get User";
             public const string GetFollowAge      = "Phoenix: Get Follow Age";
+
+            // Get Stream Status — a custom C# (Execute-Code) data action that asks
+            // Twitch's Helix /streams endpoint directly using Streamer.bot's OWN
+            // credentials (CPH.TwitchOAuthToken + CPH.TwitchClientId). It exists
+            // because Streamer.bot exposes no stream-liveness surface at all: no CPH
+            // stream-info method, and no WS request that returns live state
+            // (GetBroadcaster / GetInfo / GetActiveViewers are identity and
+            // chat-tracking only). Args: `user` (login to ask about; blank falls back
+            // to SB's connected broadcaster) + `req`.
+            //
+            // Writes phx_stream_known / _live / _login / _viewers / _started /
+            // _title / _game / _err, then phx_req LAST like every other data action.
+            // phx_stream_known == "1" is the ONLY thing that makes the rest
+            // trustworthy — "we could not ask" (no credentials, HTTP failure) and
+            // "the channel is offline" must never collapse into the same answer, or
+            // a failed call would switch the live-gated tools off mid-stream.
+            public const string GetStreamStatus   = "Phoenix: Get Stream Status";
 
             // OBS control — same model: the obs.* nodes dispatch these against an
             // SB action wrapping SB's native OBS sub-action (which talks to OBS over
@@ -137,6 +156,10 @@ namespace Phoenix.Controls.Hub.Core
             //   • Still absent by design: nothing on the Twitch side — every Twitch
             //     action now has a real path. (YouTube.GetUser + Kick reward mgmt
             //     remain absent from YouTubeAll/KickAll — no SB path even via C#.)
+            //   • 2026-08-09: GetStreamStatus joined the list. A name is only safe
+            //     to add here once the exported pack actually SHIPS it — otherwise
+            //     every correct install logs a permanent false "missing action".
+            //     Verified present in PhoenixActionPack.sb (57 actions).
             // (OBS Source Position/Scale/Rotation stay listed: their nodes are
             //  VISIBLE and use the Streamer.bot relay as a fallback to Hub's direct
             //  OBS-WebSocket path.)
@@ -148,7 +171,7 @@ namespace Phoenix.Controls.Hub.Core
                 EndPoll, CreatePoll, CreatePrediction, ResolvePrediction,
                 DeleteMessage, Whisper, SubOnlyMode,
                 UpdateRewardCost, SetRewardEnabled, FulfillRedemption, RejectRedemption,
-                GetUser, GetFollowAge,
+                GetUser, GetFollowAge, GetStreamStatus,
                 ObsSetScene, ObsSourceVisible, ObsRefreshBrowser, ObsStartRecording,
                 ObsStopRecording, ObsStartStreaming, ObsStopStreaming, ObsSaveReplay,
                 ObsSourcePosition, ObsSourceScale, ObsSourceRotation, ObsFilterVisible,
@@ -195,20 +218,74 @@ namespace Phoenix.Controls.Hub.Core
         private readonly ConcurrentDictionary<string, byte> _missingSbActionWarned =
             new(StringComparer.Ordinal);
 
+        /// <summary>
+        /// Whether a Phoenix action-pack wrapper action is CONFIRMED present on the
+        /// connected Streamer.bot. This is the capability gate a feature consults BEFORE
+        /// committing to a platform round trip it cannot finish.
+        ///
+        /// Deliberately conservative, and that is the difference between it and
+        /// <see cref="DispatchNamedAction"/>. Dispatch is optimistic on purpose — it sends
+        /// anyway, because the probe can lag an action the user just added and an unknown
+        /// name is a harmless Streamer.bot no-op. A gate cannot be optimistic: a caller
+        /// asking "can I do this?" is deciding whether to START something (open a native
+        /// prediction it must later resolve), so an UNCONFIRMED capability has to read
+        /// false. Hence both an unanswered probe (<c>_knownSbActions == null</c>) and a
+        /// disconnected socket are "no".
+        /// </summary>
+        internal bool SbActionAvailable(string actionName)
+        {
+            if (string.IsNullOrEmpty(actionName)) return false;
+            if (!WS.Instance.IsConnected) return false;
+            var known = _knownSbActions;
+            return known is not null && known.Contains(actionName);
+        }
+
+        // Non-zero while a connect-probe is running, i.e. between the SB connect
+        // event and GetActions answering (or giving up). Two readers depend on it:
+        // the probe kicks the connect-time reconcile itself, and the periodic
+        // reconcile tick skips while it is set so the two can't both burn a
+        // data-fetch on the same connect. Released in the probe's finally — NOT
+        // on _knownSbActions being populated — so a GetActions that never answers
+        // still releases the timer path instead of muting it for the session.
+        //
+        // A COUNT, not a flag: a flapping socket can start a second probe before
+        // the first returns, and a plain flag would then be cleared by whichever
+        // finished first while the other was still mid-round-trip.
+        private int _actionProbesInFlight;
+
         // Subscribe the action-pack probe to SB (re)connects. Called once from the
         // singleton ctor (process-lifetime → no handler leak); also fires
         // immediately if SB is already connected when ScriptManager initialises.
+        //
+        // The handler is never unsubscribed (the subscription outlives BeginStop),
+        // so it gates on _stopped: a Streamer.bot reconnect landing after teardown
+        // must not re-probe and must not kick a reconcile from a dead manager.
         private void HookStreamerBotActionProbe()
         {
             WS.Instance.OnConnectionStatusChanged += connected =>
             {
-                if (connected)
-                    _ = AsyncErrorBoundary.SafeRunAsync(
-                        ProbeStreamerBotActionsAsync, "ScriptManager", "ProbeStreamerBotActions");
-            };
-            if (WS.Instance.IsConnected)
+                if (!connected) return;
+                if (Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+                Interlocked.Increment(ref _actionProbesInFlight);
                 _ = AsyncErrorBoundary.SafeRunAsync(
                     ProbeStreamerBotActionsAsync, "ScriptManager", "ProbeStreamerBotActions");
+            };
+            if (WS.Instance.IsConnected)
+            {
+                Interlocked.Increment(ref _actionProbesInFlight);
+                _ = AsyncErrorBoundary.SafeRunAsync(
+                    ProbeStreamerBotActionsAsync, "ScriptManager", "ProbeStreamerBotActions");
+            }
+        }
+
+        // Clears the in-flight marker on EVERY exit path (including the
+        // no-response early return and any fault SafeRunAsync would swallow), so
+        // the periodic reconcile is only ever held for the duration of a real
+        // probe.
+        private async Task ProbeStreamerBotActionsAsync()
+        {
+            try { await ProbeStreamerBotActionsCoreAsync().ConfigureAwait(false); }
+            finally { Interlocked.Decrement(ref _actionProbesInFlight); }
         }
 
         // Enumerate Streamer.bot's actions (GetActions is one of SB's real WS
@@ -216,7 +293,7 @@ namespace Phoenix.Controls.Hub.Core
         // the operator sees a clear "import the pack" message at connect instead of
         // silent no-ops when a node fires. On timeout / no response we leave
         // _knownSbActions null so no false "missing" warnings are raised.
-        private async Task ProbeStreamerBotActionsAsync()
+        private async Task ProbeStreamerBotActionsCoreAsync()
         {
             string reqId = WS.NewRequestId("get-actions");
             var root = await WS.Instance.SendAndWaitJsonAsync(
@@ -263,6 +340,16 @@ namespace Phoenix.Controls.Hub.Core
             // per-action CriticalError treatment the Twitch/OBS set uses above.
             ReportPlatformActionPack("YouTube", "youtube.*", PhxSbActions.YouTubeAll, found);
             ReportPlatformActionPack("Kick",    "kick.*",    PhxSbActions.KickAll,    found);
+
+            // Stream-state reconcile — LAST, and deliberately after _knownSbActions
+            // has been assigned above. FetchActionGlobalsAsync fast-returns on a
+            // definitively-absent action but stays permissive while the probe is
+            // unanswered (known == null), so running this before the assignment
+            // would burn the full 4s poll on every pack that lacks the action.
+            // This is the connect-time half of the reconcile; the 60s timer covers
+            // the rest of the session.
+            _ = AsyncErrorBoundary.SafeRunAsync(
+                ReconcileStreamStateAsync, "ScriptManager", "stream-state reconcile (connect)");
         }
 
         // Grouped per-platform action-pack report (YouTube / Kick). Missing
@@ -323,9 +410,10 @@ namespace Phoenix.Controls.Hub.Core
         // ── Data-action round-trip (DoAction → poll GetGlobals → phx_* map) ──────
         // Streamer.bot's DoAction is fire-and-forget: the WS reply is just an ack,
         // it does NOT return the action's output. The Phoenix data actions (Get
-        // User / Get Follow Age / Create Clip) instead write their result into
-        // shared, NON-persisted globals named phx_* and echo a per-call token into
-        // phx_req as their LAST sub-action. Hub fires the action, then polls
+        // User / Get Follow Age / Get Stream Status / Create Clip on the Twitch
+        // side, plus the YT Get User / Kick Get User mirrors) instead write their
+        // result into shared, NON-persisted globals named phx_* and echo a
+        // per-call token into phx_req as their LAST sub-action. Hub fires the action, then polls
         // GetGlobals(persisted:false) until phx_req == its token — at which point
         // every sibling phx_* value is guaranteed present (it was written before
         // phx_req) and read from the SAME response. The phx_* globals are shared
@@ -334,12 +422,15 @@ namespace Phoenix.Controls.Hub.Core
 
         private readonly SemaphoreSlim _dataFetchLane = new(1, 1);
 
-        // Broadcaster live-state, tracked from the Twitch.StreamOnline /
-        // StreamOffline events Hub already subscribes to (WS.TwitchEvents). SB
-        // exposes NO live-stream metrics for an arbitrary user, but it tells us
-        // when OUR channel goes on/offline — so is_online / get_stream answer
-        // truthfully for the broadcaster's own channel. Volatile: written on the
-        // WS event thread, read on script-execution threads.
+        // Broadcaster live-state. Two writers, both for OUR channel: the
+        // stream-lifecycle events Hub already subscribes to (WS.TwitchEvents →
+        // ExecuteGenericEventAsync → MarkBroadcasterLive), and
+        // ReconcileStreamStateAsync, which re-derives the same state from
+        // "Phoenix: Get Stream Status" so a Hub that missed the go-live edge (a
+        // mid-stream start) still answers truthfully. An ARBITRARY channel is NOT
+        // served from this latch at all — it goes through that same action per
+        // call. Volatile: written on the WS event / timer threads, read on
+        // script-execution threads.
         private volatile bool _broadcasterLive;
         // StreamOnline time, as ticks. DateTime can't be `volatile`, and a 64-bit
         // field can tear / reorder relative to the volatile flag across threads, so
@@ -348,13 +439,482 @@ namespace Phoenix.Controls.Hub.Core
         private long _broadcasterLiveSinceTicks;
         private int _isOnlineArbitraryWarned;
 
-        // Called from ExecuteGenericEventAsync when a StreamOnline/StreamOffline
-        // event arrives for the broadcaster's channel.
+        // Called from ExecuteGenericEventAsync when a stream-lifecycle event
+        // arrives for the broadcaster's channel — ANY platform's go-live /
+        // session-end per the canonical StreamLifecycle six-event map (was
+        // Twitch-only, which left {uptime} permanently blank for a Kick/YouTube
+        // streamer). First platform to go live stamps the timestamp; the first
+        // session-end flips the flag off (the same single-flag semantics the
+        // tool live-gates always had).
         internal void MarkBroadcasterLive(bool live)
         {
             if (live && !_broadcasterLive)
                 Interlocked.Exchange(ref _broadcasterLiveSinceTicks, DateTime.UtcNow.Ticks);
             _broadcasterLive = live;
+        }
+
+        /// <summary>
+        /// Same latch, but with the stream's REAL start instant instead of "now".
+        /// The bool-only overload stamps <c>DateTime.UtcNow</c> on the offline→live
+        /// edge, which is correct only when the edge and the go-live coincide — i.e.
+        /// when a pushed StreamOnline arrived. A reconcile that discovers an
+        /// ALREADY-RUNNING stream (Hub started or restarted mid-stream) would report
+        /// 0s of uptime for a stream that began three hours ago, so it hands the
+        /// authoritative <c>started_at</c> in here instead.
+        ///
+        /// Unlike the bool overload this re-stamps on EVERY live call, not just on
+        /// the edge: the reconcile re-asks Twitch on a slow timer and the answer it
+        /// gets back is strictly better than whatever is currently latched. Twitch
+        /// reports the same started_at for the whole session, so the repeat writes
+        /// are idempotent rather than drifting.
+        /// </summary>
+        internal void MarkBroadcasterLive(bool live, DateTime startedAtUtc)
+        {
+            if (live)
+            {
+                DateTime u = startedAtUtc.Kind == DateTimeKind.Utc
+                    ? startedAtUtc
+                    : startedAtUtc.ToUniversalTime();
+                Interlocked.Exchange(ref _broadcasterLiveSinceTicks, u.Ticks);
+            }
+            _broadcasterLive = live;
+        }
+
+        // ── Stream-state reconciliation ─────────────────────────────────────
+        // Every live gate in the suite is driven by the go-live EDGE alone. Start
+        // (or restart) the Hub while already live and that edge has already
+        // happened, so nothing ever arms: "Live for {uptime}" posts "Live for !",
+        // Scheduling never posts, and the tools disagree with each other because
+        // their defaults differ (Timer and Scheduling default live, Ranks and
+        // User-Management default offline). "Phoenix: Get Stream Status" is the
+        // first thing in the suite that can answer "are you live, and since when?"
+        // without an edge, so this asks it on connect and on a slow timer.
+        //
+        // 60s cadence: Helix allows ~800 points/min per client id — shared with
+        // Streamer.bot's own traffic, since the action borrows SB's credentials —
+        // and one reconcile costs 1 call live, up to 3 offline (streams, then users
+        // + channels for the last-set title/category). 60s is far inside that
+        // budget and keeps a chat-command viewer count fresh enough to be worth
+        // printing.
+        private const int StreamReconcileIntervalMs = 60_000;
+        private System.Threading.Timer? _streamReconcileTimer;
+        // Skips a tick that lands while the previous one is still in flight: the
+        // fetch is serialized behind _dataFetchLane and can sit there for the full
+        // 4s poll, so a slow Streamer.bot must not build a queue of reconciles.
+        private int _streamReconcileRunning;
+
+        private void StartStreamReconcileTimer()
+        {
+            // Fires on a period only — the FIRST reconcile is kicked from the
+            // action-probe hook instead, because it must not run until the probe
+            // has populated _knownSbActions (an unprobed fetch would burn the full
+            // 4s timeout on a pack that simply lacks the action).
+            //
+            // The tick honours that same rule: a connect landing just before a due
+            // tick would otherwise race the probe and burn exactly the fetch the
+            // ordering above exists to avoid. Skipping is free — the probe kicks a
+            // reconcile of its own the moment it finishes, so nothing is lost.
+            _streamReconcileTimer = new System.Threading.Timer(
+                _ =>
+                {
+                    if (Volatile.Read(ref _actionProbesInFlight) != 0) return;
+                    _ = AsyncErrorBoundary.SafeRunAsync(
+                        ReconcileStreamStateAsync, "ScriptManager", "stream-state reconcile");
+                },
+                null, StreamReconcileIntervalMs, StreamReconcileIntervalMs);
+        }
+
+        // One "could not ask Twitch" line per UNKNOWN EPISODE, not per 60s tick:
+        // set on the first known == "0" answer, cleared again by the next
+        // authoritative one. Without it a permanently mis-configured Streamer.bot
+        // (a bot account connected but no broadcaster account) would either spam
+        // the System Log once a minute or — as it did before — say nothing at all
+        // while the suite quietly believed a state it had never been told.
+        private int _streamUnknownWarned;
+
+        /// <summary>
+        /// What one reconcile round-trip is allowed to conclude. The three cases
+        /// are deliberately NOT collapsed: only <see cref="Authoritative"/> may
+        /// touch a live surface, and the other two differ in whether the operator
+        /// needs telling.
+        /// </summary>
+        internal enum ReconcileAnswer
+        {
+            /// <summary>The round-trip itself never completed — socket down, action
+            /// absent from the pack, or no phx_req echo inside the timeout.
+            /// FetchActionGlobalsAsync has already logged whichever it was.</summary>
+            NoAnswer,
+            /// <summary>The action ran and reported <c>known == "0"</c>: it could not
+            /// ask Twitch. NOT a report that the channel is offline — nothing may be
+            /// published, and the reason is worth one log line.</summary>
+            CouldNotAsk,
+            /// <summary>A trustworthy answer (<c>known == "1"</c>).</summary>
+            Authoritative,
+        }
+
+        /// <summary>Pure classifier for a fetched status — the split the reconcile
+        /// and the twitch.is_online fallback both branch on.</summary>
+        internal static ReconcileAnswer Classify(StreamStatus? st) =>
+            st is null           ? ReconcileAnswer.NoAnswer
+            : st.Known           ? ReconcileAnswer.Authoritative
+                                 : ReconcileAnswer.CouldNotAsk;
+
+        /// <summary>
+        /// The operator-facing wording for a <c>known == "0"</c> answer. Pure so the
+        /// suite can pin the one property that matters: it reports that we could not
+        /// ASK, never that the channel is offline — and it carries the action's own
+        /// reason, which had no reader at all before.
+        /// </summary>
+        internal static string BuildCouldNotAskNote(string? reason, string context)
+        {
+            // Deliberately says nothing about what the CALLER then did with the
+            // non-answer — the reconcile publishes nothing, while twitch.is_online
+            // still has to hand the script a value. Each appends its own sentence.
+            string why = string.IsNullOrWhiteSpace(reason) ? "no reason reported" : reason!.Trim();
+            return $"{context}: \"{PhxSbActions.GetStreamStatus}\" ran but could not ask Twitch " +
+                   $"(reason: {why}). \"Could not ask\" is NOT \"the channel is offline\" — the live " +
+                   "state is simply unknown. Check Streamer.bot's Twitch account connection.";
+        }
+
+        /// <summary>
+        /// Asks Streamer.bot for the configured broadcaster's real stream state and
+        /// republishes it into the Hub's live surfaces. No-ops on every failure
+        /// path: teardown, a disconnected socket, a blank broadcaster name, an
+        /// absent action, or <c>known == "0"</c> all leave every gate exactly as it
+        /// was — the last of those now says so once instead of silently.
+        /// </summary>
+        internal async Task ReconcileStreamStateAsync()
+        {
+            // Teardown guard, same shape as ExecuteOnChatScriptsAsync's. The probe
+            // hook is never unsubscribed, so a Streamer.bot reconnect after
+            // shutdown can still reach here; and BeginStop disposing the timer only
+            // bars FUTURE ticks, never one already inside this method.
+            if (Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+            if (!WS.Instance.IsConnected) return;
+            string bcast = ConfigManager.Current?.BroadcasterUsername ?? "";
+            if (string.IsNullOrWhiteSpace(bcast)) return;
+            if (Interlocked.Exchange(ref _streamReconcileRunning, 1) != 0) return;
+            try
+            {
+                var st = await FetchStreamStatusAsync("stream.reconcile", bcast.Trim())
+                    .ConfigureAwait(false);
+
+                // Re-check AFTER the await: the fetch can sit in _dataFetchLane for
+                // the full 4s poll, so a teardown that began while it was in flight
+                // would otherwise have this callback re-anchor {stream.uptime} and
+                // drive tool gates from a stopped ScriptManager.
+                if (Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+
+                switch (Classify(st))
+                {
+                    case ReconcileAnswer.NoAnswer:
+                        // Already logged by FetchActionGlobalsAsync (disconnect /
+                        // missing action / timeout) — adding a second line here
+                        // would double every failure.
+                        return;
+
+                    case ReconcileAnswer.CouldNotAsk:
+                        // The round trip SUCCEEDED, so nothing else logs anything:
+                        // this is the only place the operator can learn that the
+                        // live state is unknown rather than offline.
+                        if (Interlocked.Exchange(ref _streamUnknownWarned, 1) == 0)
+                            GlobalLogger.Log(
+                                BuildCouldNotAskNote(st!.Error, "Stream-state reconcile") +
+                                " Nothing was published: uptime, the live latch and the live-gated tools " +
+                                "are left exactly as they were. (Logged once — the next trustworthy answer " +
+                                "re-arms this note.)",
+                                "ScriptManager", LogLevel.Communication);
+                        return;
+
+                    default:
+                        // Trustworthy again: re-arm the note so a LATER unknown
+                        // episode is reported instead of being swallowed by the
+                        // first one's flag.
+                        Interlocked.Exchange(ref _streamUnknownWarned, 0);
+                        ApplyReconciledStreamState(st!);
+                        return;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _streamReconcileRunning, 0);
+            }
+        }
+
+        // ── Who owns the current live episode ───────────────────────────────
+        // Non-zero while a REAL platform go-live edge is open: set when an inbound
+        // lifecycle event produced +1, cleared when one produces -1 (see
+        // NoteRealLiveEdge, called from ExecuteGenericEventAsync). It is the
+        // reconcile's only way to tell "the live set holds an episode a real
+        // StreamOnline opened — and therefore armed User-Management and Loyalty"
+        // from "the live set holds an entry I put there myself, or a provisional
+        // one restored from the last session's snapshot".
+        private int _realGoLiveEdgeOpen;
+
+        /// <summary>
+        /// Records the ownership of the current live episode from a REAL inbound
+        /// lifecycle event's edge. Only the non-zero edges matter: +1 is a genuine
+        /// offline→live transition (the one that arms the two destructive
+        /// per-stream resets), -1 drained the set again. Edge 0 changed nothing, so
+        /// it changes nothing here either.
+        /// </summary>
+        internal void NoteRealLiveEdge(int edge) =>
+            Volatile.Write(ref _realGoLiveEdgeOpen,
+                RealGoLiveEdgeOpenAfter(Volatile.Read(ref _realGoLiveEdgeOpen) != 0, edge) ? 1 : 0);
+
+        /// <summary>
+        /// The transition rule above, as a pure function. The load-bearing case is
+        /// <c>edge == 0</c>: a second platform going live during a restream, or a
+        /// platform re-emitting its go-live, both report 0 — and neither ends the
+        /// episode, so ownership must CARRY, not reset.
+        /// </summary>
+        internal static bool RealGoLiveEdgeOpenAfter(bool current, int edge) =>
+            edge > 0 ? true
+            : edge < 0 ? false
+                       : current;
+
+        /// <summary>What the reconcile may do when Twitch answers "not live".</summary>
+        internal enum ReconcileOfflineStep
+        {
+            /// <summary>Nothing is live — publish the offline state directly.</summary>
+            ApplyOffline,
+            /// <summary>Something is live, but nothing a real go-live opened: retract
+            /// Twitch first, and publish only if that empties the set.</summary>
+            DrainThenApply,
+            /// <summary>A real go-live owns the episode — leave the live set alone.</summary>
+            LeaveArmed,
+        }
+
+        /// <summary>
+        /// The arm/disarm ownership rule, factored out as a pure function because it
+        /// is the whole correctness of the offline branch and cannot otherwise be
+        /// exercised without a Streamer.bot socket and the live tool singletons.
+        ///
+        /// <para><b>Why LeaveArmed exists.</b> Consuming the offline edge makes the
+        /// real StreamOffline that follows a no-edge. This method never fans out to
+        /// User-Management or Loyalty (see the ★★ block below), so if a real
+        /// go-live had armed those two, their own <c>_streamLive</c> would stay
+        /// stuck true — and the NEXT go-live would find <c>wasLive == true</c> and
+        /// skip the welcomed-set reset, silently greeting nobody for a whole
+        /// stream.</para>
+        ///
+        /// <para><b>Why DrainThenApply is safe.</b> Without an open real go-live
+        /// edge those two were never armed in this process — the reconcile does not
+        /// arm them, and a platform merely RESTORED from the snapshot never
+        /// produced the +1 that would have. So there is no armed state to strand,
+        /// and the go-live edge itself is unaffected either way: the tracker
+        /// measures it over the OBSERVED set, which a restored entry is not part
+        /// of.</para>
+        /// </summary>
+        internal static ReconcileOfflineStep DecideOfflineStep(bool anyLive, bool realGoLiveEdgeOpen) =>
+            !anyLive            ? ReconcileOfflineStep.ApplyOffline
+            : realGoLiveEdgeOpen ? ReconcileOfflineStep.LeaveArmed
+                                 : ReconcileOfflineStep.DrainThenApply;
+
+        // Publishes an AUTHORITATIVE (known == "1") status into the live surfaces.
+        //
+        // ★★ Read this before adding a consumer here. A reconcile that flips the
+        // live latch offline→live produces the SAME edge a real go-live does, and
+        // two of the six SetStreamLive consumers run DESTRUCTIVE per-stream resets
+        // on that edge:
+        //
+        //   • UserManagementService.SetStreamLive(true) clears the in-memory
+        //     welcomed-set AND fires DB.ClearUserMgmtSeenAsync(). Arming it from a
+        //     reconcile would re-greet the entire chat in the middle of a stream —
+        //     far worse than the gap being closed here, and it is the exact reason
+        //     LivePlatformEdgeTracker's authors declined to re-arm at startup.
+        //   • LoyaltyService.SetStreamLive(true) clears the per-stream follow
+        //     dedupe and the per-stream reward quantities, so a viewer could farm a
+        //     follow payout or a once-per-stream reward again.
+        //
+        // So only the four NON-destructive consumers are driven from here: Timer
+        // (unfreezes offline-paused timers), Scheduling (re-arms schedules), Ranks
+        // (one-shot ladder-chip notification) and ViewerPresence (resumes
+        // watch-minute sampling — without it a Hub brought up mid-stream, where no
+        // go-live event will ever arrive, records no watch time for the whole
+        // session, a regression against the Ranks-gated accrual this service
+        // replaced). The destructive two keep waiting for a genuine platform edge.
+        // That omission is deliberate — please do not "fix" it.
+        // It applies in BOTH directions: the offline branch below drives the same
+        // four and no others. The greeter could never re-arm after a wrongly-read
+        // offline (a transient Helix gap); the four driven here are self-healing —
+        // the next ~60s tick flips them back — and the only cost is ViewerPresence
+        // dropping its carried sub-minute remainders (≤59s per viewer), the price
+        // of NOT handing an entire offline night to everybody sitting in chat when
+        // the stream ends while Streamer.bot is down.
+        private void ApplyReconciledStreamState(StreamStatus st)
+        {
+            if (st.Live)
+            {
+                // The latch that answers twitch.is_online / get_stream for our own
+                // channel, now anchored to the REAL start rather than "now".
+                if (st.StartedAtUtc is { } started)
+                {
+                    MarkBroadcasterLive(true, started.UtcDateTime);
+                    // …and the engine's {stream.uptime} / {stream.started_at}
+                    // anchor. This call site is the reason SetStreamStartedAtUtc
+                    // exists: until now it had no production caller at all, so the
+                    // whole {stream.*} family measured HUB PROCESS uptime and a
+                    // "!uptime" command answered with how long the app had been
+                    // open. started_at rides on every poll, not just the
+                    // transition, so this is also the only route that can recover a
+                    // correct anchor after a mid-stream start.
+                    ScriptEngine.SetStreamStartedAtUtc(started.UtcDateTime);
+                }
+                else
+                {
+                    // Live, but Twitch's stamp was missing or unparseable. Latch
+                    // live anyway (that part IS known) and leave the anchor alone
+                    // rather than replacing a possibly-correct instant with a wrong
+                    // one.
+                    MarkBroadcasterLive(true);
+                }
+
+                // Authoritative title/category — Set(), not SetIfEmpty(): unlike the
+                // background seed this is a fresh answer about the CURRENT stream,
+                // so it should win over a stale cached pair. Blank fields are
+                // ignored inside Set, so an offline-only field can't blank a good one.
+                StreamInfoTracker.Set(st.Title, st.Game, "stream.reconcile");
+
+                // Feed the per-platform edge tracker so this reconcile and the real
+                // StreamOnline cannot both count. Without it, a Hub that reconciled
+                // its way to "live" would see the NEXT genuine go-live as a fresh
+                // offline→live edge and re-run the destructive resets mid-stream.
+                // Noting it here makes that later event a benign no-edge instead.
+                // The returned edge decides only whether the three safe consumers
+                // still need arming (0 = they already are).
+                int edge = _liveEdges.Note(StreamLifecycle.Kind.GoingLive, ChatPlatforms.Twitch);
+                if (edge > 0)
+                {
+                    GlobalLogger.Log(
+                        "Stream state reconciled: you are already live" +
+                        (st.StartedAtUtc is { } s
+                            ? $" (since {s.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)}, up {FormatUptimeSince(s.UtcDateTime)})"
+                            : "") +
+                        ". The uptime anchor is set to the real start, and the Timer / Scheduling / Ranks / " +
+                        "watch-time live gates are set live — each of those only changes anything if it had " +
+                        "been flipped offline first. The welcomed-set reset and the Loyalty per-stream reset are " +
+                        "deliberately NOT re-run — they would re-greet chat and reopen per-stream payouts " +
+                        "mid-stream.",
+                        "ScriptManager", LogLevel.Communication);
+
+                    ApplyToolStreamLive(TimerService.Instance.SetStreamLive, edge, "TimerService", "stream.reconcile");
+                    ApplyToolStreamLive(SchedulingService.Instance.SetStreamLive, edge, "SchedulingService", "stream.reconcile");
+                    ApplyToolStreamLive(RanksService.Instance.SetStreamLive, edge, "RanksService", "stream.reconcile");
+                    ApplyToolStreamLive(ViewerPresenceService.Instance.SetStreamLive, edge, "ViewerPresenceService", "stream.reconcile");
+                }
+                return;
+            }
+
+            // ── Authoritatively NOT live ────────────────────────────────────
+            // Twitch is one platform of several: a restreamer whose Twitch leg is
+            // down while YouTube is still running must not have every tool frozen
+            // by a Twitch-only answer. So the live SET, not this one answer,
+            // decides whether the suite goes offline.
+            //
+            // The subtlety that used to make this branch unreachable: the live
+            // branch above Notes GoingLive for Twitch on every live tick, so once
+            // the reconcile had armed the state, AnyLive was true for ever and the
+            // guard muted the only thing that could authoritatively take Twitch
+            // back out. A stream that ended while Streamer.bot was closed (no
+            // StreamOffline ever delivered) then left {uptime} climbing all night
+            // and Twitch.IsOnline contradicting Twitch.GetStream. The same held for
+            // a phantom restored from the previous session's snapshot, which the
+            // edge tracker's heartbeat keeps fresh for as long as the Hub is up.
+            //
+            // So the guard is NARROWED, not removed: it still protects a live
+            // episode a REAL platform go-live opened (see DecideOfflineStep for the
+            // hazard that case carries), and otherwise the reconcile retracts the
+            // entry it is responsible for.
+            var step = DecideOfflineStep(_liveEdges.AnyLive, Volatile.Read(ref _realGoLiveEdgeOpen) != 0);
+            if (step == ReconcileOfflineStep.LeaveArmed) return;
+            if (step == ReconcileOfflineStep.DrainThenApply)
+            {
+                // Retract Twitch. Note() ignores a platform that is not in the set
+                // (edge 0), and returns 0 while OTHER platforms remain live — in
+                // both cases the suite stays armed and only the stale Twitch entry
+                // is cleaned up. -1 means the set is now genuinely empty.
+                if (_liveEdges.Note(StreamLifecycle.Kind.SessionEnd, ChatPlatforms.Twitch) >= 0) return;
+            }
+
+            MarkBroadcasterLive(false);
+
+            // Uptime after the stream ends. ResolveStreamVar has no live gate — it
+            // always renders (now - anchor) — so an anchor left at the finished
+            // stream's start would make {stream.uptime} grow for ever, and a
+            // "!uptime" run the next morning would proudly report 14h. Re-anchoring
+            // to now makes it read "0s" instead, climbing at most one reconcile
+            // interval (~60s) before the next tick pulls it back. Rejected
+            // alternatives: leaving the anchor (actively wrong, unbounded), and
+            // anchoring into the FUTURE to pin the negative-elapsed clamp at "0s"
+            // (abuses a clamp meant for a different case and makes
+            // {stream.started_at} render an instant that has not happened).
+            // Rendering "" instead would need a live-state flag inside the Shared
+            // engine's {stream.*} family, changing a contract several scripts
+            // already compare against — out of scope for this change.
+            ScriptEngine.SetStreamStartedAtUtc(DateTime.UtcNow);
+
+            // Correct the optimistic defaults. Timer and Scheduling both start
+            // _streamLive = true so that a setup with NO live detection still runs;
+            // now that there IS live detection, an authoritative offline answer is
+            // what those gates were always meant to receive.
+            //
+            // Repeating this every 60s while offline costs nothing, but not by one
+            // shared mechanism: Timer and Ranks early-return when the value is
+            // unchanged, while Scheduling assigns unconditionally and guards only
+            // its re-arm (`live && !wasLive && OnlyWhenLive`) — so a repeated
+            // `false` reaches the assignment and stops there, with no side effect.
+            // ViewerPresence likewise assigns unconditionally but clears its carried
+            // remainders only on the true→false EDGE, so a repeated `false` is inert.
+            ApplyToolStreamLive(TimerService.Instance.SetStreamLive, -1, "TimerService", "stream.reconcile");
+            ApplyToolStreamLive(SchedulingService.Instance.SetStreamLive, -1, "SchedulingService", "stream.reconcile");
+            ApplyToolStreamLive(RanksService.Instance.SetStreamLive, -1, "RanksService", "stream.reconcile");
+            ApplyToolStreamLive(ViewerPresenceService.Instance.SetStreamLive, -1, "ViewerPresenceService", "stream.reconcile");
+        }
+
+        // ── Ambient stream-info seed ────────────────────────────────────────
+        // The pushed StreamUpdate/ChannelUpdate events only fire on CHANGES, so
+        // without a seed the {game}/{title} cache stays empty until the streamer
+        // edits their title. Two triggers, both funneling into the same
+        // "Phoenix: Get User" fetch for the configured broadcaster: a lazy,
+        // throttled kick from the token resolvers (EnsureStreamInfoSeeded) and a
+        // refresh on each TWITCH go-live (ExecuteGenericEventAsync — Twitch-only
+        // because "Phoenix: Get User" answers with the TWITCH channel's data,
+        // which must not race a fresher Kick/YouTube payload; the fill-if-empty
+        // write makes even the Twitch case clobber-safe). Serialized with every
+        // other data fetch via _dataFetchLane; never blocks a caller.
+        //
+        // Retry model: NOT a burn-once gate — a failed fetch (SB action missing,
+        // timeout) leaves the cache empty, so the next token render may try
+        // again, throttled to one attempt per 5 minutes to keep a permanently
+        // missing action from burning the 4s poll on every chat command.
+        private long _streamInfoSeedLastAttemptTicks;
+        private const long StreamInfoSeedRetryTicks = 5L * 60 * TimeSpan.TicksPerSecond;
+
+        internal void EnsureStreamInfoSeeded()
+        {
+            if (!StreamInfoTracker.NeedsSeed) return;
+            if (!WS.Instance.IsConnected) return;
+            long now = DateTime.UtcNow.Ticks;
+            long last = Interlocked.Read(ref _streamInfoSeedLastAttemptTicks);
+            if (now - last < StreamInfoSeedRetryTicks) return;
+            if (Interlocked.CompareExchange(ref _streamInfoSeedLastAttemptTicks, now, last) != last)
+                return;   // another caller claimed this window
+            _ = AsyncErrorBoundary.SafeRunAsync(
+                SeedStreamInfoAsync, "ScriptManager", "stream-info seed");
+        }
+
+        internal async Task SeedStreamInfoAsync()
+        {
+            string bcast = ConfigManager.Current?.BroadcasterUsername ?? "";
+            if (string.IsNullOrWhiteSpace(bcast)) return;
+            var g = await FetchActionGlobalsAsync("streaminfo.seed", PhxSbActions.GetUser,
+                new Dictionary<string, string> { ["user"] = bcast.Trim() }).ConfigureAwait(false);
+            if (g is null) return;
+            string G(string k) => g.TryGetValue(k, out var v) ? v : "";
+            // Fill-if-empty: a pushed event that arrived while this fetch was in
+            // flight is fresher than the fetched snapshot — never overwrite it.
+            StreamInfoTracker.SetIfEmpty(G("phx_user_title"), G("phx_user_game"), "streaminfo.seed");
         }
 
         // Fires a Phoenix data action and reads back the phx_* globals it writes.
@@ -433,6 +993,108 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
+        // ── "Phoenix: Get Stream Status" readback ────────────────────────────
+        /// <summary>
+        /// The parsed shape of the <c>phx_stream_*</c> globals.
+        ///
+        /// <see cref="Known"/> is the gate on everything else: false means the
+        /// action ran but could not get an answer out of Twitch (no broadcaster
+        /// account connected in Streamer.bot, HTTP failure, a thrown exception),
+        /// and every other field is then meaningless. Callers must fall back to
+        /// whatever they did before rather than publishing the zero-valued fields —
+        /// rendering "we could not ask" as "you are offline with no viewers" is the
+        /// specific failure this flag exists to prevent.
+        /// </summary>
+        internal sealed class StreamStatus
+        {
+            public bool Known { get; init; }
+            /// <summary>Live right now. Only meaningful while <see cref="Known"/>.</summary>
+            public bool Live { get; init; }
+            /// <summary>Lowercase login that actually answered ("" when unknown).</summary>
+            public string Login { get; init; } = "";
+            /// <summary>Current viewer count; 0 when offline, which is the action's
+            /// own contract rather than a Hub-side guess.</summary>
+            public int Viewers { get; init; }
+            /// <summary>Twitch's <c>started_at</c>, normalised to UTC. Null when
+            /// offline, absent, or unparseable — never a fabricated instant.</summary>
+            public DateTimeOffset? StartedAtUtc { get; init; }
+            /// <summary>Live title, or the channel's last-set title when offline.</summary>
+            public string Title { get; init; } = "";
+            /// <summary>Live category, or the last-set category when offline.</summary>
+            public string Game { get; init; } = "";
+            /// <summary>Short failure reason; "" on success.</summary>
+            public string Error { get; init; } = "";
+        }
+
+        /// <summary>
+        /// Fires "Phoenix: Get Stream Status" for one channel and parses the globals
+        /// it writes. Returns null when the round-trip itself never completed
+        /// (Streamer.bot disconnected, the action absent from the pack, or no
+        /// <c>phx_req</c> echo inside the timeout) — the caller treats that exactly
+        /// like <c>Known == false</c>; the split exists only so a caller can tell a
+        /// missing action from a call that ran and failed.
+        /// </summary>
+        private async Task<StreamStatus?> FetchStreamStatusAsync(string command, string channel)
+        {
+            var g = await FetchActionGlobalsAsync(command, PhxSbActions.GetStreamStatus,
+                new Dictionary<string, string> { ["user"] = channel }).ConfigureAwait(false);
+            return g is null ? null : ParseStreamStatus(g);
+        }
+
+        /// <summary>
+        /// Pure parse of a GetGlobals map into <see cref="StreamStatus"/>. Static and
+        /// separate from the fetch so the parsing rules are testable without a
+        /// Streamer.bot socket.
+        /// </summary>
+        internal static StreamStatus ParseStreamStatus(IReadOnlyDictionary<string, string> g)
+        {
+            string G(string k) => g.TryGetValue(k, out var v) ? (v ?? "") : "";
+
+            // The action writes literal "1"/"0" strings, but Streamer.bot's per-
+            // sub-action "Auto Type" toggle can store them as a number or a bool
+            // instead — NormBool accepts every spelling those produce.
+            bool known = NormBool(G("phx_stream_known")) == "true";
+            if (!known)
+                return new StreamStatus { Known = false, Error = G("phx_stream_err") };
+
+            bool live = NormBool(G("phx_stream_live")) == "true";
+
+            // Invariant in AND out: the action stringifies the count with
+            // CultureInfo.InvariantCulture, so parsing it under the machine's
+            // culture is what turns a large count into a parse failure on a locale
+            // that groups digits differently. A negative or unparseable value stays
+            // 0 rather than being invented.
+            int viewers = 0;
+            if (int.TryParse(G("phx_stream_viewers"), NumberStyles.Integer,
+                             CultureInfo.InvariantCulture, out int v) && v >= 0)
+                viewers = v;
+
+            // started_at is Twitch's RFC3339 UTC stamp, forwarded verbatim.
+            // AssumeUniversal is the load-bearing flag: without it a stamp that
+            // arrived without an explicit offset would be read as machine-LOCAL
+            // time, shifting every uptime by the local UTC offset. A malformed or
+            // empty value yields null — the callers render no uptime rather than
+            // throwing or guessing.
+            DateTimeOffset? startedAt = null;
+            string startedRaw = G("phx_stream_started");
+            if (startedRaw.Length > 0
+                && DateTimeOffset.TryParse(startedRaw, CultureInfo.InvariantCulture,
+                       DateTimeStyles.RoundtripKind | DateTimeStyles.AssumeUniversal, out var parsed))
+                startedAt = parsed.ToUniversalTime();
+
+            return new StreamStatus
+            {
+                Known        = true,
+                Live         = live,
+                Login        = G("phx_stream_login"),
+                Viewers      = viewers,
+                StartedAtUtc = startedAt,
+                Title        = G("phx_stream_title"),
+                Game         = G("phx_stream_game"),
+                Error        = G("phx_stream_err"),
+            };
+        }
+
         // Flattens a GetGlobals response { variables:[ {name,value,lastWrite}, … ] }
         // into a name→string map. `value` may be a JSON string OR a number/bool
         // (the SB "Auto Type" toggle decides which); both collapse to string form.
@@ -485,20 +1147,56 @@ namespace Phoenix.Controls.Hub.Core
             if (!_broadcasterLive) return "";
             long ticks = Interlocked.Read(ref _broadcasterLiveSinceTicks);
             if (ticks == 0) return "";
-            var elapsed = DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc);
+            return FormatUptimeSince(new DateTime(ticks, DateTimeKind.Utc));
+        }
+
+        /// <summary>
+        /// Elapsed-since formatter shared by the broadcaster latch and the
+        /// arbitrary-channel answer built from a Get-Stream-Status
+        /// <c>started_at</c>, so both render the same Ns / Nm / Hh Mm shape as the
+        /// <c>{stream.uptime}</c> token (ScriptEngine.FormatStreamUptime). A start
+        /// instant in the future clamps to zero rather than going negative.
+        /// </summary>
+        // internal, not private: the "a stream that started three hours ago must
+        // not report 0s" case is the whole point of the MarkBroadcasterLive
+        // overload beside it, so the suite covers this formatter directly rather
+        // than through a Streamer.bot socket it cannot stand up.
+        internal static string FormatUptimeSince(DateTime startedAtUtc)
+        {
+            var inv = CultureInfo.InvariantCulture;
+            var elapsed = DateTime.UtcNow - startedAtUtc;
             if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
-            if (elapsed.TotalMinutes < 1) return $"{(int)elapsed.TotalSeconds}s";
-            if (elapsed.TotalHours   < 1) return $"{(int)elapsed.TotalMinutes}m";
-            return $"{(int)elapsed.TotalHours}h {elapsed.Minutes}m";
+            if (elapsed.TotalMinutes < 1) return ((int)elapsed.TotalSeconds).ToString(inv) + "s";
+            if (elapsed.TotalHours   < 1) return ((int)elapsed.TotalMinutes).ToString(inv) + "m";
+            return ((int)elapsed.TotalHours).ToString(inv) + "h " + elapsed.Minutes.ToString(inv) + "m";
         }
 
         // Maps the phx_user_* globals from a Get User fetch onto the user.* result
         // slots. Shared by twitch.get_user and streamerbot.get_user.
+        //
+        // ★ is_mod / is_sub / is_vip are the PLATFORM's answer, full stop. They used to
+        // be OR-ed with the User-Management group overlay ("a user granted Moderator via
+        // a group reports true here even without the platform rank"), which is no longer
+        // a thing that can happen: Moderator / VIP / Subscriber stopped being
+        // hand-maintained member lists — their membership IS the platform's, so the
+        // overlay had nothing of its own left to add. What the override could still do
+        // was harm: this fetch just asked Twitch and got a live answer, and OR-ing a
+        // cached group flag over it can only ever turn a fresh "no" into a stale "yes".
+        //
+        // is_regular KEEPS its group lookup — Regular is a group-only concept with no
+        // platform source, so the overlay is the only thing that can answer it. The
+        // lookup gets BOTH spellings (login first, display as fallback) exactly like the
+        // chat overlay: group membership is stored however the streamer typed it, so
+        // passing the login alone would resolve a display-spelled entry on the overlay
+        // but NOT here — the same viewer's Regular status would differ between chat and
+        // twitch.get_user. Passthrough while that tool is dormant.
         private void ApplyUserGlobals(Dictionary<string, string> g, string fallbackUser)
         {
             string G(string k) => g.TryGetValue(k, out var v) ? v : "";
             string login   = G("phx_user_login");
             string display = G("phx_user_display");
+            string lookupName = login.Length > 0 ? login : fallbackUser;
+            var (_, _, _, gRegular, _) = UserManagementService.Instance.LookupGroups(lookupName, display);
             _engine.SetLocalResultVar("user.id",              G("phx_user_id"));
             _engine.SetLocalResultVar("user.login",           login.Length   > 0 ? login   : fallbackUser);
             _engine.SetLocalResultVar("user.display_name",    display.Length > 0 ? display : fallbackUser);
@@ -509,6 +1207,11 @@ namespace Phoenix.Controls.Hub.Core
             _engine.SetLocalResultVar("user.is_mod",          NormBool(G("phx_user_mod")));
             _engine.SetLocalResultVar("user.is_sub",          NormBool(G("phx_user_sub")));
             _engine.SetLocalResultVar("user.is_vip",          NormBool(G("phx_user_vip")));
+            _engine.SetLocalResultVar("user.is_regular",      gRegular ? "true" : "false");
+            // Free ambient write-through when the fetched user IS the broadcaster —
+            // the globals carry the channel's current title/game either way.
+            if (IsConfiguredBroadcaster(login) || IsConfiguredBroadcaster(fallbackUser))
+                StreamInfoTracker.Set(G("phx_user_title"), G("phx_user_game"), "twitch.get_user");
         }
 
         private void RegisterTwitchCommands()
@@ -833,6 +1536,13 @@ namespace Phoenix.Controls.Hub.Core
                     return null;
                 }
                 DispatchNamedAction("twitch.update_channel", PhxSbActions.UpdateChannel, new { title, gameId });
+                // Write-through: the new title is known right here. The gameId is a
+                // numeric category ID, NOT the game NAME the {game}/stream.game
+                // surface carries — never cache it as one (the next pushed
+                // StreamUpdate / seed fetch supplies the name). Connected-gated:
+                // a dropped dispatch changed nothing, so cache nothing.
+                if (WS.Instance.IsConnected)
+                    StreamInfoTracker.Set(title, null, "twitch.update_channel");
                 await Task.CompletedTask;
                 return null;
             });
@@ -878,16 +1588,49 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // twitch.get_stream(username) — game/title come from "Phoenix: Get
-            // User" (the channel's last set game + title, offline-capable — the
-            // "last game played" the old fictional GetStreamInfo never returned).
-            // Live metrics (is_live / viewers / uptime) are NOT retrievable for an
-            // arbitrary channel over Streamer.bot; for the broadcaster's OWN
-            // channel we answer is_live/uptime from the StreamOnline/Offline-tracked
-            // flag. viewers stays "0" (no SB path for it yet — Helix-followup).
+            // twitch.get_stream(username) — live metrics now come from "Phoenix: Get
+            // Stream Status" (Twitch Helix /streams through Streamer.bot's own
+            // credentials), which answers for ANY channel and carries the real
+            // viewer count and start time. The old shape could only ever report the
+            // broadcaster's own liveness from the StreamOnline/Offline latch and
+            // hardcoded viewers to "0" — a literal zero on a live channel with an
+            // audience.
+            //
+            // When the status action can't answer — absent from the pack, or
+            // known == "0" meaning "we could not ask Twitch" — this falls back to
+            // the previous "Phoenix: Get User" behaviour instead of publishing the
+            // zeroed fields. The one deliberate difference in the fallback is the
+            // viewer count: it is left EMPTY rather than "0", because "we could not
+            // ask" must not render as "you have no viewers".
             _engine.RegisterCommand("twitch.get_stream", async (args) => {
                 string user = StripBareQuotes(_engine.CurrentBoundArgs?.GetOrDefault<string>("Username", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0));
                 if (string.IsNullOrEmpty(user)) return null;
+
+                var st = await FetchStreamStatusAsync("twitch.get_stream", user).ConfigureAwait(false);
+                if (st is { Known: true })
+                {
+                    _engine.SetLocalResultVar("stream.is_live", st.Live ? "true" : "false");
+                    _engine.SetLocalResultVar("stream.viewers", st.Viewers.ToString(CultureInfo.InvariantCulture));
+                    _engine.SetLocalResultVar("stream.title",   st.Title);
+                    _engine.SetLocalResultVar("stream.game",    st.Game);
+                    // Uptime only while live — an offline channel's started_at is ""
+                    // by the action's contract, and a stale one would read as though
+                    // the finished stream were still running.
+                    _engine.SetLocalResultVar("stream.uptime",
+                        st.Live && st.StartedAtUtc is { } started ? FormatUptimeSince(started.UtcDateTime) : "");
+                    // Ambient write-through for our own channel, same as the
+                    // fallback path below. The broadcaster LATCH and the engine's
+                    // {stream.*} anchor are deliberately NOT written here: they are
+                    // owned by ReconcileStreamStateAsync, which is also the only
+                    // place that decides which live-edge consumers may be armed. A
+                    // script node must not be able to fire a per-stream reset.
+                    if (IsConfiguredBroadcaster(st.Login) || IsConfiguredBroadcaster(user))
+                        StreamInfoTracker.Set(st.Title, st.Game, "twitch.get_stream");
+                    return null;
+                }
+
+                // Fallback — the pre-Get-Stream-Status behaviour, unchanged except
+                // for the viewer count (see the note above).
                 var g = await FetchActionGlobalsAsync("twitch.get_stream", PhxSbActions.GetUser,
                     new Dictionary<string, string> { ["user"] = user }).ConfigureAwait(false);
                 if (g != null)
@@ -897,17 +1640,31 @@ namespace Phoenix.Controls.Hub.Core
                     _engine.SetLocalResultVar("stream.title",   G("phx_user_title"));
                     _engine.SetLocalResultVar("stream.game",    G("phx_user_game"));
                     _engine.SetLocalResultVar("stream.is_live", (ownChannel && _broadcasterLive) ? "true" : "false");
-                    _engine.SetLocalResultVar("stream.viewers", "0");
+                    // Written (as "") rather than skipped: an unset {stream.viewers}
+                    // is not in the engine's stream.* resolver, so it would leak the
+                    // literal token "{stream.viewers}" into chat.
+                    _engine.SetLocalResultVar("stream.viewers", "");
                     _engine.SetLocalResultVar("stream.uptime",  ownChannel ? ResolveBroadcasterUptime() : "");
+                    // Free ambient write-through — an own-channel fetch just told us
+                    // the current title/game; keep the {game}/{title} cache warm.
+                    if (ownChannel)
+                        StreamInfoTracker.Set(G("phx_user_title"), G("phx_user_game"), "twitch.get_stream");
                 }
                 return null;
             });
 
             // twitch.is_online(Channel) — backs Twitch.IsOnline's IsLive output.
-            // For the broadcaster's OWN channel (blank Channel = broadcaster) we
-            // answer from the StreamOnline/Offline-tracked live flag. Streamer.bot
-            // exposes NO live-status path for an ARBITRARY channel, so those report
-            // not-live (honest), but still surface game/title from "Phoenix: Get User".
+            //
+            // The broadcaster's OWN channel (blank Channel = broadcaster) keeps
+            // answering from the in-process live latch: it is instant, and it is now
+            // kept honest by ReconcileStreamStateAsync, which re-asks Twitch every
+            // 60s and re-anchors the latch. Routing this branch through the action
+            // instead would put a round-trip of up to 4s on what is typically a hot
+            // chat command, for an answer the latch already holds.
+            //
+            // An ARBITRARY channel goes through "Phoenix: Get Stream Status" — the
+            // hardcoded not-live that used to live here was simply wrong once that
+            // action existed.
             _engine.RegisterCommand("twitch.is_online", async (args) => {
                 string channel = StripBareQuotes(_engine.CurrentBoundArgs?.GetOrDefault<string>("Channel", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0));
                 if (string.IsNullOrWhiteSpace(channel))
@@ -923,12 +1680,50 @@ namespace Phoenix.Controls.Hub.Core
                     _engine.SetLocalResultVar("stream.uptime",  ResolveBroadcasterUptime());
                     return null;
                 }
-                // Arbitrary channel — no SB live path. Report offline honestly,
-                // but fetch game/title so the node isn't fully empty.
-                if (Interlocked.Exchange(ref _isOnlineArbitraryWarned, 1) == 0)
+                // Arbitrary channel — answered from the SAME source as get_stream.
+                var st = await FetchStreamStatusAsync("twitch.is_online", channel).ConfigureAwait(false);
+                if (st is { Known: true })
+                {
+                    _engine.SetLocalResultVar("stream.is_live", st.Live ? "true" : "false");
+                    _engine.SetLocalResultVar("stream.viewers", st.Viewers.ToString(CultureInfo.InvariantCulture));
+                    _engine.SetLocalResultVar("stream.title",   st.Title);
+                    _engine.SetLocalResultVar("stream.game",    st.Game);
+                    _engine.SetLocalResultVar("stream.uptime",
+                        st.Live && st.StartedAtUtc is { } started ? FormatUptimeSince(started.UtcDateTime) : "");
+                    return null;
+                }
+
+                // No usable answer — and the two ways to get here need DIFFERENT
+                // words, because only one of them is the user's to fix by importing
+                // anything:
+                //
+                //   • The action is definitively ABSENT (the probe ran and did not
+                //     find it) → the import nag. Note it is gated on the probe
+                //     verdict, not on merely reaching this branch: the pack now
+                //     ships "Phoenix: Get Stream Status", so a correct install must
+                //     stop emitting the old claim that arbitrary-channel liveness
+                //     "cannot be retrieved over Streamer.bot" — no longer true.
+                //   • The action ANSWERED known == "0" → it is installed and it ran;
+                //     it just could not ask Twitch. That reason had no reader at
+                //     all before, so a mis-configured Streamer.bot produced a
+                //     permanent, unexplained "not live".
+                //
+                // A transient no-answer on an install that HAS the action stays
+                // quiet here; FetchActionGlobalsAsync already logs its own timeout.
+                // Both messages share the one-time gate — whichever condition is
+                // hit first is the one this node reports for the session.
+                var probed = _knownSbActions;
+                bool actionAbsent = probed is not null && !probed.Contains(PhxSbActions.GetStreamStatus);
+                bool couldNotAsk  = Classify(st) == ReconcileAnswer.CouldNotAsk;
+                if ((actionAbsent || couldNotAsk)
+                    && Interlocked.Exchange(ref _isOnlineArbitraryWarned, 1) == 0)
                     GlobalLogger.Log(
-                        "twitch.is_online: live status for a channel other than the broadcaster's own cannot be " +
-                        "retrieved over Streamer.bot — reporting not-live. (One-time note.)",
+                        actionAbsent
+                            ? "twitch.is_online: live status for a channel other than the broadcaster's own needs the " +
+                              "\"Phoenix: Get Stream Status\" action, which this Streamer.bot doesn't have — reporting " +
+                              "not-live. Re-import the Phoenix Controls action pack to enable it. (One-time note.)"
+                            : BuildCouldNotAskNote(st!.Error, "twitch.is_online") +
+                              " The node reports not-live because it has to answer something. (One-time note.)",
                         "Script", LogLevel.Communication);
                 _engine.SetLocalResultVar("stream.is_live", "false");
                 var g = await FetchActionGlobalsAsync("twitch.is_online", PhxSbActions.GetUser,
@@ -953,10 +1748,20 @@ namespace Phoenix.Controls.Hub.Core
                 if (g != null)
                 {
                     string G(string k) => g.TryGetValue(k, out var v) ? v : "";
+                    string login = G("phx_user_login");
+                    // ★ mod / sub / vip are reported exactly as the platform answered
+                    // this fetch. They are no longer OR-ed with the User-Management
+                    // group overlay: those three groups ARE the platform now (no
+                    // hand-maintained member list exists for them), so the override
+                    // could only ever replace the live answer this node just paid a
+                    // round-trip for with an older cached one. Regular keeps the group
+                    // lookup — it is the one role with no platform source.
+                    var (_, _, _, gRegular, _) =
+                        UserManagementService.Instance.LookupGroups(login.Length > 0 ? login : user);
                     _engine.SetLocalResultVar("role.is_mod", NormBool(G("phx_user_mod")));
                     _engine.SetLocalResultVar("role.is_sub", NormBool(G("phx_user_sub")));
                     _engine.SetLocalResultVar("role.is_vip", NormBool(G("phx_user_vip")));
-                    string login = G("phx_user_login");
+                    _engine.SetLocalResultVar("role.is_regular", gRegular ? "true" : "false");
                     _engine.SetLocalResultVar("role.is_broadcaster",
                         IsConfiguredBroadcaster(login.Length > 0 ? login : user) ? "true" : "false");
                 }
@@ -1017,10 +1822,19 @@ namespace Phoenix.Controls.Hub.Core
                 return null;
             });
 
-            // twitch.get_viewers(resultVar) — fetches the active-chatter list via
-            // Streamer.bot's GetActiveViewers request. The response carries a
-            // `viewers[]` array (NOT `users[]`); each entry exposes `login`,
-            // `display`, `role`, `subscribed`, etc. We collect the `login` handles.
+            // twitch.get_viewers(resultVar) — the active-chatter list, comma-joined
+            // into the result var. The request/parse itself is the suite's ONE shared
+            // sweep (FetchActiveViewersAsync, ScriptManager.ViewerPresence.cs), which
+            // hands this node three things its own hand-rolled copy never had: a
+            // connectivity guard (a disconnected socket answered by burning the full
+            // 5s timeout on every cron tick), a ValueKind == Array check before
+            // enumerating (a `viewers` value that was not an array threw into the
+            // catch and returned nobody), and lowercased logins — so the names a graph
+            // gets here key the same rows the wallet and watch-time tables use.
+            //
+            // Fresh, not the cached presence sample: a graph that calls this is asking
+            // "who is watching right now", and the caller has no way to say how stale
+            // an answer it can live with.
             //
             // NOTE: `GetUsers` (the request this used to send) is NOT a real
             // Streamer.bot request — it was only ever answered by the external
@@ -1030,31 +1844,14 @@ namespace Phoenix.Controls.Hub.Core
             _engine.RegisterCommand("twitch.get_viewers", async (args) => {
                 string resultVar = _engine.CurrentBoundArgs?.GetOrDefault<string>("ResultVar", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
                 if (string.IsNullOrEmpty(resultVar)) return null;
-                // Brand sweep — was "sovereign-get-viewers-…".
-                string reqId = $"phx-get-viewers-{Guid.NewGuid():N}";
-                string response = await WS.Instance.SendAndWaitAsync(
-                    $@"{{""request"":""GetActiveViewers"",""id"":""{reqId}""}}",
-                    reqId, 5000).ConfigureAwait(false);
-                var names = new List<string>();
-                if (!string.IsNullOrEmpty(response))
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(response);
-                        if (doc.RootElement.TryGetProperty("viewers", out var viewers))
-                            foreach (var v in viewers.EnumerateArray())
-                                if (v.TryGetProperty("login", out var login)
-                                    && login.GetString() is { Length: > 0 } name)
-                                    names.Add(name);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Bare catch hid JSON-parse failures of
-                        // the Streamer.bot GetActiveViewers response, masking malformed payloads.
-                        GlobalLogger.Log($"twitch.get_viewers: JSON parse failed: {ex.Message}", "Script", LogLevel.CriticalError);
-                    }
-                }
-                _engine.SetLocalResultVar(resultVar, string.Join(",", names));
+                // NULL = the sweep FAILED (timeout, malformed payload) under the
+                // nullable contract; this script surface coalesces it to empty so
+                // the result var is written even then — a downstream text.split /
+                // array.length reads an empty list rather than an unresolved
+                // {token}, and the script run never aborts on a stalled socket.
+                var viewers = await FetchActiveViewersAsync().ConfigureAwait(false)
+                              ?? Array.Empty<ActiveViewer>();
+                _engine.SetLocalResultVar(resultVar, string.Join(",", viewers.Select(v => v.Login)));
                 return null;
             });
         }

@@ -44,6 +44,29 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
     // lookups that read this.
     private readonly Dictionary<string, NodeViewModel> _nodesById = new();
 
+    // Live title→VMs index maintained in the SAME CollectionChanged handler
+    // as _nodesById, so every mutation site stays covered by construction.
+    // Keyed on the CANONICAL model title (NodeViewModel.Model.Title, e.g.
+    // "Logic.EnumMatch") — NOT the display title (NodeViewModel.Title /
+    // NodeGeometry.DisplayTitle, which renders "Add  +" for Math.Add or
+    // "↩ {EventName}" for Event.Return). The consumer is the Live-Debug
+    // flash: ScriptExporter emits `# [{node.Title}]` markers from the MODEL
+    // title, the engine parses that string verbatim into the field
+    // ScriptManager marshals as DEBUG_NODE_EXEC "nodeId", so this index must
+    // resolve exactly the string the exporter wrote. Titles are NOT unique
+    // (a graph typically holds many "Twitch.SendChat" nodes) — hence a list
+    // per key; FindNodesByTitle fans out to every instance.
+    //
+    // Title mutation: none post-add, so add-time keying is stable and no
+    // per-node change subscription / lazy rebuild is needed. The user-facing
+    // rename path (NodeViewModel.EditableTitle) writes the
+    // __displayNameOverride ATTRIBUTE and by documented contract never
+    // touches Node.Title (it is the NodeRegistry / CommandManifest /
+    // exporter lookup key); the only Node.Title writes in the codebase are
+    // GraphSerializer load-time migrations, which run before any
+    // NodeViewModel exists.
+    private readonly Dictionary<string, List<NodeViewModel>> _nodesByTitle = new();
+
     // Per-node incident-link index kept in
     // lockstep with the Links collection via CollectionChanged. TranslateNode
     // (called per moved node at pointer cadence, x N for a group drag) used to
@@ -72,11 +95,15 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         Links.CollectionChanged += OnLinksCollectionChanged;
     }
 
-    // Maintain _nodesById alongside the Nodes
+    // Maintain _nodesById + _nodesByTitle alongside the Nodes
     // collection. Reset (Clear) rebuilds from scratch; Add / Remove / Replace
     // apply the delta. Empty / duplicate ids are guarded the same way the
     // prior per-call rebuild did (skip empty; last-write-wins on dup, which
-    // matches the old Dictionary indexer assignment).
+    // matches the old Dictionary indexer assignment). The title index needs
+    // no ReferenceEquals dup guard on the remove paths: it holds every
+    // instance in a list, and List.Remove takes out exactly the departing
+    // instance (reference equality — NodeViewModel doesn't override Equals),
+    // so a same-id survivor can never be evicted by proxy.
     private void OnNodesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         switch (e.Action)
@@ -84,32 +111,74 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
             case NotifyCollectionChangedAction.Add:
                 if (e.NewItems != null)
                     foreach (NodeViewModel n in e.NewItems)
+                    {
                         if (!string.IsNullOrEmpty(n.Id)) _nodesById[n.Id] = n;
+                        IndexNodeTitle(n);
+                    }
                 break;
             case NotifyCollectionChangedAction.Remove:
                 if (e.OldItems != null)
                     foreach (NodeViewModel n in e.OldItems)
+                    {
                         if (!string.IsNullOrEmpty(n.Id)
                             && _nodesById.TryGetValue(n.Id, out var cur)
                             && ReferenceEquals(cur, n))
                             _nodesById.Remove(n.Id);
+                        DeindexNodeTitle(n);
+                    }
                 break;
             case NotifyCollectionChangedAction.Replace:
                 if (e.OldItems != null)
                     foreach (NodeViewModel n in e.OldItems)
+                    {
                         if (!string.IsNullOrEmpty(n.Id)
                             && _nodesById.TryGetValue(n.Id, out var old)
                             && ReferenceEquals(old, n))
                             _nodesById.Remove(n.Id);
+                        DeindexNodeTitle(n);
+                    }
                 if (e.NewItems != null)
                     foreach (NodeViewModel n in e.NewItems)
+                    {
                         if (!string.IsNullOrEmpty(n.Id)) _nodesById[n.Id] = n;
+                        IndexNodeTitle(n);
+                    }
                 break;
             default: // Reset / Move — rebuild from the authoritative collection.
                 _nodesById.Clear();
+                _nodesByTitle.Clear();
                 foreach (var n in Nodes)
+                {
                     if (!string.IsNullOrEmpty(n.Id)) _nodesById[n.Id] = n;
+                    IndexNodeTitle(n);
+                }
                 break;
+        }
+    }
+
+    // File a node under its canonical model title. Mirrors the
+    // AddLinkToNode list-bucket shape. The Contains guard keeps the bucket
+    // duplicate-free if the same INSTANCE is ever double-added (the id index
+    // tolerates that via last-write-wins; the list equivalent is skip).
+    private void IndexNodeTitle(NodeViewModel n)
+    {
+        string title = n.Model.Title;
+        if (string.IsNullOrEmpty(title)) return;
+        if (!_nodesByTitle.TryGetValue(title, out var list))
+            _nodesByTitle[title] = list = new List<NodeViewModel>(1);
+        if (!list.Contains(n)) list.Add(n);
+    }
+
+    // Remove a node from its title bucket; drop the bucket when it empties
+    // so stale keys don't accrete across long editing sessions.
+    private void DeindexNodeTitle(NodeViewModel n)
+    {
+        string title = n.Model.Title;
+        if (string.IsNullOrEmpty(title)) return;
+        if (_nodesByTitle.TryGetValue(title, out var list))
+        {
+            list.Remove(n);
+            if (list.Count == 0) _nodesByTitle.Remove(title);
         }
     }
 
@@ -615,9 +684,19 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         Links.ReplaceAll(linkVms);
         Frames.ReplaceAll(frameVms);
 
-        Zoom = _graph.ViewZoom > 0 ? _graph.ViewZoom : 1.0;
-        PanX = _graph.ViewOffsetX;
-        PanY = _graph.ViewOffsetY;
+        // Viewport restore is the one place a bad .phxg can make a perfectly
+        // loaded graph INVISIBLE: nodes, links and the minimap are all correct,
+        // but the camera points at empty space. Zoom carried a `> 0` guard
+        // (which also rejects NaN, since NaN > 0 is false); PanX/PanY carried
+        // none at all, so a NaN/Infinity offset went straight through and left
+        // the canvas blank with no way back except Home.
+        //
+        // Sanitise the raw values here. Whether the resulting camera actually
+        // SEES anything depends on the viewport size, which only the view knows
+        // — LogicCanvasView re-centres after load if it does not.
+        Zoom = (_graph.ViewZoom > 0 && double.IsFinite(_graph.ViewZoom)) ? _graph.ViewZoom : 1.0;
+        PanX = double.IsFinite(_graph.ViewOffsetX) ? _graph.ViewOffsetX : 0.0;
+        PanY = double.IsFinite(_graph.ViewOffsetY) ? _graph.ViewOffsetY : 0.0;
 
         SyncSocketConnectivity();
 
@@ -1143,6 +1222,29 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         => string.IsNullOrEmpty(nodeId) ? null
          : _nodesById.TryGetValue(nodeId, out var vm) ? vm : null;
 
+    /// <summary>
+    /// Returns every node VM whose CANONICAL model title
+    /// (<c>Node.Title</c>, e.g. <c>"Logic.EnumMatch"</c>) equals
+    /// <paramref name="title"/> — empty when none match.
+    /// </summary>
+    /// <remarks>
+    /// Built for the Live-Debug flash fallback: ScriptExporter emits
+    /// <c># [{node.Title}]</c> trace markers, the engine parses that TITLE
+    /// string and Hub marshals it into DEBUG_NODE_EXEC's <c>nodeId</c>
+    /// field — so the GUID-keyed <see cref="FindNode"/> can never resolve
+    /// it. Titles are not unique; this returns all instances and the caller
+    /// decides the fan-out policy. Exact-ordinal match only — the exporter
+    /// writes the title verbatim, so no case folding is wanted. O(1) against
+    /// the <c>_nodesByTitle</c> index maintained by
+    /// <see cref="OnNodesCollectionChanged"/>. Returns the live bucket list
+    /// as read-only; callers iterate synchronously on the UI thread (the
+    /// flash drain), never across a Nodes mutation.
+    /// </remarks>
+    public IReadOnlyList<NodeViewModel> FindNodesByTitle(string title)
+        => !string.IsNullOrEmpty(title) && _nodesByTitle.TryGetValue(title, out var list)
+            ? list
+            : Array.Empty<NodeViewModel>();
+
     private string? _pickerVarChainName;
     /// <summary>
     /// Sticky var-chain picker name. When set, the canvas dims every node
@@ -1325,6 +1427,7 @@ public sealed class LogicCanvasViewModel : ObservableObject, IDisposable
         Links.Clear();
         Frames.Clear();
         _nodesById.Clear();
+        _nodesByTitle.Clear();
         _linksByNode.Clear();
         _linksBySocket.Clear();
         _selection = null;

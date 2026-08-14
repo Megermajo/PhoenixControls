@@ -34,7 +34,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
     /// <inheritdoc/>
     public string CurrentDocumentDisplayName =>
         string.IsNullOrEmpty(ViewModel.ActiveLayerFileName)
-            ? "(unsaved)"
+            ? Localizer.T("visualist.main.document.unsaved", "(unsaved)")
             : ViewModel.ActiveLayerFileName;
 
     /// <inheritdoc/>
@@ -156,6 +156,11 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
         _canvasView = new LayerCanvasView { DataContext = ViewModel };
         _editorView = new WidgetEditorView { DataContext = ViewModel };
+        // T11-9 — the editor's own bottom status strip is collapsed to avoid a
+        // double strip in Widget-Editor mode; route its transient feedback (Test
+        // Run / keyframe / fit / errors) into this MainView's single canonical
+        // status strip instead, so no feedback is lost.
+        _editorView.ExternalStatusSink = ShowTransientEditorStatus;
         MainPaneRegion.Content = _canvasView;
 
         // Explorer file-drop on the layer canvas opens the dropped .phxlayer.
@@ -240,6 +245,30 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // synchronous MainView ctor return isn't gated on `data/layers/`
         // FS work. Loaded drives InitializeAsync below.
         Loaded += OnLoadedInit;
+
+        // Restore the user's persisted splitter widths BEFORE the first
+        // SelectSubTab so the initial layout comes up at the saved sizes rather
+        // than the XAML defaults. Both are clamped to the shell Min/Max so a
+        // stale/out-of-range stored value can't wedge a column. The DYNAMIC
+        // centre-starvation cap can't run here — ActualWidth is still 0 in the
+        // ctor — so ApplyCenterStarvationClamp runs off SizeChanged below, whose
+        // first fire is the initial layout pass.
+        try
+        {
+            var cfg = Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance;
+            _railWidthPref        = System.Math.Clamp(cfg.RailWidth,      RailMinWidth,      RailMaxWidth);
+            _inspectorWidthPref   = System.Math.Clamp(cfg.InspectorWidth, InspectorMinWidth, InspectorMaxWidth);
+            InspectorColumn.Width = new GridLength(_inspectorWidthPref);
+        }
+        catch (Exception ex) { GlobalLogger.Error("Visualist.WinUI", "restore splitter widths", ex); }
+
+        // Self-heal the side columns whenever the shell's own width changes —
+        // first layout (which is what applies the clamp to the RESTORED widths),
+        // a Hub window resize, and a move to a smaller monitor. Without this a
+        // pair of widths persisted near maximum came back on a narrower window
+        // and squeezed the centre canvas under its floor until the user happened
+        // to drag a splitter.
+        SizeChanged += OnShellSizeChanged;
 
         // Seed the initial mode (Layer Canvas) through SelectSubTab — the single
         // source of truth for the MainPaneRegion swap, the LayerRail column
@@ -697,7 +726,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
 
             int w = layer.Resolution.Width;
             int h = layer.Resolution.Height;
-            string title = string.IsNullOrEmpty(layer.Name) ? "Layer" : layer.Name;
+            string title = string.IsNullOrEmpty(layer.Name)
+                ? Localizer.T("visualist.main.preview.untitled_layer", "Layer")
+                : layer.Name;
             var win = new Phoenix.Controls.Visualist.WinUI.Hosting.LayerPreviewWindow(title, layerId, w, h);
             win.Closed += (_, _) => _layerPreviewWindow = null;
             _layerPreviewWindow = win;
@@ -820,7 +851,9 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             {
                 list.Items.Add(new ListViewItem
                 {
-                    Content = string.IsNullOrEmpty(win.Title) ? "(untitled)" : win.Title,
+                    Content = string.IsNullOrEmpty(win.Title)
+                        ? Localizer.T("visualist.window.switcher.untitled", "(untitled)")
+                        : win.Title,
                 });
             }
             if (list.Items.Count > 0) list.SelectedIndex = 0;
@@ -920,9 +953,12 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             // Extension order mirrors the baseline's alpha-capable-first
             // convention (images before video before audio).
             var allExt = new List<(string, string)>();
-            foreach (var e in s_imageExt) allExt.Add(("Image", e));
-            foreach (var e in s_videoExt) allExt.Add(("Video", e));
-            foreach (var e in s_audioExt) allExt.Add(("Audio", e));
+            string imageLabel = Localizer.T("visualist.main.picker.media.image", "Image");
+            string videoLabel = Localizer.T("visualist.main.picker.media.video", "Video");
+            string audioLabel = Localizer.T("visualist.main.picker.media.audio", "Audio");
+            foreach (var e in s_imageExt) allExt.Add((imageLabel, e));
+            foreach (var e in s_videoExt) allExt.Add((videoLabel, e));
+            foreach (var e in s_audioExt) allExt.Add((audioLabel, e));
 
             // Multi-select import. Each picked file is copied into the
             // kind-by-extension subfolder; unsupported types are skipped (logged)
@@ -996,9 +1032,236 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         // out from under the editor) and tell the inspector to drop its LAYER
         // settings, leaving the widget/trigger context only. Layer Canvas mode
         // restores both. SelectSubTab is the single source of truth for the mode.
-        LayerRailColumn.Width       = showCanvas ? new GridLength(200) : new GridLength(0);
+        // Restore the user's last splitter-adjusted rail width on the way back to
+        // canvas mode, not a hardcoded 200 — otherwise a resize was lost on every
+        // editor round-trip.
+        LayerRailColumn.Width       = showCanvas ? new GridLength(_railWidthPref) : new GridLength(0);
         LayerRailControl.Visibility = showCanvas ? Visibility.Visible : Visibility.Collapsed;
+        RailSplitter.Visibility     = showCanvas ? Visibility.Visible : Visibility.Collapsed;
         InspectorPanelControl.SetEditorContext(widgetEditing: !showCanvas);
+
+        // Coming back to canvas mode re-adds the rail's width to the row, which
+        // on a narrow window can push the centre under its floor — re-run the
+        // cap. No-op during the ctor's seed call (ActualWidth is still 0 there).
+        ApplyCenterStarvationClamp();
+    }
+
+    // ─── Hand-rolled panel splitters (rail | canvas | inspector) ─────────
+    // WinUI 3 has no built-in GridSplitter; a lightweight pointer-drag on the
+    // divider Borders resizes the fixed side columns. Button-held guard +
+    // capture-lost teardown mirror the canvas drag pattern. Chosen widths are
+    // persisted to VisualistUserConfig (RailWidth / InspectorWidth) — restored in
+    // the ctor and written on drag-release in EndSplitterDrag.
+    private const double RailMinWidth      = 140;
+    private const double RailMaxWidth      = 420;
+    private const double InspectorMinWidth = 220;
+    private const double InspectorMaxWidth = 560;
+    private const double CenterMinWidth    = 360;   // mirrors the centre column's XAML MinWidth (T11-9)
+
+    private bool   _railSplitterDrag;
+    private bool   _inspectorSplitterDrag;
+    private double _splitterDragStartX;
+    private double _splitterStartWidth;
+    private double _railWidthPref      = 200;   // last user-chosen rail width
+    // Same role for the inspector. Kept as a PREFERENCE rather than reading the
+    // column back, because ApplyCenterStarvationClamp may be holding the column
+    // narrower than the user asked for on a small window — the pref is what we
+    // persist and what we grow back to once there's room again.
+    private double _inspectorWidthPref = 280;   // matches the XAML default
+
+    private void OnSplitterPointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        try { ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast); }
+        catch { /* cursor best-effort */ }
+        // T11-9 — ember hover accent on the grabber pill (skip if a drag is live).
+        if (!_railSplitterDrag && !_inspectorSplitterDrag) SetSplitterPill(sender, "EmberDeepBrush");
+    }
+
+    private void OnSplitterPointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_railSplitterDrag || _inspectorSplitterDrag) return; // keep the resize cursor + highlight through the drag
+        try { ProtectedCursor = null; } catch { /* best-effort */ }
+        SetSplitterPill(sender, "CoalDividerBrush");
+    }
+
+    // T11-9 — paint a splitter's grabber pill for hover/drag affordance. The pill
+    // is the strip Border's single child; a missing token degrades to a no-op.
+    private static void SetSplitterPill(object splitter, string brushKey)
+    {
+        if (splitter is Microsoft.UI.Xaml.Controls.Border strip
+            && strip.Child is Microsoft.UI.Xaml.Controls.Border pill)
+            pill.Background = ResolveBrush(brushKey);
+    }
+
+    private void OnRailSplitterPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _railSplitterDrag   = true;
+        _splitterDragStartX = e.GetCurrentPoint(this).Position.X;
+        _splitterStartWidth = LayerRailColumn.ActualWidth;
+        SetSplitterPill(sender, "EmberPrimaryBrush");
+        RailSplitter.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnRailSplitterMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_railSplitterDrag) return;
+        var pp = e.GetCurrentPoint(this);
+        if (!pp.Properties.IsLeftButtonPressed) { EndSplitterDrag(RailSplitter, e.Pointer); return; }
+        double dx = pp.Position.X - _splitterDragStartX;
+        // Upper bound is the smaller of the static Max and the room left before the
+        // centre canvas would drop under CenterMinWidth (T11-9).
+        double w = System.Math.Clamp(_splitterStartWidth + dx, RailMinWidth, RailMaxRoomForCenter());
+        _railWidthPref = w;
+        LayerRailColumn.Width = new GridLength(w);
+        e.Handled = true;
+    }
+
+    private void OnRailSplitterReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => EndSplitterDrag(RailSplitter, e.Pointer);
+
+    private void OnInspectorSplitterPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _inspectorSplitterDrag = true;
+        _splitterDragStartX    = e.GetCurrentPoint(this).Position.X;
+        _splitterStartWidth    = InspectorColumn.ActualWidth;
+        SetSplitterPill(sender, "EmberPrimaryBrush");
+        InspectorSplitter.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnInspectorSplitterMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_inspectorSplitterDrag) return;
+        var pp = e.GetCurrentPoint(this);
+        if (!pp.Properties.IsLeftButtonPressed) { EndSplitterDrag(InspectorSplitter, e.Pointer); return; }
+        // Inspector sits on the RIGHT — dragging the divider right shrinks it.
+        double dx = pp.Position.X - _splitterDragStartX;
+        // Upper bound is the smaller of the static Max and the room left before the
+        // centre canvas would drop under CenterMinWidth (T11-9).
+        double w = System.Math.Clamp(_splitterStartWidth - dx, InspectorMinWidth, InspectorMaxRoomForCenter());
+        _inspectorWidthPref   = w;
+        InspectorColumn.Width = new GridLength(w);
+        e.Handled = true;
+    }
+
+    private void OnInspectorSplitterReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => EndSplitterDrag(InspectorSplitter, e.Pointer);
+
+    // T11-9 — dynamic upper bounds for the two side columns: never let the column
+    // being dragged grow past the point where the centre canvas would fall under
+    // CenterMinWidth. Reads live sibling widths (collapsed splitter/rail report 0
+    // ActualWidth in Widget-Editor mode, so those cases fall out for free). On a
+    // wide window the room exceeds the static Max, so the drag range is unchanged;
+    // a degenerately narrow window clamps to the column's own Min (the XAML
+    // MinWidth on the centre column is the last-resort guard beyond that).
+    private double RailMaxRoomForCenter()
+    {
+        double avail = ActualWidth;
+        if (double.IsNaN(avail) || avail <= 0) return RailMaxWidth;
+        double room = avail - CenterMinWidth
+                    - RailSplitter.ActualWidth
+                    - InspectorSplitter.ActualWidth
+                    - InspectorColumn.ActualWidth;
+        return System.Math.Max(RailMinWidth, System.Math.Min(RailMaxWidth, room));
+    }
+
+    private double InspectorMaxRoomForCenter()
+    {
+        double avail = ActualWidth;
+        if (double.IsNaN(avail) || avail <= 0) return InspectorMaxWidth;
+        double room = avail - CenterMinWidth
+                    - RailSplitter.ActualWidth
+                    - InspectorSplitter.ActualWidth
+                    - LayerRailColumn.ActualWidth;
+        return System.Math.Max(InspectorMinWidth, System.Math.Min(InspectorMaxWidth, room));
+    }
+
+    private void OnShellSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // Never fight a live splitter drag — the drag handlers already apply
+        // their own dynamic cap, and the shell's own width can't change mid-drag
+        // anyway, so this is pure insurance.
+        if (_railSplitterDrag || _inspectorSplitterDrag) return;
+        ApplyCenterStarvationClamp();
+    }
+
+    /// <summary>
+    /// Re-apply the centre-starvation cap to BOTH side columns at once.
+    ///
+    /// The two RoomForCenter helpers cap only the column being dragged and read
+    /// the OTHER column's live ActualWidth — correct mid-drag, useless on a
+    /// restore or a window resize where both columns can be over-wide at the
+    /// same time. So this works off the stored PREFERENCES: it prices the whole
+    /// row, pays any deficit back out of the inspector first (the rail is the
+    /// navigation surface the user needs to keep switching layers), then the
+    /// rail, and never takes either below its own Min. Because it recomputes
+    /// from the prefs rather than the current widths it is idempotent, and a
+    /// window that grows again restores the widths the user actually chose.
+    /// </summary>
+    private void ApplyCenterStarvationClamp()
+    {
+        try
+        {
+            double avail = ActualWidth;
+            if (double.IsNaN(avail) || avail <= 0) return;
+
+            // The rail collapses to a zero-width column in Widget-Editor mode;
+            // it contributes nothing then and must not be restored here.
+            bool railShown = LayerRailControl.Visibility == Visibility.Visible;
+            double rail = railShown ? _railWidthPref : 0;
+            double insp = _inspectorWidthPref;
+
+            double deficit = CenterMinWidth
+                           + RailSplitter.ActualWidth
+                           + InspectorSplitter.ActualWidth
+                           + rail + insp
+                           - avail;
+
+            double effRail = rail;
+            double effInsp = insp;
+            if (deficit > 0)
+            {
+                effInsp = System.Math.Max(InspectorMinWidth, insp - deficit);
+                deficit -= insp - effInsp;
+                if (railShown && deficit > 0)
+                    effRail = System.Math.Max(RailMinWidth, rail - deficit);
+            }
+
+            // Half-pixel slack so a rounding wobble during layout doesn't churn
+            // the columns (each write re-triggers a measure pass).
+            if (railShown && System.Math.Abs(LayerRailColumn.Width.Value - effRail) > 0.5)
+                LayerRailColumn.Width = new GridLength(effRail);
+            if (System.Math.Abs(InspectorColumn.Width.Value - effInsp) > 0.5)
+                InspectorColumn.Width = new GridLength(effInsp);
+        }
+        catch (Exception ex) { GlobalLogger.Error("Visualist.WinUI", "ApplyCenterStarvationClamp", ex); }
+    }
+
+    private void EndSplitterDrag(Microsoft.UI.Xaml.Controls.Border splitter, Microsoft.UI.Xaml.Input.Pointer? pointer)
+    {
+        _railSplitterDrag      = false;
+        _inspectorSplitterDrag = false;
+        if (pointer is not null) { try { splitter.ReleasePointerCapture(pointer); } catch { /* already lost */ } }
+        try { ProtectedCursor = null; } catch { /* best-effort */ }
+        SetSplitterPill(splitter, "CoalDividerBrush");   // T11-9 — back to resting pill
+
+        // Persist the chosen widths so they survive across sessions. Both prefs
+        // are kept in sync through their drags and preserved across editor
+        // round-trips. We persist the PREFS, not the columns' measured widths:
+        // on a narrow window ApplyCenterStarvationClamp may be holding a column
+        // below what the user asked for, and writing that back would silently
+        // shrink their layout for good. Guarded so a config-write fault can't
+        // break the splitter interaction.
+        try
+        {
+            Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance.Update(c =>
+            {
+                c.RailWidth      = _railWidthPref;
+                c.InspectorWidth = _inspectorWidthPref;
+            });
+        }
+        catch (Exception ex) { GlobalLogger.Error("Visualist.WinUI", "persist splitter widths", ex); }
     }
 
     // ─── file commands ──────────────────────────────────────────────────
@@ -1053,7 +1316,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             var path = CustomFilePicker.PickSingleFile(
                 hwnd,
                 startDir,
-                new[] { ("Phoenix Layer", ".phxlayer") });
+                new[] { (Localizer.T("visualist.main.picker.open.layer_type", "Phoenix Layer"), ".phxlayer") });
             if (string.IsNullOrEmpty(path)) return;
             // Route through the registry so opening a layer that's
             // already loaded in a sibling window focuses that window
@@ -1149,7 +1412,7 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
             hwnd,
             startDir,
             suggestedName,
-            new[] { ("Phoenix Layer", ".phxlayer") });
+            new[] { (Localizer.T("visualist.main.picker.save.layer_type", "Phoenix Layer"), ".phxlayer") });
         if (!string.IsNullOrEmpty(path))
         {
             // Refresh widget thumbnails before SaveAs writes the file
@@ -1293,6 +1556,31 @@ public sealed partial class MainView : UserControl, IPillarShellHost, ICanExecut
         StatusLeft.Text  = Localizer.T(
             "visualist.status.save_failed",
             "Save failed — see System Log");
+    }
+
+    // T11-9 — the WidgetEditorView's own bottom status strip is collapsed to avoid
+    // a double strip in Widget-Editor mode; its transient feedback is routed here
+    // (via WidgetEditorView.ExternalStatusSink) into this single canonical strip.
+    // The message occupies the left zone for ~5s, then RefreshStatusBar restores
+    // the persistent Saved/Modified text. The traffic-light dot is left untouched
+    // so document state stays visible under the transient message. Runs on the UI
+    // thread — SetStatus marshals before invoking the sink.
+    private Microsoft.UI.Xaml.DispatcherTimer? _editorStatusClearTimer;
+
+    private void ShowTransientEditorStatus(string message)
+    {
+        if (StatusLeft is null || string.IsNullOrEmpty(message)) return;
+        StatusLeft.Text = message;
+        _editorStatusClearTimer ??= CreateEditorStatusClearTimer();
+        _editorStatusClearTimer.Stop();
+        _editorStatusClearTimer.Start();
+    }
+
+    private Microsoft.UI.Xaml.DispatcherTimer CreateEditorStatusClearTimer()
+    {
+        var t = new Microsoft.UI.Xaml.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        t.Tick += (_, _) => { t.Stop(); RefreshStatusBar(); };
+        return t;
     }
 
     // Theme-brush lookup with graceful fallback — the status-bar spec requires

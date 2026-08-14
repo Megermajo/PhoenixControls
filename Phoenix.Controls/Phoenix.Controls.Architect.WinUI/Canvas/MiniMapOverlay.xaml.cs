@@ -500,10 +500,50 @@ public sealed partial class MiniMapOverlay : UserControl
             if (h < MinBoundsExtent) { double pad2 = (MinBoundsExtent - h) / 2; minY -= pad2; maxY += pad2; }
         }
 
-        _boundsX = minX;
-        _boundsY = minY;
-        _boundsW = Math.Max(1.0, maxX - minX);
-        _boundsH = Math.Max(1.0, maxY - minY);
+        double newX = minX, newY = minY;
+        double newW = Math.Max(1.0, maxX - minX);
+        double newH = Math.Max(1.0, maxY - minY);
+
+        // ★ 2026-08-14 — HYSTERESIS. Majo: "the mini map jumping."
+        //
+        // The bounding box was re-derived from scratch on EVERY rebuild, and
+        // _scale with it. Every dot, frame and the viewport rect is projected
+        // as (coord - _boundsX/Y) * _scale, so any change to the extent moved
+        // the ENTIRE map at once: dragging, adding, deleting or undoing a
+        // single node at the graph's outer edge re-scaled everything. On a
+        // ~3000 px graph, deleting the outermost node shifted a mid-graph dot
+        // ~33 px on a 200 px map in one frame. That is the "jumping".
+        //
+        // Re-scale only when the extent changed MEANINGFULLY. Below the
+        // threshold the previous basis is kept, so incidental edits leave the
+        // map still. A minimap is a navigation aid, not a measurement — a few
+        // percent of stale scale costs nothing, and the stability is the point.
+        //
+        // This also removes the visible half of the throttle problem: on a
+        // throttled rebuild skip, the per-frame viewport pass re-projects on
+        // the PREVIOUS basis, and with a stable basis that projection is now
+        // bit-identical instead of a visible step.
+        const double ReScaleThreshold = 0.06;   // 6% of the current extent
+        bool first = _boundsW <= 1.0 && _boundsH <= 1.0;
+        bool moved = Math.Abs(newX - _boundsX) > _boundsW * ReScaleThreshold
+                  || Math.Abs(newY - _boundsY) > _boundsH * ReScaleThreshold;
+        bool resized = Math.Abs(newW - _boundsW) > _boundsW * ReScaleThreshold
+                    || Math.Abs(newH - _boundsH) > _boundsH * ReScaleThreshold;
+
+        // Always accept a basis change that would otherwise leave graph content
+        // outside the drawn map. The guard exists to ignore noise, never to
+        // hide a node off the edge.
+        bool contentOutside = newX < _boundsX || newY < _boundsY
+                           || newX + newW > _boundsX + _boundsW
+                           || newY + newH > _boundsY + _boundsH;
+
+        if (first || moved || resized || contentOutside)
+        {
+            _boundsX = newX;
+            _boundsY = newY;
+            _boundsW = newW;
+            _boundsH = newH;
+        }
     }
 
     private void RenderFrames()

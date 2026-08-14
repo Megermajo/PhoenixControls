@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Visualist.Core;
@@ -69,7 +70,8 @@ public sealed partial class ThumbnailHost : UserControl
 
             PreviewImage.Source     = null;
             PreviewImage.Visibility = Visibility.Collapsed;
-            PreviewHint.Text        = _currentImageHint ?? "(image unavailable)";
+            PreviewHint.Text        = _currentImageHint
+                ?? Localizer.T("visualist.preview.thumb.image_unavailable", "(image unavailable)");
             PreviewHint.Visibility  = Visibility.Visible;
 
             // Same breadcrumb posture as TryLoadBitmap's missing-file path:
@@ -142,7 +144,8 @@ public sealed partial class ThumbnailHost : UserControl
                         // (relative path, network failure, malformed URI).
                         // Degrade to the Unloaded look with a stable hint
                         // so the strip stays informative.
-                        PreviewHint.Text = snapshot?.Hint ?? "(image unavailable)";
+                        PreviewHint.Text = snapshot?.Hint
+                            ?? Localizer.T("visualist.preview.thumb.image_unavailable", "(image unavailable)");
                         PreviewHint.Visibility = Visibility.Visible;
                     }
                     break;
@@ -157,7 +160,8 @@ public sealed partial class ThumbnailHost : UserControl
                     }
                     else
                     {
-                        PreviewHint.Text = snapshot?.Hint ?? "(invalid color)";
+                        PreviewHint.Text = snapshot?.Hint
+                            ?? Localizer.T("visualist.preview.thumb.invalid_color", "(invalid color)");
                         PreviewHint.Visibility = Visibility.Visible;
                     }
                     break;
@@ -165,7 +169,8 @@ public sealed partial class ThumbnailHost : UserControl
 
                 case NodeEvaluator.PreviewKind.Unloaded:
                 {
-                    PreviewHint.Text = snapshot?.Hint ?? "(unloaded)";
+                    PreviewHint.Text = snapshot?.Hint
+                        ?? Localizer.T("visualist.preview.thumb.unloaded", "(unloaded)");
                     PreviewHint.Visibility = Visibility.Visible;
                     break;
                 }
@@ -178,7 +183,8 @@ public sealed partial class ThumbnailHost : UserControl
                     // see PhoenixDark.xaml; reused so no new brush is
                     // introduced just for the preview-host error state.
                     PlaceholderRect.Fill = (Brush)Application.Current.Resources["StatusRedTintBrush"];
-                    PreviewHint.Text = snapshot?.Hint ?? "(preview error)";
+                    PreviewHint.Text = snapshot?.Hint
+                        ?? Localizer.T("visualist.preview.thumb.error", "(preview error)");
                     PreviewHint.Visibility = Visibility.Visible;
                     if (!string.IsNullOrWhiteSpace(snapshot?.Hint))
                     {

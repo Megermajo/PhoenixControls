@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Phoenix.Controls.Shared.Localization;
 using Windows.UI;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
@@ -817,7 +818,7 @@ public sealed partial class NodeView : UserControl
                     {
                         flyout.Items.Add(new MenuFlyoutItem
                         {
-                            Text = "(no tables in databank)",
+                            Text = Localizer.T("architect.canvas.databank_picker.no_tables", "(no tables in databank)"),
                             IsEnabled = false,
                         });
                     }
@@ -835,12 +836,16 @@ public sealed partial class NodeView : UserControl
                             if (tables.Count > 0) flyout.Items.Add(new MenuFlyoutSeparator());
                             var create = new MenuFlyoutItem
                             {
-                                Text = $"Create '{ChannelPointsTableName}' table",
+                                Text = string.Format(
+                                    Localizer.T("architect.canvas.databank_picker.create_table", "Create '{0}' table"),
+                                    ChannelPointsTableName),
                                 Icon = new FontIcon { Glyph = "" },   // Segoe MDL2 "Add"
                             };
-                            ToolTipService.SetToolTip(create,
-                                $"Creates the standard currency table '{ChannelPointsTableName}' with the columns " +
-                                "name + currency — the shape this node charges channel points from — and selects it here.");
+                            ToolTipService.SetToolTip(create, string.Format(
+                                Localizer.T("architect.canvas.databank_picker.create_table.tip",
+                                    "Creates the standard currency table '{0}' with the columns " +
+                                    "name + currency — the shape this node charges channel points from — and selects it here."),
+                                ChannelPointsTableName));
                             create.Click += async (_, _) => await CreateChannelPointsTableAsync(s);
                             flyout.Items.Add(create);
                         }
@@ -854,9 +859,13 @@ public sealed partial class NodeView : UserControl
                     // giveaway); the rest list every giveaway in the databank —
                     // the pill is set to the KEY, which ResolveTargetAsync
                     // matches unambiguously (titles may repeat).
-                    var defaultItem = new MenuFlyoutItem { Text = "(default giveaway)" };
+                    var defaultItem = new MenuFlyoutItem
+                    {
+                        Text = Localizer.T("architect.canvas.databank_picker.default_giveaway", "(default giveaway)"),
+                    };
                     ToolTipService.SetToolTip(defaultItem,
-                        "Clears the selector — the node then follows the app-wide default giveaway from the Hub Giveaway page.");
+                        Localizer.T("architect.canvas.databank_picker.default_giveaway.tip",
+                            "Clears the selector — the node then follows the app-wide default giveaway from the Hub Giveaway page."));
                     defaultItem.Click += (_, _) => s.ValuePill = "";
                     flyout.Items.Add(defaultItem);
 
@@ -882,7 +891,7 @@ public sealed partial class NodeView : UserControl
                     {
                         flyout.Items.Add(new MenuFlyoutItem
                         {
-                            Text = "(set TableName first)",
+                            Text = Localizer.T("architect.canvas.databank_picker.set_table_first", "(set TableName first)"),
                             IsEnabled = false,
                         });
                         break;
@@ -897,7 +906,10 @@ public sealed partial class NodeView : UserControl
                     if (s.ParentNode.Title is { } pt
                         && pt.EndsWith("GetColumn", System.StringComparison.Ordinal))
                     {
-                        var rowidItem = new MenuFlyoutItem { Text = "rowid (row id)" };
+                        var rowidItem = new MenuFlyoutItem
+                        {
+                            Text = Localizer.T("architect.canvas.databank_picker.rowid", "rowid (row id)"),
+                        };
                         rowidItem.Click += (_, _) => s.ValuePill = "rowid";
                         flyout.Items.Add(rowidItem);
                     }
@@ -905,7 +917,9 @@ public sealed partial class NodeView : UserControl
                     {
                         flyout.Items.Add(new MenuFlyoutItem
                         {
-                            Text = $"(no columns in {tableName})",
+                            Text = string.Format(
+                                Localizer.T("architect.canvas.databank_picker.no_columns", "(no columns in {0})"),
+                                tableName),
                             IsEnabled = false,
                         });
                     }
@@ -929,7 +943,7 @@ public sealed partial class NodeView : UserControl
             {
                 flyout.Items.Add(new MenuFlyoutItem
                 {
-                    Text = "(databank unavailable)",
+                    Text = Localizer.T("architect.canvas.databank_picker.unavailable", "(databank unavailable)"),
                     IsEnabled = false,
                 });
             }
@@ -1009,11 +1023,11 @@ public sealed partial class NodeView : UserControl
             if (isProcess)
             {
                 if (graph.Processes.Count == 0)
-                    flyout.Items.Add(new MenuFlyoutItem { Text = "(no processes — add one in the left rail)", IsEnabled = false });
+                    flyout.Items.Add(new MenuFlyoutItem { Text = Localizer.T("architect.canvas.target_picker.no_processes", "(no processes — add one in the left rail)"), IsEnabled = false });
                 foreach (var p in graph.Processes)
                 {
                     var proc = p;
-                    var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(proc.Name) ? "(unnamed process)" : proc.Name };
+                    var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(proc.Name) ? Localizer.T("architect.canvas.target_picker.unnamed_process", "(unnamed process)") : proc.Name };
                     item.Click += (_, _) => canvas.BindProcessSpawnNode(node, proc);
                     flyout.Items.Add(item);
                 }
@@ -1021,11 +1035,11 @@ public sealed partial class NodeView : UserControl
             else // Macro.Call
             {
                 if (graph.Macros.Count == 0)
-                    flyout.Items.Add(new MenuFlyoutItem { Text = "(no macros — add one in the left rail)", IsEnabled = false });
+                    flyout.Items.Add(new MenuFlyoutItem { Text = Localizer.T("architect.canvas.target_picker.no_macros", "(no macros — add one in the left rail)"), IsEnabled = false });
                 foreach (var mac in graph.Macros)
                 {
                     var macro = mac;
-                    var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(macro.Name) ? "(unnamed macro)" : macro.Name };
+                    var item = new MenuFlyoutItem { Text = string.IsNullOrEmpty(macro.Name) ? Localizer.T("architect.canvas.target_picker.unnamed_macro", "(unnamed macro)") : macro.Name };
                     item.Click += (_, _) => canvas.BindMacroCallNode(node, macro);
                     flyout.Items.Add(item);
                 }
@@ -1322,11 +1336,15 @@ public sealed partial class NodeView : UserControl
         }
 
         // 1) Static catalogue — namespace bookends + 10 system tokens.
-        Add("global.", "namespace");
-        Add("user.",   "namespace");
-        Add("state.",  "namespace");
+        // The TOKENS are engine identifiers and stay English; the dim
+        // right-hand SOURCE tag beside each one is prose.
+        string srcNamespace = Localizer.T("architect.canvas.autocomplete.source.namespace", "namespace");
+        Add("global.", srcNamespace);
+        Add("user.",   srcNamespace);
+        Add("state.",  srcNamespace);
+        string srcSystem = Localizer.T("architect.canvas.autocomplete.source.system", "system");
         foreach (var sys in new[] { "time","hours","minutes","seconds","unix","date","day","month","monthname","year" })
-            Add("system." + sys, "system");
+            Add("system." + sys, srcSystem);
 
         // 2) Local-scope variables sweep — every Var.Get/Set/Inc/Toggle.VariableName +
         //    every Public.Get/Set.KeyName (engine-key prefixed "public.").
@@ -1340,12 +1358,12 @@ public sealed partial class NodeView : UserControl
                 case "Var.Inc":
                 case "Var.Toggle":
                     if (n.Attributes.TryGetValue("VariableName", out var vn) && !string.IsNullOrWhiteSpace(vn))
-                        Add(vn.Trim(), "var");
+                        Add(vn.Trim(), Localizer.T("architect.canvas.autocomplete.source.var", "var"));
                     break;
                 case "Public.Get":
                 case "Public.Set":
                     if (n.Attributes.TryGetValue("KeyName", out var kn) && !string.IsNullOrWhiteSpace(kn))
-                        Add("public." + kn.Trim(), "public");
+                        Add("public." + kn.Trim(), Localizer.T("architect.canvas.autocomplete.source.public", "public"));
                     break;
             }
         }
@@ -1357,7 +1375,8 @@ public sealed partial class NodeView : UserControl
             try
             {
                 var scoped = Phoenix.Controls.Architect.Core.AutocompleteScopeBuilder.Build(graph, currentNode);
-                foreach (var t in scoped) Add(t, "scope");
+                string srcScope = Localizer.T("architect.canvas.autocomplete.source.scope", "scope");
+                foreach (var t in scoped) Add(t, srcScope);
             }
             catch { /* scope builder is best-effort — never break the picker on fault */ }
         }
@@ -1365,7 +1384,8 @@ public sealed partial class NodeView : UserControl
         // 4) Graph-level Variables list (still surfaced — power users define vars
         //    here and refer to them in pill content).
         foreach (var v in graph.Variables)
-            Add(v.Name, $"graph · {v.Type}");
+            Add(v.Name, string.Format(
+                Localizer.T("architect.canvas.autocomplete.source.graph", "graph · {0}"), v.Type));
 
         return pool;
     }
@@ -1405,34 +1425,6 @@ public sealed partial class NodeView : UserControl
     <TextBlock Grid.Column=""1"" Text=""{Binding Source}"" Margin=""8,0,0,0""
                Foreground=""{StaticResource CoalSecondaryTextBrush}""
                FontFamily=""{StaticResource SansFont}"" FontSize=""9"" />
-  </Grid>
-</DataTemplate>";
-        return (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);
-    }
-
-    /// <summary>One-line: variable name + tiny type tag. Built in code-behind to
-    /// avoid a XAML resource dependency on the canvas namespace from NodeView's scope.</summary>
-    private static readonly DataTemplate s_varPickerTemplate
-        = LoadVarPickerTemplate();
-    private static DataTemplate BuildVarPickerTemplate() => s_varPickerTemplate;
-
-    private static DataTemplate LoadVarPickerTemplate()
-    {
-        // x:DataType stripped for the same reason as the autocomplete
-        // template above — XamlReader.Load doesn't accept compile-time
-        // attributes and the {Binding} expressions below don't need it.
-        var xaml = @"
-<DataTemplate xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
-              xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
-  <Grid Padding=""6,4"">
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition Width=""*"" />
-      <ColumnDefinition Width=""Auto"" />
-    </Grid.ColumnDefinitions>
-    <TextBlock Text=""{Binding Name}"" FontFamily=""{StaticResource MonoFont}"" FontSize=""11"" />
-    <TextBlock Grid.Column=""1"" Text=""{Binding Type}"" Margin=""8,0,0,0""
-               Foreground=""{StaticResource CoalSecondaryTextBrush}""
-               FontFamily=""{StaticResource MonoFont}"" FontSize=""9"" />
   </Grid>
 </DataTemplate>";
         return (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);

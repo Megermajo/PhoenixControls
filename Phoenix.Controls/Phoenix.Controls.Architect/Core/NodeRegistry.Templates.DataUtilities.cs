@@ -54,15 +54,17 @@ namespace Phoenix.Controls.Architect.Core
 
             // Time.StreamUptime. Pure-data probe: outputs
             // resolve to {stream.*} tokens at exec time. The anchor
-            // ("stream start" instant) defaults to Hub-uptime — i.e. the
-            // moment the ScriptEngine module first loaded — and
-            // can be re-anchored at runtime via
-            // ScriptEngine.SetStreamStartedAtUtc(...) for a
-            // future config-driven choice (Streamer.bot connect /
-            // first-chat / custom signal). Existing scripts never need
-            // to change because the var names are stable.
+            // ("stream start" instant) is re-anchored at runtime by
+            // ScriptManager.ReconcileStreamStateAsync, which reads Twitch's
+            // real started_at through the "Phoenix: Get Stream Status"
+            // action on connect and on a 60s refresh and calls
+            // ScriptEngine.SetStreamStartedAtUtc(...). Only when that
+            // lookup is unavailable does the anchor stay at its default —
+            // the moment the ScriptEngine module first loaded, i.e. Hub
+            // uptime. Existing scripts never need to change because the
+            // var names are stable.
             AddTemplate("Time.StreamUptime", "System", Color.DimGray,
-                "Returns how long the stream has been live, anchored at the configured \"stream start\" signal (default: Hub startup). Uptime is a human-readable form (\"45m\", \"1h 23m\"); UptimeSeconds / Minutes / Hours expose the raw integer counts; Formatted mirrors Uptime; StartedAt is the anchor instant in ISO-8601 UTC.",
+                "Returns how long the stream has been live, anchored to the stream's real start time (read from Twitch on connect and refreshed about once a minute; falls back to Hub startup when that lookup isn't available). Uptime is a human-readable form (\"45m\", \"1h 23m\"); UptimeSeconds / Minutes / Hours expose the raw integer counts; Formatted mirrors Uptime; StartedAt is the anchor instant in ISO-8601 UTC.",
                 null,
                 new[] {
                     ("Uptime",        ColString),

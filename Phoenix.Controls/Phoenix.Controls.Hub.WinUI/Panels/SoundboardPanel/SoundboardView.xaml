@@ -1,0 +1,545 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.SoundboardPanel.SoundboardView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.SoundboardPanel"
+    xmlns:common="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Soundboard page"
+    AutomationProperties.HelpText="Chat commands mapped to sound clips, played through one overlay layer and trigger."
+    loc:Localize.AutomationKey="panel.soundboard.page.a11y"
+    loc:Localize.HelpTextKey="panel.soundboard.page.help">
+
+    <!--
+        HOUSE SHELL — the 48px ToolPageHeader band over a two-column body.
+
+        Soundboard is the spec's declared PARTIAL-PARITY tool (§2.12, "Option B").
+        The other eleven pages split master-detail: a roster on the right, the
+        selected entity's editor on the left. This one cannot, and the reason is a
+        safety property rather than a layout preference: a sound row is a ~150px
+        card carrying eight controls AND the two silent-failure warnings (a clip
+        that will not play, a command word something else already answers). Option
+        A — compress the rows into a right-hand roster and move the editor left —
+        would hide both warnings behind a selection, which is precisely what those
+        warnings exist to prevent. So the body is asymmetric instead:
+
+          LEFT  1.4*  the sound cards themselves, full width
+          RIGHT 0.9*  the board-wide OUTPUT surfaces — the overlay hookup and the
+                      widget contract
+
+        ─ Why the right column is NOT a 300px live rail ─
+        It never was a live column; the one live element it carried was the
+        activity feed at its foot, and that came off in the 2026-08-14 pass. What
+        is left is two EDITABLE pickers (overlay layer, trigger) plus the only
+        documentation in the app of the widget graph the board needs. There is no
+        roster and no empty state to size a fixed rail for, and pinning editable
+        combo boxes to 300px would cramp a config surface to look like a feed. It
+        keeps its proportional width.
+
+        There is deliberately NO IsEnabled gate on the detail column. Nine of the
+        twelve pages grey their body while the master switch is off; this page
+        never has, and gating it now would stop the streamer configuring a board
+        they have not switched on yet — a behaviour change dressed as a layout
+        change. The header band's one state phrase is now the single place that
+        state is reported: the action strip's chip label, the pinned state band
+        and the status pill used to say the same boolean three times, in three
+        vocabularies, across ~80px above the first editable control.
+    -->
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Checked type by type, per the spec's merge rule. After the
+                     conversions below this page still contains TextBox (command,
+                     aliases, both cooldowns) and ComboBox (layer, trigger, clip —
+                     all three editable), which is exactly what this dictionary is
+                     for. No ToggleSwitch is declared in this page's own markup
+                     (per-row Enabled is a TogglePill in a Button host; the master
+                     switch is the one inside ToolPageHeader, which brings its own
+                     resources), and there is no Pivot and no Expander anywhere
+                     here. The six CheckBoxes on the page live
+                     inside the shared RoleCheckRow, which merges this same
+                     dictionary itself. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell recipes (cards, bands, buttons, text tiers). -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+        <!-- No page-local text tiers remain. Every text recipe on this page (card,
+             band, eyebrow, settings label, mono hint, strip label, CTA label, plus
+             the hint and warning voices) now comes from ToolShellStyles. -->
+
+        <DataTemplate x:Key="SoundRowTemplate" x:DataType="local:SoundRowVm">
+            <Border Background="{StaticResource CoalShellBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource Radius1Corner}"
+                    Margin="0,0,0,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Enabled accent rail — ember when live, divider-coal when off. -->
+                    <Border Grid.Column="0"
+                            Width="2"
+                            CornerRadius="1"
+                            Margin="6,10,0,10"
+                            Background="{x:Bind EnabledAccentBrush, Mode=OneWay}" />
+
+                    <!-- ★ The role gate at the bottom of this stack sits in the STAR
+                         column of a vertical StackPanel, and the list that hosts this
+                         template scrolls vertically only. WrapRowPanel needs a finite
+                         width offer to fold its six boxes; an Auto column, a horizontal
+                         StackPanel or a horizontally-scrolling host clips them. -->
+                    <StackPanel Grid.Column="1" Spacing="10" Padding="12,12,14,12">
+
+                        <!-- Header: !command + enabled toggle + delete -->
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE767;" FontSize="12"
+                                          Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="!"
+                                           FontFamily="{StaticResource MonoFont}" FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                <TextBox Text="{x:Bind Command, Mode=TwoWay}" PlaceholderText="airhorn" Width="180"
+                                         FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                         Foreground="{StaticResource EmberPrimaryBrush}"
+                                         VerticalAlignment="Center"
+                                         AutomationProperties.Name="Sound command word"
+                                         loc:Localize.PlaceholderKey="panel.soundboard.row.command.placeholder"
+                                         loc:Localize.AutomationKey="panel.soundboard.row.command.a11y" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <!-- Was a ToggleSwitch. The pill is display-only, so the
+                                     Click, the accessible name and the tooltip live on the
+                                     host Button (spec §3.4). -->
+                                <Button Click="OnToggleSoundEnabledClick"
+                                        Padding="8,5,10,5"
+                                        CornerRadius="{StaticResource Radius1Corner}"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="Sound enabled"
+                                        ToolTipService.ToolTip="When ON, this word answers in chat."
+                                        loc:Localize.AutomationKey="panel.soundboard.row.enabled.a11y"
+                                        loc:Localize.TooltipKey="panel.soundboard.row.enabled.tip">
+                                    <common:TogglePill IsOn="{x:Bind Enabled, Mode=OneWay}"
+                                                       Label="{x:Bind EnabledToggleLabel, Mode=OneWay}" />
+                                </Button>
+                                <Button Style="{StaticResource ToolDangerButtonStyle}"
+                                        Click="OnDeleteSoundClick"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="Delete sound"
+                                        loc:Localize.AutomationKey="panel.soundboard.row.delete.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                                  Foreground="{StaticResource ErrBrush}" />
+                                        <TextBlock Text="DELETE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.soundboard.row.delete.label" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Shadowed-word notice: an earlier built-in, or another row of
+                             this board, already answers this word. -->
+                        <TextBlock Style="{StaticResource ToolWarnTextStyle}"
+                                   Visibility="{x:Bind ShadowWarningVisibility, Mode=OneWay}"
+                                   Text="{x:Bind ShadowWarningText, Mode=OneWay}" />
+
+                        <Border Height="1" Background="{StaticResource CoalDividerSubtleBrush}" />
+
+                        <!-- Clip -->
+                        <StackPanel Spacing="6">
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="CLIP" Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.soundboard.row.clip.eyebrow" />
+                                <TextBlock Text="paths stay relative to the media library"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.soundboard.row.clip.hint" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ComboBox Width="360" IsEditable="True"
+                                          FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                          ItemsSource="{x:Bind ClipOptions, Mode=OneWay}"
+                                          Text="{x:Bind ClipPath, Mode=TwoWay}"
+                                          PlaceholderText="audio/airhorn.mp3"
+                                          DropDownOpened="OnClipComboOpened"
+                                          AutomationProperties.Name="Sound clip"
+                                          loc:Localize.AutomationKey="panel.soundboard.row.clip.a11y" />
+                                <!-- Routes to the SAME page-wide refresh as the strip's
+                                     button, deliberately: re-reading one list without the
+                                     others leaves the page half-stale. -->
+                                <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                        Padding="10,0"
+                                        VerticalAlignment="Center"
+                                        Click="OnRefreshClick"
+                                        ToolTipService.ToolTip="Reload the clip list"
+                                        AutomationProperties.Name="Refresh clip list"
+                                        loc:Localize.TooltipKey="panel.soundboard.row.clip.refresh.tip"
+                                        loc:Localize.AutomationKey="panel.soundboard.row.clip.refresh.a11y">
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="11"
+                                              Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource ToolWarnTextStyle}"
+                                       Visibility="{x:Bind ClipWarningVisibility, Mode=OneWay}"
+                                       Text="{x:Bind ClipWarningText, Mode=OneWay}" />
+                        </StackPanel>
+
+                        <Border Height="1" Background="{StaticResource CoalDividerSubtleBrush}" />
+
+                        <!-- Aliases + cooldowns -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="ALIASES · COOLDOWNS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                       loc:Localize.Key="panel.soundboard.row.aliases.eyebrow" />
+                            <Grid ColumnSpacing="10" RowSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Aliases"
+                                           Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.soundboard.row.aliases.label" />
+                                <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3"
+                                         Text="{x:Bind AliasesText, Mode=TwoWay}"
+                                         PlaceholderText="e.g. horn, honk" HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Sound aliases"
+                                         loc:Localize.PlaceholderKey="panel.soundboard.row.aliases.placeholder"
+                                         loc:Localize.AutomationKey="panel.soundboard.row.aliases.a11y" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Cooldowns"
+                                           Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.soundboard.row.cooldowns.label" />
+                                <TextBlock Grid.Row="1" Grid.Column="1"
+                                           Text="user = per viewer · global = whole channel"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.soundboard.row.cooldowns.hint" />
+                                <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Text="User CD (s)" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.soundboard.row.cooldowns.user.label" />
+                                    <TextBox Text="{x:Bind UserCooldownText, Mode=TwoWay}" Width="56"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11" TextAlignment="Right"
+                                             AutomationProperties.Name="Per-user cooldown seconds"
+                                             loc:Localize.AutomationKey="panel.soundboard.row.cooldowns.user.a11y" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="3" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Text="Global CD (s)" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.soundboard.row.cooldowns.global.label" />
+                                    <TextBox Text="{x:Bind GlobalCooldownText, Mode=TwoWay}" Width="56"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11" TextAlignment="Right"
+                                             AutomationProperties.Name="Channel-wide cooldown seconds"
+                                             loc:Localize.AutomationKey="panel.soundboard.row.cooldowns.global.a11y" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+
+                        <Border Height="1" Background="{StaticResource CoalDividerSubtleBrush}" />
+
+                        <!-- Roles -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="WHO CAN PLAY IT" Style="{StaticResource ToolEyebrowTextStyle}"
+                                       loc:Localize.Key="panel.soundboard.row.roles.eyebrow" />
+                            <common:RoleCheckRow Roles="{x:Bind Roles, Mode=OneWay}" />
+                        </StackPanel>
+
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- 48px header band -->
+            <RowDefinition Height="*" />      <!-- two-column body -->
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+             Title · master switch · one state phrase · verbs, wired in
+             SoundboardView.xaml.cs where the strip's four controls were wired.
+             The master flip still routes to ViewModel.MasterEnabled (SaveNow, no
+             400ms debounce); the CTA still routes to AddSound; the refresh verb
+             still routes to the SAME page-wide RefreshEverything the row and
+             overlay-card ↻ buttons use.
+
+             The state phrase is the STATUS PILL'S OWN RESULT, re-rendered here:
+             ViewModel.HeaderStateText / HeaderStateKind switch over the same
+             SoundboardService.PillState the pill does. The service predicate is
+             untouched and PreBuildStatusPillTests still pins it — so the "cannot
+             play" case (a blank layer or trigger refuses every row before it
+             reaches the overlay) is still said above the fold, in red, which is
+             the one thing this page most needs to say. -->
+        <common:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.4*" />   <!-- LEFT: the sound cards -->
+                <ColumnDefinition Width="0.9*" />   <!-- RIGHT: overlay output -->
+            </Grid.ColumnDefinitions>
+            <!-- No ColumnSpacing. The right column's left border IS the divider. -->
+
+            <!-- ───────────── LEFT: the board ─────────────
+                 A bare scroller now. It used to be a two-row Grid whose top row
+                 pinned the master sentence ("DISABLED — the tool is dormant; no
+                 sound command answers."); the header band says that once, in one
+                 vocabulary, and the band is gone. -->
+            <ScrollViewer Grid.Column="0"
+                          x:Name="DetailScroll"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Disabled"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="12" Padding="14">
+
+                    <TextBlock Style="{StaticResource ToolHintTextStyle}"
+                               Text="Map chat commands to sound clips. Every sound fires the same overlay trigger with its own clip."
+                               loc:Localize.Key="panel.soundboard.intro" />
+
+                    <!-- The SOUNDS / ENABLED / CLIPS FOUND hero tile strip stood
+                         here. It read 0 0 0 on a fresh install and 76px of it sat
+                         between the streamer and the first thing they came to
+                         change. The one count worth a glance is the sound count,
+                         and the list header below already carries it. -->
+
+                    <!-- ═══ Sound list ═══ -->
+                    <StackPanel Spacing="10" Margin="0,4,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <TextBlock Text="SOUNDS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                       VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.soundboard.list.eyebrow" />
+                            <TextBlock Text="{x:Bind ViewModel.CountText, Mode=OneWay}"
+                                       Style="{StaticResource ToolMonoHintTextStyle}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Sounds, Mode=OneWay}"
+                                       common:RowDataContext.Supply="True"
+                                       ItemTemplate="{StaticResource SoundRowTemplate}"
+                                       AutomationProperties.Name="Sound rows"
+                                       loc:Localize.AutomationKey="panel.soundboard.list.a11y" />
+
+                        <!-- List empty state. It stays INSIDE the scroller rather
+                             than replacing the column: the intro line is still
+                             worth showing on an empty board, and there is no
+                             selection here to be empty of. -->
+                        <StackPanel Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}"
+                                    HorizontalAlignment="Center" Margin="0,24,0,8" Spacing="8">
+                            <TextBlock Text="No sounds yet"
+                                       FontFamily="{StaticResource DisplayFont}"
+                                       FontSize="20"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       HorizontalAlignment="Center"
+                                       loc:Localize.Key="panel.soundboard.empty.title" />
+                            <TextBlock Text="Press ADD SOUND to map your first chat command to a clip."
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="12"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       HorizontalAlignment="Center" TextAlignment="Center"
+                                       loc:Localize.Key="panel.soundboard.empty.body" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- What the board answers to in chat. It is NOT a restatement of
+                         the rows above: the rows edit one word each, this lists every
+                         ALIAS beside the command it belongs to, names the clip each one
+                         plays, and prints the role gate — the three facts an alias row
+                         has nowhere else to appear. Rendered from the WORKING config,
+                         so it moves with the keystroke rather than with the save. -->
+                    <common:ToolCommandList Commands="{x:Bind ViewModel.ChatCommands, Mode=OneWay}"
+                                            AutomationProperties.Name="Soundboard chat commands"
+                                            loc:Localize.AutomationKey="panel.soundboard.commands.a11y" />
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ───────────── RIGHT: output ───────────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />   <!-- header   -->
+                        <RowDefinition Height="*" />      <!-- overlay  -->
+                    </Grid.RowDefinitions>
+
+                    <!-- The one legal PanelHeader in the house shell: the right
+                         column's own header. -->
+                    <common:PanelHeader Grid.Row="0" Eyebrow="OUTPUT" Title="Overlay"
+                                        EyebrowKey="panel.common.eyebrow.output"
+                                        TitleKey="panel.soundboard.output.title" />
+
+                    <ScrollViewer Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="12" Padding="14">
+
+                            <!-- ═══ Overlay hookup ═══ -->
+                            <TextBlock Text="WHERE THE SOUND PLAYS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                       loc:Localize.Key="panel.soundboard.overlay.eyebrow" />
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Style="{StaticResource ToolHintTextStyle}"
+                                               Text="The widget behind this trigger needs one graph: Visual.Arg(&quot;Args3&quot;) → Audio.Load.Path → Audio.Play."
+                                               loc:Localize.Key="panel.soundboard.overlay.graph_hint" />
+
+                                    <!-- Stacked, not side by side: the pair used to sit
+                                         in a 900px centred body; 0.9* is half that. -->
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="OVERLAY LAYER" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.soundboard.overlay.layer.label" />
+                                        <ComboBox HorizontalAlignment="Stretch" IsEditable="True"
+                                                  FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                  ItemsSource="{x:Bind ViewModel.LayerIds, Mode=OneWay}"
+                                                  Text="{x:Bind ViewModel.LayerId, Mode=TwoWay}"
+                                                  PlaceholderText="(none)"
+                                                  DropDownOpened="OnLayerComboOpened"
+                                                  AutomationProperties.Name="Overlay layer id"
+                                                  loc:Localize.PlaceholderKey="panel.soundboard.overlay.layer.placeholder"
+                                                  loc:Localize.AutomationKey="panel.soundboard.overlay.layer.a11y" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="TRIGGER" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.soundboard.overlay.trigger.label" />
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox HorizontalAlignment="Stretch" IsEditable="True"
+                                                      FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                      ItemsSource="{x:Bind ViewModel.TriggerNames, Mode=OneWay}"
+                                                      Text="{x:Bind ViewModel.TriggerName, Mode=TwoWay}"
+                                                      PlaceholderText="(none)"
+                                                      DropDownOpened="OnTriggerComboOpened"
+                                                      AutomationProperties.Name="Overlay trigger name"
+                                                      loc:Localize.PlaceholderKey="panel.soundboard.overlay.trigger.placeholder"
+                                                      loc:Localize.AutomationKey="panel.soundboard.overlay.trigger.a11y" />
+                                            <!-- Kept next to the two pickers it fills: the
+                                                 lists are read lazily on drop-down open, so
+                                                 this is the "the list is stale" escape hatch
+                                                 exactly where the staleness shows. -->
+                                            <Button Grid.Column="1"
+                                                    Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                    Padding="10,0"
+                                                    VerticalAlignment="Bottom"
+                                                    Click="OnRefreshClick"
+                                                    ToolTipService.ToolTip="Reload the layer, trigger and clip lists"
+                                                    AutomationProperties.Name="Refresh overlay lists"
+                                                    loc:Localize.TooltipKey="panel.soundboard.overlay.refresh.tip"
+                                                    loc:Localize.AutomationKey="panel.soundboard.overlay.refresh.a11y">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="11"
+                                                          Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <TextBlock Style="{StaticResource ToolWarnTextStyle}"
+                                               Visibility="{x:Bind ViewModel.OverlayMissingVisibility, Mode=OneWay}"
+                                               Text="No layer or trigger set — commands still answer in chat, but nothing plays."
+                                               loc:Localize.Key="panel.soundboard.overlay.missing.warn" />
+                                    <TextBlock Style="{StaticResource ToolHintTextStyle}"
+                                               Text="Sounds fired close together queue instead of overlapping."
+                                               loc:Localize.Key="panel.soundboard.overlay.queue_hint" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ═══ How it reaches the overlay ═══
+                                 The only documentation in the app of the widget graph
+                                 the board needs to make any sound at all. -->
+                            <TextBlock Text="WHAT THE WIDGET RECEIVES" Style="{StaticResource ToolEyebrowTextStyle}"
+                                       Margin="0,4,0,0"
+                                       loc:Localize.Key="panel.soundboard.contract.eyebrow" />
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Style="{StaticResource ToolHintTextStyle}"
+                                               Text="Every sound fires the same trigger with the same three values."
+                                               loc:Localize.Key="panel.soundboard.contract.hint" />
+                                    <Border Background="{StaticResource CoalShellBrush}"
+                                            BorderBrush="{StaticResource CoalCardBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{StaticResource Radius1Corner}">
+                                        <StackPanel>
+                                            <Border BorderBrush="{StaticResource CoalDividerSubtleBrush}" BorderThickness="0,0,0,1" Padding="12,7">
+                                                <Grid ColumnSpacing="14">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="60" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Args1"
+                                                               FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                               Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="Always PLAY — the same KIND label the Alerts tool sends."
+                                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                                               loc:Localize.Key="panel.soundboard.contract.args1.desc" />
+                                                </Grid>
+                                            </Border>
+                                            <Border BorderBrush="{StaticResource CoalDividerSubtleBrush}" BorderThickness="0,0,0,1" Padding="12,7">
+                                                <Grid ColumnSpacing="14">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="60" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Args2"
+                                                               FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                               Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="Who asked for it."
+                                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                                               loc:Localize.Key="panel.soundboard.contract.args2.desc" />
+                                                </Grid>
+                                            </Border>
+                                            <Border Padding="12,7">
+                                                <Grid ColumnSpacing="14">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="60" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Args3"
+                                                               FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                               Foreground="{StaticResource EmberPrimaryBrush}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="The clip path — wire Visual.Arg(Args3) into Audio.Load.Path."
+                                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                                               loc:Localize.Key="panel.soundboard.contract.args3.desc" />
+                                                </Grid>
+                                            </Border>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- The ToolActivityFeed sat here, in the column's bottom Auto
+                         row. It is a watch surface — what a viewer played 40 seconds
+                         ago does not help anyone editing a cooldown — and the rows it
+                         showed (PLAY dispatches, DENY/WARN refusals) are still written
+                         to the System Log by the service, which is unchanged. -->
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

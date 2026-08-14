@@ -10,7 +10,8 @@ namespace Phoenix.Controls.Hub.Core
         string WhereToFind);
 
     /// <summary>
-    /// Catalogue of every user-facing Hub feature, displayed by HubDocumentationForm.
+    /// Catalogue of every user-facing Hub feature, rendered live by the
+    /// Tools → Documentation window (DocumentationWindow, reachable via F1).
     /// Add an entry here when a new window, status indicator, menu item, or
     /// notable background service ships.
     /// </summary>
@@ -37,11 +38,6 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.category.main_window"),
                 Localizer.T("hub.feature.connection_status_bar.description"),
                 Localizer.T("hub.feature.connection_status_bar.where"));
-
-            Add(Localizer.T("hub.feature.critical_error_bar.title"),
-                Localizer.T("hub.feature.category.main_window"),
-                Localizer.T("hub.feature.critical_error_bar.description"),
-                Localizer.T("hub.feature.critical_error_bar.where"));
 
             Add(Localizer.T("hub.feature.websocket_status_footer.title"),
                 Localizer.T("hub.feature.category.main_window"),
@@ -74,10 +70,10 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.script_monitor.description"),
                 Localizer.T("hub.feature.script_monitor.where"));
 
-            Add(Localizer.T("hub.feature.script_activity.title"),
+            Add(Localizer.T("hub.feature.toggling_panels.title"),
                 Localizer.T("hub.feature.category.dashboard_panels"),
-                Localizer.T("hub.feature.script_activity.description"),
-                Localizer.T("hub.feature.script_activity.where"));
+                Localizer.T("hub.feature.toggling_panels.description"),
+                Localizer.T("hub.feature.toggling_panels.where"));
 
             // ─────────────────────────────────────────────────────────────
             // TOOLS MENU
@@ -97,33 +93,28 @@ namespace Phoenix.Controls.Hub.Core
                 Localizer.T("hub.feature.system_log.description"),
                 Localizer.T("hub.feature.system_log.where"));
 
-            Add(Localizer.T("hub.feature.run_diagnostics_tests.title"),
-                Localizer.T("hub.feature.category.tools_menu"),
-                Localizer.T("hub.feature.run_diagnostics_tests.description"),
-                Localizer.T("hub.feature.run_diagnostics_tests.where"));
-
-            // ─────────────────────────────────────────────────────────────
-            // WINDOWS MENU
-            // ─────────────────────────────────────────────────────────────
-            Add(Localizer.T("hub.feature.toggling_panels.title"),
-                Localizer.T("hub.feature.category.windows_menu"),
-                Localizer.T("hub.feature.toggling_panels.description"),
-                Localizer.T("hub.feature.toggling_panels.where"));
-
-            Add(Localizer.T("hub.feature.reset_layout.title"),
-                Localizer.T("hub.feature.category.windows_menu"),
-                Localizer.T("hub.feature.reset_layout.description"),
-                Localizer.T("hub.feature.reset_layout.where"));
-
+            // ── Two entries carried over from the Dev merge ──────────────────
+            // Both describe surfaces that ARE live on this branch (WebhookPanel,
+            // EventLogPanel) but were never documented here, so they close a real
+            // gap. Category re-pointed from Dev's hub.feature.category.windows_menu
+            // to dashboard_panels: D13 retired the Windows-menu category and D14
+            // deleted its lang key, so Dev's value would render as a raw key.
+            //
+            // Dev's three OTHER entries from this block are deliberately dropped:
+            // run_diagnostics_tests and reset_layout were deleted by D13 (no such
+            // surface exists on this branch, and D14 removed their lang keys — they
+            // would render raw keys for features that never shipped), and
+            // toggling_panels is already registered above under dashboard_panels.
             Add(Localizer.T("hub.feature.recent_webhooks.title"),
-                Localizer.T("hub.feature.category.windows_menu"),
+                Localizer.T("hub.feature.category.dashboard_panels"),
                 Localizer.T("hub.feature.recent_webhooks.description"),
                 Localizer.T("hub.feature.recent_webhooks.where"));
 
             Add(Localizer.T("hub.feature.event_log_window.title"),
-                Localizer.T("hub.feature.category.windows_menu"),
+                Localizer.T("hub.feature.category.dashboard_panels"),
                 Localizer.T("hub.feature.event_log_window.description"),
                 Localizer.T("hub.feature.event_log_window.where"));
+
 
             // ─────────────────────────────────────────────────────────────
             // BEHIND THE SCENES

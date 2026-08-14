@@ -278,7 +278,16 @@ internal static class NodeReferenceData
         var groups = new List<object>();
         foreach (var (section, entries) in ArchitectHotkeyCatalog.GroupedBySection())
         {
-            if (section.StartsWith("Retired", StringComparison.OrdinalIgnoreCase)) continue;
+            // ★ Compare against the catalog's own value, NOT the English prefix.
+            // This read "section.StartsWith(\"Retired\", …)" until the localization
+            // retrofit turned ArchitectHotkeyCatalog.SectionRetired from a const
+            // into Localizer.T("architect.canvas.hotkey.section.retired", …). In
+            // German/French/Spanish the section name no longer starts with
+            // "Retired", the filter stopped matching, and the two deliberately-dead
+            // chords (Space-to-pan, Tab-to-spawn) were documented as live chords in
+            // the F1 Node Reference — in translated builds only, so every
+            // English test stayed green. Identity comparison is language-proof.
+            if (string.Equals(section, ArchitectHotkeyCatalog.SectionRetired, StringComparison.Ordinal)) continue;
 
             // Split a "(hint)" parenthetical out of the section name into a note,
             // matching the design's compact section title + dim hint layout.

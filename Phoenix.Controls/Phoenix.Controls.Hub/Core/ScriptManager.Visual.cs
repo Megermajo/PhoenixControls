@@ -7,36 +7,32 @@ using Phoenix.Controls.Shared.Services;
 namespace Phoenix.Controls.Hub.Core
 {
     // Partial split: visual.* command registrations.
-    // Lifts the 5 HUD-broadcasting handlers (set_text / trigger / set_visible /
-    // set_property + the trigger_queued alias) out of RegisterHubCommands.
-    // They lived across three non-contiguous source clusters (set_text +
-    // trigger up top, trigger_queued sandwiched between wait_for_visual and
-    // wait_for_event, set_visible + set_property after the moderation block);
+    // Lifts the HUD-addressing handlers out of RegisterHubCommands; they lived
+    // across three non-contiguous source clusters in the parent partial, and
     // collapsing them here is safe because RegisterCommand stores by name.
     //
-    // Two patterns of broadcast:
-    //   * HubHost.HUD.BroadcastAsync — direct HUDServer broadcast for the
-    //     low-level set_text / set_visible / set_property steps.
-    //   * Bus.TriggerVisualQueuedAsync — addressed routing into the
-    //     LayerRuntime per-(layerId, widgetId) queue used by visual.trigger
-    //     and visual.trigger_queued. visual.trigger is an alias kept for the
-    //     manifesto §3 hand-authored examples; Architect's Visual.Trigger
-    //     node emits visual.trigger_queued directly.
+    // Every handler here routes through Bus.TriggerVisualQueuedAsync —
+    // addressed delivery into the LayerRuntime per-(layerId, widgetId) queue.
+    // visual.trigger is an alias kept for the manifesto §3 hand-authored
+    // examples; Architect's Visual.Trigger node emits visual.trigger_queued
+    // directly.
+    //
+    // The second pattern this file used to hold — a direct
+    // HubHost.HUD.BroadcastAsync of a per-element mutation step
+    // (visual.set_text / set_visible / set_property) — is gone as of V4 part C,
+    // along with HUDServer.BroadcastAsync itself. compositor.js never had a
+    // handler for SET_TEXT / VISUAL_SET_VISIBLE / VISUAL_SET_PROPERTY, so those
+    // three commands had shipped inert. Their capability now belongs to
+    // overlay.publish (ScriptManager.Overlay.cs) plus a widget-side Var.Live
+    // binding, which is the one data path for ambient values. The three NAMES are
+    // still registered, as no-op shims in ScriptManager.RetiredCommands.cs, so an
+    // unmigrated `.phx` that still calls them stays quiet instead of tripping the
+    // engine's CriticalError unknown-command path.
 #pragma warning disable CS1998
     public partial class ScriptManager
     {
         private void RegisterVisualCommands()
         {
-            // visual.set_text(id, value)
-            _engine.RegisterCommand("visual.set_text", async (args) => {
-                var bound = _engine.CurrentBoundArgs;
-                string id    = bound?.GetOrDefault<string>("Id", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                string value = bound?.GetOrDefault<string>("Value", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
-                if (!string.IsNullOrEmpty(id) && HubHost.HUD != null)
-                    await HubHost.HUD.BroadcastAsync(new { type = "SET_TEXT", id, value });
-                return null;
-            });
-
             // visual.trigger(layerId, widgetId, triggerName, key=val, ...) — alias of visual.trigger_queued.
             // The legacy 1-arg "id, data" broadcast form was retired in Phase 2; this alias preserves
             // the spelling so manifesto §3 examples keep parsing while routing to the addressed
@@ -105,27 +101,37 @@ namespace Phoenix.Controls.Hub.Core
                 await Bus.Instance.TriggerVisualQueuedAsync(layerId, widgetId, triggerName, eventData);
                 return null;
             });
+        }
 
-            // ── Visual extras ───────────────────────────────────────────────
-            _engine.RegisterCommand("visual.set_visible", async (args) => {
-                var bound = _engine.CurrentBoundArgs;
-                string widget = bound?.GetOrDefault<string>("Widget", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                bool   visible = (bound != null && bound.ContainsKey("Visible"))
-                    ? bound.Get<bool>("Visible")
-                    : (bool.TryParse(ArgOrEmpty(args, 1), out var b) && b);
-                if (string.IsNullOrEmpty(widget) || HubHost.HUD == null) return null;
-                await HubHost.HUD.BroadcastAsync(new { type = "VISUAL_SET_VISIBLE", widget, visible });
-                return null;
-            });
-            _engine.RegisterCommand("visual.set_property", async (args) => {
-                var bound = _engine.CurrentBoundArgs;
-                string widget = bound?.GetOrDefault<string>("Widget", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                string key    = bound?.GetOrDefault<string>("Key", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
-                string value  = bound?.GetOrDefault<string>("Value", ArgOrEmpty(args, 2)) ?? ArgOrEmpty(args, 2);
-                if (string.IsNullOrEmpty(widget) || string.IsNullOrEmpty(key) || HubHost.HUD == null) return null;
-                await HubHost.HUD.BroadcastAsync(new { type = "VISUAL_SET_PROPERTY", widget, key, value });
-                return null;
-            });
+        // ── Shared (layer, trigger) visual fan-out ──────────────────────────
+        // A tool effect carries only (LayerId, TriggerName) — no widget id. The
+        // LayerRuntime routes per (LayerId, WidgetId) and the browser matches by
+        // widget, so resolve every widget on the layer that owns the trigger and
+        // fire each through the SAME fire-and-forget Bus method that
+        // visual.trigger_queued uses. Extracted from the Loyalty reward seam
+        // (which now delegates here) so every pre-build tool shares one path.
+        internal async Task FireVisualTriggerFanOutAsync(
+            string layerId, string triggerName,
+            Dictionary<string, string>? eventData = null, string source = "VisualFanOut")
+        {
+            if (string.IsNullOrWhiteSpace(layerId) || string.IsNullOrWhiteSpace(triggerName)) return;
+            var layer = LayerRuntime.Instance.Registry.GetLayer(layerId);
+            if (layer is null)
+            {
+                GlobalLogger.Log($"{source} visual: layer '{layerId}' not found — effect skipped.",
+                    source, Phoenix.Controls.Shared.Models.LogLevel.VisualEvent);
+                return;
+            }
+            int fired = 0;
+            foreach (var w in layer.Widgets)
+            {
+                if (!WidgetOwnsTrigger(w, triggerName)) continue;
+                await Bus.Instance.TriggerVisualQueuedAsync(layerId, w.Id, triggerName, eventData).ConfigureAwait(false);
+                fired++;
+            }
+            if (fired == 0)
+                GlobalLogger.Log($"{source} visual: no widget on layer '{layerId}' owns trigger '{triggerName}'.",
+                    source, Phoenix.Controls.Shared.Models.LogLevel.VisualEvent);
         }
     }
 #pragma warning restore CS1998

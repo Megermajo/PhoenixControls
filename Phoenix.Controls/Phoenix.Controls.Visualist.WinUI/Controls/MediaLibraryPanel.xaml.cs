@@ -366,10 +366,21 @@ public sealed partial class MediaLibraryPanel : UserControl
                 string.IsNullOrEmpty(Vm?.ActiveLayerFileName) ? null : Vm!.ActiveLayerFileName);
 
             string body = refs.Count == 0
-                ? $"Delete \"{row.RelativePath}\" from data/media? This can't be undone."
-                : $"\"{row.RelativePath}\" is still used by:\n\n• {string.Join("\n• ", refs.Take(8))}" +
-                  (refs.Count > 8 ? $"\n• …and {refs.Count - 8} more" : "") +
-                  "\n\nDelete it anyway? The referencing nodes will fail to load it.";
+                ? string.Format(
+                    Localizer.T("visualist.media.delete.body_format",
+                        "Delete \"{0}\" from data/media? This can't be undone."),
+                    row.RelativePath)
+                : string.Format(
+                      Localizer.T("visualist.media.delete.body_referenced_format",
+                          "\"{0}\" is still used by:\n\n• {1}"),
+                      row.RelativePath, string.Join("\n• ", refs.Take(8))) +
+                  (refs.Count > 8
+                      ? string.Format(
+                          Localizer.T("visualist.media.delete.body_more_format", "\n• …and {0} more"),
+                          refs.Count - 8)
+                      : "") +
+                  Localizer.T("visualist.media.delete.body_anyway",
+                      "\n\nDelete it anyway? The referencing nodes will fail to load it.");
 
             var dlg = new ContentDialog
             {

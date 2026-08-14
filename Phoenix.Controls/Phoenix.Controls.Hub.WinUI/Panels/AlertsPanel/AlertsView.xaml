@@ -1,0 +1,564 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.AlertsPanel.AlertsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.AlertsPanel"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Alerts page"
+    AutomationProperties.HelpText="Event responses: pick an event family from the roster on the right, switch it on, and give it size tiers with a chat line and an optional overlay trigger."
+    loc:Localize.AutomationKey="panel.alerts.page.a11y"
+    loc:Localize.HelpTextKey="panel.alerts.page.help">
+
+    <!--
+        ══════════════════ THE HOUSE TOOL-PAGE SHELL ══════════════════
+
+        Row 0  ToolPageHeader — the 48 px band: name · master switch · ONE state
+               phrase · the page's single brass CTA.
+        Row 1  two-column body: the detail column takes the star, the live column
+               is a fixed 300 px. No ColumnSpacing — the right column's left
+               border IS the divider.
+
+               LEFT  *     the SELECTED event family — its enable, the raid-only
+                           auto-shoutout, the token strip and its tier editor.
+               RIGHT 300   the ten families as compact rows, plus the matching rule.
+
+        ══ 2026-08-14 — the config-surface conversion ══
+        Majo, on 1.1.9: the Pre-Build pages "are NOT conclusive ... additionally
+        many of those panels are cluttered heavily with options". Measured on this
+        page: 192 px of chrome sat above the first editable control, and three of
+        the rows in that stack said the SAME thing — whether the tool is enabled —
+        in three vocabularies (DISABLED chip · "DISABLED — the tool is dormant…"
+        band · "dormant" pill). Four rows collapsed into one 48 px band:
+
+          · the action strip (master chip · status pill · ADD TIER)  → the band
+          · the pinned master-state banner (its VM text members are
+            gone with it)                                            → the band
+          · the ToolStatusPill instance                              → the band
+          · the three-tile stat strip (0 / 0 / 0 on a fresh install) → DELETED
+
+        The stat strip has no replacement. The one count worth a glance — how many
+        families are armed — was already in the live column's own header
+        (RosterCountText, "3 of 10 on"), which is where a count belongs.
+
+        ★ THE PILL IS RE-HOMED, NOT REVOKED. AlertsService.PillState and its
+        four-state predicate are untouched, as is PreBuildStatusPillTests; they
+        carry the honesty audit (the Degraded caption names the seams the
+        predicate actually gates, and no state claims a green light over a dead
+        socket). What changed is only WHERE the result renders — the band's state
+        phrase now, computed from the same StatusPillText the pill consumed.
+
+        WHAT DID NOT CHANGE. Everything in the detail column moved across intact —
+        family enable, raid auto-shoutout, the token/amount strip, the tier list
+        with its per-tier enable / delete / from-size / message / layer / trigger /
+        ↻ controls, the unreachable-tier warning and the per-card empty state.
+
+        NO IsEnabled GATE ANYWHERE ON THIS PAGE. Nothing on the old page was gated
+        on the master switch either, and adding a gate now would be a behaviour
+        change dressed up as a layout change — a streamer configures tiers with the
+        tool off all the time. The header's state phrase says what "off" means in
+        words instead. (Corollary: none of the IsEnabled-on-a-Panel markup-compiler
+        traps can bite here — the page now carries no IsEnabled binding at all.)
+
+        NO ENTRANCE ANIMATION. the Pre-Builds rail already runs FadeSlideIn on every tool
+        activation; the page-side entrance this file used to run was the second of
+        two.
+    -->
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- KEPT, checked type by type: the page declares TextBox
+                     (from-size, message) and ComboBox (the two editable layer /
+                     trigger pickers) directly, and since the header-band
+                     conversion its implicit ToggleSwitch style also reaches the
+                     master switch inside ToolPageHeader (implicit-style lookup
+                     walks up out of a nested UserControl). No CheckBox, no Pivot. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell styles. Never merged into App.xaml. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Tier mini-card nested inside the detail column's tier list. Padding 0
+                 so the raised mini-band can run edge to edge; the house separation is
+                 the opaque coal-card outline plus that band, never a second fill. -->
+            <Style x:Key="AlTierCard" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource CoalShellBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CoalCardBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource Radius1Corner}" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Margin" Value="0,0,0,10" />
+            </Style>
+
+            <!-- ════════ One size tier, in the 1.4* detail column ════════
+                 ItemsControl → ItemsRepeater host. Safe here: no code-behind walks
+                 the visual tree for tier rows — delete / ↻ / drop-down-opened all
+                 pattern-match the sender's DataContext, which ItemsRepeater
+                 supplies exactly as ItemsControl did. -->
+            <DataTemplate x:Key="TierRowTemplate" x:DataType="local:AlertTierRowVm">
+                <Border Style="{StaticResource AlTierCard}">
+                    <StackPanel>
+
+                        <!-- Mini-band: FROM SIZE eyebrow + enable + delete. -->
+                        <Border Background="{StaticResource CoalRaisedBrush}"
+                                BorderBrush="{StaticResource CoalCardBrush}"
+                                BorderThickness="0,0,0,1"
+                                Padding="12,6">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{x:Bind TitleEyebrow, Mode=OneWay}"
+                                           Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center" />
+                                <!-- ToggleSwitch → TogglePill in a borderless Button host.
+                                     The Button owns the Click and the accessible name; the
+                                     pill is display-only. -->
+                                <Button Grid.Column="1"
+                                        Padding="0,4,10,4"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        CornerRadius="{StaticResource Radius1Corner}"
+                                        VerticalAlignment="Center"
+                                        Click="OnToggleTierEnabledClick"
+                                        AutomationProperties.Name="Tier enabled"
+                                        loc:Localize.AutomationKey="panel.alerts.tier.enabled.a11y">
+                                    <cmn:TogglePill IsOn="{x:Bind Enabled, Mode=OneWay}"
+                                                    Label="{x:Bind EnabledLabel, Mode=OneWay}" />
+                                </Button>
+                                <Button Grid.Column="2"
+                                        Style="{StaticResource ToolDangerButtonStyle}"
+                                        Click="OnDeleteTierClick"
+                                        AutomationProperties.Name="Delete tier"
+                                        loc:Localize.AutomationKey="panel.alerts.tier.delete.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                                  Foreground="{StaticResource ErrBrush}" />
+                                        <TextBlock Text="DELETE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.alerts.tier.delete.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Tier settings body -->
+                        <StackPanel Margin="12,10,12,12" Spacing="10">
+
+                            <!-- From size -->
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="From size" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.alerts.tier.from_size.label" />
+                                <TextBox Text="{x:Bind MinValueText, Mode=TwoWay}" Width="64"
+                                         FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                         TextAlignment="Right"
+                                         AutomationProperties.Name="Minimum event size"
+                                         loc:Localize.AutomationKey="panel.alerts.tier.from_size.a11y" />
+                                <TextBlock Text="(0 = catch-all)" Style="{StaticResource ToolMonoHintTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.alerts.tier.from_size.hint" />
+                            </StackPanel>
+
+                            <!-- Passive reachability cue: the highest matching tier wins and
+                                 ties resolve to the FIRST in list order, so a duplicate "From
+                                 size" leaves this row dead. A muted whisper only — the value
+                                 stays exactly as typed and the save is never blocked. -->
+                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Visibility="{x:Bind UnreachableVisibility, Mode=OneWay}"
+                                       Text="Unreachable — an earlier tier already starts at this size."
+                                       loc:Localize.Key="panel.alerts.tier.unreachable.hint" />
+
+                            <!-- Message -->
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="Message" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.alerts.tier.message.label" />
+                                <TextBox Text="{x:Bind Message, Mode=TwoWay}"
+                                         PlaceholderText="Thanks {user}!"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="56"
+                                         HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Tier chat message"
+                                         loc:Localize.PlaceholderKey="panel.alerts.tier.message.placeholder"
+                                         loc:Localize.AutomationKey="panel.alerts.tier.message.a11y" />
+                            </StackPanel>
+
+                            <Border Height="1" Background="{StaticResource CoalCardBrush}" />
+
+                            <!-- Overlay hookup: editable ComboBoxes (free entry via Text)
+                                 fed lazily from the layer registry; ↻ re-reads both lists. -->
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="OVERLAY LAYER" Style="{StaticResource ToolSubLabelTextStyle}"
+                                               loc:Localize.Key="panel.alerts.tier.layer.label" />
+                                    <ComboBox Width="200" IsEditable="True"
+                                              FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                              ItemsSource="{x:Bind LayerOptions, Mode=OneWay}"
+                                              Text="{x:Bind LayerId, Mode=TwoWay}"
+                                              PlaceholderText="(none)"
+                                              DropDownOpened="OnLayerComboOpened"
+                                              AutomationProperties.Name="Overlay layer id"
+                                              loc:Localize.PlaceholderKey="panel.alerts.tier.layer.placeholder"
+                                              loc:Localize.AutomationKey="panel.alerts.tier.layer.a11y" />
+                                </StackPanel>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="TRIGGER" Style="{StaticResource ToolSubLabelTextStyle}"
+                                               loc:Localize.Key="panel.alerts.tier.trigger.label" />
+                                    <ComboBox Width="200" IsEditable="True"
+                                              FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                              ItemsSource="{x:Bind TriggerOptions, Mode=OneWay}"
+                                              Text="{x:Bind TriggerName, Mode=TwoWay}"
+                                              PlaceholderText="(none)"
+                                              DropDownOpened="OnTriggerComboOpened"
+                                              AutomationProperties.Name="Overlay trigger name"
+                                              loc:Localize.PlaceholderKey="panel.alerts.tier.trigger.placeholder"
+                                              loc:Localize.AutomationKey="panel.alerts.tier.trigger.a11y" />
+                                </StackPanel>
+                                <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                        VerticalAlignment="Bottom"
+                                        MinWidth="40" Padding="0"
+                                        Click="OnRefreshLayersClick"
+                                        ToolTipService.ToolTip="Reload the layer and trigger lists"
+                                        AutomationProperties.Name="Refresh layer list"
+                                        loc:Localize.TooltipKey="panel.alerts.tier.refresh.tip"
+                                        loc:Localize.AutomationKey="panel.alerts.tier.refresh.a11y">
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="11"
+                                              Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Text="Optional — fires the trigger on every widget of the layer that owns it (Args1=KIND, Args2=USER, Args3=AMOUNT)."
+                                       loc:Localize.Key="panel.alerts.tier.overlay.hint" />
+
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- ════════ One event family, as a 0.9* roster row ════════
+                 The enable pill stays a plain SIBLING of the row-select button,
+                 never nested inside it — same rule the old header band followed, so
+                 switching a family on never moves the selection.
+                 Safe as an ItemsRepeater: the EventCard / EventBody visual-tree walk
+                 that used to open a card body is gone with the collapsible card. -->
+            <DataTemplate x:Key="EventRowTemplate" x:DataType="local:AlertEventVm">
+                <Grid Padding="14,7"
+                      ColumnSpacing="8"
+                      Background="{x:Bind RowBackground, Mode=OneWay}"
+                      BorderBrush="{StaticResource CoalRaisedBrush}"
+                      BorderThickness="0,0,0,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0"
+                            Padding="0,4,4,4"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            CornerRadius="{StaticResource Radius1Corner}"
+                            VerticalAlignment="Center"
+                            Click="OnToggleEventEnabledClick"
+                            ToolTipService.ToolTip="Switch this event family on or off"
+                            AutomationProperties.Name="{x:Bind Title}"
+                            loc:Localize.TooltipKey="panel.alerts.roster.enable.tip">
+                        <cmn:TogglePill IsOn="{x:Bind Enabled, Mode=OneWay}" />
+                    </Button>
+
+                    <Button Grid.Column="1"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="0,2"
+                            CornerRadius="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            Click="OnEventRowClick"
+                            AutomationProperties.Name="{x:Bind Title}">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets"
+                                      Glyph="{x:Bind IconGlyph}" FontSize="12"
+                                      Foreground="{StaticResource EmberPrimaryBrush}"
+                                      VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Title}"
+                                       FontFamily="{StaticResource SansFont}" FontSize="10"
+                                       FontWeight="SemiBold" CharacterSpacing="180"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{StaticResource EmberPrimaryBrush}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Text="{x:Bind TierCountText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="10"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
+                </Grid>
+            </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+             48 px, and it is the whole of the page's chrome. Everything on it is
+             set from code-behind (AlertsView's ctor + SyncHeaderState):
+               Title      "Alerts"
+               IsOn       ViewModel.MasterEnabled — seeded, does not raise
+               SetState   the AlertsService.PillState projection, unchanged
+                          predicate, three words or fewer
+               PrimaryCta "+ ADD TIER", the page's one brass verb -->
+        <cmn:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <!-- The live column is a fixed 300, not a share of the width: a
+                     ten-row roster does not get wider with the window, and a
+                     proportional right column stole space from the editor at
+                     every size. -->
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ───────────── LEFT * : the selected event family ─────────────
+                 The pinned master-state banner that used to sit above this
+                 scroller is gone (VM members and all) — it was the second of
+                 three renderings of the master boolean; the header band
+                 carries it now. -->
+            <Grid Grid.Column="0">
+
+                <!-- The detail pane's VISIBILITY is bound; its content is never
+                     swapped or virtualized, so a focused TextBox stays in the
+                     tree and commits its LostFocus edit before a roster click
+                     changes the selection. -->
+                <ScrollViewer x:Name="DetailScroll"
+                              Visibility="{x:Bind ViewModel.DetailVisibility, Mode=OneWay}"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Disabled">
+                    <StackPanel Spacing="12" Padding="14">
+
+                        <!-- The three-tile stat strip that used to be this
+                             scroller's first child (EVENTS ENABLED / TIERS
+                             CONFIGURED / ALERTS FIRED) is gone with no
+                             replacement: 76 px of DisplayFont-26 reading
+                             "0  0  0" on a fresh install, above the settings
+                             someone opened the page to change. The one count
+                             worth a glance is already in the live column's
+                             header ("3 of 10 on"). -->
+
+                        <!-- ── FAMILY ─────────────────────────────────────── -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock Text="EVENT FAMILY" Style="{StaticResource ToolEyebrowTextStyle}"
+                                                   loc:Localize.Key="panel.alerts.family.eyebrow" />
+                                        <TextBlock Text="{x:Bind ViewModel.SelectedEvent.Title, Mode=OneWay}"
+                                                   FontFamily="{StaticResource DisplayFont}"
+                                                   FontSize="18"
+                                                   Foreground="{StaticResource CoalPaperBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <!-- CheckBox → TogglePill in a borderless Button host. -->
+                                    <Button Grid.Column="1"
+                                            Padding="0,4,10,4"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            CornerRadius="{StaticResource Radius1Corner}"
+                                            VerticalAlignment="Center"
+                                            Click="OnToggleEventEnabledClick"
+                                            AutomationProperties.Name="Switch this event family on or off"
+                                            loc:Localize.AutomationKey="panel.alerts.family.enable.a11y">
+                                        <cmn:TogglePill IsOn="{x:Bind ViewModel.SelectedEvent.Enabled, Mode=OneWay}"
+                                                        Label="{x:Bind ViewModel.SelectedEvent.EnabledLabel, Mode=OneWay}" />
+                                    </Button>
+                                </Grid>
+
+                                <!-- Raid-only: automatic Twitch shoutout for the raider.
+                                     Visibility-gated, so it is invisible on nine of ten
+                                     families exactly as before. -->
+                                <StackPanel Visibility="{x:Bind ViewModel.SelectedEvent.AutoShoutoutVisibility, Mode=OneWay}"
+                                            Spacing="10">
+                                    <Border Height="1" Background="{StaticResource CoalCardBrush}" />
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   Text="Auto-shoutout the raider (Twitch)"
+                                                   Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.alerts.family.auto_shoutout.label" />
+                                        <Button Grid.Column="1"
+                                                Padding="0,4,10,4"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                CornerRadius="{StaticResource Radius1Corner}"
+                                                VerticalAlignment="Center"
+                                                Click="OnToggleAutoShoutoutClick"
+                                                AutomationProperties.Name="Auto-shoutout the raider"
+                                                loc:Localize.AutomationKey="panel.alerts.family.auto_shoutout.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.SelectedEvent.AutoShoutout, Mode=OneWay}"
+                                                            Label="{x:Bind ViewModel.SelectedEvent.AutoShoutoutLabel, Mode=OneWay}" />
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ── TOKENS ─────────────────────────────────────── -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{x:Bind ViewModel.SelectedEvent.TokenLine, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                                <!-- One step under the token line (mono 11 → 10), same warm
+                                     secondary — the house label/hint pairing. -->
+                                <TextBlock Text="{x:Bind ViewModel.SelectedEvent.AmountHint, Mode=OneWay}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ── SIZE TIERS ─────────────────────────────────── -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="SIZE TIERS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           loc:Localize.Key="panel.alerts.tiers.eyebrow" />
+
+                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.SelectedEvent.Tiers, Mode=OneWay}"
+                                               cmn:RowDataContext.Supply="True"
+                                               ItemTemplate="{StaticResource TierRowTemplate}"
+                                               AutomationProperties.Name="Size tiers, lowest first"
+                                               loc:Localize.AutomationKey="panel.alerts.tiers.list.a11y" />
+
+                                <!-- Per-family empty state -->
+                                <TextBlock Visibility="{x:Bind ViewModel.SelectedEvent.EmptyVisibility, Mode=OneWay}"
+                                           Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="No tiers yet — use ADD TIER above; From size 0 catches everything."
+                                           loc:Localize.Key="panel.alerts.tiers.empty.body" />
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Empty state — a SIBLING of the scroller in the same cell,
+                     never inside it. Two lines, no icon. -->
+                <StackPanel Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="8">
+                    <TextBlock Text="No event family selected"
+                               FontFamily="{StaticResource DisplayFont}"
+                               FontSize="20"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               HorizontalAlignment="Center"
+                               loc:Localize.Key="panel.alerts.empty.title" />
+                    <TextBlock Text="Pick one from the list on the right."
+                               FontFamily="{StaticResource SansFont}"
+                               FontSize="12"
+                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                               HorizontalAlignment="Center"
+                               loc:Localize.Key="panel.alerts.empty.body" />
+                </StackPanel>
+            </Grid>
+
+            <!-- ───────────── RIGHT 300 : the family roster ─────────────
+                 The ACTIVITY feed that used to close this column is gone. It is a
+                 watch-surface element: what fired 40 seconds ago does not help
+                 someone editing a From size, and on this page it was the fourth
+                 place the tool's liveness got restated. -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />   <!-- header      -->
+                        <RowDefinition Height="Auto" />   <!-- column band -->
+                        <RowDefinition Height="*" />      <!-- roster      -->
+                        <RowDefinition Height="Auto" />   <!-- rule note   -->
+                    </Grid.RowDefinitions>
+
+                    <!-- The one legal PanelHeader in the house shell: the right
+                         column's own header. -->
+                    <cmn:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Event responses"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.alerts.roster.title">
+                        <cmn:PanelHeader.RightContent>
+                            <TextBlock Text="{x:Bind ViewModel.RosterCountText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </cmn:PanelHeader.RightContent>
+                    </cmn:PanelHeader>
+
+                    <Border Grid.Row="1"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="14,6">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="ON" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.alerts.roster.column.on" />
+                            <TextBlock Grid.Column="1" Text="EVENT" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.alerts.roster.column.event" />
+                            <TextBlock Grid.Column="2" Text="TIERS" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.alerts.roster.column.tiers" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Ten fixed families, so there is no roster empty state to
+                         build: the list is never empty. -->
+                    <ScrollViewer Grid.Row="2"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Events, Mode=OneWay}"
+                                       cmn:RowDataContext.Supply="True"
+                                       ItemTemplate="{StaticResource EventRowTemplate}"
+                                       AutomationProperties.Name="Event families"
+                                       loc:Localize.AutomationKey="panel.alerts.roster.list.a11y" />
+                    </ScrollViewer>
+
+                    <!-- The matching rule, kept from the old page intro; it belongs
+                         under the roster it describes. -->
+                    <Border Grid.Row="3"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="14,6">
+                        <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                   Text="Each event picks the highest matching size tier, posts its chat line and can fire an overlay trigger."
+                                   loc:Localize.Key="panel.alerts.roster.rule.hint" />
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

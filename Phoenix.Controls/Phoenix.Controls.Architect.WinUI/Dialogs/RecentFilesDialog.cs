@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Architect.WinUI.Services;
+using Phoenix.Controls.Shared.Localization;
 using Windows.System;
 
 namespace Phoenix.Controls.Architect.WinUI.Dialogs;
@@ -44,10 +45,10 @@ public sealed class RecentFilesDialog : ContentDialog
 
     public RecentFilesDialog()
     {
-        Title = "Open Recent";
+        Title = Localizer.T("architect.dialog.recent.title", "Open Recent");
         BorderThickness = new Thickness(1);
         CornerRadius = new CornerRadius(6);
-        CloseButtonText = "Cancel";
+        CloseButtonText = Localizer.T("common.button.cancel", "Cancel");
         DefaultButton = ContentDialogButton.Close;
 
         var grid = new Grid { Width = 520, Height = 400 };
@@ -59,8 +60,9 @@ public sealed class RecentFilesDialog : ContentDialog
         var infoBar = new InfoBar
         {
             Severity = InfoBarSeverity.Informational,
-            Title = "Read-only reference",
-            Message = "This view can stay open while you edit — close manually when done.",
+            Title = Localizer.T("architect.dialog.recent.infobar.title", "Read-only reference"),
+            Message = Localizer.T("architect.dialog.recent.infobar.body",
+                "This view can stay open while you edit — close manually when done."),
             IsOpen = true,
             IsClosable = false,
             Margin = new Thickness(0, 0, 0, 8),
@@ -72,7 +74,7 @@ public sealed class RecentFilesDialog : ContentDialog
         {
             Margin = new Thickness(0, 0, 0, 6),
             FontSize = 11,
-            Text = "Architect MRU — last 10 graphs opened",
+            Text = Localizer.T("architect.dialog.recent.hint", "Architect MRU — last 10 graphs opened"),
         };
         Grid.SetRow(MruHint, 1);
         grid.Children.Add(MruHint);
@@ -99,7 +101,8 @@ public sealed class RecentFilesDialog : ContentDialog
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             FontSize = 12,
-            Text = "No recent files yet — open a .phxg from File → Open.",
+            Text = Localizer.T("architect.dialog.recent.empty",
+                "No recent files yet — open a .phxg from File → Open."),
         };
         Grid.SetRow(EmptyHint, 2);
         grid.Children.Add(EmptyHint);
@@ -108,7 +111,7 @@ public sealed class RecentFilesDialog : ContentDialog
         {
             Margin = new Thickness(0, 8, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Content = "Clear list",
+            Content = Localizer.T("architect.dialog.recent.clear_button", "Clear list"),
         };
         ClearButton.Click += OnClearClick;
         Grid.SetRow(ClearButton, 3);
@@ -180,6 +183,15 @@ public sealed class RecentFilesDialog : ContentDialog
             // container never accumulates duplicate handlers.
             btn.Click -= OnPinToggleClick;
             btn.Click += OnPinToggleClick;
+
+            // The row template is built through XamlReader.Load, which cannot
+            // carry the loc: attached properties, so the pin button's two
+            // chrome strings resolve here per realized container instead. The
+            // template literals stay as the pre-realization fallback.
+            Microsoft.UI.Xaml.Controls.ToolTipService.SetToolTip(btn,
+                Localizer.T("architect.dialog.recent.pin.tip", "Pin to top / unpin"));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(btn,
+                Localizer.T("architect.dialog.recent.pin.a11y", "Pin or unpin this file"));
         }
     }
 
@@ -272,133 +284,5 @@ public sealed class RecentFilesDialog : ContentDialog
             RecentFiles.SetPinned(r.FullPath, !r.IsPinned);
             Reload();
         }
-    }
-
-    // ── Flyout entry point ──────────────────────────────────────────────
-
-    /// <summary>
-    /// Surface the recent-files list as a non-modal Flyout anchored on
-    /// <paramref name="anchor"/>. Pick-a-row commits via <paramref name="picked"/>;
-    /// clearing fires <paramref name="cleared"/>. Architect P1 — modal
-    /// ContentDialog interrupts the canvas; the flyout sits beside the menu
-    /// and dismisses on click-away.
-    /// </summary>
-    public static Flyout OpenAsFlyout(FrameworkElement anchor,
-                                      Action<string>? picked  = null,
-                                      Action?         cleared = null)
-    {
-        var paths = RecentFiles.Load();
-        var rows  = paths
-            .Select(p => new Row(Path.GetFileName(p), p, IsMissing: !File.Exists(p)))
-            .ToList();
-
-        // Build a self-contained flyout without spinning up the full
-        // ContentDialog visual surface (which would also block input).
-        var list = new ListView
-        {
-            ItemsSource         = rows,
-            SelectionMode       = ListViewSelectionMode.Single,
-            IsItemClickEnabled  = true,
-            Width               = 420,
-            MaxHeight           = 320,
-        };
-        list.ItemTemplate = BuildRowTemplate();
-
-        var emptyHint = new TextBlock
-        {
-            Text                = "No recent files yet — open a .phxg from File → Open.",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment   = VerticalAlignment.Center,
-            FontSize            = 12,
-            Foreground          = TryFindBrush("TextLabelBrush"),
-        };
-
-        var clear = new Button
-        {
-            Content             = "Clear list",
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin              = new Thickness(0, 8, 0, 0),
-            IsEnabled           = rows.Count > 0,
-        };
-
-        var grid = new Grid { Width = 420 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        if (rows.Count == 0)
-        {
-            Grid.SetRow(emptyHint, 0);
-            grid.Children.Add(emptyHint);
-        }
-        else
-        {
-            Grid.SetRow(list, 0);
-            grid.Children.Add(list);
-        }
-        Grid.SetRow(clear, 1);
-        grid.Children.Add(clear);
-
-        var flyout = new Flyout { Content = grid };
-
-        list.ItemClick += (_, e) =>
-        {
-            if (e.ClickedItem is Row r)
-            {
-                picked?.Invoke(r.FullPath);
-                flyout.Hide();
-            }
-        };
-        list.KeyDown += (_, ke) =>
-        {
-            if (ke.Key == VirtualKey.Enter && list.SelectedItem is Row r)
-            {
-                picked?.Invoke(r.FullPath);
-                ke.Handled = true;
-                flyout.Hide();
-            }
-            else if (ke.Key == VirtualKey.Escape)
-            {
-                ke.Handled = true;
-                flyout.Hide();
-            }
-        };
-        clear.Click += (_, _) =>
-        {
-            // Architect P0 : single Clear() write instead of 10
-            // sequential Load → Remove → Save round-trips on recent-files.json.
-            // Matches OnClearClick()'s modal-path fix; the flyout path was
-            // overlooked and still iterated Remove() per entry, creating an
-            // O(n²) burst of File.ReadAllText/WriteAllText cycles that race
-            // the deferred MRU writes under OneDrive / AV latency.
-            RecentFiles.Clear();
-            cleared?.Invoke();
-            flyout.Hide();
-        };
-
-        flyout.ShowAt(anchor);
-        return flyout;
-    }
-
-    private static DataTemplate BuildRowTemplate()
-    {
-        const string xaml = @"
-<DataTemplate xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
-              xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
-  <StackPanel Spacing=""2"" Margin=""0,4,0,4"" Opacity=""{Binding Opacity}""
-              ToolTipService.ToolTip=""{Binding FullPath}"">
-    <TextBlock Text=""{Binding FileName}""
-               FontSize=""13"" />
-    <TextBlock Text=""{Binding FullPath}""
-               FontSize=""10""
-               TextTrimming=""CharacterEllipsis"" />
-  </StackPanel>
-</DataTemplate>";
-        return (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);
-    }
-
-    private static Brush TryFindBrush(string key)
-    {
-        try { return (Application.Current.Resources[key] as Brush) ?? new SolidColorBrush(Microsoft.UI.Colors.Gray); }
-        catch { return new SolidColorBrush(Microsoft.UI.Colors.Gray); }
     }
 }

@@ -46,7 +46,11 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         /// <summary>
         /// Master switch for the layer-canvas widget preview (single hidden
         /// WebView2 + per-widget rect blit). When OFF, <c>LayerCanvas</c> falls
-        /// back to its labeled-rectangle placeholder rendering.
+        /// back to its labeled-rectangle placeholder rendering. The Preview
+        /// ToggleButton that flipped this was removed from the canvas command
+        /// bar, so <see cref="LoadOrDefault"/> coerces the value to
+        /// <c>true</c> on load; the property survives only so persisted JSON
+        /// that still carries <c>false</c> keeps deserializing.
         /// </summary>
         public bool CanvasWidgetPreviewEnabled { get; set; } = true;
 
@@ -62,6 +66,40 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
         /// from the widget's aspect ratio + the resize-grip band height.
         /// Persisted so the user's chosen size carries between sessions.</summary>
         public int EditorPreviewWidth { get; set; } = 480;
+
+        /// <summary>
+        /// Absolute path of the <c>.phxlayer</c> that was the selected/open
+        /// document when Visualist last had a real (saved) layer loaded.
+        /// Restored by the LayerRail on startup so the rail reopens where the
+        /// user left off instead of always defaulting to the alphabetically
+        /// first file. Null until a saved layer has been opened; a stored path
+        /// that no longer exists on disk falls back to the first enumerated
+        /// layer. Written verbatim (no validation) — mirrors the rest of this
+        /// config's save-as-is contract.
+        /// </summary>
+        public string? LastLayerPath { get; set; }
+
+        /// <summary>
+        /// Persisted width (CSS px) of the layer-file rail column in the shell.
+        /// Clamped to the shell's Rail Min/Max on restore, so an out-of-range
+        /// stored value can't wedge the column. Written on splitter release.
+        /// </summary>
+        public double RailWidth { get; set; } = 200;
+
+        /// <summary>
+        /// Persisted width (CSS px) of the inspector column in the shell.
+        /// Clamped to the shell's Inspector Min/Max on restore. Written on
+        /// splitter release.
+        /// </summary>
+        public double InspectorWidth { get; set; } = 280;
+
+        /// <summary>
+        /// Persisted manual height (CSS px) override for the widget-editor
+        /// timeline surface. <c>null</c> = auto (height follows the track count).
+        /// Set by the timeline's resize handle; clamped to the editor's Min/Resize-Max
+        /// on use so it stays sane across widgets with differing track counts.
+        /// </summary>
+        public double? TimelineHeight { get; set; }
 
         // ── Singleton + change notification ──────────────────────────────
 
@@ -111,7 +149,22 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
                 string json = File.ReadAllText(p);
                 if (string.IsNullOrWhiteSpace(json)) return new VisualistUserConfig();
                 var cfg = JsonSerializer.Deserialize<VisualistUserConfig>(json, JsonOpts);
-                return cfg ?? new VisualistUserConfig();
+                if (cfg is null) return new VisualistUserConfig();
+
+                // One-shot restore: the layer-canvas "Preview" thumbnail
+                // ToggleButton was removed by the fix sweep, but this flag still
+                // gates thumbnail rendering — a user who had unticked it before
+                // the sweep would be stranded with thumbnails off and no UI to
+                // re-enable them. Coerce to ON here, at load, before the value
+                // reaches any consumer (Instance only ever hands out configs
+                // that passed through this method). The coercion runs on every
+                // load and is idempotent — and since no UI can write `false`
+                // anymore, it is effectively one-shot and needs no migration
+                // flag. The property itself is kept so old JSON carrying
+                // `false` still deserializes cleanly before being coerced.
+                cfg.CanvasWidgetPreviewEnabled = true;
+
+                return cfg;
             }
             catch (Exception ex)
             {
@@ -156,9 +209,12 @@ namespace Phoenix.Controls.Visualist.WinUI.Core
             }
         }
 
-        /// <summary>Test hook — reset the singleton so tests can probe a fresh
-        /// instance without leaking state across cases.</summary>
-        internal static void ResetInstanceForTests() { _instance = null; }
+        // V14 removed ResetInstanceForTests() — no test ever called it, and it was
+        // not a safe hook to leave lying around: nulling _instance abandons every
+        // live OnChanged subscriber (VisualistViewModel subscribes in its ctor and
+        // unsubscribes in Dispose), so after a reset a still-alive VM would hold a
+        // dead config while the next Instance access minted a fresh one whose
+        // broadcasts reach nobody. Isolate through Update(...) + restore instead.
     }
 
     /// <summary>

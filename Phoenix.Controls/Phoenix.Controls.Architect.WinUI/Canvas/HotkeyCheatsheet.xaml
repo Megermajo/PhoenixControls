@@ -21,6 +21,7 @@
     x:Class="Phoenix.Controls.Architect.WinUI.Canvas.HotkeyCheatsheet"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization"
     HorizontalAlignment="Left"
     VerticalAlignment="Bottom"
     Margin="12,0,0,12"
@@ -114,10 +115,12 @@
                                 Spacing="8"
                                 VerticalAlignment="Center">
                         <TextBlock Text="HOTKEYS"
-                                   Style="{StaticResource CheatsheetEyebrow}" />
+                                   Style="{StaticResource CheatsheetEyebrow}"
+                                   loc:Localize.Key="architect.canvas.cheatsheet.eyebrow" />
                         <TextBlock x:Name="ContextLabel"
                                    Text="CANVAS"
-                                   Style="{StaticResource CheatsheetContextLabel}" />
+                                   Style="{StaticResource CheatsheetContextLabel}"
+                                   loc:Localize.Key="architect.canvas.cheatsheet.context.canvas" />
                     </StackPanel>
 
                     <Button x:Name="ToggleButton"
@@ -126,6 +129,8 @@
                             Content="—"
                             AutomationProperties.Name="Collapse hotkey cheatsheet"
                             ToolTipService.ToolTip="Collapse"
+                            loc:Localize.AutomationKey="architect.canvas.cheatsheet.toggle.collapse.a11y"
+                            loc:Localize.TooltipKey="architect.canvas.cheatsheet.toggle.collapse.tip"
                             Click="OnToggleClicked" />
                 </Grid>
             </Border>

@@ -128,52 +128,88 @@ public sealed class LiveFeedSource : ILiveFeedSource, IDisposable
 
     private static (LiveFeedKind Kind, string Who) ClassifyStreamEvent(Log entry)
     {
-        // WS logs StreamEvent rows with Source like "Twitch", "OBS",
-        // "YouTube" and a Message containing the verb + actor. The existing
-        // WinForms StatusStrip parses these the same way; we keep the
-        // heuristic local rather than introducing a new structured channel
-        // (that would be a WS surface change which is out of scope).
+        // ── The four shapes WS actually emits at LogLevel.StreamEvent ────────
+        //   1. "Scene → <scene>"                         source "OBS"
+        //   2. "<sender> whispered: <text>"              source "Twitch"  (actor FIRST)
+        //   3. "<EventType> by <actor>"  /  "<EventType>"  source = platform (actor LAST)
+        //   4. "!<verb> by <user>"                       source "Chat"
+        //
+        // ★ Classification is keyed off the EVENT-TYPE token, never off the whole
+        // line. The previous pass ran unanchored `Contains` probes over a string
+        // that EMBEDS the actor, which produced two live defects:
+        //   • a chat command rendered as the event its own verb spelled — "!subs
+        //     by Bob" painted a SUB row with the ember brush, "!raid by Bob" a
+        //     RAID — and any command at all typed by a viewer named *SubZero*
+        //     became a SUB;
+        //   • `Who` was the FIRST word, which for shape 3 is the event type, so
+        //     the column read "Twitch.Sub" instead of the viewer, and the
+        //     right-click "filter to this user" it feeds was poisoned for every
+        //     real stream event, not just for commands.
+        // Splitting on the " by " infix separates the two halves, so the probes
+        // see only the type and `Who` sees only the actor.
         string m = entry.Message ?? "";
-        // Take the first word as the candidate "who" when the message looks
-        // like "<user> subscribed" / "<user> raided …". Falls back to source.
-        string who = entry.Source ?? "";
-        int firstSpace = m.IndexOf(' ');
-        if (firstSpace > 0) who = m[..firstSpace];
+        string source = entry.Source ?? "";
 
-        // Private whispers to the bot account. WS emits these (via the
-        // ephemeral LogTransient path) as "<sender> whispered: <text>". Matched
-        // on the exact " whispered:" verb form — NOT a bare "whisper" substring
-        // — so a viewer/scene name that merely contains "whisper" (e.g.
-        // "WhisperKing raided", "Scene → WhisperCam") can't hijack the kind.
-        // Checked FIRST so the body text can't steal the row from itself
-        // ("<sender> whispered: nice raid!" stays a Whisper). who = first word
-        // = sender; Detail keeps the full line so the panel shows the complete
-        // whisper.
-        if (m.Contains(" whispered:", StringComparison.OrdinalIgnoreCase))
-            return (LiveFeedKind.Whisper, who);
+        // Shape 4 — a chat command. Anchored on the literal '!' in the first
+        // character position (ordinal, per ChatVerb) plus WS's " by " infix; no
+        // platform allows a username to begin with '!', so a real stream event
+        // cannot take this branch. Routed to the EXISTING Chat kind, which until
+        // now had a live filter chip and no producer at all. Whether a command is
+        // REGISTERED — and therefore whether it deserves its own kind and chip —
+        // needs the command registry (CR0/CR5); this fix is only about the row
+        // no longer lying about what it is and who sent it.
+        if (ChatCommandFeedLine.TryRead(m, out string commandUser))
+            return (LiveFeedKind.Chat, commandUser);
+
+        // Shape 2 — private whispers to the bot account, emitted through the
+        // ephemeral LogTransient path. Matched on the exact " whispered:" verb
+        // form — NOT a bare "whisper" substring — so a viewer or scene name that
+        // merely contains "whisper" ("WhisperKing raided", "Scene → WhisperCam")
+        // can't hijack the kind. Checked before the split because this is the one
+        // shape whose actor comes FIRST, and because the whisper BODY is free text
+        // that could otherwise contain " by " (or the word "raid") and steal the
+        // row from itself. Detail keeps the full line.
+        int whisperAt = m.IndexOf(" whispered:", StringComparison.OrdinalIgnoreCase);
+        if (whisperAt > 0)
+            return (LiveFeedKind.Whisper, m[..whisperAt].Trim());
+
+        // Shapes 1 and 3 — head = the classifiable token, tail = the actor. The
+        // FIRST " by " is the separator: an event type never contains one, while
+        // a YouTube display name legitimately can.
+        string head = m;
+        string who = source;
+        int byAt = m.IndexOf(" by ", StringComparison.Ordinal);
+        if (byAt > 0)
+        {
+            head = m[..byAt];
+            string actor = m[(byAt + 4)..].Trim();
+            if (actor.Length > 0) who = actor;
+        }
+
         // YouTube memberships are subs in Twitch vocabulary — NewSponsor /
         // MembershipGift / MemberMileStone bucket with Sub alongside Kick's
         // Subscription/GiftSubscription (already caught by the "sub" probe).
-        if (m.Contains("sub", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("sponsor", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("membership", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("milestone", StringComparison.OrdinalIgnoreCase))
+        if (head.Contains("sub", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("sponsor", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("membership", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("milestone", StringComparison.OrdinalIgnoreCase))
             return (LiveFeedKind.Sub, who);
-        if (m.Contains("raid", StringComparison.OrdinalIgnoreCase))   return (LiveFeedKind.Raid,   who);
-        if (m.Contains("follow", StringComparison.OrdinalIgnoreCase)) return (LiveFeedKind.Follow, who);
+        if (head.Contains("raid", StringComparison.OrdinalIgnoreCase))   return (LiveFeedKind.Raid,   who);
+        if (head.Contains("follow", StringComparison.OrdinalIgnoreCase)) return (LiveFeedKind.Follow, who);
         // Monetary one-offs bucket with Redeem: Twitch cheers/redeems,
         // YouTube SuperChat/SuperSticker/JewelsGifted, Kick KicksGifted.
-        if (m.Contains("redeem", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("reward", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("cheer",  StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("superchat", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("supersticker", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("kicksgifted", StringComparison.OrdinalIgnoreCase) ||
-            m.Contains("jewels", StringComparison.OrdinalIgnoreCase))
+        if (head.Contains("redeem", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("reward", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("cheer",  StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("superchat", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("supersticker", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("kicksgifted", StringComparison.OrdinalIgnoreCase) ||
+            head.Contains("jewels", StringComparison.OrdinalIgnoreCase))
             return (LiveFeedKind.Redeem, who);
         // Default to Visual so the row still surfaces — better than dropping.
         return (LiveFeedKind.Visual, who);
     }
+
 
     private static DateTimeOffset ToUtcOffset(DateTime dt) =>
         dt.Kind switch

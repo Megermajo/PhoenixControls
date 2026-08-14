@@ -556,7 +556,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
         });
     }
 
-    // ── Macro.Call / Process.Spawn call-site socket sync ────────────────
+    // ── Macro.Call / Process.Start call-site socket sync ────────────────
     //
     // Self-contained WinUI port of the baseline WinForms Canvas.Macros.cs
     // RefreshMacroCallSockets / RefreshProcessSpawnSockets pair. Lives here
@@ -635,10 +635,10 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     }
 
     /// <summary>
-    /// Re-sync every open <c>Process.Spawn</c> node referencing
+    /// Re-sync every open <c>Process.Start</c> node referencing
     /// <paramref name="processId"/> to the process's current Entry/Exit
     /// signature. Resolves the canonical process from the open graph. No-op
-    /// when absent. Process.Spawn keeps its fixed Done + InstanceId outputs.
+    /// when absent. Process.Start keeps its fixed Done + InstanceId outputs.
     /// </summary>
     public void RefreshProcessSpawnSockets(string processId)
     {
@@ -649,7 +649,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     }
 
     /// <summary>
-    /// Re-sync every open <c>Process.Spawn</c> node referencing
+    /// Re-sync every open <c>Process.Start</c> node referencing
     /// <paramref name="process"/>'s id to its current signature.
     /// </summary>
     public void RefreshProcessSpawnSockets(Process process)
@@ -682,7 +682,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     /// input sockets (→ call-site outputs), then mutates <paramref name="callNode"/>'s
     /// socket list in place: drop sockets (and their links) no longer in the
     /// signature, refresh / append the rest. <paramref name="fixedOutputNames"/>
-    /// (e.g. Process.Spawn's Done + InstanceId) are never dropped and lead the
+    /// (e.g. Process.Start's Done + InstanceId) are never dropped and lead the
     /// output column.
     /// </summary>
     private static void SyncCallSiteSockets(
@@ -769,7 +769,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
                 (int)(width - 14), CallSiteHeaderH + 6 + outputRow * CallSiteRowSpacing);
 
             // Resolve the fixed output's canonical colour/type from the template
-            // (Process.Spawn: Done = Flow, InstanceId = String). Without an explicit
+            // (Process.Start: Done = Flow, InstanceId = String). Without an explicit
             // DataType these pins default to SocketDataType.Any and render as
             // unwireable ◆ Diamonds instead of the correct shape — the same class of
             // bug fixed in the node factories. Set both branches so a legacy node whose
@@ -837,7 +837,7 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
 
         // Always-present output rows: the macro call site carries one Flow
         // output (not in fixedOutputNames, which only lists named fixed outputs
-        // like Process.Spawn's Done + InstanceId), so floor the count at 1.
+        // like Process.Start's Done + InstanceId), so floor the count at 1.
         // Mirrors the baseline WinForms height math — macro: Max(1+entry, 1+exit);
         // process: Max(1+entry, 2+exit).
         int alwaysPresentOutputRows = Math.Max(1, fixedOut.Count);
@@ -1049,6 +1049,8 @@ public sealed class ArchitectViewModel : ObservableObject, IPillarShell, IDispos
     }
 
     // ─── IPillarShell ─────────────────────────────────────────────────────
+    // Not localized: the whole string is two product names and a dash, and
+    // product names stay untranslated by decision.
     public string     Title => "Phoenix Controls — Architect";
     public PillarKind Kind  => PillarKind.Architect;
 

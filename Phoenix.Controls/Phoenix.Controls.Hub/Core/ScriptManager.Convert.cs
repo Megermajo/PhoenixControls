@@ -33,7 +33,7 @@ namespace Phoenix.Controls.Hub.Core
                 // so a script using `if convert.to_bool({x}):` and
                 // `result = convert.to_bool({x})` agree on edge cases.
                 string value = _engine.CurrentBoundArgs?.GetOrDefault<string>("Value", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                return ScriptEngine.ParseTruthy(value).ToString().ToLowerInvariant();
+                return (ScriptEngine.ParseTruthy(value) ? "true" : "false");
             });
             _engine.RegisterCommand("convert.to_float", async (args) => {
                 string value = _engine.CurrentBoundArgs?.GetOrDefault<string>("Value", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);

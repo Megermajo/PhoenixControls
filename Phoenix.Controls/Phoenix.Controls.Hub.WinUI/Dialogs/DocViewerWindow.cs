@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using Phoenix.Controls.Hub.Core;
 using Phoenix.Controls.Hub.WinUI.Services;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Shared.WinUI.Contracts;
@@ -72,7 +73,7 @@ public sealed class DocViewerWindow : Window
 
         _pending = initial;
         Title = string.IsNullOrEmpty(initial.Title)
-            ? "Phoenix Controls — Documentation"
+            ? Localizer.T("dialog.documentation.title", "Phoenix Controls — Documentation")
             : initial.Title!;
 
         ConfigureAppWindow();

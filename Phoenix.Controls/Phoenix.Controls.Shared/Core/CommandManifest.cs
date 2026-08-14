@@ -196,14 +196,152 @@ namespace Phoenix.Controls.Shared.Core
 
             // Collections / Queue / State
             AddT("array.push", new ArgSpec("List", ArgType.String), new ArgSpec("Value", ArgType.String));
-            AddT("queue.push", new ArgSpec("EventID", ArgType.String), new ArgSpec("Payload", ArgType.String));
-            AddT("queue.clear");
+            // queue.* — the OPTIONAL trailing Name is what generalised this band: absent
+            // selects the legacy unnamed pipe-string queue (global._event_queue), present
+            // selects a persistent NAMED queue in the open "Queues" table. Priority only
+            // means anything on a named queue (higher sorts earlier). Both optionals widen
+            // MaxArgs only, so an existing 2-arg call still binds exactly as before; the
+            // emission side is a custom IExporterHandler, NOT a descriptor, because
+            // SimpleEmitHandler.Emit would write the new args unconditionally and rewrite
+            // every shipped graph's .phx.
+            AddT("queue.push", new ArgSpec("EventID", ArgType.String), new ArgSpec("Payload", ArgType.String),
+                               new ArgSpec("Name", ArgType.String, Optional: true),
+                               new ArgSpec("Priority", ArgType.Int, Optional: true, Default: "0"));
+            AddT("queue.clear", new ArgSpec("Name", ArgType.String, Optional: true));
             AddT("state.set",  new ArgSpec("Name", ArgType.String), new ArgSpec("Value", ArgType.String));
 
             // Public.Set — script-run-wide, no DB, parallel-branch merge-back.
             // Routes through SetLocalResultVar so _branchResultKeysLocal tags the
             // key for parallel_begin's merge step.
             AddT("public.set", new ArgSpec("Key", ArgType.String), new ArgSpec("Value", ArgType.String));
+
+            // Timer — subathon-style countdown control. The 9 void commands are
+            // SimpleEmitDescriptors (flow nodes); the 2 get_* are inline pure-data
+            // probes resolved by ScriptExporter (no descriptor). Duration / Amount
+            // are strings parsed by ParseDurationToMs ("300"=300s, "90s", "5m",
+            // "1h30m", "2h", "1d"; bare number = seconds; a leading "-" negates the
+            // whole amount, so timer.add covers subtraction). Handlers in
+            // ScriptManager.Timer.cs; engine reads route TimerService.Instance.
+            // (timer.subtract / get_formatted / get_paused / get_progress were
+            // RETIRED in the 2026-08 tool-node cut — timer.add takes signed amounts
+            // and Overlay.Get reads the timer.<name>.* live-channel keys; the old
+            // command names answer through ScriptManager.RetiredCommands shims.)
+            AddT("timer.start",          new ArgSpec("Name", ArgType.String), new ArgSpec("Duration", ArgType.String, Optional: true, Default: ""));
+            AddT("timer.stop",           new ArgSpec("Name", ArgType.String));
+            AddT("timer.pause",          new ArgSpec("Name", ArgType.String));
+            AddT("timer.resume",         new ArgSpec("Name", ArgType.String));
+            AddT("timer.toggle",         new ArgSpec("Name", ArgType.String));
+            AddT("timer.reset",          new ArgSpec("Name", ArgType.String));
+            AddT("timer.add",            new ArgSpec("Name", ArgType.String), new ArgSpec("Amount", ArgType.String));
+            AddT("timer.set_time",       new ArgSpec("Name", ArgType.String), new ArgSpec("Amount", ArgType.String));
+            AddT("timer.set_happy_hour", new ArgSpec("Name", ArgType.String), new ArgSpec("Multiplier", ArgType.String), new ArgSpec("Duration", ArgType.String), new ArgSpec("Scope", ArgType.String, Optional: true, Default: "all"));
+            AddT("timer.get_remaining",  new ArgSpec("Name", ArgType.String));
+            AddT("timer.get_state",      new ArgSpec("Name", ArgType.String));
+
+            // Loyalty / Counters / Quotes — RETIRED command families (2026-08
+            // tool-node cut). The points.* / counter.* / quote.* script commands
+            // wrapped OPEN tables, so graphs use the generic db.* family instead
+            // (db.top replaces points.top). The tools themselves — chat commands,
+            // panels, games, store — are untouched; only the script-command wrappers
+            // went. Old .phx lines answer through ScriptManager.RetiredCommands
+            // shims, so none of the names re-enter this manifest.
+
+            // Song Request — the YouTube request queue. Eleven flow commands
+            // (song.request / skip / pause / resume / remove / remove_last / clear /
+            // set_volume / vote_skip / approve / deny) are SimpleEmitDescriptors; four
+            // (song.current / song.up_next / song.queue_length / song.queue_position) are
+            // inline pure-data probes resolved by ScriptExporter with no descriptor.
+            // Handlers in ScriptManager.SongRequest.cs drive the shared
+            // SongRequestService.Instance; the exporter emits from
+            // ExporterRegistry.Handlers1.RegisterSongRequest + ComputeInlineValue.
+            //
+            // song.request's Query takes whatever a viewer would type after !sr — a
+            // YouTube link, a bare 11-character video id, or a search phrase (the last of
+            // which needs the streamer's optional API key). An empty User resolves to the
+            // triggering chatter, the Loyalty/Twitch convention, which is why User is
+            // Optional here while the descriptor still emits it positionally.
+            //
+            // ResultBase on song.current / song.up_next: the optional trailing arg those
+            // nodes inject so ONE read backs every output socket ("{base}_title" /
+            // "{base}_requester" / "{base}_video_id", plus "{base}_state" and
+            // "{base}_volume" on song.current) — the same shape as db.top and the
+            // giveaway.* reads. Positions are 1-based and address the WAITING queue only;
+            // the playing track is not addressable by position.
+            AddT("song.request",        new ArgSpec("Query", ArgType.String),
+                                        new ArgSpec("User", ArgType.String, Optional: true, Default: ""));
+            AddT("song.skip");
+            AddT("song.pause");
+            AddT("song.resume");
+            AddT("song.remove",         new ArgSpec("Position", ArgType.Int));
+            AddT("song.remove_last",    new ArgSpec("User", ArgType.String, Optional: true, Default: ""));
+            AddT("song.clear");
+            AddT("song.set_volume",     new ArgSpec("Volume", ArgType.Int));
+            AddT("song.vote_skip",      new ArgSpec("User", ArgType.String, Optional: true, Default: ""));
+            AddT("song.approve",        new ArgSpec("Position", ArgType.Int));
+            AddT("song.deny",           new ArgSpec("Position", ArgType.Int));
+            AddT("song.current",        new ArgSpec("ResultBase", ArgType.String, Optional: true, Default: ""));
+            AddT("song.up_next",        new ArgSpec("ResultBase", ArgType.String, Optional: true, Default: ""));
+            AddT("song.queue_length");
+            AddT("song.queue_position", new ArgSpec("User", ArgType.String, Optional: true, Default: ""));
+
+            // Polls & Betting — the chat poll + points side-bet. Five flow commands
+            // (poll.open / close / cancel / vote / bet) are SimpleEmitDescriptors; two
+            // (poll.status / poll.get_votes) are inline pure-data probes resolved by
+            // ScriptExporter with no descriptor. Handlers in ScriptManager.Polls.cs drive
+            // the shared PollsService.Instance; the exporter emits from
+            // ExporterRegistry.Handlers1.RegisterPolls + ComputeInlineValue.
+            //
+            // poll.open's Options is one comma-separated list rather than N pins, so the
+            // same node opens a two-way and a five-way poll. Betting is honoured only when
+            // the tool's own betting gate is on — a graph can never switch the money on
+            // behind the streamer's back. Mirror asks for the native Twitch poll /
+            // prediction, which is CAPABILITY-GATED at runtime and degrades to chat-only.
+            //
+            // Option (on poll.vote / poll.bet / poll.get_votes) is a String rather than an
+            // Int because it accepts EITHER the 1-based option number a chat arg carries OR
+            // the option's label, which is what a hard-wired branch has. An empty User
+            // resolves to the triggering chatter — the Loyalty/Song convention — which is
+            // why User is Optional while the descriptor still emits it positionally.
+            //
+            // ResultBase on poll.status: the optional trailing arg the Poll.Status node
+            // injects so ONE read backs every output socket ("{base}_state" /
+            // "{base}_is_open" / "{base}_title" / "{base}_leader" / "{base}_leader_votes" /
+            // "{base}_total_votes" / "{base}_pot" / "{base}_seconds_left") — the same shape
+            // as song.current and the giveaway.* reads.
+            AddT("poll.open",      new ArgSpec("Title", ArgType.String),
+                                   new ArgSpec("Options", ArgType.String),
+                                   new ArgSpec("DurationSeconds", ArgType.Int, Optional: true, Default: "0"),
+                                   new ArgSpec("Betting", ArgType.Bool, Optional: true, Default: "false"),
+                                   new ArgSpec("Mirror", ArgType.Bool, Optional: true, Default: "false"));
+            AddT("poll.close");
+            AddT("poll.cancel");
+            AddT("poll.vote",      new ArgSpec("Option", ArgType.String),
+                                   new ArgSpec("User", ArgType.String, Optional: true, Default: ""));
+            AddT("poll.bet",       new ArgSpec("Option", ArgType.String),
+                                   new ArgSpec("Amount", ArgType.Int),
+                                   new ArgSpec("User", ArgType.String, Optional: true, Default: ""));
+            AddT("poll.status",    new ArgSpec("ResultBase", ArgType.String, Optional: true, Default: ""));
+            AddT("poll.get_votes", new ArgSpec("Option", ArgType.String, Optional: true, Default: ""));
+
+            // Ranks — the watch-time / points rank ladder. rank.evaluate is a
+            // SimpleEmitDescriptor (the one flow node); rank.get is an inline
+            // pure-data probe resolved by ScriptExporter (no descriptor). Handlers in
+            // ScriptManager.Ranks.cs drive the shared RanksService.Instance; the
+            // exporter emits from ExporterRegistry.Ranks.cs + ComputeInlineValue.
+            // (rank.value / rank.top were RETIRED in the 2026-08 tool-node cut —
+            // both read OPEN tables, so db.get_cell / db.top cover them; rank.get
+            // stays because the value→rank-name ladder lives in the Ranks CONFIG,
+            // which db.* cannot reach.)
+            //
+            // An empty User resolves to the triggering chatter's LOGIN at runtime
+            // (ResolveRankUser), the Song.QueuePosition convention.
+            //
+            // rank.evaluate is the ONLY rank.* command with side effects, and it exists for
+            // a specific gap: the Loyalty balance table is OPEN, so a graph moving points
+            // with db.set_cell never enters any service hook, and this is how that graph
+            // gets its Rank.OnRankUp instead of waiting for the next watch-time tick.
+            AddT("rank.get",      new ArgSpec("User", ArgType.String));
+            AddT("rank.evaluate", new ArgSpec("User", ArgType.String));
 
             // Platforms remainder — typed
             AddT("discord.webhook",        new ArgSpec("URL", ArgType.String), new ArgSpec("Msg", ArgType.String));
@@ -315,6 +453,11 @@ namespace Phoenix.Controls.Shared.Core
             AddT("twitch.check_role",     new ArgSpec("Username", ArgType.String));
             AddT("twitch.is_online",      new ArgSpec("Channel", ArgType.String));
             AddT("twitch.get_follow_age", new ArgSpec("Username", ArgType.String));
+
+            // User-Management group lookup (the User.GetGroups node). Writes
+            // group.moderator/vip/subscriber/regular + one group.<sanitized> result
+            // var per existing custom group; handler in ScriptManager.UserManagement.cs.
+            AddT("usermgmt.get_groups",   new ArgSpec("Username", ArgType.String));
 
             // YouTube — outbound platform commands. Proxy commands routed
             // through Streamer.bot DoAction (action name = "Phoenix: YT <Verb>");
@@ -428,6 +571,16 @@ namespace Phoenix.Controls.Shared.Core
             AddT("db.delete_row",     new ArgSpec("Table", ArgType.String), new ArgSpec("RowId", ArgType.Int));
             AddT("db.row_count",      new ArgSpec("Table", ArgType.String));
             AddT("db.get_column",     new ArgSpec("Table", ArgType.String), new ArgSpec("Column", ArgType.String));
+            // db.top — generic top-N leaderboard over any OPEN table, ordered
+            // numerically DESC by ValueColumn (added in the 2026-08 tool-node cut as
+            // the generic replacement for the retired points.top / rank.top). One
+            // read backs BOTH of the DB.Top node's outputs: the Hub handler writes
+            // "{base}_labels" (LabelColumn values, e.g. names) and "{base}_values"
+            // (the ranking numbers) via SetLocalResultVar — the quote.get ResultBase
+            // shape — and returns the labels CSV for legacy/inline callers.
+            AddT("db.top",            new ArgSpec("Table", ArgType.String), new ArgSpec("ValueColumn", ArgType.String),
+                                      new ArgSpec("LabelColumn", ArgType.String), new ArgSpec("Count", ArgType.Int, Optional: true, Default: "5"),
+                                      new ArgSpec("ResultBase", ArgType.String, Optional: true, Default: ""));
 
             // Giveaway — create is a simple emit (no value output); close/ticket/
             // winner are imperative handlers that ALSO emit a result-var base
@@ -585,10 +738,27 @@ namespace Phoenix.Controls.Shared.Core
             AddT("state.exists",       new ArgSpec("Name", ArgType.String));
             AddT("state.delete",       new ArgSpec("Name", ArgType.String));
             AddT("state.list_keys");
-            AddT("queue.pop",          new ArgSpec("EventIDVar", ArgType.String), new ArgSpec("PayloadVar", ArgType.String));
-            AddT("queue.length",       new ArgSpec("ResultVar", ArgType.String));
-            AddT("chat.overlay.push",  new ArgSpec("WidgetID", ArgType.String), new ArgSpec("Username", ArgType.String), new ArgSpec("Message", ArgType.String), new ArgSpec("Color", ArgType.String));
-            AddT("chat.overlay.clear", new ArgSpec("WidgetID", ArgType.String));
+            AddT("queue.pop",          new ArgSpec("EventIDVar", ArgType.String), new ArgSpec("PayloadVar", ArgType.String),
+                                       new ArgSpec("Name", ArgType.String, Optional: true));
+            // ResultVar stays FIRST and Name is appended after it, even though the exporter
+            // only ever emits Name (Queue.Length is an inline value node, so its generated
+            // form is `queue.length()` / `queue.length("", "viewers")`). Reordering would be
+            // silently destructive: ResultVar is reachable from a hand-authored .phx, and a
+            // one-arg `queue.length("waiting")` written before this change must keep meaning
+            // "write the length into global.waiting", not "read the queue named waiting".
+            // Both are Optional now — the zero-arg inline form was always the only shape the
+            // exporter produced.
+            AddT("queue.length",       new ArgSpec("ResultVar", ArgType.String, Optional: true),
+                                       new ArgSpec("Name", ArgType.String, Optional: true));
+            // The three band members added with the Name generalisation. Position and List
+            // are pure-data value reads (inlined by the exporter, no descriptor); Remove is
+            // a void control node with a custom handler so its optional Name is emitted only
+            // when set. All three serve BOTH stores.
+            AddT("queue.position",     new ArgSpec("Entry", ArgType.String),
+                                       new ArgSpec("Name", ArgType.String, Optional: true));
+            AddT("queue.remove",       new ArgSpec("Entry", ArgType.String),
+                                       new ArgSpec("Name", ArgType.String, Optional: true));
+            AddT("queue.list",         new ArgSpec("Name", ArgType.String, Optional: true));
             // visual.trigger is the manifest's hand-authored alias for
             // visual.trigger_queued; it accepts the same trailing key=val pairs so
             // a script (and the in-handler dict-build loop, prior to migration)
@@ -599,10 +769,55 @@ namespace Phoenix.Controls.Shared.Core
                 new ArgSpec("WidgetID", ArgType.String),
                 new ArgSpec("TriggerName", ArgType.String),
                 new ArgSpec("EventData", ArgType.KvPairs, Variadic: true));
+            AddT("twitch.last_active", new ArgSpec("User", ArgType.String), new ArgSpec("ThresholdMins", ArgType.Int), new ArgSpec("InactiveVar", ArgType.String), new ArgSpec("MinutesAgoVar", ArgType.String));
+
+            // Overlay Live Channel — the author-facing half of the one key/value
+            // channel every overlay widget binds to. overlay.publish writes a literal
+            // key (Value is stored as a JSON STRING, always — no numeric sniffing, so
+            // "007" stays "007"; coercion belongs at the reader, where the author has
+            // already picked a pin type). overlay.get reads the current value back and
+            // is pure-data: no descriptor, resolved inline by ScriptExporter like
+            // state.exists / timer.get_state, hence its KnownImperativeOnlyCommands entry.
+            //
+            // These two are also what RETIRED the second, per-widget addressing model
+            // that used to live here: chat.overlay.push / chat.overlay.clear and
+            // visual.set_text / set_visible / set_property lost their nodes in V4
+            // part C. compositor.js never had a handler for any of their wire types
+            // (STEP/chat_push, STEP/chat_clear, SET_TEXT, VISUAL_SET_VISIBLE,
+            // VISUAL_SET_PROPERTY), so all five had shipped inert since they were
+            // written. Their capability is overlay.publish plus a widget-side Var.Live
+            // binding — a published key bound to a parameter is what set_property was
+            // reaching for. Do not re-add their NODES: a second addressing model beside
+            // the channel's is the thing this campaign exists to remove. The five
+            // manifest entries below are a different question; see there.
+            AddT("overlay.publish", new ArgSpec("Key", ArgType.String), new ArgSpec("Value", ArgType.String));
+            AddT("overlay.get",     new ArgSpec("Key", ArgType.String));
+
+            // ── Retired overlay-addressing commands (no-op shims) ────────────────
+            // Node-less and exporter-less BY DESIGN: no NodeRegistry template, no
+            // SimpleEmitDescriptor, no NodeProse entry, no lang bubble. Nothing can
+            // author a fresh call to any of them.
+            //
+            // The entries survive because a name already written into a `.phx` on disk
+            // outlives the graph it came from — hand-authored scripts have no `.phxg` at
+            // all, and a generated `.phx` is only rewritten when its `.phxg` is re-opened
+            // and saved. Without a manifest entry + engine registration those calls hit
+            // ScriptEngine's unknown-command path, which logs at CriticalError, which
+            // LiveFeed turns into a red error row on every invocation — a visible
+            // regression for a script whose behaviour did not change, since all five were
+            // already inert. The shims are in ScriptManager.RetiredCommands.cs; the
+            // ArgSpecs are verbatim the originals so CommandBinder still types a legacy
+            // call exactly as it did.
+            //
+            // Kept out of the descriptor cross-check by CommandManifestTests.
+            // KnownImperativeOnlyCommands. Removable only once unmigrated `.phx` files are
+            // no longer a population worth supporting — and then all four sites go
+            // together: here, the shim file, that whitelist, and the Hub's startup audits.
+            AddT("chat.overlay.push",  new ArgSpec("WidgetID", ArgType.String), new ArgSpec("Username", ArgType.String), new ArgSpec("Message", ArgType.String), new ArgSpec("Color", ArgType.String));
+            AddT("chat.overlay.clear", new ArgSpec("WidgetID", ArgType.String));
             AddT("visual.set_text",    new ArgSpec("Id", ArgType.String), new ArgSpec("Value", ArgType.String));
             AddT("visual.set_visible", new ArgSpec("Widget", ArgType.String), new ArgSpec("Visible", ArgType.Bool));
             AddT("visual.set_property",new ArgSpec("Widget", ArgType.String), new ArgSpec("Key", ArgType.String), new ArgSpec("Value", ArgType.String));
-            AddT("twitch.last_active", new ArgSpec("User", ArgType.String), new ArgSpec("ThresholdMins", ArgType.Int), new ArgSpec("InactiveVar", ArgType.String), new ArgSpec("MinutesAgoVar", ArgType.String));
 
             // Copy into a ConcurrentDictionary preserving the Ordinal comparer.
             return new ConcurrentDictionary<string, CommandSpec>(dict, System.StringComparer.Ordinal);

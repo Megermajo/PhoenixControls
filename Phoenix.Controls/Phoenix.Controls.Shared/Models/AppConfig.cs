@@ -84,6 +84,33 @@ namespace Phoenix.Controls.Shared.Models
         /// <summary>Twitch username of the bot account. Chat messages from this account are ignored by the script engine to prevent self-triggering.</summary>
         public string BotUsername { get; set; } = "";
 
+        // ── Viewer presence + watch time (ViewerPresenceService) ──────────
+        /// <summary>
+        /// How often the Hub asks Streamer.bot who is currently in chat, in
+        /// seconds. That one sample feeds every consumer that used to open its own
+        /// <c>GetActiveViewers</c> round-trip, the platform-role cache, and the
+        /// passive watch-time accrual. Default 60; clamped in-code to [15, 300] —
+        /// under 15s is a socket round-trip every few seconds for data that changes
+        /// at human speed, over 300s makes watch minutes too coarse to be fair.
+        /// </summary>
+        public int ViewerPresencePollSeconds { get; set; } = 60;
+
+        /// <summary>
+        /// When true (default), presence samples accrue watch MINUTES into the OPEN
+        /// "WatchTime" table. This is a passive background data source, not a
+        /// feature: no pre-build tool has to be enabled for it to record, and the
+        /// numbers are what a User-Management group's watch-hour rule, a Ranks
+        /// ladder and <c>db.top("WatchTime", …)</c> all read.
+        /// </summary>
+        public bool WatchTimeTrackingEnabled { get; set; } = true;
+
+        /// <summary>
+        /// When true (default), watch minutes accrue only while the stream is live.
+        /// Turn it off to count viewers who sit in chat between streams — a Hub left
+        /// running overnight will then hand everybody present the hours.
+        /// </summary>
+        public bool WatchTimeOnlyWhenLive { get; set; } = true;
+
         /// <summary>
         /// Twitch numeric user id of the bot account, preferred over
         /// <see cref="BotUsername"/> for the self-trigger guard because the
@@ -194,7 +221,12 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public int ChatDispatchDetachSeconds { get; set; } = 5;
 
-        /// <summary>Maximum number of webhook-triggered scripts running concurrently. 0 = unlimited.</summary>
+        /// <summary>Maximum number of webhook-triggered scripts running concurrently.
+        /// Shared with <c>on_websocket</c> dispatch — both flavors draw from the one
+        /// ScriptManager webhook semaphore (on_websocket is additionally bounded
+        /// upstream by <see cref="MaxConcurrentWebsocketScripts"/>). Hotkey and
+        /// clipboard scripts have their own caps and no longer draw from this pool.
+        /// 0 = unlimited.</summary>
         public int MaxConcurrentWebhookScripts { get; set; } = 5;
 
         /// <summary>
@@ -224,21 +256,28 @@ namespace Phoenix.Controls.Shared.Models
         /// <summary>
         /// Maximum number of hotkey-triggered scripts running
         /// concurrently from <see cref="HotkeysEnabled"/>'s HotkeyService.
-        /// Split out from the shared default so a flurry of held / repeating
-        /// chord registrations can't starve chat/webhook concurrency. Default
-        /// 5 matches the webhook cap; 0 = unlimited (not recommended).
-        /// Excess invocations queue on the semaphore — they are not dropped.
+        /// Drives ScriptManager's own hotkey semaphore rather than the shared
+        /// webhook one, so a flurry of held / repeating chord fires can't
+        /// starve on_webhook / on_websocket delivery. Default 5 matches the
+        /// webhook cap; 0 = unlimited (not recommended). Excess invocations
+        /// queue on the semaphore for up to 30s, then drop with a
+        /// CriticalError log entry.
         /// </summary>
         public int MaxConcurrentHotkeyScripts { get; set; } = 5;
 
         /// <summary>
         /// Maximum number of clipboard-triggered scripts running
         /// concurrently from <see cref="ClipboardWatchEnabled"/>'s
-        /// ClipboardService. Split out from the shared default for the same
-        /// reason as <see cref="MaxConcurrentHotkeyScripts"/>: a fast
+        /// ClipboardService. Drives its own ScriptManager semaphore for the
+        /// same reason as <see cref="MaxConcurrentHotkeyScripts"/>: a fast
         /// copy-paste loop (paste-detection panels, instant-share-link
-        /// scripts) can otherwise wedge the shared semaphore. Default 5
-        /// matches the webhook cap; 0 = unlimited.
+        /// scripts) would otherwise wedge the shared webhook semaphore. The
+        /// OS gives no per-handler discriminator for a clipboard update, so
+        /// every on_clipboard subscriber fans out in parallel and this cap
+        /// bounds the whole fan-out rather than a single script. Default 5
+        /// matches the webhook cap; 0 = unlimited. Excess invocations queue on
+        /// the semaphore for up to 30s, then drop with a CriticalError log
+        /// entry.
         /// </summary>
         public int MaxConcurrentClipboardScripts { get; set; } = 5;
 
@@ -298,13 +337,27 @@ namespace Phoenix.Controls.Shared.Models
         // and written back when the user mutates the corresponding affordance.
         // 0 / "" means "no recall yet — use the layout default".
 
-        /// <summary>Last cap of the right-hand inspector card (px). 0 = use default 280.</summary>
+        /// <summary>
+        /// RETIRED 2026-08-14 — kept only so an existing config round-trips
+        /// without losing the key. Nothing reads it. It held the inspector
+        /// card's height cap, written solely by an InspectorThumb drag handler
+        /// that was deleted on 2026-05-24; after that every layout flush
+        /// re-persisted whatever the restore had just applied, so a legacy
+        /// value could never age out and there was no affordance to change it.
+        /// The card is capped from the live pane height now
+        /// (MainView.ApplyInspectorCardHeightCap).
+        /// </summary>
         public double ArchitectInspectorHeight { get; set; } = 0;
 
         /// <summary>Width of the LeftRail column in MainView (px). 0 = use XAML default 220.</summary>
         public double ArchitectRailColumnWidth { get; set; } = 0;
 
-        /// <summary>Width of the Inspector column in MainView (px). 0 = use XAML default 240.</summary>
+        /// <summary>
+        /// RETIRED 2026-08-14 — see <see cref="ArchitectInspectorHeight"/>.
+        /// Same echo-write shape: the splitter that wrote it went in the same
+        /// 2026-05-24 commit. The inspector card's width is a markup constant
+        /// now. Kept for config round-trip only; nothing reads it.
+        /// </summary>
         public double ArchitectInspectorColumnWidth { get; set; } = 0;
 
         /// <summary>Last-active pillar tab ("logic" / "databank"). Empty = default to Logic.</summary>
@@ -358,6 +411,22 @@ namespace Phoenix.Controls.Shared.Models
         /// chosen via the chevron.
         /// </summary>
         public bool ArchitectInspectorDockedMigrated { get; set; } = false;
+
+        /// <summary>
+        /// 2026-08-14 — one-shot flag for the floating-card retirement. When
+        /// false, the Architect hosts zero
+        /// <see cref="ArchitectInspectorHeight"/> and
+        /// <see cref="ArchitectInspectorColumnWidth"/> once and set this true.
+        /// Both keys lost their write affordance on 2026-05-24 but kept being
+        /// re-persisted by the layout flush, so a profile that predates that
+        /// commit carries frozen geometry no in-app control can reach — on the
+        /// reporting profile, a 588.8 px height cap that turned the inspector
+        /// into a full-height side panel. Clearing them is what makes the
+        /// retirement stick; without it the restore path would keep reading
+        /// values the new layout no longer honours and the file would stay
+        /// misleading.
+        /// </summary>
+        public bool ArchitectInspectorCardMigrated { get; set; } = false;
 
         /// <summary>
         /// Architect canvas hotkey cheatsheet expanded state — the bottom-left
@@ -522,76 +591,29 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool SuppressBroadcasterRedeem { get; set; } = true;
 
-        // ── Remote Bridge (Phoenix.Controls.Viewer) ──────────────────────
-        /// <summary>
-        /// Master toggle for the Hub's RemoteBridgeServer (Viewer-roadmap Slice 0).
-        /// Default <c>false</c> — when off, port <see cref="RemotePort"/> is unbound
-        /// and no remote-auth surface area is exposed. The Remote Devices panel
-        /// flips this at runtime to start/stop the bridge in place.
-        /// </summary>
-        public bool RemoteEnabled { get; set; } = false;
-
-        /// <summary>
-        /// Listener bind address for <see cref="RemoteBridgeServer"/>. Defaults to
-        /// loopback so a fresh-install Hub never accidentally exposes itself; LAN
-        /// streamers set this to their LAN IP or <c>0.0.0.0</c>.
-        /// </summary>
-        public string RemoteBindHost { get; set; } = "127.0.0.1";
-
-        /// <summary>
-        /// Port for the <see cref="RemoteBridgeServer"/>. Default 18082 keeps the
-        /// suite contiguous with HUDServer (18080) and Bus (18081).
-        /// </summary>
-        public int RemotePort { get; set; } = 18082;
-
-        /// <summary>
-        /// PFX/PEM cert path for HTTPS/WSS. Empty string = HTTP/WS. The Hub does
-        /// NOT auto-elevate to register a netsh sslcert binding — see Viewer_Roadmap.md
-        /// for the one-time admin command.
-        /// </summary>
-        public string RemoteTlsCertPath { get; set; } = "";
-
-        /// <summary>
-        /// Lifetime (seconds) of a pairing-code grant before it expires. Default 5 min.
-        /// Single-use plus this TTL is the mitigation against LAN-mode pairing-code
-        /// interception per the Viewer roadmap auth section.
-        /// </summary>
-        public int RemotePairingTtlSeconds { get; set; } = 300;
-
-        /// <summary>
-        /// When <c>true</c> (default), <see cref="RemoteBridgeServer"/>
-        /// refuses to start over plaintext HTTP on a non-loopback bind. Pairing
-        /// codes and bearer tokens travel verbatim over this socket, so a LAN-
-        /// segment sniffer can grab them outright. Set <see cref="RemoteTlsCertPath"/>
-        /// to switch to HTTPS, OR restrict <see cref="RemoteBindHost"/> to loopback,
-        /// OR (NOT recommended) flip this to <c>false</c> to allow plaintext-on-LAN.
-        /// </summary>
-        public bool RemotePairingRequiresHttps { get; set; } = true;
-
         // ── ViewerServer v2 (Phoenix.Controls.ViewerServer) ────
         /// <summary>
         /// Master toggle for the v2 <c>ViewerServer</c> hosted in
         /// <c>Phoenix.Controls.ViewerServer</c>. Default <c>false</c> — when off,
         /// port <see cref="ViewerServerPort"/> is unbound and the v2 web-bundle
-        /// surface area is not exposed. Distinct from <see cref="RemoteEnabled"/>
-        /// (the legacy RemoteBridge); a streamer cutting over to v2 flips this
-        /// on and turns the legacy bridge off.
+        /// surface area is not exposed. This is the Hub's single Viewer feature
+        /// (the legacy RemoteBridge was retired).
         /// </summary>
         public bool ViewerServerEnabled { get; set; } = false;
 
         /// <summary>
         /// Port for the v2 <see cref="ViewerServer"/>. Default 18090 keeps the
         /// suite contiguous with HUDServer (18080) / Bus (18081) /
-        /// RemoteBridge (18082) / WebSocketServer (18083). Matches the default
-        /// the WebView2 shell in Phoenix.Controls.Viewer falls back to.
+        /// WebSocketServer (18083). Matches the default the WebView2 shell in
+        /// Phoenix.Controls.Viewer falls back to.
         /// </summary>
         public int ViewerServerPort { get; set; } = 18090;
 
         /// <summary>
         /// When true, the v2 ViewerServer binds the wildcard <c>+</c> prefix so
         /// other devices on the LAN can reach it; needs a urlacl reservation
-        /// or admin rights. Default <c>false</c> — loopback-only, the same
-        /// defence-in-depth posture as <see cref="RemoteEnabled"/>.
+        /// or admin rights. Default <c>false</c> — loopback-only
+        /// (defence-in-depth).
         /// </summary>
         public bool ViewerServerLan { get; set; } = false;
 
@@ -616,14 +638,13 @@ namespace Phoenix.Controls.Shared.Models
 
         /// <summary>
         /// Listener bind address for the WebSocket server. Loopback by default
-        /// — same rationale as <see cref="RemoteBindHost"/>.
+        /// (defence-in-depth).
         /// </summary>
         public string WebSocketServerBindHost { get; set; } = "127.0.0.1";
 
         /// <summary>
         /// Port for the WebSocket server. Default 18083 keeps the suite
-        /// contiguous with HUDServer (18080) / Bus (18081) /
-        /// RemoteBridge (18082).
+        /// contiguous with HUDServer (18080) / Bus (18081).
         /// </summary>
         public int WebSocketServerPort { get; set; } = 18083;
 
@@ -647,8 +668,7 @@ namespace Phoenix.Controls.Shared.Models
         /// <c>0.0.0.0</c>, the service refuses to bind unless this flag is
         /// true. Forces a streamer who flips the bind host (perhaps via a
         /// quick edit during a sound-test) to also tick a "yes, I really want
-        /// LAN access" checkbox in Settings — same defense-in-depth posture as
-        /// <see cref="RemoteBridgeServer"/>'s plaintext-HTTP warning. Default
+        /// LAN access" checkbox in Settings. Default
         /// false. LAN bind without this flag downgrades to loopback with a
         /// CriticalError log entry.
         /// </summary>
@@ -784,6 +804,46 @@ namespace Phoenix.Controls.Shared.Models
         public bool SeenWelcomeDialog { get; set; } = false;
 
         /// <summary>
+        /// 1.1 test-build cleanup — one-shot migration flag. Earlier 1.1 test
+        /// builds could leave Pre-Build tools (Loyalty / Automod / Counters /
+        /// Quotes / CustomCommands / Scheduling / UserManagement / Alerts /
+        /// SongRequest) persisted as Enabled=true and timers persisted as Running in the DB,
+        /// which then reload as "active" after an in-place upgrade. All
+        /// Pre-Build tools are opt-in by design — nothing may be active until
+        /// the streamer enables it — so the first boot where this is false
+        /// force-disables every tool master toggle and pauses every running
+        /// timer exactly once (HubBootstrapper), then sets this true.
+        /// Subsequent patches never touch the user's choices again.
+        /// The tool list above is the authoritative one — it must match
+        /// <c>PreBuildOptInMigration.RunAsync</c>, because a tool missing there
+        /// stays enabled forever on an upgraded DB.
+        /// </summary>
+        public bool PreBuildToolsForcedOffMigrated { get; set; } = false;
+
+        /// <summary>
+        /// Donation-ingestion cleanup — one-shot migration flag. The Loyalty tip
+        /// earn and the Timer's tip seconds-per-unit both shipped ENABLED while
+        /// Phoenix subscribed no donation source, so they could never fire and
+        /// nobody noticed. Connecting a broker turns them into live points and
+        /// live subathon time with no consent, and a model-default flip only
+        /// protects a fresh install — an upgraded databank reloads the old
+        /// enabled values. The first boot where this is false zeroes those
+        /// settings on existing blobs exactly once (HubBootstrapper →
+        /// <c>TipDefaultsMigration</c>), then sets this true. Subsequent patches
+        /// never touch the streamer's choice again.
+        /// </summary>
+        public bool TipDefaultsForcedOffMigrated { get; set; } = false;
+
+        /// <summary>
+        /// Whether donation events flagged as TEST by their broker are processed.
+        /// Default false: a test tip fired from a broker's dashboard (or from
+        /// Streamer.bot's Test Trigger UI) must not move real points, extend a
+        /// real subathon or fire a real alert. Enable it deliberately while
+        /// wiring up a donation chain, then turn it back off.
+        /// </summary>
+        public bool DonationAcceptTestEvents { get; set; } = false;
+
+        /// <summary>
         /// Highest Terms-of-Service version the user has accepted via the
         /// first-launch consent gate (<c>TermsOfServiceGate</c>). Default 0 means
         /// "never accepted" — a fresh install or clean AppData shows the ToS
@@ -830,6 +890,32 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         [JsonConverter(typeof(DpapiProtectedStringConverter))]
         public string ObsWebSocketPassword { get; set; } = "";
+
+        // ── Song Request (YouTube) ────────────────────────────────────────
+        /// <summary>
+        /// OPTIONAL streamer-supplied YouTube Data API v3 key, used by the Song Request
+        /// pre-build tool for the two things a bare link cannot answer: resolving a
+        /// <c>!sr &lt;search phrase&gt;</c> to a video, and reading a video's title,
+        /// length and embeddable flag.
+        ///
+        /// Empty (default) is a fully supported mode, not a broken one: links and bare
+        /// video ids keep working with no key at all, a search politely asks for a link
+        /// instead, and the max-duration cap is SKIPPED rather than guessed. Phoenix never
+        /// scrapes YouTube as a fallback.
+        ///
+        /// DPAPI-protected at rest like every other streamer-supplied credential here, and
+        /// read lazily per call (<c>ConfigManager.Current.YouTubeDataApiKey</c>) so a
+        /// Settings edit takes effect on the very next request without a restart.
+        ///
+        /// Entered at Settings → Connection (<c>YouTubeDataApiKeyBox</c>). That box is the
+        /// ONLY way to set it, and SettingsDialog is hand-wired per field rather than
+        /// reflecting over this class — so a credential added here without its own box is
+        /// not "defaulted off", it is permanently unreachable, and every capability behind
+        /// it becomes dead code behind a switch nothing can flip. That is exactly what
+        /// happened to this field before the box existed.
+        /// </summary>
+        [JsonConverter(typeof(DpapiProtectedStringConverter))]
+        public string YouTubeDataApiKey { get; set; } = "";
 
         /// <summary>
         /// OBS WS v5 EventSubscription bitmask requested in the

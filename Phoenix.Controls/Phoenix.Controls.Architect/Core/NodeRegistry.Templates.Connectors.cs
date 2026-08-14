@@ -32,28 +32,84 @@ namespace Phoenix.Controls.Architect.Core
                 new[] { ("Done", ColExec) });
 
             // ── QUEUE ────────────────────────────────────────────────────
-            // Tooltip wording: this isn't an "internal event queue", it's a Var
-            // pipe-string under the hood (one var per queue, '|' separated entries). Naming the
-            // backing store helps users understand persistence + cross-script visibility.
+            // TWO STORES, ONE BAND. Every node here carries an optional trailing
+            // Name pin:
+            //   * Name EMPTY → the legacy unnamed queue, a Var pipe-string under
+            //     the hood (one var, '|' separated "eventid:payload" entries).
+            //     Naming the backing store helps users understand persistence +
+            //     cross-script visibility. Behaviour is exactly what it always was.
+            //   * Name FILLED → a persistent NAMED queue: rows in the OPEN "Queues"
+            //     databank table, ordered by Priority then arrival, readable from
+            //     db.* like the Counters / Quotes tables.
+            //
+            // The User-Management viewer queue IS one of those named queues, so its
+            // !join is the same write as Queue.Push with that queue's name — which is
+            // what makes the tool reachable from a graph without a parallel node
+            // namespace. Change nothing about the pins without reading the
+            // omit-when-unset emission rule in ExporterRegistry.Handlers2.cs: the
+            // trailing pins are emitted ONLY when set, which is what keeps every
+            // pre-existing graph exporting byte-identically.
             AddTemplate("Queue.Push",   "Queue", Color.DarkCyan,
                 Localizer.T("architect.node.bubble.queue_push"),
-                new[] { ("Flow", ColExec), ("EventID", ColString), ("Payload", ColString) },
+                new[] { ("Flow", ColExec), ("EventID", ColString), ("Payload", ColString),
+                        ("Name", ColString), ("Priority", ColNumber) },
                 new[] { ("Done", ColExec) });
 
             AddTemplate("Queue.Pop",    "Queue", Color.DarkCyan,
                 Localizer.T("architect.node.bubble.queue_pop"),
-                new[] { ("Flow", ColExec) },
+                new[] { ("Flow", ColExec), ("Name", ColString) },
                 new[] { ("Done", ColExec), ("EventID", ColString), ("Payload", ColString), ("Empty", ColExec) });
 
             AddTemplate("Queue.Length", "Queue", Color.DarkCyan,
                 Localizer.T("architect.node.bubble.queue_length"),
-                null,
+                new[] { ("Name", ColString) },
                 new[] { ("Count", ColNumber) });
 
             AddTemplate("Queue.Clear",  "Queue", Color.DarkCyan,
                 Localizer.T("architect.node.bubble.queue_clear"),
-                new[] { ("Flow", ColExec) },
+                new[] { ("Flow", ColExec), ("Name", ColString) },
                 new[] { ("Done", ColExec) });
+
+            // ── QUEUE — the members the Name generalisation made possible ──
+            // A single global pipe-string only ever needed push / pop / length /
+            // clear. Once a queue can be addressed BY NAME and holds one row per
+            // entry, "where am I in the line", "take me out of it" and "print the
+            // line" become answerable — and they are exactly the three verbs the
+            // viewer-queue tool needs, so they exist here rather than as a private
+            // tool surface. All three serve BOTH stores.
+            // Bubbles resolve through Localizer.T, matching the four members above:
+            // the tooltip convention follows the BAND, and Connectors/Queue is a
+            // localized band (the TOOL bands — Counters, Quotes, Loyalty, Users — are
+            // hardcoded English instead).
+            AddTemplate("Queue.Position", "Queue", Color.DarkCyan,
+                Localizer.T("architect.node.bubble.queue_position"),
+                new[] { ("Entry", ColString), ("Name", ColString) },
+                new[] { ("Position", ColNumber) });
+
+            AddTemplate("Queue.Remove", "Queue", Color.DarkCyan,
+                Localizer.T("architect.node.bubble.queue_remove"),
+                new[] { ("Flow", ColExec), ("Entry", ColString), ("Name", ColString) },
+                new[] { ("Done", ColExec) });
+
+            AddTemplate("Queue.List", "Queue", Color.DarkCyan,
+                Localizer.T("architect.node.bubble.queue_list"),
+                new[] { ("Name", ColString) },
+                new[] { ("List", ColList) });
+
+            // ── QUEUE — event root (category "Events" — output-only) ──────
+            // MIRRORS Counter.OnChanged: null inputs, Flow output first. Category
+            // "Events" makes it a script entry point; the exporter emits
+            // on_event(Queue.OnChanged) via ProcessEventNode's trigger-switch
+            // fallback, matching the phoenixEvent string NamedQueueService raises.
+            // Fires for BOTH stores — a legacy unnamed mutation reports an empty
+            // Queue name — so a graph can watch a queue it did not itself write,
+            // which is what closes the parity loop for the viewer-queue tool: a
+            // chat !join and a script queue.push raise the identical event.
+            AddTemplate("Queue.OnChanged", "Events", Color.DarkCyan,
+                Localizer.T("architect.node.bubble.queue_onchanged"),
+                null,
+                new[] { ("Flow", ColExec), ("Queue", ColString), ("Entry", ColString),
+                        ("Action", ColString), ("Length", ColNumber) });
 
             // ── PROCESS — live, self-contained mini-script ──────────────
             //
@@ -120,6 +176,72 @@ namespace Phoenix.Controls.Architect.Core
                 "Walks through every item in List, firing Loop Body once per item with the current value on Item. Done fires once after the last item is processed. Empty lists fire Done immediately without firing the body.",
                 new[] { ("Flow", ColExec), ("List", ColList) },
                 new[] { ("Loop Body", ColExec), ("Item", ColString), ("Done", ColExec) });
+
+            // ── Queue socket-level hover help (canvas pin pop-ups + doc form) ──
+            // The Name pin needs it most: "leave it empty" is a MODE, not a default
+            // value, and nothing on the canvas would say so otherwise.
+            const string queueNameHelp =
+                "Which queue to use. Leave empty for the single unnamed queue every script shares. " +
+                "Fill in a name for a persistent queue of its own — one row per entry in the databank's " +
+                "\"Queues\" table, readable from the DB nodes. The User Management tool's viewer queue is one of these.";
+
+            SetSocketDescriptions("Queue.Push", new()
+            {
+                { "EventID",  "The entry's identity — what Queue.Position and Queue.Remove match on later (case-insensitive)." },
+                { "Payload",  "Data carried along with the entry. Comes back out of Queue.Pop." },
+                { "Name",     queueNameHelp },
+                { "Priority", "Higher numbers move to the front of a NAMED queue; equal numbers keep arrival order. Leave at 0 for a plain first-come line. Has no effect on the unnamed queue." },
+            });
+            SetSocketDescriptions("Queue.Pop", new()
+            {
+                { "Name",    queueNameHelp },
+                { "EventID", "The identity of the entry that came off the front." },
+                { "Payload", "The data that was stored with it." },
+                { "Empty",   "Fires instead of Done when there was nothing to pop." },
+            });
+            SetSocketDescriptions("Queue.Length", new()
+            {
+                { "Name",  queueNameHelp },
+                { "Count", "How many entries are waiting." },
+            });
+            SetSocketDescriptions("Queue.Clear", new()
+            {
+                { "Name", queueNameHelp },
+            });
+            SetSocketDescriptions("Queue.Position", new()
+            {
+                { "Entry",    "Which entry to look for — matched against the EventID it was pushed with (case-insensitive)." },
+                { "Name",     queueNameHelp },
+                { "Position", "Its place in the line counting from 1, or 0 when it is not queued." },
+            });
+            SetSocketDescriptions("Queue.Remove", new()
+            {
+                { "Entry", "Which entry to take out — matched against the EventID it was pushed with (case-insensitive)." },
+                { "Name",  queueNameHelp },
+            });
+            SetSocketDescriptions("Queue.List", new()
+            {
+                { "Name", queueNameHelp },
+                { "List", "The whole queue, front first, as a comma-separated list." },
+            });
+            SetSocketDescriptions("Queue.OnChanged", new()
+            {
+                { "Queue",  "Which queue changed. Empty means the unnamed queue." },
+                { "Entry",  "The entry that was added, popped or removed. Empty for a clear." },
+                { "Action", "What happened: push, pop, remove or clear." },
+                { "Length", "How many entries are left afterwards." },
+            });
+
+            // Fuzzy spawn-search aliases — the gap between what a user types
+            // ("line", "waiting list", "next up") and the Queue.* titles.
+            SetKeywords("Queue.Push",      "queue", "line", "enqueue", "join", "add", "waitlist");
+            SetKeywords("Queue.Pop",       "queue", "line", "dequeue", "next", "take", "waitlist");
+            SetKeywords("Queue.Length",    "queue", "line", "length", "count", "waiting", "size");
+            SetKeywords("Queue.Clear",     "queue", "line", "clear", "empty", "reset", "wipe");
+            SetKeywords("Queue.Position",  "queue", "line", "position", "place", "where", "rank", "spot");
+            SetKeywords("Queue.Remove",    "queue", "line", "remove", "leave", "drop", "kick");
+            SetKeywords("Queue.List",      "queue", "line", "list", "show", "print", "who", "waiting");
+            SetKeywords("Queue.OnChanged", "queue", "line", "changed", "onchange", "event", "trigger");
         }
     }
 }

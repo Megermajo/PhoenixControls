@@ -33,10 +33,12 @@
     x:Class="Phoenix.Controls.Architect.WinUI.Hosting.InspectorWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls">
+    xmlns:controls="using:Phoenix.Controls.Architect.WinUI.Controls"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <Grid Background="{StaticResource CoalShellBrush}"
-          AutomationProperties.Name="Inspector Window">
+          AutomationProperties.Name="Inspector Window"
+          loc:Localize.AutomationKey="architect.window.inspector.shell.a11y">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -62,7 +64,12 @@
                                FontWeight="SemiBold"
                                CharacterSpacing="180"
                                Foreground="{StaticResource EmberPrimaryBrush}"
-                               Text="INSPECTOR" />
+                               Text="INSPECTOR"
+                               loc:Localize.Key="architect.window.inspector.eyebrow" />
+                    <!-- ★ NO loc:Localize.Key on CaptionFileName — same reason as
+                         ArchitectSiblingWindow: the code-behind writes the live filename here and
+                         already localizes the "(unsaved)" case itself. A Loaded-time key would
+                         overwrite the real filename with the placeholder on every open. -->
                     <TextBlock x:Name="CaptionFileName"
                                VerticalAlignment="Center"
                                FontFamily="{StaticResource SansFont}"
@@ -91,7 +98,8 @@
                             VerticalAlignment="Stretch"
                             HorizontalContentAlignment="Stretch"
                             VerticalContentAlignment="Stretch"
-                            AutomationProperties.Name="Inspector Content" />
+                            AutomationProperties.Name="Inspector Content"
+                            loc:Localize.AutomationKey="architect.window.inspector.content.a11y" />
         </Border>
     </Grid>
 </Window>

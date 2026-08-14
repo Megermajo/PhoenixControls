@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Phoenix.Controls.Architect.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.Foundation;
@@ -55,6 +56,50 @@ namespace Phoenix.Controls.Architect.WinUI.Canvas;
 // once the .phxg → .phx round-trip closes.
 public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Architect.WinUI.Services.EventPairLiveSync.IPeer
 {
+    /// <summary>
+    /// ★ 2026-08-14 — width of host chrome floating over this canvas's RIGHT
+    /// edge, in DIPs. The Architect hosts set it from the inspector card's
+    /// footprint; it stays 0 wherever nothing overlaps.
+    ///
+    /// Why this exists. The inspector card is painted ON TOP of the canvas, so
+    /// <c>HostRoot.ActualWidth</c> is the PAINTED width, not the width the user
+    /// can see. Every camera routine used the painted width and therefore aimed
+    /// graph content into the band the card covers: Home / F
+    /// (<c>FitToBounds</c>) centred the graph half the card's width too far
+    /// right and, in the width-limited branch, fitted to a viewport hundreds of
+    /// px wider than the visible one; <c>CenterViewportOn</c> — which the
+    /// minimap's click-to-jump drives — put the clicked point under the card;
+    /// and <c>EnsureGraphVisibleAfterLoad</c> counted nodes hidden behind the
+    /// card as "visible", declined to re-centre, and left the canvas looking
+    /// blank while the minimap (which ignores pan/zoom) looked perfect. That
+    /// pairing is what the 95a6a4e7 node-walk guard was chasing: walking the
+    /// real node rects made the guard sharper, but it was still measuring the
+    /// wrong viewport.
+    ///
+    /// Consumers read <see cref="VisibleViewportWidth"/>, not this. The inset
+    /// is deliberately treated as full-height even though the card only covers
+    /// the top of the edge — conservative is correct here, because aiming
+    /// content at a region that is definitely visible beats aiming it at one
+    /// that is only sometimes visible.
+    /// </summary>
+    public double ViewportInsetRight { get; set; }
+
+    /// <summary>
+    /// Host width minus the chrome floating over it — the width the user can
+    /// actually see. Clamped so a mis-set inset degrades to the old behaviour
+    /// rather than inverting the camera.
+    /// </summary>
+    private double VisibleViewportWidth
+    {
+        get
+        {
+            double host = HostRoot?.ActualWidth ?? 0;
+            if (host <= 0) return host;
+            double inset = System.Math.Clamp(ViewportInsetRight, 0, System.Math.Max(0, host - 1));
+            return System.Math.Max(1, host - inset);
+        }
+    }
+
     private LogicCanvasViewModel? _vm;
     private UndoRedoController? _history;
 
@@ -762,17 +807,17 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     private static readonly WelcomeSampleSeed[] WelcomeSamples = new[]
     {
         // Starter — single-trigger Hello-World-style command.
-        new WelcomeSampleSeed(WelcomeSampleTier.Starter,      "01_starter_command.phxg",       "Chat command that echoes a reply"),
+        new WelcomeSampleSeed(WelcomeSampleTier.Starter,      "01_starter_command.phxg",       Localizer.T("architect.canvas.welcome.sample.starter_command",      "Chat command that echoes a reply")),
 
         // Intermediate — multi-node flow with one Twitch event + side effects.
-        new WelcomeSampleSeed(WelcomeSampleTier.Intermediate, "02_raid_alert.phxg",            "Raid event → on-screen alert"),
-        new WelcomeSampleSeed(WelcomeSampleTier.Intermediate, "03_ai_assistant.phxg",          "Chat command routed through AI.ChatComplete"),
-        new WelcomeSampleSeed(WelcomeSampleTier.Intermediate, "04_scheduled_reminder.phxg",    "Cron schedule posts a recurring reminder"),
+        new WelcomeSampleSeed(WelcomeSampleTier.Intermediate, "02_raid_alert.phxg",            Localizer.T("architect.canvas.welcome.sample.raid_alert",            "Raid event → on-screen alert")),
+        new WelcomeSampleSeed(WelcomeSampleTier.Intermediate, "03_ai_assistant.phxg",          Localizer.T("architect.canvas.welcome.sample.ai_assistant",          "Chat command routed through AI.ChatComplete")),
+        new WelcomeSampleSeed(WelcomeSampleTier.Intermediate, "04_scheduled_reminder.phxg",    Localizer.T("architect.canvas.welcome.sample.scheduled_reminder",    "Cron schedule posts a recurring reminder")),
 
         // Advanced — branching logic, databank reads, webhooks.
-        new WelcomeSampleSeed(WelcomeSampleTier.Advanced,     "05_channel_point_redeem.phxg",  "Channel-point redeem with databank loyalty tally"),
-        new WelcomeSampleSeed(WelcomeSampleTier.Advanced,     "06_subscription_alert.phxg",    "Sub / resub / gift-sub branching alerts"),
-        new WelcomeSampleSeed(WelcomeSampleTier.Advanced,     "07_webhook_handler.phxg",       "Webhook payload → parse JSON → route by field"),
+        new WelcomeSampleSeed(WelcomeSampleTier.Advanced,     "05_channel_point_redeem.phxg",  Localizer.T("architect.canvas.welcome.sample.channel_point_redeem",  "Channel-point redeem with databank loyalty tally")),
+        new WelcomeSampleSeed(WelcomeSampleTier.Advanced,     "06_subscription_alert.phxg",    Localizer.T("architect.canvas.welcome.sample.subscription_alert",    "Sub / resub / gift-sub branching alerts")),
+        new WelcomeSampleSeed(WelcomeSampleTier.Advanced,     "07_webhook_handler.phxg",       Localizer.T("architect.canvas.welcome.sample.webhook_handler",       "Webhook payload → parse JSON → route by field")),
     };
 
     /// <summary>
@@ -787,7 +832,9 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         public double Opacity => IsMissing ? 0.45 : 1.0;
 
         /// <summary>Tooltip text — full path, with a "(missing)" suffix when stale.</summary>
-        public string ToolTip => IsMissing ? $"{FullPath}  (missing)" : FullPath;
+        public string ToolTip => IsMissing
+            ? string.Format(Localizer.T("architect.canvas.welcome.sample.missing_tip", "{0}  (missing)"), FullPath)
+            : FullPath;
     }
 
     /// <summary>
@@ -1053,11 +1100,14 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         {
             var dialog = new ContentDialog
             {
-                Title             = "Sample already copied",
-                Content           = $"An editable copy of \"{displayName}\" already exists as \"{fileName}\". "
-                                  + "Overwrite it with the original sample, or open your existing copy?",
-                PrimaryButtonText = "Overwrite",
-                CloseButtonText   = "Open existing copy",
+                Title             = Localizer.T("architect.canvas.welcome.overwrite.title", "Sample already copied"),
+                Content           = string.Format(
+                                        Localizer.T("architect.canvas.welcome.overwrite.body",
+                                            "An editable copy of \"{0}\" already exists as \"{1}\". "
+                                          + "Overwrite it with the original sample, or open your existing copy?"),
+                                        displayName, fileName),
+                PrimaryButtonText = Localizer.T("architect.canvas.welcome.overwrite.primary", "Overwrite"),
+                CloseButtonText   = Localizer.T("architect.canvas.welcome.overwrite.close",   "Open existing copy"),
                 DefaultButton     = ContentDialogButton.Close,
                 XamlRoot          = XamlRoot,
             };
@@ -1184,6 +1234,34 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        // ★ 2026-08-14 — RE-ATTACH THE MINIMAP.
+        //
+        // MiniMapOverlay.Detach() runs from its own Unloaded, which fires on a
+        // pillar-tab swap (Architect -> Databank -> Architect) — that is a
+        // tab-blur on a cached instance, not a teardown. But the only Attach()
+        // call site in the whole project is OnDataContextChanged, and the
+        // DataContext is assigned ONCE per process in the MainView ctor. So the
+        // first tab round-trip detached the overlay permanently: no VM
+        // subscriptions, no CompositionTarget.Rendering drain, and Rebuild()
+        // running with _vm == null, which clears both layers.
+        //
+        // The symptom is a minimap that is blank and frozen rather than one
+        // that jumps — a different report from the same control, and the one
+        // that would have made every other minimap fix look ineffective.
+        //
+        // Attach() is documented idempotent (it calls Detach() first and the
+        // Rendering hook is flag-guarded), so re-attaching on every Loaded is
+        // safe and needs no one-shot.
+        if (_vm is not null)
+        {
+            try { MiniMap?.Attach(this, _vm); }
+            catch (Exception ex)
+            {
+                Phoenix.Controls.Shared.Services.GlobalLogger.Error(
+                    "Architect.Canvas", "MiniMap re-attach on Loaded", ex);
+            }
+        }
+
         // Make the canvas focusable so KeyDown fires when it has logical focus.
         IsTabStop = true;
         Focus(FocusState.Programmatic);
@@ -2070,6 +2148,24 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
             // error-state will refresh on the next user-driven structural
             // change.
             if (isUndoRestore) return;
+
+            // Camera-can't-be-lost guard. LoadGraph restores pan/zoom from the
+            // .phxg's saved viewport; when that camera sits off the graph the
+            // canvas opens BLANK while the minimap — which renders the whole
+            // extent independently of pan/zoom — stays perfectly correct. That
+            // exact pairing was reported ("sometimes the graph simply does not
+            // appear, minimap is correct") and it is what makes the diagnosis
+            // certain rather than a guess.
+            //
+            // The VM already rejects non-finite offsets; only the view knows the
+            // viewport size, so the "does this camera actually see anything"
+            // half has to live here. Deferred, so it runs after the socket
+            // rebuilds below settle node sizes (ComputeNodesBounds reads
+            // Width/Height) and after layout has measured HostRoot.
+            //
+            // Deliberately NOT run on the undo/redo path — that restore is
+            // reinstating a known view state and must not be overridden.
+            QueueGraphVisibilityCheck();
 
             PlaceholderActivator.SyncAllEventPairs(_vm.Graph);
             // Re-rebuild every node VM in case SyncAllEventPairs mutated
@@ -3211,7 +3307,9 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
     public void CenterViewportOn(double canvasX, double canvasY)
     {
         if (_vm is null) return;
-        double viewW = HostRoot.ActualWidth;
+        // VISIBLE width, not painted width — otherwise a minimap click lands
+        // the target under the floating inspector card (see ViewportInsetRight).
+        double viewW = VisibleViewportWidth;
         double viewH = HostRoot.ActualHeight;
         if (viewW <= 0 || viewH <= 0) return;
         _vm.PanX = viewW / 2.0 - canvasX * _vm.Zoom;
@@ -3820,19 +3918,47 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
         long nowMs = System.Environment.TickCount64;
         foreach (var nodeId in ids)
         {
+            // GUID first — LeftRail's macro-highlight (:FlashNode(nodeVm.Id)),
+            // RevealNodeFromShell and HighlightMacroCallSites all pass
+            // NodeViewModel.Id and must keep resolving exactly one node.
             var n = _vm.FindNode(nodeId);
-            if (n is null) continue;
-            // TriggerFlash bumps a monotonic counter that always raises
-            // PropertyChanged, so back-to-back flashes on the same node restart
-            // the pulse instead of being eaten by SetField bool-equality.
-            n.TriggerFlash();
-            // Record (or extend) the auto-clear deadline. The sweep timer clears
-            // IsExecutingFlash once now >= ExpiresAtMs AND the recorded tick
-            // still matches (an overlapping re-flash bumps both).
-            _flashExpiries[n] = (n.FlashTick, nowMs + FlashHoldMs);
+            if (n is not null)
+            {
+                FlashAndArmExpiry(n, nowMs);
+                continue;
+            }
+
+            // GUID miss → TITLE fallback: the Live-Debug leg. ScriptExporter
+            // emits `# [{node.Title}]` markers (the canonical node TITLE,
+            // e.g. "Logic.EnumMatch"), the engine parses that string and Hub
+            // marshals it into DEBUG_NODE_EXEC's nodeId field — so by the
+            // time it reaches this drain it is a title, never a GUID, and
+            // the id lookup above always misses. Titles aren't unique, so
+            // fan out and flash EVERY same-titled instance: over-reporting
+            // duplicates is acceptable for a debug affordance, and the
+            // engine's own TryAddVisited(title) suppression means only the
+            // first same-titled node fires per visit window anyway. An
+            // unknown string (neither id nor title) falls through to a no-op
+            // exactly like the old `continue`.
+            foreach (var m in _vm.FindNodesByTitle(nodeId))
+                FlashAndArmExpiry(m, nowMs);
         }
 
         EnsureFlashSweepTimer();
+    }
+
+    // Shared tail of DrainPendingFlashes — one pulse + one auto-clear arm per
+    // resolved node, whether it came from the GUID hit or the title fan-out.
+    private void FlashAndArmExpiry(NodeViewModel n, long nowMs)
+    {
+        // TriggerFlash bumps a monotonic counter that always raises
+        // PropertyChanged, so back-to-back flashes on the same node restart
+        // the pulse instead of being eaten by SetField bool-equality.
+        n.TriggerFlash();
+        // Record (or extend) the auto-clear deadline. The sweep timer clears
+        // IsExecutingFlash once now >= ExpiresAtMs AND the recorded tick
+        // still matches (an overlapping re-flash bumps both).
+        _flashExpiries[n] = (n.FlashTick, nowMs + FlashHoldMs);
     }
 
     private void EnsureFlashSweepTimer()
@@ -4469,8 +4595,10 @@ public sealed partial class LogicCanvasView : UserControl, Phoenix.Controls.Arch
                 && !string.IsNullOrWhiteSpace(reasonEv))
             {
                 string peerTitle = n.Model.Title == "Event.Trigger" ? "Event.Executor" : "Event.Trigger";
-                n.ErrorReason =
-                    $"Unpaired {n.Model.Title} “{reasonEv}” — no matching {peerTitle} in this graph or any sibling .phxg.";
+                n.ErrorReason = string.Format(
+                    Localizer.T("architect.canvas.node.error.unpaired_event",
+                        "Unpaired {0} “{1}” — no matching {2} in this graph or any sibling .phxg."),
+                    n.Model.Title, reasonEv, peerTitle);
             }
             else
             {

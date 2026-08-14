@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.Web.WebView2.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Phoenix.Controls.Visualist.WinUI.Core;
@@ -16,10 +17,12 @@ namespace Phoenix.Controls.Visualist.WinUI.Controls;
 
 /// <summary>
 /// WidgetSinglePreviewPanel — embedded per-widget preview pane. Loads
-/// <c>http://127.0.0.1:18080/layer/&lt;id&gt;?widget=&lt;widgetId&gt;&amp;bg=&lt;color&gt;</c>
+/// <c>http://127.0.0.1:18080/layer/&lt;id&gt;?widget=&lt;widgetId&gt;&amp;client=editor&amp;bg=&lt;color&gt;</c>
 /// in a WebView2; compositor.js resizes its canvas to the widget's rect, so the
 /// pane shows ONLY that widget filling the available area. Same renderer as the
-/// OBS source.
+/// OBS source — but <c>client=editor</c> declares it a DESIGN-TIME surface, so it may
+/// render PreviewText mocks and Hub excludes its socket from layer presence
+/// (see <see cref="BuildUrl"/>).
 ///
 /// <para>WinUI re-architecture of the pre-T15 WinForms
 /// <c>WidgetSinglePreviewPanel</c>. The grip-drag width resize (persisted to
@@ -163,11 +166,32 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
     /// Build the URL for a (layerId, widgetId) pair. Public so tests can assert
     /// the wire-format without a real WebView2. Transparent bg skips the
     /// &amp;bg= param so the page stays transparent.
+    ///
+    /// <para>V6 — <c>&amp;client=editor</c> is on every editor page URL, and it now carries
+    /// TWO meanings. Page-side it is one of compositor.js's three <c>IS_DESIGN_TIME</c>
+    /// markers (so PreviewText mocks may render). Wire-side compositor.js forwards it onto
+    /// its <c>/hud/&lt;id&gt;</c> WebSocket URL, where Hub reads it to classify this socket
+    /// as a design-time client: the layer does NOT count as live presence, and this socket's
+    /// <c>VISUAL_COMPLETE</c> / <c>FPS</c> frames are refused. Before that, a preview pane
+    /// was indistinguishable from an OBS Browser Source, so a script's
+    /// <c>wait_for_visual</c> could complete against a pane.</para>
+    ///
+    /// <para><c>?widget=</c> alone already implies design-time on both sides, so this param
+    /// is redundant HERE — and deliberately so: it makes the marker uniform across all
+    /// three navigating surfaces, which is what lets compositor.js forward ONE param
+    /// instead of re-deriving the page's design-time rule on the socket URL.</para>
+    ///
+    /// <para>The Inspector's Copy-OBS-URL affordance must NEVER gain this param. That
+    /// string is pasted into an OBS Browser Source, where <c>client=editor</c> would both
+    /// re-enable the PreviewText mocks (fake leaderboard names in front of an audience) and
+    /// make the real overlay invisible to presence, so scripts would stop dispatching to
+    /// it. It stays a bare production URL.</para>
     /// </summary>
     public static Uri BuildUrl(string layerId, string widgetId, PreviewBgColor bg)
     {
         string url = $"http://127.0.0.1:18080/layer/{Uri.EscapeDataString(layerId)}"
-                   + $"?widget={Uri.EscapeDataString(widgetId)}";
+                   + $"?widget={Uri.EscapeDataString(widgetId)}"
+                   + "&client=editor";
         string token = bg.ToQueryToken();
         if (!string.IsNullOrEmpty(token)) url += $"&bg={token}";
         return new Uri(url);
@@ -182,13 +206,15 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
     {
         if (string.IsNullOrWhiteSpace(layerId) || string.IsNullOrWhiteSpace(widgetId))
         {
-            ShowPlaceholder("Save the layer first to preview.");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.save_first",
+                "Save the layer first to preview."));
             return;
         }
 
         if (!VisualistUserConfig.Instance.EditorEmbeddedPreviewEnabled)
         {
-            ShowPlaceholder("Embedded preview is turned off in settings.");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.disabled",
+                "Embedded preview is turned off in settings."));
             return;
         }
 
@@ -207,7 +233,7 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
         {
             _pendingLayerId  = layerId;
             _pendingWidgetId = widgetId;
-            ShowPlaceholder("Loading preview…");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.loading", "Loading preview…"));
             ArmInitRetry();
             return;
         }
@@ -253,7 +279,8 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
             catch (Exception ex)
             {
                 GlobalLogger.Error("WidgetSinglePreviewPanel", "WebView2 init failed", ex);
-                ShowPlaceholder("Preview unavailable — install the Microsoft Edge WebView2 runtime.");
+                ShowPlaceholder(Localizer.T("visualist.preview.widget.webview_missing",
+                    "Preview unavailable — install the Microsoft Edge WebView2 runtime."));
                 _coreInitializing = false;
                 return;
             }
@@ -262,7 +289,8 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
 
         if (!_coreInitialized || PreviewWeb.CoreWebView2 is null)
         {
-            ShowPlaceholder("Preview unavailable — WebView2 did not initialise.");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.webview_failed",
+                "Preview unavailable — WebView2 did not initialise."));
             return;
         }
 
@@ -284,12 +312,13 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
             // NavigationCompleted confirms a healthy page, so a transient 404 never
             // shows the browser's "page can't be found". ShowWebView() is deferred to
             // the success branch of OnNavigationCompleted.
-            ShowPlaceholder("Loading preview…");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.loading", "Loading preview…"));
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("WidgetSinglePreviewPanel", $"failed to point WebView2 at widget '{w}'", ex);
-            ShowPlaceholder("Preview navigation failed — check Hub is running on port 18080.");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.nav_failed",
+                "Preview navigation failed — check Hub is running on port 18080."));
         }
     }
 
@@ -412,46 +441,72 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
 
     /// <summary>Render the active trigger at <paramref name="timeMs"/> — the
     /// timeline scrub / playhead-position consumer. No-op until the pane knows its
-    /// widget (after the first <see cref="LoadAsync"/>).</summary>
-    public void PostScrub(double timeMs)
+    /// widget (after the first <see cref="LoadAsync"/>).
+    ///
+    /// <para>Returns TRUE only when the message actually reached the page. Two early-outs
+    /// return false silently: the pane has no widget yet, and the WebView2 bridge is not
+    /// initialised (see <see cref="PostJson"/>) — the documented intermittent
+    /// detached-tree init case this class carries a retry for. Callers that REPORT a
+    /// reached surface to the author (Test Run's status line) must gate on this result;
+    /// counting the pane from a non-null reference plus a Visibility check claims a target
+    /// that took nothing, which is the same false-confirmation class Test Run's per-target
+    /// reporting exists to remove. The 30 Hz timeline transport ignores it.</para></summary>
+    public bool PostScrub(double timeMs)
     {
         // Remember the last scrubbed playhead so the post-navigation re-send
         // (OnNavigationCompleted) can restore the same frame the editor was
         // showing before a reload/recovery navigate, instead of snapping to t=0.
         _lastScrubMs = timeMs;
-        if (string.IsNullOrEmpty(_widgetId)) return;
-        PostJson(new { type = "SCRUB", widgetId = _widgetId, triggerName = _activeTriggerName, timeMs });
+        if (string.IsNullOrEmpty(_widgetId)) return false;
+        return PostJson(new { type = "SCRUB", widgetId = _widgetId, triggerName = _activeTriggerName, timeMs });
     }
 
-    /// <summary>Start timeline playback of the active trigger in the preview.</summary>
-    public void PostPlay(double durationMs, bool loop)
+    /// <summary>Start timeline playback of the active trigger in the preview. Returns true
+    /// only when the message reached the page — see <see cref="PostScrub"/>.</summary>
+    public bool PostPlay(double durationMs, bool loop)
     {
-        if (string.IsNullOrEmpty(_widgetId)) return;
-        PostJson(new { type = "PLAY", widgetId = _widgetId, triggerName = _activeTriggerName, durationMs, loop });
+        if (string.IsNullOrEmpty(_widgetId)) return false;
+        return PostJson(new { type = "PLAY", widgetId = _widgetId, triggerName = _activeTriggerName, durationMs, loop });
     }
 
     /// <summary>Stop / reset timeline playback in the preview.</summary>
     public void PostStop()
         => PostJson(new { type = "STOP_PLAY" });
 
-    private void PostJson(object payload)
+    /// <summary>
+    /// Release every design-time clock pin, handing the widget back to the ambient clock.
+    /// Pause holds the played frame; STOP is the "done scrubbing" gesture. See
+    /// <c>LayerPreviewPanel.PostReleaseTimeCursor</c> for why the two are separate.
+    /// </summary>
+    public void PostReleaseTimeCursor()
+        => PostJson(new { type = "RELEASE_TIME_CURSOR" });
+
+    /// <summary>
+    /// Post one design-time message into the page. Returns TRUE only when
+    /// <c>PostWebMessageAsJson</c> actually ran — every early-out and every throw returns
+    /// false so a caller can tell "delivered" from "silently dropped" (see
+    /// <see cref="PostScrub"/>).
+    /// </summary>
+    private bool PostJson(object payload)
     {
-        if (!_coreInitialized) return;
+        if (!_coreInitialized) return false;
         // Explicit guard against a torn-down
         // WebView2. PostJson is reachable from SetActiveNode / PostWidgetUpdate /
         // manipulator events that may fire after the pane unloaded, where
         // PreviewWeb (or its CoreWebView2) can be null. Guarding up front makes
         // the no-op intent explicit and skips the serialize when there's nothing
         // to post to, rather than dereferencing through `?.` after the work.
-        if (PreviewWeb?.CoreWebView2 is null) return;
+        if (PreviewWeb?.CoreWebView2 is null) return false;
         try
         {
             string json = JsonSerializer.Serialize(payload);
             PreviewWeb.CoreWebView2.PostWebMessageAsJson(json);
+            return true;
         }
         catch (Exception ex)
         {
             GlobalLogger.Error("WidgetSinglePreviewPanel", "PostWebMessage failed", ex);
+            return false;
         }
     }
 
@@ -497,11 +552,12 @@ public sealed partial class WidgetSinglePreviewPanel : UserControl
         // a genuinely-missing layer ends on a clear message, not the browser error.
         if (_navFailRetries >= MaxNavFailRetries)
         {
-            ShowPlaceholder("Preview unavailable — the layer wasn't found. Save the layer, then reselect the widget.");
+            ShowPlaceholder(Localizer.T("visualist.preview.widget.layer_missing",
+                "Preview unavailable — the layer wasn't found. Save the layer, then reselect the widget."));
             return;
         }
         _navFailRetries++;
-        ShowPlaceholder("Loading preview…");
+        ShowPlaceholder(Localizer.T("visualist.preview.widget.loading", "Loading preview…"));
         _ = RetryNavigateAfterDelayAsync();
     }
 

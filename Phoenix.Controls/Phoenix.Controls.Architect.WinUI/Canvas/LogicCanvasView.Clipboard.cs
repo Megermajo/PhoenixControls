@@ -384,6 +384,13 @@ public sealed partial class LogicCanvasView
             node.Attributes["WidgetID"]    = snip.WidgetID;
             node.Attributes["TriggerName"] = snip.TriggerName ?? string.Empty;
             node.Attributes["Queued"]      = snip.Queued ? "true" : "false";
+            // V13 §8.4 input contract — the Visualist snippet carries the eventData keys
+            // the copied widget graph actually reads; seed one variable pin per key so the
+            // author wires values instead of rediscovering the names by reading the widget
+            // graph. Must run BEFORE the NodeViewModel below, which builds its socket rows
+            // from the model.
+            VisualTriggerPinSeeder.SeedConsumedKeyPins(
+                node, VisualTriggerPinSeeder.ReadConsumedKeys(raw!));
             // Off-canvas / stale-cursor fallback. The
             // WinForms baseline (Canvas.Clipboard.cs) checked
             // `!ClientRectangle.Contains(screen)` and fell back to canvas centre
@@ -852,5 +859,254 @@ public sealed partial class LogicCanvasView
                 level: LogLevel.Communication);
             return null;
         }
+    }
+}
+
+/// <summary>
+/// V13 §8.4 — the CONSUMER half of the Visualist input contract: read the
+/// <c>ConsumedKeys</c> member off a <c>VisualTriggerSnippet</c> clipboard payload and
+/// seed one variable pin per key on the pasted <c>Visual.Trigger</c> node.
+///
+/// <para>
+/// The producer (<c>Visualist.WinUI/Clipboard/VisualTriggerSnippetProducer</c>) scans the
+/// copied widget graph for the eventData keys it actually reads and writes them onto the
+/// clipboard beside the four addressing fields. Before this type existed the keys were
+/// CARRIED and never read — <c>Deserialize&lt;VisualTriggerSnippet&gt;</c> skips the
+/// unmapped member, so the whole contract terminated at the clipboard.
+/// </para>
+/// <para>
+/// Split out of <see cref="LogicCanvasView"/> as a plain static type on purpose: the paste
+/// path itself needs a XamlRoot, a live ViewModel and a clipboard, so the only way this
+/// half gets real coverage is a seam that does not. It also keeps the diff inside the
+/// canvas to a single call — another box may be working in Architect.
+/// </para>
+/// <para>
+/// The member name is written out as a LITERAL here and as a record property on the
+/// producer side. Deliberately NOT hoisted into a shared constant: two components that
+/// must agree on a wire name have to be able to DISAGREE for a test to be worth
+/// anything. V13's first pass hoisted exactly this into one constant, asserted the
+/// constant against output built from the same constant, and shipped a dead feature past
+/// a green suite.
+/// </para>
+/// </summary>
+public static class VisualTriggerPinSeeder
+{
+    /// <summary>
+    /// Upper bound on seeded pins. The real key set comes from a graph scan and runs to a
+    /// handful; the cap exists because ANY process can put this clipboard format on the
+    /// system clipboard, and a payload with ten thousand keys would otherwise build a node
+    /// with ten thousand socket rows. Excess keys are dropped with one System-tier line
+    /// (repeatable rejection ⇒ log, never a modal).
+    ///
+    /// <para>
+    /// This bounds the key COUNT only. The key CONTENT is bounded by
+    /// <see cref="IsLegalConsumedKey"/>, enforced in <see cref="ReadConsumedKeys"/> —
+    /// which is the half that matters more, because the key becomes a socket NAME and the
+    /// exporter emits that name unquoted into the generated <c>.phx</c>.
+    /// </para>
+    /// </summary>
+    public const int MaxSeededPins = 32;
+
+    // The fixed template pins on Visual.Trigger. LayerID / WidgetID / TriggerName are
+    // attribute-backed addressing inputs and Args is the positional Collection input;
+    // VisualTriggerHandler excludes exactly these four names (plus Flow) when it folds the
+    // node's remaining inputs into trailing key=value args, so seeding a pin that collides
+    // with one would either shadow an addressing pin or vanish from the export. Matched
+    // case-INSENSITIVELY, which is stricter than the exporter's Ordinal compare on
+    // purpose: "args" would slip past the exporter's filter and emit a bare `args=` arg.
+    private static readonly HashSet<string> FixedPinNames =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Flow", "LayerID", "WidgetID", "TriggerName", "Args",
+        };
+
+    /// <summary>
+    /// Longest key this will accept. An eventData key is <c>Args1..N</c> / <c>user</c> /
+    /// <c>message</c> or a short author-typed name; 64 characters is generous for all of
+    /// them and bounds the socket-row label a hostile payload can produce.
+    /// </summary>
+    public const int MaxKeyLength = 64;
+
+    /// <summary>
+    /// True when <paramref name="key"/> is a legal eventData key — i.e. one that can
+    /// survive the whole pipeline it is about to enter. Charset is
+    /// <c>A-Z a-z 0-9 _ . -</c>, non-empty, at most <see cref="MaxKeyLength"/> chars.
+    ///
+    /// <para>
+    /// This is a SECURITY boundary, not tidiness. The key becomes a
+    /// <c>Socket.Name</c>, and <c>VisualTriggerHandler</c> emits <c>{s.Name}={value}</c>
+    /// <b>UNQUOTED</b> into the generated <c>.phx</c> — so a key holding a comma, a
+    /// double quote, an <c>=</c>, a <c>|</c>, a paren or whitespace does not merely look
+    /// wrong, it RE-SHAPES the emitted command line: <c>ScriptEngine.SplitArgs</c> is
+    /// comma-/quote-/paren-aware, the KvPairs binder splits on the first <c>=</c> and
+    /// trims, and <c>|</c> is the binder's own single-arg pair separator. The seeder's
+    /// cap above bounds the COUNT of keys a hostile clipboard can inject; this bounds
+    /// their CONTENT, which the cap never addressed.
+    /// </para>
+    /// <para>
+    /// REJECT, never sanitise: a silently repaired key would seed a pin whose name the
+    /// widget graph does not read, which is the same class of lie as dropping one. The
+    /// author can still add the pin by hand from the <c>"+ variable"</c> slot.
+    /// </para>
+    /// <para>
+    /// Two known, deliberate consequences. (1) The producer's <c>Message.Read</c> arm
+    /// does NOT trim its key, so a widget really can read <c>" Args4 "</c> — that key is
+    /// rejected here, correctly, because it could never round-trip anyway: both
+    /// <c>SplitArgs</c> and the binder trim, so the pin would deliver <c>Args4</c> and
+    /// never the spaced key the browser looks up. (2) Non-ASCII is rejected; Hub's
+    /// delivered key space is ASCII and a Unicode socket name buys nothing.
+    /// </para>
+    /// </summary>
+    public static bool IsLegalConsumedKey(string? key)
+    {
+        if (string.IsNullOrEmpty(key)) return false;
+        if (key!.Length > MaxKeyLength) return false;
+        foreach (char c in key)
+        {
+            bool ok = (c >= 'A' && c <= 'Z')
+                   || (c >= 'a' && c <= 'z')
+                   || (c >= '0' && c <= '9')
+                   || c == '_' || c == '.' || c == '-';
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Pull the <c>ConsumedKeys</c> string array out of a raw snippet payload. Returns an
+    /// empty list for anything that is not a usable list — absent member, wrong JSON type,
+    /// malformed document, a payload written by a Visualist build that predates the
+    /// contract. Never throws: a paste must still spawn its node when the pre-fill can't
+    /// be read.
+    ///
+    /// <para>
+    /// This is also the CHARSET GATE (see <see cref="IsLegalConsumedKey"/>): it is the one
+    /// place a clipboard string crosses into becoming a socket name, so it is the one
+    /// place that has to validate. Illegal entries are dropped and reported once per
+    /// payload at System tier — the legal keys in a mixed payload are still seeded, since
+    /// they are still worth pre-filling.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<string> ReadConsumedKeys(string? rawSnippetJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawSnippetJson)) return Array.Empty<string>();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(rawSnippetJson!);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return Array.Empty<string>();
+            // Exact-case probe, matching the strictness of the default-options
+            // Deserialize<VisualTriggerSnippet> call this sits beside.
+            if (!doc.RootElement.TryGetProperty("ConsumedKeys", out var arr)) return Array.Empty<string>();
+            if (arr.ValueKind != System.Text.Json.JsonValueKind.Array) return Array.Empty<string>();
+
+            var keys = new List<string>(arr.GetArrayLength());
+            int rejected = 0;
+            string? firstRejected = null;
+            foreach (var el in arr.EnumerateArray())
+            {
+                if (el.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                string? k = el.GetString();
+                if (string.IsNullOrWhiteSpace(k)) continue;
+                if (!IsLegalConsumedKey(k))
+                {
+                    rejected++;
+                    // Truncated + only the first one, so a hostile payload cannot use
+                    // the log line as its own output channel.
+                    firstRejected ??= k!.Length <= 32 ? k : k.Substring(0, 32) + "…";
+                    continue;
+                }
+                keys.Add(k!);
+            }
+
+            if (rejected > 0)
+            {
+                GlobalLogger.Log(
+                    $"clipboard.visual-trigger.key-rejected:{rejected} consumed key(s) dropped — "
+                    + $"a key must be [A-Za-z0-9_.-] and at most {MaxKeyLength} chars (first: '{firstRejected}'). "
+                    + "Add any missing pin by wiring the node's \"+ variable\" slot.",
+                    source: "Architect.LogicCanvasView",
+                    level: LogLevel.System);
+            }
+            return keys;
+        }
+        catch
+        {
+            // Malformed payload — the addressing half already deserialized fine or we
+            // wouldn't be here, so degrade to "no pre-fill" rather than failing the paste.
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Append one String input socket per key to <paramref name="node"/>, immediately
+    /// ABOVE the trailing <c>"+ variable"</c> placeholder so the placeholder stays last
+    /// (the same insert-above-placeholder rule <c>PlaceholderActivator</c> follows).
+    /// Returns the number of pins seeded.
+    ///
+    /// <para>
+    /// Additive only: existing socket Ids are never touched, nothing is renamed and
+    /// nothing is removed, so no <c>Link</c> can be left dangling. A key that duplicates
+    /// a socket the node already carries is skipped — socket NAME is what
+    /// <c>VisualTriggerHandler</c> emits as the arg key, so two same-named pins would be
+    /// an ambiguous export rather than a richer node.
+    /// </para>
+    /// </summary>
+    public static int SeedConsumedKeyPins(Node? node, IReadOnlyList<string>? consumedKeys)
+    {
+        if (node is null || consumedKeys is null || consumedKeys.Count == 0) return 0;
+        if (node.Sockets is null) node.Sockets = new List<Socket>();
+
+        // Insert above the trailing placeholder; append at the end when the node has none
+        // (a hand-edited graph, or a template that stopped carrying one).
+        int insertAt = node.Sockets.FindIndex(s => s is not null
+                                              && s.IsPlaceholder
+                                              && s.Type == SocketType.Input);
+        if (insertAt < 0) insertAt = node.Sockets.Count;
+
+        int seeded = 0;
+        bool capped = false;
+        foreach (string rawKey in consumedKeys)
+        {
+            if (string.IsNullOrWhiteSpace(rawKey)) continue;
+            if (FixedPinNames.Contains(rawKey)) continue;
+            if (node.Sockets.Exists(s => s is not null
+                                    && string.Equals(s.Name, rawKey, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (seeded >= MaxSeededPins) { capped = true; break; }
+
+            // DataType-at-creation drives the pin's shape and its wire compatibility
+            // (project_winui_socket_datatype_at_creation) — a String pin minted at the
+            // Any default renders as a diamond and refuses String wires until
+            // save+reload. Same colour/type pair PlaceholderActivator.Activate uses when
+            // no source socket types the new pin.
+            node.Sockets.Insert(insertAt++, new Socket
+            {
+                Name     = rawKey,
+                Type     = SocketType.Input,
+                Color    = NodeRegistry.ColString,
+                DataType = NodeRegistry.DataTypeFromColorPublic(NodeRegistry.ColString),
+            });
+            seeded++;
+        }
+
+        if (capped)
+        {
+            GlobalLogger.Log(
+                $"clipboard.visual-trigger.pins-capped:{consumedKeys.Count} consumed key(s) offered, "
+                + $"{MaxSeededPins} seeded — the rest were dropped. Add any missing pin by wiring the "
+                + "node's \"+ variable\" slot.",
+                source: "Architect.LogicCanvasView",
+                level: LogLevel.System);
+        }
+
+        if (seeded > 0)
+        {
+            // Re-stripe the persisted socket Y offsets the way Activate does. The WinUI
+            // canvas derives pin positions from row index rather than from Socket.Offset,
+            // so this is for the serialized form and any offset-reading consumer.
+            PlaceholderActivator.RecalculateSocketOffsets(node);
+        }
+        return seeded;
     }
 }

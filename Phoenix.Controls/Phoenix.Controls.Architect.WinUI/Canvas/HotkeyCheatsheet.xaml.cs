@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Shared.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Architect.WinUI.Canvas;
@@ -63,15 +64,15 @@ public sealed partial class HotkeyCheatsheet : UserControl
 
     private static string LabelFor(HotkeyContext context) => context switch
     {
-        HotkeyContext.Canvas         => "CANVAS",
-        HotkeyContext.NodeSelected   => "NODE SELECTED",
-        HotkeyContext.MultiSelection => "MULTI-SELECTION",
-        HotkeyContext.WireSelected   => "WIRE SELECTED",
-        HotkeyContext.FrameSelected  => "FRAME SELECTED",
-        HotkeyContext.DraggingWire   => "DRAGGING WIRE",
-        HotkeyContext.Panning        => "PANNING",
-        HotkeyContext.TextEditing    => "EDITING",
-        _                            => "CANVAS",
+        HotkeyContext.Canvas         => Localizer.T("architect.canvas.cheatsheet.context.canvas", "CANVAS"),
+        HotkeyContext.NodeSelected   => Localizer.T("architect.canvas.cheatsheet.context.node_selected", "NODE SELECTED"),
+        HotkeyContext.MultiSelection => Localizer.T("architect.canvas.cheatsheet.context.multi_selection", "MULTI-SELECTION"),
+        HotkeyContext.WireSelected   => Localizer.T("architect.canvas.cheatsheet.context.wire_selected", "WIRE SELECTED"),
+        HotkeyContext.FrameSelected  => Localizer.T("architect.canvas.cheatsheet.context.frame_selected", "FRAME SELECTED"),
+        HotkeyContext.DraggingWire   => Localizer.T("architect.canvas.cheatsheet.context.dragging_wire", "DRAGGING WIRE"),
+        HotkeyContext.Panning        => Localizer.T("architect.canvas.cheatsheet.context.panning", "PANNING"),
+        HotkeyContext.TextEditing    => Localizer.T("architect.canvas.cheatsheet.context.editing", "EDITING"),
+        _                            => Localizer.T("architect.canvas.cheatsheet.context.canvas", "CANVAS"),
     };
 
     // ── Toggle wiring ────────────────────────────────────────────────────
@@ -129,9 +130,13 @@ public sealed partial class HotkeyCheatsheet : UserControl
         BodyHairline.Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
         BodyBorder  .Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
         ToggleButton.Content    = _expanded ? "—" : "+";
-        ToolTipService.SetToolTip(ToggleButton, _expanded ? "Collapse" : "Expand");
+        ToolTipService.SetToolTip(ToggleButton, _expanded
+            ? Localizer.T("architect.canvas.cheatsheet.toggle.collapse.tip", "Collapse")
+            : Localizer.T("architect.canvas.cheatsheet.toggle.expand.tip",   "Expand"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ToggleButton, _expanded ? "Collapse hotkey cheatsheet" : "Expand hotkey cheatsheet");
+            ToggleButton, _expanded
+                ? Localizer.T("architect.canvas.cheatsheet.toggle.collapse.a11y", "Collapse hotkey cheatsheet")
+                : Localizer.T("architect.canvas.cheatsheet.toggle.expand.a11y",   "Expand hotkey cheatsheet"));
     }
 
     // ── Hover affordance — subtle background lift on the header chip ─────
@@ -175,7 +180,9 @@ public sealed partial class HotkeyCheatsheet : UserControl
             EntryGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var overflow = new TextBlock
             {
-                Text = $"+{more} more — F1 for the full shortcut list",
+                Text = string.Format(
+                    Localizer.T("architect.canvas.cheatsheet.overflow", "+{0} more — F1 for the full shortcut list"),
+                    more),
                 Style = (Style)Resources["CheatsheetDescription"],
                 Opacity = 0.7,
                 Margin = new Thickness(0, 4, 0, 2),
@@ -194,7 +201,7 @@ public sealed partial class HotkeyCheatsheet : UserControl
             EntryGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var hint = new TextBlock
             {
-                Text = "No context-specific chords.",
+                Text = Localizer.T("architect.canvas.cheatsheet.empty", "No context-specific chords."),
                 Style = (Style)Resources["CheatsheetDescription"],
                 Opacity = 0.7,
                 Margin = new Thickness(0, 2, 0, 2),

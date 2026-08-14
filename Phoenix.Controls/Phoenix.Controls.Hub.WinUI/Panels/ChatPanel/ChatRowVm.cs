@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Media;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.WinUI.Contracts;
 using Windows.UI;
 
@@ -44,7 +45,7 @@ public sealed class ChatRowVm : INotifyPropertyChanged
         // is fixed per row. Bot rows are out of the role hierarchy and use the
         // Phoenix glyph; everyone else resolves by precedence.
         BadgeLabel = IsBot
-            ? "Bot"
+            ? Localizer.T("panel.chat.role.bot", "Bot")
             : RoleColorBrush.ResolveLabel(IsBroadcaster, IsMod, IsVip, IsSubscriber);
         _usernameBrush = ResolveUsernameBrush();
         _badgeBrush    = _usernameBrush;

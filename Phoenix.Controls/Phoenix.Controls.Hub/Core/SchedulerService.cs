@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -169,8 +170,8 @@ namespace Phoenix.Controls.Hub.Core
                         break;
                     case "on_interval":
                     {
-                        // on_interval(seconds[, minChatLines]) — the regex captures the
-                        // whole "300, 5" as one group, so split off the seconds first.
+                        // on_interval(seconds[, minChatLines[, maxCount]]) — the regex captures
+                        // the whole "300, 5, 3" as one group, so split off the seconds first.
                         // Single-arg form parses exactly as before.
                         string[] parts = arg.Split(',');
                         if (!int.TryParse(parts[0].Trim(), out int seconds) || seconds <= 0)
@@ -181,6 +182,11 @@ namespace Phoenix.Controls.Hub.Core
                         entry.IntervalSeconds = seconds;
                         if (parts.Length > 1 && int.TryParse(parts[1].Trim(), out int minChatLines) && minChatLines > 0)
                             entry.MinChatLines = minChatLines;
+                        // Third slot = Schedule.Recurring's MaxCount. Absent / 0 / unparsable
+                        // stays UNBOUNDED, which is what every existing header emits, so the
+                        // single- and two-arg forms behave exactly as before.
+                        if (parts.Length > 2 && int.TryParse(parts[2].Trim(), out int maxCount) && maxCount > 0)
+                            SetMaxFireCount(entry, maxCount);
                         break;
                     }
                     default:
@@ -189,6 +195,29 @@ namespace Phoenix.Controls.Hub.Core
                 yield return entry;
             }
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        //  MAX-FIRE-COUNT SIDE TABLE  (Schedule.Recurring's MaxCount)
+        // ─────────────────────────────────────────────────────────────────────
+        //
+        // The bound is carried here rather than on ScheduleEntry because
+        // ScheduleEntry (Shared/Models/AppConfig.cs) is the *config* shape and has
+        // no MaxCount member — the value only ever travels from an on_interval
+        // header into this service's own loop, so both ends live in this file.
+        // Weak keys: the mapping dies with the entry, so nothing is retained after
+        // a Stop()/Reload() drops the old generation of entries. Entries with no
+        // recorded bound (config-driven schedules, ProcessInstanceManager's
+        // per-instance timers, every pre-existing header) read back as 0 =
+        // unbounded, which is exactly the old behaviour.
+        private static readonly ConditionalWeakTable<ScheduleEntry, StrongBox<int>> s_maxFireCounts = new();
+
+        private static void SetMaxFireCount(ScheduleEntry entry, int maxCount) =>
+            s_maxFireCounts.AddOrUpdate(entry, new StrongBox<int>(maxCount));
+
+        /// <summary>Fire ceiling recorded for <paramref name="entry"/> by
+        /// <see cref="ParseScheduleHeaders"/>; 0 = unbounded.</summary>
+        internal static int GetMaxFireCount(ScheduleEntry entry) =>
+            s_maxFireCounts.TryGetValue(entry, out var box) ? box.Value : 0;
 
         /// <summary>
         /// Resolves the logic directory: honors absolute paths in config, otherwise
@@ -251,6 +280,11 @@ namespace Phoenix.Controls.Hub.Core
                 if (entry.IntervalSeconds > 0)
                 {
                     int fireCount = 0;
+                    // Schedule.Recurring's MaxCount: stop after this many ACTUAL fires
+                    // (chat-gated skips below don't count, matching the node help).
+                    // 0 = unbounded — the historical behaviour for every header that
+                    // doesn't carry a third on_interval arg.
+                    int maxFireCount = GetMaxFireCount(entry);
                     // Chat-activity gate baseline (Schedule.Recurring's MinChatLines).
                     // Snapshot the running chat count; each interval only fires when at
                     // least MinChatLines new lines arrived since the LAST fire. A skipped
@@ -267,6 +301,11 @@ namespace Phoenix.Controls.Hub.Core
                             continue; // not enough chat activity yet — wait another interval
                         await fire(++fireCount);
                         lastFireLines = ChatActivityCounter.Current;
+                        if (maxFireCount > 0 && fireCount >= maxFireCount)
+                        {
+                            GlobalLogger.Log($"Scheduler: '{entry.Name}' reached its MaxCount of {maxFireCount} fire(s) — schedule finished.", "Scheduler", LogLevel.System);
+                            return;
+                        }
                     }
                     return;
                 }
@@ -277,10 +316,15 @@ namespace Phoenix.Controls.Hub.Core
                     int fireCount = 0;
                     while (!ct.IsCancellationRequested)
                     {
-                        // Compute next occurrence + wait-delta in UTC (DST safety).
-                        DateTime next = GetNextCronOccurrence(entry.CronExpression, DateTime.UtcNow);
-                        if (next == DateTime.MaxValue) return; // invalid cron, already logged
-                        TimeSpan wait = next - DateTime.UtcNow;
+                        // Match the cron FIELDS against local wall-clock time — "0 9 * * 1-5"
+                        // means 9 AM where the streamer lives, which is what the node help and
+                        // the RunAt path above both promise. Only the wait SUBTRACTION happens
+                        // in an absolute frame (DST safety): resolving the occurrence to a
+                        // DateTimeOffset first means a DST shift changes the delay, not the
+                        // wall-clock hour the script fires at.
+                        DateTimeOffset? next = GetNextCronInstant(entry.CronExpression, DateTimeOffset.Now, TimeZoneInfo.Local);
+                        if (next == null) return; // invalid cron, already logged
+                        TimeSpan wait = next.Value - DateTimeOffset.UtcNow;
                         if (wait > TimeSpan.Zero)
                             await Task.Delay(wait, ct);
                         await fire(++fireCount);
@@ -352,8 +396,44 @@ namespace Phoenix.Controls.Hub.Core
             return cron;
         }
 
+        /// <summary>
+        /// Resolves a cron expression to the next absolute instant it fires, matching the
+        /// cron fields against WALL-CLOCK time in <paramref name="tz"/> and converting the
+        /// resolved occurrence back to a <see cref="DateTimeOffset"/>. Returns null when the
+        /// expression is invalid (already logged by <see cref="GetNextCronOccurrence"/>).
+        ///
+        /// This is the local-match / absolute-wait split the cron loop needs: the fields keep
+        /// their wall-clock meaning ("0 9 * * *" = 9 AM local all year) while the caller's
+        /// `next - DateTimeOffset.UtcNow` subtraction stays immune to the offset changing
+        /// under it across a DST transition. `internal` so the tests can pin both halves
+        /// against a fixed timezone (InternalsVisibleTo for Tests: Phoenix.Controls.Hub.csproj).
+        /// </summary>
+        internal static DateTimeOffset? GetNextCronInstant(string cron, DateTimeOffset now, TimeZoneInfo tz)
+        {
+            // Wall clock in tz at `now` — the frame the cron fields are written in.
+            DateTime nowLocal = TimeZoneInfo.ConvertTime(now, tz).DateTime;
+
+            DateTime nextLocal = GetNextCronOccurrence(cron, nowLocal);
+            if (nextLocal == DateTime.MaxValue) return null;
+
+            // GetNextCronOccurrence builds unspecified-kind values; be explicit so the
+            // DateTimeOffset ctor never sees a Kind that contradicts the offset.
+            nextLocal = DateTime.SpecifyKind(nextLocal, DateTimeKind.Unspecified);
+
+            // GetUtcOffset resolves the two DST edge cases deterministically: an ambiguous
+            // (repeated) local time takes the standard-time offset, so the schedule fires
+            // once rather than twice; an invalid (skipped) local time takes the pre-transition
+            // offset, so it fires at the first instant that exists after the gap.
+            return new DateTimeOffset(nextLocal, tz.GetUtcOffset(nextLocal));
+        }
+
         /// <summary>Returns the next DateTime at or after <paramref name="after"/> matching the cron expression.
         /// Returns DateTime.MaxValue if the expression is invalid.
+        ///
+        /// Frame-agnostic: the fields are matched against whatever clock <paramref name="after"/>
+        /// is expressed in. The live loop goes through <see cref="GetNextCronInstant"/>, which
+        /// passes LOCAL wall-clock time (cron fields are wall-clock by definition) and converts
+        /// the result back to an absolute instant for the wait computation.
         ///
         /// `internal` (was `private`) so the Phoenix.Controls.Tests project can
         /// pin DST-safety and cron-arithmetic contracts directly without a

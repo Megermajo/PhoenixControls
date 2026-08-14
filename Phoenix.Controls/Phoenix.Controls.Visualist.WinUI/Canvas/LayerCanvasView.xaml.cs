@@ -80,13 +80,6 @@ public sealed partial class LayerCanvasView : UserControl
     private bool         _resizing;
     private bool         _resizeMoved;
 
-    // Scancode anchoring for Undo/Redo — mirrors LogicCanvasView.Keyboard.cs so
-    // QWERTZ users get Undo on the physical Z keytop regardless of which
-    // VirtualKey the OS reports. The VK.Y case in the switch below is a
-    // safety net for VMs / RDP where KeyStatus.ScanCode isn't populated.
-    private const uint ScanCode_PhysicalZ = 0x2C;
-    private const uint ScanCode_PhysicalY = 0x15;
-
     // Physical [ / ] keytops (the two keys right of P on a US layout) drive
     // single-step z-order regardless of the VirtualKey the layout reports, the
     // same scancode-anchor pattern as Undo/Redo above.
@@ -401,11 +394,11 @@ public sealed partial class LayerCanvasView : UserControl
         // sees something coherent; the rejection caption ("Unsupported file
         // type") is set in OnHostDragOver below — this method only renders
         // accepted drops.
-        if (anyLayer && !anyImage && !anyVideo) return "Open layer";
-        if (anyImage && !anyVideo && !anyLayer) return "Spawn image widget";
-        if (anyVideo && !anyImage && !anyLayer) return "Spawn video widget";
-        if (anyImage || anyVideo) return "Spawn media widget";
-        return "Open layer";
+        if (anyLayer && !anyImage && !anyVideo) return Localizer.T("visualist.canvas.drop.open_layer", "Open layer");
+        if (anyImage && !anyVideo && !anyLayer) return Localizer.T("visualist.canvas.drop.spawn_image", "Spawn image widget");
+        if (anyVideo && !anyImage && !anyLayer) return Localizer.T("visualist.canvas.drop.spawn_video", "Spawn video widget");
+        if (anyImage || anyVideo) return Localizer.T("visualist.canvas.drop.spawn_media", "Spawn media widget");
+        return Localizer.T("visualist.canvas.drop.open_layer", "Open layer");
     }
 
     private async void OnHostDragOver(object sender, DragEventArgs e)
@@ -446,7 +439,7 @@ public sealed partial class LayerCanvasView : UserControl
                 e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.None;
                 if (e.DragUIOverride is not null)
                 {
-                    e.DragUIOverride.Caption          = "Unsupported file type";
+                    e.DragUIOverride.Caption          = Localizer.T("visualist.canvas.drop.unsupported", "Unsupported file type");
                     e.DragUIOverride.IsCaptionVisible = true;
                     e.DragUIOverride.IsContentVisible = false;
                     e.DragUIOverride.IsGlyphVisible   = false;
@@ -673,17 +666,35 @@ public sealed partial class LayerCanvasView : UserControl
         {
             vm.PropertyChanged += OnVmPropertyChanged;
             Render(vm);
+            PublishMultiSelection(vm);
         }
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (sender is VisualistViewModel vm
-            && (e.PropertyName == nameof(VisualistViewModel.SelectedLayer)
-                || e.PropertyName == nameof(VisualistViewModel.SelectedWidget)))
+        if (sender is not VisualistViewModel vm) return;
+        if (e.PropertyName == nameof(VisualistViewModel.SelectedWidget))
+        {
+            // A single-select that originated OUTSIDE the canvas (inspector
+            // roster row, context-menu single fallback) never touched
+            // _multiSelected — collapse any stale multi-set onto the new anchor
+            // so the canvas highlight and the inspector's mode agree. Canvas ops
+            // always add the anchor to _multiSelected before assigning it, so
+            // this is a no-op for them.
+            if (vm.SelectedWidget is { } sw && !_multiSelected.Contains(sw))
+            {
+                ClearMultiSelect();
+                _multiSelected.Add(sw);
+            }
+            Render(vm);
+            RecomputeHotkeyContext();
+            PublishMultiSelection(vm);
+        }
+        else if (e.PropertyName == nameof(VisualistViewModel.SelectedLayer))
         {
             Render(vm);
             RecomputeHotkeyContext();
+            PublishMultiSelection(vm);
         }
     }
 
@@ -784,7 +795,7 @@ public sealed partial class LayerCanvasView : UserControl
 
         if (layer is null || layer.Resolution.Width <= 0 || layer.Resolution.Height <= 0)
         {
-            ResolutionLabel.Text = "(no layer loaded)";
+            ResolutionLabel.Text = Localizer.T("visualist.canvas.resolution.no_layer", "(no layer loaded)");
             // Layer change invalidates any prior multi-select.
             _multiSelected.Clear();
             // Surface the New/Open empty-state when nothing is loaded.
@@ -840,6 +851,46 @@ public sealed partial class LayerCanvasView : UserControl
         string? path = _vm?.Document?.FilePath;
         if (string.IsNullOrEmpty(path)) return null;
         return System.IO.Path.GetFileNameWithoutExtension(path);
+    }
+
+    /// <summary>
+    /// Fan a committed rect edit out to the live surfaces BEYOND the in-canvas
+    /// previewer (which each caller already posts to). Two targets:
+    ///
+    ///   1. An open full-layer popout preview window — ALWAYS updated: it's a
+    ///      design surface the author explicitly opened, so there's no reason to
+    ///      make them re-save to see the move. No-op when no popout is open.
+    ///   2. The live production OBS browser source, via the Hub bus
+    ///      (<see cref="Core.VisualistBusClient.SendWidgetLiveUpdateAsync"/>) —
+    ///      but ONLY when the user opted into AutoSyncOnEdit. Pushing rect updates
+    ///      to the on-stream overlay is exactly the "sync my edits live" the flag
+    ///      already promises; gating it there keeps a streamer who never asked for
+    ///      live sync from seeing their overlay shift while they design. Skipped for
+    ///      an unsaved scratch layer (no layerId ⇒ no live browser source).
+    ///
+    /// Both legs are ephemeral (compositor.js applies WIDGET_UPDATE in memory; a
+    /// browser refresh reverts to the saved layer) and independently guarded so a
+    /// publish fault can't break the gesture teardown. This retires the two
+    /// dead live-update paths (popout PostWidgetUpdate + SendWidgetLiveUpdateAsync).
+    /// </summary>
+    private void PublishLiveWidgetEdit(LayerWidget widget)
+    {
+        if (widget is null) return;
+
+        try { FindPillarMainView()?.ActiveLayerPreviewWindow?.Preview?.PostWidgetUpdate(widget); }
+        catch (Exception ex) { GlobalLogger.Error("LayerCanvasView", "popout live update", ex); }
+
+        try
+        {
+            if (Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance.AutoSyncOnEdit)
+            {
+                string? layerId = ResolveLayerIdForPreview();
+                if (!string.IsNullOrEmpty(layerId))
+                    _ = Phoenix.Controls.Visualist.WinUI.Core.VisualistBusClient.Instance
+                            .SendWidgetLiveUpdateAsync(layerId!, widget);
+            }
+        }
+        catch (Exception ex) { GlobalLogger.Error("LayerCanvasView", "live OBS widget update", ex); }
     }
 
     private void SyncPreviewer(VisualistViewModel vm, Layer layer)
@@ -938,12 +989,15 @@ public sealed partial class LayerCanvasView : UserControl
     // Hex replaces it as the first swatch — a hex pasteboard pattern that frames the
     // layer bounds ("hex outside, flat inside"). The swatch fill is dark so the hex
     // glyph reads on it; the actual pasteboard pattern is the HexPatternOverlay.
-    private static readonly (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor Color, string Tip, byte R, byte G, byte B, bool Hex)[] s_backdropSpecs =
+    // TipKey rides alongside the English Tip so the swatch tooltip can be
+    // translated without splitting the table — Tip stays the fallback the
+    // Localizer degrades to when a bundle has no entry.
+    private static readonly (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor Color, string Tip, string TipKey, byte R, byte G, byte B, bool Hex)[] s_backdropSpecs =
     {
-        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.Hex,   "Hex pattern — frames the layer bounds", 0x16, 0x13, 0x10, true),
-        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.Black, "Black", 0x00, 0x00, 0x00, false),
-        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.Gray,  "Gray",  0x80, 0x80, 0x80, false),
-        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.White, "White", 0xFF, 0xFF, 0xFF, false),
+        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.Hex,   "Hex pattern — frames the layer bounds", "visualist.canvas.backdrop.hex", 0x16, 0x13, 0x10, true),
+        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.Black, "Black", "visualist.canvas.backdrop.black", 0x00, 0x00, 0x00, false),
+        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.Gray,  "Gray",  "visualist.canvas.backdrop.gray",  0x80, 0x80, 0x80, false),
+        (Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor.White, "White", "visualist.canvas.backdrop.white", 0xFF, 0xFF, 0xFF, false),
     };
     private readonly Dictionary<Phoenix.Controls.Visualist.WinUI.Core.PreviewBgColor, Border> _backdropSwatches = new();
 
@@ -967,7 +1021,9 @@ public sealed partial class LayerCanvasView : UserControl
                 // Mini hexagon outline marks the hex-pattern backdrop swatch.
                 swatch.Child = BuildHexGlyph();
             }
-            ToolTipService.SetToolTip(swatch, $"Preview backdrop: {spec.Tip}");
+            ToolTipService.SetToolTip(swatch, string.Format(
+                Localizer.T("visualist.canvas.backdrop.tip_format", "Preview backdrop: {0}"),
+                Localizer.T(spec.TipKey, spec.Tip)));
             var captured = spec.Color;
             swatch.Tapped += (_, e) => { OnBackdropSwatchClicked(captured); e.Handled = true; };
             _backdropSwatches[spec.Color] = swatch;
@@ -981,7 +1037,9 @@ public sealed partial class LayerCanvasView : UserControl
         _suppressPrefsEcho = true;
         try
         {
-            if (CanvasPreviewToggle is not null) CanvasPreviewToggle.IsChecked = cfg.CanvasWidgetPreviewEnabled;
+            // CanvasPreviewToggle was removed as an abandoned affordance; its setting
+            // (cfg.CanvasWidgetPreviewEnabled) still gates WidgetCanvasPreviewer and is
+            // simply no longer user-toggleable from the command bar.
             if (AutoSyncToggle     is not null) AutoSyncToggle.IsChecked     = cfg.AutoSyncOnEdit;
             // Reflect the in-memory snap state (defaults true). Not config-
             // backed, so this seeds from the live field rather than cfg.
@@ -1083,12 +1141,10 @@ public sealed partial class LayerCanvasView : UserControl
     private void OnPreviewLayerCommand(object sender, RoutedEventArgs e)
         => FindPillarMainView()?.PreviewLayer();
 
-    private void OnCanvasPreviewToggle(object sender, RoutedEventArgs e)
-    {
-        if (_suppressPrefsEcho) return;
-        bool on = CanvasPreviewToggle?.IsChecked == true;
-        Phoenix.Controls.Visualist.WinUI.Core.VisualistUserConfig.Instance.Update(c => c.CanvasWidgetPreviewEnabled = on);
-    }
+    // OnCanvasPreviewToggle was removed with the "Preview" canvas-thumbnail ToggleButton
+    // (abandoned affordance). VisualistUserConfig.CanvasWidgetPreviewEnabled survives at
+    // its default (true) and still gates WidgetCanvasPreviewer — the thumbnails render as
+    // before, there is simply no command-bar switch for them any more.
 
     private void OnAutoSyncToggle(object sender, RoutedEventArgs e)
     {
@@ -1155,6 +1211,22 @@ public sealed partial class LayerCanvasView : UserControl
         DispatcherQueue.TryEnqueue(async () => await RefreshWidgetOverlaysAsync());
     }
 
+    // True while <paramref name="w"/> is the widget (or one of the widgets)
+    // being actively dragged or resized on the canvas. Its rect on-screen is
+    // ahead of the compositor's in-memory rect until the gesture commits, so its
+    // captured crop is unreliable mid-gesture — see the skip in
+    // RefreshWidgetOverlaysAsync.
+    private bool IsWidgetUnderActiveGesture(LayerWidget w)
+    {
+        if (_dragWidget is not null)
+        {
+            if (_isGroupDragging) { if (_groupDragOrigins.ContainsKey(w)) return true; }
+            else if (ReferenceEquals(_dragWidget, w)) return true;
+        }
+        if (_resizing && ReferenceEquals(_resizeWidget, w)) return true;
+        return false;
+    }
+
     private async System.Threading.Tasks.Task RefreshWidgetOverlaysAsync()
     {
         if (_previewRefreshInFlight) { _previewRefreshQueued = true; return; }
@@ -1188,6 +1260,15 @@ public sealed partial class LayerCanvasView : UserControl
                 {
                     LayerWidget w = kvp.Key;
                     WidgetView  v = kvp.Value;
+
+                    // Skip the widget under an active drag/resize gesture: the
+                    // compositor still holds its PRE-gesture rect (WIDGET_UPDATE is
+                    // posted on commit), so cropping it at its live (moved/resized)
+                    // Rect samples the wrong region of the frame and flashes a
+                    // neighbour's pixels. Its outline / last-good crop stays until
+                    // the commit-time CaptureAfterCommit refreshes it correctly.
+                    if (IsWidgetUnderActiveGesture(w)) continue;
+
                     try
                     {
                         var crop = await previewer.CropWidgetAsync(w.Rect);
@@ -1272,7 +1353,7 @@ public sealed partial class LayerCanvasView : UserControl
                 StrokeThickness = 1,
                 IsHitTestVisible = true,
             };
-            ToolTipService.SetToolTip(_resizeHandle, "Drag to resize");
+            ToolTipService.SetToolTip(_resizeHandle, Localizer.T("visualist.canvas.resize.tip", "Drag to resize"));
             WireResizeHandle(_resizeHandle);
         }
 
@@ -1408,7 +1489,8 @@ public sealed partial class LayerCanvasView : UserControl
             // Push the committed geometry to the live WebView2 so the
             // captured frame reflects the new rect before the next save round-
             // trip. No-op when the previewer isn't running.
-            if (resized is not null) _previewer?.PostWidgetUpdate(resized);
+            if (resized is not null) { _previewer?.PostWidgetUpdate(resized); PublishLiveWidgetEdit(resized); }
+            _previewer?.CaptureAfterCommit();
             // Re-sync the inspector mirror with the committed geometry; this
             // also re-renders the canvas and re-anchors the handle.
             _vm?.RaiseSelectedLayerChanged();
@@ -1639,13 +1721,20 @@ public sealed partial class LayerCanvasView : UserControl
                 {
                     _multiSelected.Remove(capture);
                     view.IsSelected = false;
+                    // Don't leave the just-removed widget as the primary anchor —
+                    // re-anchor onto a still-selected widget (or null when the set
+                    // is now empty) so OnVmPropertyChanged doesn't treat the next
+                    // anchor as an external select and collapse the remaining set.
+                    if (ReferenceEquals(vm.SelectedWidget, capture))
+                        vm.SelectedWidget = _multiSelected.LastOrDefault();
                 }
                 else
                 {
                     _multiSelected.Add(capture);
                     view.IsSelected = true;
+                    vm.SelectedWidget = capture;  // anchor on the most-recently-added
                 }
-                vm.SelectedWidget = capture;  // anchor on the most-recently-toggled
+                PublishMultiSelection(vm);
                 args.Handled = true;
                 RecomputeHotkeyContext();
                 return;
@@ -1670,6 +1759,7 @@ public sealed partial class LayerCanvasView : UserControl
             }
 
             vm.SelectedWidget = capture;
+            PublishMultiSelection(vm);   // reflect the collapse-to-one / group keep
             _dragWidget   = capture;
             _dragView     = view;
             _dragStartLocal = p.Position;
@@ -1798,12 +1888,17 @@ public sealed partial class LayerCanvasView : UserControl
             // captured frame tracks the move without a save round-trip.
             if (_isGroupDragging)
             {
-                foreach (var w in _groupDragOrigins.Keys) _previewer?.PostWidgetUpdate(w);
+                foreach (var w in _groupDragOrigins.Keys) { _previewer?.PostWidgetUpdate(w); PublishLiveWidgetEdit(w); }
             }
             else if (_dragWidget is not null)
             {
                 _previewer?.PostWidgetUpdate(_dragWidget);
+                PublishLiveWidgetEdit(_dragWidget);
             }
+            // Re-render the moved widget's content now instead of waiting up to
+            // the 250ms capture timer — the posted WIDGET_UPDATE paints a frame
+            // later, so CaptureAfterCommit grabs it staggered.
+            _previewer?.CaptureAfterCommit();
         }
 
         ClearAlignmentGuides();
@@ -1938,6 +2033,7 @@ public sealed partial class LayerCanvasView : UserControl
 
         if (lastHit is not null && _vm is not null)
             _vm.SelectedWidget = lastHit;
+        if (_vm is not null) PublishMultiSelection(_vm);
     }
 
     private void ApplyGroupDragDelta(int dx, int dy)
@@ -2328,7 +2424,37 @@ public sealed partial class LayerCanvasView : UserControl
     private void ClearMultiSelectAndAnchor()
     {
         ClearMultiSelect();
-        if (_vm is not null) _vm.SelectedWidget = null;
+        if (_vm is not null)
+        {
+            _vm.SelectedWidget = null;
+            PublishMultiSelection(_vm);
+        }
+    }
+
+    /// <summary>
+    /// Publish the current visually-selected widgets to the VM so the inspector
+    /// can drive mixed-value / apply-to-all editing. Mirrors BuildView's
+    /// IsSelected rule exactly (the multi-select set ∪ the primary anchor),
+    /// ordered by layer Z so the inspector's roster and the published set agree.
+    /// Idempotent on the VM side (sequence-equal = no-op), so it's safe to call
+    /// liberally — every selection op funnels through here.
+    /// </summary>
+    private void PublishMultiSelection(VisualistViewModel vm)
+    {
+        if (vm.SelectedLayer is not Layer layer)
+        {
+            vm.SetSelectedWidgets(System.Array.Empty<LayerWidget>());
+            return;
+        }
+        var set = new HashSet<LayerWidget>(_multiSelected);
+        if (vm.SelectedWidget is { } anchor && layer.Widgets.Contains(anchor))
+            set.Add(anchor);
+        if (set.Count == 0)
+        {
+            vm.SetSelectedWidgets(System.Array.Empty<LayerWidget>());
+            return;
+        }
+        vm.SetSelectedWidgets(layer.Widgets.Where(set.Contains).ToList());
     }
 
     private static Rect NormalizeRect(Point a, Point b)
@@ -2369,7 +2495,12 @@ public sealed partial class LayerCanvasView : UserControl
     // math stays intact (GetPosition(WidgetSurface) already accounts for the
     // ancestor RenderTransform). Ctrl+wheel zooms about the cursor; middle-mouse
     // drag pans. State is view-local and reset whenever a fresh layer renders.
-    private const double StageMinZoom = 0.25;
+    // Min zoom is deliberately low (0.1) so the layer frame can shrink well
+    // inside the stage and float in "pasteboard" space with the backdrop visible
+    // all around it — DaVinci-style zoom-out so off-frame content and scaling are
+    // visible while composing cut-outs. Fit (scale 1.0) fills the view; the user
+    // zooms out from there.
+    private const double StageMinZoom = 0.1;
     private const double StageMaxZoom = 8.0;
     private const double StageZoomStep = 1.15;   // per wheel notch
 
@@ -2419,6 +2550,7 @@ public sealed partial class LayerCanvasView : UserControl
             // back to a plain centre-anchored zoom (no cursor tracking).
             StageScale.ScaleX = newZoom;
             StageScale.ScaleY = newZoom;
+            UpdateZoomReadout();
             e.Handled = true;
             return;
         }
@@ -2433,6 +2565,7 @@ public sealed partial class LayerCanvasView : UserControl
             StagePan.Y += cursor.Y - afterPt.Y;
         }
         catch { /* leave pan as-is on a transform failure */ }
+        UpdateZoomReadout();
         e.Handled = true;
     }
 
@@ -2495,6 +2628,76 @@ public sealed partial class LayerCanvasView : UserControl
         if (StageScale is not null) { StageScale.ScaleX = 1.0; StageScale.ScaleY = 1.0; }
         if (StagePan   is not null) { StagePan.X = 0.0; StagePan.Y = 0.0; }
         _isPanning = false;
+        UpdateZoomReadout();
+    }
+
+    // Fixed design-surface width — the WidgetSurface Canvas is a constant
+    // 1920×1080 in XAML; the Viewbox uniform-fits it into the stage, so the
+    // Viewbox's rendered width ÷ 1920 is the fit scale.
+    private const double StageDesignWidth = 1920.0;
+
+    /// <summary>Refresh the command-bar zoom readout. Shows "Fit" at the natural
+    /// uniform-fit (StageScale == 1) and the effective on-screen percentage
+    /// otherwise (StageScale × the Viewbox fit scale).</summary>
+    private void UpdateZoomReadout()
+    {
+        if (ZoomReadout is null || StageScale is null) return;
+        double s = StageScale.ScaleX;
+        if (Math.Abs(s - 1.0) < 0.001) { ZoomReadout.Text = Localizer.T("visualist.canvas.zoom.fit", "Fit"); return; }
+        double fit = StageViewbox is { ActualWidth: > 0 } ? StageViewbox.ActualWidth / StageDesignWidth : 1.0;
+        ZoomReadout.Text = $"{Math.Round(s * fit * 100)}%";
+    }
+
+    /// <summary>Set the stage zoom, anchored about the stage-host centre, and
+    /// refresh the readout. Clamped to [StageMinZoom, StageMaxZoom].</summary>
+    private void SetStageZoom(double newZoom)
+    {
+        if (StageScale is null || StagePan is null) return;
+        newZoom = Math.Clamp(newZoom, StageMinZoom, StageMaxZoom);
+        double oldZoom = StageScale.ScaleX;
+        if (Math.Abs(newZoom - oldZoom) < 0.0001) { UpdateZoomReadout(); return; }
+
+        Point center = new(StageHost.ActualWidth / 2.0, StageHost.ActualHeight / 2.0);
+        Point contentPt;
+        try { contentPt = StageHost.TransformToVisual(WidgetSurface).TransformPoint(center); }
+        catch
+        {
+            StageScale.ScaleX = StageScale.ScaleY = newZoom;
+            UpdateZoomReadout();
+            return;
+        }
+        StageScale.ScaleX = StageScale.ScaleY = newZoom;
+        try
+        {
+            Point afterPt = WidgetSurface.TransformToVisual(StageHost).TransformPoint(contentPt);
+            StagePan.X += center.X - afterPt.X;
+            StagePan.Y += center.Y - afterPt.Y;
+        }
+        catch { /* leave pan as-is on a transform failure */ }
+        UpdateZoomReadout();
+    }
+
+    private void OnZoomInCommand(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    { if (StageScale is not null) SetStageZoom(StageScale.ScaleX * StageZoomStep); }
+
+    private void OnZoomOutCommand(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    { if (StageScale is not null) SetStageZoom(StageScale.ScaleX / StageZoomStep); }
+
+    private void OnZoomFitCommand(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+        => ResetStageZoomPan();
+
+    private void OnZoom100Command(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        // Actual size = 1 device px per layer px = invert the Viewbox fit scale.
+        double fit = StageViewbox is { ActualWidth: > 0 } ? StageViewbox.ActualWidth / StageDesignWidth : 1.0;
+        if (fit > 0) SetStageZoom(1.0 / fit);
+    }
+
+    private void OnGuidesToggle(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+    {
+        if (GuideOverlay is null) return;
+        GuideOverlay.Visibility = GuidesToggle?.IsChecked == true
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ─── Empty-canvas authoring menu (Add Widget + presets) ──────────────
@@ -2543,7 +2746,10 @@ public sealed partial class LayerCanvasView : UserControl
         foreach (WidgetPreset preset in Enum.GetValues<WidgetPreset>())
         {
             WidgetPreset captured = preset;
-            var item = new MenuFlyoutItem { Text = PresetLabel(preset) };
+            // Labels come from the ONE shared helper (VisualistViewModel.cs's
+            // WidgetPresetLabels) — this menu, the Inspector picker and the preset gallery used
+            // to spell the same preset three different ways.
+            var item = new MenuFlyoutItem { Text = WidgetPresetLabels.For(preset) };
             item.Click += (_, _) => SpawnWidget(captured, worldPt);
             presets.Items.Add(item);
         }
@@ -2597,13 +2803,6 @@ public sealed partial class LayerCanvasView : UserControl
         }
         return false;
     }
-
-    private static string PresetLabel(WidgetPreset p) => p switch
-    {
-        WidgetPreset.WebSource => Localizer.T("visualist.preset.websource", "Web Source"),
-        WidgetPreset.CC        => Localizer.T("visualist.preset.captions",  "Captions"),
-        _                      => p.ToString(),
-    };
 
     // Instance (was static) so the "Edit Widget" item can reach the
     // enter-editor bubble (RequestEnter / WidgetEnterRequested). The pre-T15
@@ -2695,6 +2894,17 @@ public sealed partial class LayerCanvasView : UserControl
         WidgetPreset.Chat      => WidgetThumbKind.Text,
         WidgetPreset.CC        => WidgetThumbKind.Text,
         WidgetPreset.Audio     => WidgetThumbKind.Label,
+        // V8 — Gradient, not the default Label. An Alert Box is idle-blank by design
+        // (its onStartup is a bare Display sink), so on the layer canvas it would otherwise
+        // read as an empty box with a word in it; the gradient thumb is the convention for
+        // "this widget paints an image at runtime", which is what it does.
+        WidgetPreset.AlertBox  => WidgetThumbKind.Gradient,
+        // V15 — Gradient for the same reason AlertBox is. A Player widget's canvas
+        // content is permanently nothing: the iframe lives on the DOM-overlay track and
+        // is drawn by the browser in OBS, never on this design surface, so a Label thumb
+        // would read as a broken empty box. Gradient is the established "this paints at
+        // runtime" thumb.
+        WidgetPreset.Player    => WidgetThumbKind.Gradient,
         _                      => WidgetThumbKind.Label,
     };
 
@@ -2708,30 +2918,38 @@ public sealed partial class LayerCanvasView : UserControl
     {
         if (_vm is null) return;
 
+        // When an inline value-pill or rename TextBox owns focus, none of the
+        // canvas shortcuts may fire — the focused editor owns its keys (Ctrl+Z
+        // must undo the TEXT, Delete must not destroy the widget, arrows move the
+        // caret). Mirrors WidgetGraphCanvas.OnHostKeyDown's guard; without it a
+        // Ctrl+Z while renaming a widget hijacked the document undo stack.
+        if (IsTextInputFocused()) return;
+
         bool ctrl = (InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
                      & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
 
-        // Undo / Redo — scancode-anchored so the physical Z keytop drives Undo
-        // on QWERTZ (mirrors LogicCanvasView.Keyboard.cs). Detected BEFORE the
-        // VirtualKey switch; the VK.Y branch in the switch is a safety net for
-        // VMs / RDP where KeyStatus.ScanCode isn't populated.
+        // Undo / Redo — keyed on the layout-mapped VirtualKey (the LABEL on the
+        // keytop), NOT the physical scancode. The old scancode anchor (0x2C/0x15)
+        // tracked the PHYSICAL key position, which on a German QWERTZ keyboard has
+        // the Y/Z keytops INVERTED from QWERTY — so Strg+Z hit the redo scancode
+        // and undo never fired (Majo's "Ctrl+Z doesn't work"). VirtualKey.Z
+        // resolves to whatever key produces 'Z' on the active layout, so the
+        // visible Z keytop always undoes. Matches WidgetGraphCanvas.OnHostKeyDown
+        // so both canvases behave identically on every layout.
         if (ctrl)
         {
-            uint sc = e.KeyStatus.ScanCode;
-            if (sc == ScanCode_PhysicalZ)
+            if (e.Key == Windows.System.VirtualKey.Z)
             {
-                bool shift = (InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift)
-                              & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
                 var mv = FindPillarMainView();
                 if (mv is not null)
                 {
-                    try { if (shift) mv.Redo(); else mv.Undo(); }
+                    try { if (IsShiftDown()) mv.Redo(); else mv.Undo(); }
                     catch (Exception ex) { GlobalLogger.Error("LayerCanvasView", "Save/Undo chord", ex); }
                     e.Handled = true;
                 }
                 return;
             }
-            if (sc == ScanCode_PhysicalY)
+            if (e.Key == Windows.System.VirtualKey.Y)
             {
                 var mv = FindPillarMainView();
                 if (mv is not null)
@@ -2742,6 +2960,7 @@ public sealed partial class LayerCanvasView : UserControl
                 }
                 return;
             }
+            uint sc = e.KeyStatus.ScanCode;
             // Ctrl+] / Ctrl+[ step the selection's z-order; Shift makes it
             // To-Front / To-Back (group-aware when several widgets are selected).
             if (sc == ScanCode_BracketRight || sc == ScanCode_BracketLeft)
@@ -2832,21 +3051,26 @@ public sealed partial class LayerCanvasView : UserControl
                 }
                 break;
             }
-            case Windows.System.VirtualKey.Y when ctrl:
+        }
+    }
+
+    // True when a TextBox / NumberBox owns focus anywhere in the tree — the
+    // guard that lets a focused inline editor keep its own keys (text undo,
+    // caret arrows, Delete) instead of the canvas hijacking them. Mirrors
+    // WidgetGraphCanvas.IsTextInputFocused so both canvases behave the same.
+    private bool IsTextInputFocused()
+    {
+        try
+        {
+            DependencyObject? fe = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+            while (fe is not null)
             {
-                // Defence-in-depth — the scancode branch above already handles
-                // Y, but VirtualKey.Y falls through here on layouts where
-                // KeyStatus.ScanCode isn't populated (VMs / RDP).
-                var mv = FindPillarMainView();
-                if (mv is not null)
-                {
-                    try { mv.Redo(); }
-                    catch (Exception ex) { GlobalLogger.Error("LayerCanvasView", "Save/Undo chord", ex); }
-                    e.Handled = true;
-                }
-                break;
+                if (fe is TextBox || fe is NumberBox) return true;
+                fe = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(fe);
             }
         }
+        catch { /* XamlRoot not ready — treat as not-focused */ }
+        return false;
     }
 
     // Apply a z-order chord. <paramref name="dir"/> +1 = toward front,
@@ -2920,7 +3144,9 @@ public sealed partial class LayerCanvasView : UserControl
             // Keep the live WebView2 frame in step (no-op when the
             // previewer isn't running), matching the finished-drag path.
             _previewer?.PostWidgetUpdate(w);
+            PublishLiveWidgetEdit(w);
         }
+        _previewer?.CaptureAfterCommit();
         doc.MarkDirty();
         // Re-anchor the resize handle over the (possibly moved) primary without a
         // full rebuild — RaiseSelectedLayerChanged would re-render the whole
@@ -2972,6 +3198,7 @@ public sealed partial class LayerCanvasView : UserControl
             if (_viewByWidget.TryGetValue(w, out var view)) view.IsSelected = true;
         }
         _vm.SelectedWidget = layer.Widgets[^1]; // last as anchor (matches lasso convention)
+        PublishMultiSelection(_vm);
         RecomputeHotkeyContext();
     }
 
@@ -3061,6 +3288,7 @@ public sealed partial class LayerCanvasView : UserControl
                 if (_viewByWidget.TryGetValue(w, out var view)) view.IsSelected = true;
             }
             _vm.SelectedWidget = pasted[^1];
+            PublishMultiSelection(_vm);
             RecomputeHotkeyContext();
         }
         catch (Exception ex)
@@ -3153,6 +3381,7 @@ public sealed partial class LayerCanvasView : UserControl
                 if (_viewByWidget.TryGetValue(w, out var view)) view.IsSelected = true;
             }
             _vm.SelectedWidget = clones[^1];
+            PublishMultiSelection(_vm);
             RecomputeHotkeyContext();
             return true;
         }

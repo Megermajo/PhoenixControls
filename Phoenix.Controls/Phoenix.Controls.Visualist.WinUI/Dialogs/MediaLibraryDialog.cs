@@ -138,8 +138,8 @@ public sealed class MediaLibraryDialog : ContentDialog
     public MediaLibraryDialog()
     {
         // Root ContentDialog attributes from the old <ContentDialog …>.
-        Title           = "Media Library";
-        CloseButtonText = "Close";
+        Title           = Localizer.T("visualist.dialog.media_library.title", "Media Library");
+        CloseButtonText = Localizer.T("common.button.close", "Close");
         DefaultButton   = ContentDialogButton.Close;
 
         // ── Root grid (560×420, four rows). ──────────────────────────────
@@ -154,7 +154,8 @@ public sealed class MediaLibraryDialog : ContentDialog
         {
             Margin   = new Thickness(0, 0, 0, 6),
             FontSize = 11,
-            Text     = "data/media — files served at /media/<path>",
+            Text     = Localizer.T("visualist.dialog.media_library.header_default",
+                                   "data/media — files served at /media/<path>"),
         };
         Grid.SetRow(HeaderLine, 0);
         root.Children.Add(HeaderLine);
@@ -176,7 +177,8 @@ public sealed class MediaLibraryDialog : ContentDialog
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment   = VerticalAlignment.Center,
             FontSize            = 12,
-            Text                = "data/media is empty — drop image / video / audio files into the Hub media folder to populate this list.",
+            Text                = Localizer.T("visualist.dialog.media_library.empty_list",
+                                              "data/media is empty — drop image / video / audio files into the Hub media folder to populate this list."),
         };
         Grid.SetRow(EmptyHint, 1);
         root.Children.Add(EmptyHint);
@@ -187,7 +189,8 @@ public sealed class MediaLibraryDialog : ContentDialog
             Margin       = new Thickness(0, 8, 0, 0),
             FontSize     = 10,
             TextWrapping = TextWrapping.Wrap,
-            Text         = "Select a file to inspect or delete.",
+            Text         = Localizer.T("visualist.dialog.media_library.pick_hint",
+                                       "Select a file to inspect or delete."),
         };
         Grid.SetRow(StatusLine, 2);
         root.Children.Add(StatusLine);
@@ -201,12 +204,15 @@ public sealed class MediaLibraryDialog : ContentDialog
             Spacing             = 6,
         };
 
-        RefreshButton = new Button { Content = "Refresh" };
+        RefreshButton = new Button
+        {
+            Content = Localizer.T("visualist.dialog.media_library.refresh", "Refresh"),
+        };
         RefreshButton.Click += OnRefreshClick;
 
         DeleteButton = new Button
         {
-            Content         = "Delete",
+            Content         = Localizer.T("common.button.delete", "Delete"),
             Background       = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             BorderThickness  = new Thickness(1),
             IsEnabled        = false,

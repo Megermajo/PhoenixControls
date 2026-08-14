@@ -44,9 +44,10 @@ namespace Phoenix.Controls.Shared.Services
         /// audit which pillar's config was canonicalised.
         /// </para>
         /// <para>
-        /// After deserialization, if any of the seven DPAPI-protected
-        /// secret fields landed as legacy plaintext (no <c>dpapi:v1:</c> prefix
-        /// in the JSON), the next Save will re-wrap them automatically because
+        /// After deserialization, if any of the eight DPAPI-protected
+        /// secret fields landed as legacy plaintext (neither the <c>dpapi:v1:</c>
+        /// nor the current <c>dpapi:v2:</c> prefix in the JSON), the next Save
+        /// will re-wrap them automatically because
         /// the serializer always Protects on write. A System-tier log entry
         /// notes how many secrets crossed the boundary.
         /// </para>
@@ -274,26 +275,51 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// Async wrapper around <see cref="Save"/> so UI callers
-        /// (WelcomeDialog.OnDialogClosing, SettingsDialog.OnPrimaryClick) can
-        /// await the disk write without pegging the UI thread for the round
-        /// trip — important when AppData is OneDrive-backed and a write can
-        /// stall on cloud sync. The underlying Save uses
-        /// File.Replace which is synchronous at the OS level, so this
-        /// thread-pools the call rather than re-implementing the write loop;
-        /// the temp-then-replace atomicity contract and the
-        /// tmp-cleanup posture are preserved verbatim.
+        /// Async save for UI callers (the Settings window, the Viewer panel,
+        /// WelcomeDialog) that await the disk write without pegging the UI thread
+        /// — important when AppData is OneDrive-backed and a write can stall on
+        /// cloud sync. Serializes through the SAME <see cref="_deferredWriteGate"/>
+        /// as <see cref="SaveDeferred"/> (serialize + write both inside the gate)
+        /// so two concurrent awaited saves — e.g. the now-non-modal Settings
+        /// window and the Viewer panel both calling SaveAsync — can't race the
+        /// shared "&lt;path&gt;.tmp" file (a stale earlier snapshot overwriting a
+        /// newer one, or one caller's File.Replace hitting a tmp the other already
+        /// consumed). The temp-then-replace atomicity + tmp-cleanup contract is
+        /// preserved via <see cref="WriteJsonAtomic"/>.
         /// </summary>
-        public static Task SaveAsync(string path) => Task.Run(() => Save(path));
+        public static async Task SaveAsync(string path)
+        {
+            await _deferredWriteGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                string json;
+                try { json = JsonSerializer.Serialize(Current, _writeOpts); }
+                catch (Exception ex)
+                {
+                    GlobalLogger.Log($"ConfigManager: Failed to serialize config for '{path}': {ex.Message}", "ConfigManager", LogLevel.CriticalError);
+                    return;
+                }
+                await Task.Run(() => WriteJsonAtomic(path, json)).ConfigureAwait(false);
+            }
+            finally { _deferredWriteGate.Release(); }
+        }
 
         // ────────────────────────────────────────────────────────────────────
         // migration helpers
         // ────────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// The seven secret fields whose JSON value is DPAPI-wrapped on disk.
-        /// Used by <see cref="CountPlaintextSecrets"/> to detect legacy-format
-        /// configs landing on first DPAPI-aware load.
+        /// The eight secret fields <see cref="CountPlaintextSecrets"/> scans for, to detect
+        /// legacy-format configs landing on first DPAPI-aware load.
+        ///
+        /// ★ This is NOT the complete set of DPAPI-wrapped properties, and saying so is the
+        /// point: <c>AppConfig.ObsWebSocketPassword</c> and <c>AppConfig.YouTubeDataApiKey</c>
+        /// both carry <c>[JsonConverter(typeof(DpapiProtectedStringConverter))]</c> and are
+        /// absent from this array. The converter is the authority on what gets wrapped, so
+        /// those two are still written protected; what they miss is only the eager re-save
+        /// this count triggers, so a legacy config whose ONLY plaintext secret is one of them
+        /// stays plaintext on disk until the next Save rather than being rewritten on load.
+        /// Reconciling the two lists changes migration behaviour and belongs in its own change.
         /// </summary>
         private static readonly string[] s_protectedSecretFields = {
             "OpenAIApiKey",
@@ -445,11 +471,17 @@ namespace Phoenix.Controls.Shared.Services
         }
 
         /// <summary>
-        /// Counts how many of the seven DPAPI-protected secret
-        /// fields are present in the raw JSON with a non-empty value that does
-        /// NOT carry the <see cref="DpapiSecretStore.Prefix"/>. Run before
-        /// deserialization because the converter normalises everything to
-        /// plaintext in-memory.
+        /// Counts how many of the eight DPAPI-protected secret
+        /// fields are present in the raw JSON with a non-empty value that is
+        /// NOT in a DPAPI-wrapped on-disk form. The test goes through
+        /// <see cref="DpapiSecretStore.IsProtected"/>, which recognises BOTH
+        /// the legacy <see cref="DpapiSecretStore.Prefix"/> (v1) and the
+        /// current <see cref="DpapiSecretStore.PrefixV2"/> that
+        /// <see cref="DpapiSecretStore.Protect"/> actually emits — testing only
+        /// the v1 prefix counted every correctly-protected value as plaintext,
+        /// which made <see cref="Load"/> log a bogus migration line and re-Save
+        /// config.json on every single boot. Run before deserialization
+        /// because the converter normalises everything to plaintext in-memory.
         /// </summary>
         private static int CountPlaintextSecrets(string json)
         {
@@ -465,7 +497,7 @@ namespace Phoenix.Controls.Shared.Services
                     if (el.ValueKind != JsonValueKind.String) continue;
                     string? value = el.GetString();
                     if (string.IsNullOrEmpty(value)) continue;
-                    if (!value.StartsWith(DpapiSecretStore.Prefix, StringComparison.Ordinal))
+                    if (!DpapiSecretStore.IsProtected(value))
                         count++;
                 }
                 return count;

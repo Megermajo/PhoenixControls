@@ -1,0 +1,748 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.PollsPanel.PollsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.PollsPanel"
+    xmlns:common="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Polls page"
+    AutomationProperties.HelpText="A chat poll with an optional points side-bet: start, close, and set the commands, roles, limits and overlay."
+    loc:Localize.AutomationKey="panel.polls.page.a11y"
+    loc:Localize.HelpTextKey="panel.polls.page.help">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- ToolControlStyles is still merged because this page keeps stock TextBoxes
+                     (the start form, every command word, every numeric limit). It no longer
+                     needs the ToggleSwitch or CheckBox overrides — both stock types are gone
+                     from this file, converted to TogglePill — but the shared RoleCheckRow
+                     hosted below still renders CheckBoxes and merges the dictionary itself.
+                     There is no ComboBox and no Pivot on this page. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell recipes (strip buttons, section cards, band borders,
+                     the text tiers). Contains no implicit style. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- ── Page-local literals only ─────────────────────────────────── -->
+
+            <!-- Nested strip inside a section card. Same tokens as ToolSectionCardStyle,
+                 kept separate because every use site sets its own padding. -->
+            <Style x:Key="PlRecessed" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource CoalShellBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CoalCardBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource Radius1Corner}" />
+            </Style>
+
+            <!-- The four text tiers this page used to declare locally are now the
+                 canonical ToolSubLabelTextStyle, ToolMonoHintTextStyle,
+                 ToolHintTextStyle and ToolWarnTextStyle from ToolShellStyles.xaml —
+                 the same setters under one name. The trailing row hints carry
+                 VerticalAlignment="Center" inline: that was the local copy's only
+                 setter beyond the canonical signature, and it is not dropped. -->
+
+            <!-- Borderless host for a converted CheckBox (GiveawayView's set-default
+                 toggle recipe). The Button owns the Click, the accessible name and any
+                 IsEnabled gate; the TogglePill inside is display-only. IsEnabled must never
+                 move onto the pill's parent Grid — IsEnabled is declared on Control. -->
+            <Style x:Key="PlCheckButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="0,5,10,5" />
+                <Setter Property="CornerRadius" Value="{StaticResource Radius1Corner}" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+            </Style>
+
+            <!-- One poll option: number, label, the result rail, and the vote / stake
+                 figures. Read-only — the options are fixed once a poll opens.
+
+                 The rail replaces the page's former ProgressBar. It is the house meter: a
+                 two-star-GridLength underlay Grid painted with an ember fade, sitting BEHIND
+                 the row content (GiveawayView's per-entrant weight bar). The percentage is
+                 still printed as text, so the rail carries no information the row does not
+                 also say in words. -->
+            <DataTemplate x:Key="PollOptionTemplate" x:DataType="local:PollOptionRowVm">
+                <Grid BorderBrush="{StaticResource CoalRaisedBrush}"
+                      BorderThickness="0,0,0,1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{x:Bind BarColumnLength}" />
+                            <ColumnDefinition Width="{x:Bind RestColumnLength}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="{x:Bind BarBrush}" />
+                    </Grid>
+
+                    <Grid Padding="14,7" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Option number (what a viewer types) -->
+                        <TextBlock Grid.Column="0" Text="{x:Bind NumberText}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{StaticResource EmberPrimaryBrush}"
+                                   VerticalAlignment="Center" />
+
+                        <TextBlock Grid.Column="1" Text="{x:Bind Label}"
+                                   FontFamily="{StaticResource SansFont}"
+                                   FontSize="12"
+                                   Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center" />
+
+                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="1">
+                            <TextBlock Text="{x:Bind VotesText}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                       HorizontalAlignment="Right" />
+                            <TextBlock Text="{x:Bind PercentText}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="10"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       HorizontalAlignment="Right" />
+                        </StackPanel>
+
+                        <!-- Staked (blank on a poll that takes no bets) -->
+                        <TextBlock Grid.Column="3" Text="{x:Bind StakeText}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   VerticalAlignment="Center"
+                                   MinWidth="40"
+                                   TextAlignment="Right" />
+                    </Grid>
+                </Grid>
+            </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+
+             One 48 px row where THREE used to stack: the action strip, the
+             pinned state-sentence band that opened the left column, and the
+             status pill between them. All three rendered the same boolean in a
+             different vocabulary (OFF / DISABLED / dormant), and together with
+             the four hero stat tiles below they put ~274 px above the first
+             editable field on a config page.
+
+             ★ The pill CONTROL is not deleted and neither is the predicate
+             behind it. PollsService.PillState — including its deliberate
+             REFUSAL to model "open · Twitch mirror refused", which the service
+             cannot honestly know — still decides what is shown here.
+             HeaderStateText / HeaderStateKind switch on that same private
+             _pillState the pill's three properties read; only the register
+             changed, and only the render site moved.
+
+             ★ START / CLOSE / CANCEL did NOT come up here. The band carries at
+             most one CTA, and START POLL's IsEnabled is bound to CanStart so
+             the two-option rule stays visible BEFORE the click rather than
+             becoming a refusal after it. The three verbs now sit at the foot of
+             the START A POLL form they act on. -->
+        <common:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <!-- FIXED, not proportional. The live column holds a handful of
+                     option rows whose content does not grow with the window; a
+                     0.9* share turned it into a widening void on a large monitor
+                     while squeezing the settings forms that DO want the room. -->
+                <ColumnDefinition Width="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ───────── LEFT: the start form and the settings ─────────
+
+                 The wrapper Grid is gone with the band it pinned: the state
+                 sentence it carried is the header's job now, and the two verbs
+                 it interpolated are still spelled out in full by the CHAT
+                 COMMANDS block at the foot of this scroller. What is left is
+                 one scroller, so it is the column.
+
+                 No IsEnabled gate here, deliberately: this page has never
+                 greyed its settings while the tool is off, and adding a gate
+                 would be a behaviour change, not a layout one. -->
+            <ScrollViewer Grid.Column="0"
+                          x:Name="DetailScroll"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Disabled">
+                <StackPanel Spacing="12" Padding="14">
+
+                    <TextBlock Style="{StaticResource ToolHintTextStyle}"
+                               Text="One poll at a time; it closes itself when the time is up. Viewers answer with the vote command below and can stake with the bet command."
+                               loc:Localize.Key="panel.polls.intro.hint" />
+
+                    <!-- The four hero stat tiles (STATE / VOTES / POT / TIME LEFT) that
+                         used to sit here are gone, with NO replacement on this page. On a
+                         fresh install they read IDLE 0 — —, which is 76 px of nothing
+                         above the first field; and three of the four are already said
+                         better elsewhere — STATE and TIME LEFT are the header's one
+                         phrase ("open · 45s left"), and the per-option stake column
+                         carries the pot's composition. The one count worth a glance,
+                         total votes, moved into the live column's own header where the
+                         thing it counts actually is. -->
+
+                    <!-- ── Start a poll ── -->
+                    <Border Style="{StaticResource ToolSectionCardStyle}">
+                        <StackPanel Spacing="10">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="START A POLL" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           loc:Localize.Key="panel.polls.start.eyebrow" />
+                                <Border Height="1" Background="{StaticResource CoalDividerBrush}" />
+                            </StackPanel>
+
+                            <!-- The outcome line. TEN sentences land here — the five
+                                 mirror verdicts, the short-payout count, the
+                                 already-open / too-few / too-many / economy-off
+                                 refusals and the settlement totals. It stays at the top
+                                 of this card, one card-height from the START / CLOSE /
+                                 CANCEL row at its foot, and it is never a modal: a
+                                 repeatable refusal belongs on the page. Empty until a
+                                 verb is pressed, so it costs nothing on a fresh open. -->
+                            <TextBlock Text="{x:Bind ViewModel.StartFeedback, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource Ember200Brush}"
+                                       TextWrapping="Wrap"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       AutomationProperties.Name="Last poll action"
+                                       loc:Localize.AutomationKey="panel.polls.start.feedback.a11y" />
+
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0"
+                                         Text="{x:Bind ViewModel.StartTitle, Mode=TwoWay}"
+                                         PlaceholderText="the question"
+                                         HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Poll question"
+                                         loc:Localize.PlaceholderKey="panel.polls.start.question.placeholder"
+                                         loc:Localize.AutomationKey="panel.polls.start.question.a11y" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBox Text="{x:Bind ViewModel.StartDuration, Mode=TwoWay}"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             Width="70" PlaceholderText="secs"
+                                             AutomationProperties.Name="Poll length in seconds"
+                                             loc:Localize.PlaceholderKey="panel.polls.start.duration.placeholder"
+                                             loc:Localize.AutomationKey="panel.polls.start.duration.a11y" />
+                                    <TextBlock Text="s" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.polls.start.duration.unit" />
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBox Text="{x:Bind ViewModel.StartOptions, Mode=TwoWay}"
+                                     PlaceholderText="Yes, No, Maybe"
+                                     HorizontalAlignment="Stretch"
+                                     AutomationProperties.Name="Poll options"
+                                     loc:Localize.PlaceholderKey="panel.polls.start.options.placeholder"
+                                     loc:Localize.AutomationKey="panel.polls.start.options.a11y" />
+
+                            <!-- Converted CheckBox. Still gated on BettingEnabled, and
+                                 the VM still un-ticks it when betting is switched off. -->
+                            <Button Style="{StaticResource PlCheckButton}"
+                                    IsEnabled="{x:Bind ViewModel.BettingEnabled, Mode=OneWay}"
+                                    Click="OnToggleStartBettingClick"
+                                    ToolTipService.ToolTip="Only selectable while betting is switched on below."
+                                    AutomationProperties.Name="Take points bets on this poll"
+                                    loc:Localize.TooltipKey="panel.polls.start.take_bets.tip"
+                                    loc:Localize.AutomationKey="panel.polls.start.take_bets.a11y">
+                                <common:TogglePill IsOn="{x:Bind ViewModel.StartBetting, Mode=OneWay}"
+                                                   Label="Take bets"
+                                                   loc:Localize.Key="panel.polls.start.take_bets.label" />
+                            </Button>
+
+                            <!-- The three poll verbs, moved down out of the deleted action
+                                 strip. They belong to this form, not to the page chrome:
+                                 START reads the three boxes directly above it, and CLOSE /
+                                 CANCEL act on whatever START opened.
+
+                                 Every binding and handler is the strip's, unchanged —
+                                 START keeps IsEnabled="{CanStart}" so the two-option floor
+                                 is visible before the click, CLOSE and CANCEL keep
+                                 IsEnabled="{IsPollOpen}", and the danger slot keeps the
+                                 house grammar where only the GLYPH turns red. This is also
+                                 why the header's PrimaryCta is NOT enabled on this page:
+                                 one brass CTA per visible surface, and it is this one. -->
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,2,0,0">
+                                <Button Style="{StaticResource ToolBrassCtaStyle}"
+                                        IsEnabled="{x:Bind ViewModel.CanStart, Mode=OneWay}"
+                                        Click="OnStartPollClick"
+                                        ToolTipService.ToolTip="Opens the poll typed above — at least two options."
+                                        AutomationProperties.Name="Start the poll"
+                                        loc:Localize.TooltipKey="panel.polls.start.cta.tip"
+                                        loc:Localize.AutomationKey="panel.polls.start.cta.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE768;" FontSize="11"
+                                                  Foreground="{StaticResource CoalShellBrush}" />
+                                        <TextBlock Text="START POLL" Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                                   loc:Localize.Key="panel.polls.start.cta.label" />
+                                    </StackPanel>
+                                </Button>
+
+                                <!-- settle. Not destructive: the pot pays out. -->
+                                <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                        IsEnabled="{x:Bind ViewModel.IsPollOpen, Mode=OneWay}"
+                                        Click="OnClosePollClick"
+                                        ToolTipService.ToolTip="Stops the voting now and settles the pot."
+                                        AutomationProperties.Name="Close the poll and settle it"
+                                        loc:Localize.TooltipKey="panel.polls.close.tip"
+                                        loc:Localize.AutomationKey="panel.polls.close.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE73E;" FontSize="11"
+                                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                                        <TextBlock Text="CLOSE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.polls.close.label" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button Style="{StaticResource ToolDangerButtonStyle}"
+                                        IsEnabled="{x:Bind ViewModel.IsPollOpen, Mode=OneWay}"
+                                        Click="OnCancelPollClick"
+                                        ToolTipService.ToolTip="Ends the poll with no winner and returns every stake."
+                                        AutomationProperties.Name="Cancel the poll and refund every stake"
+                                        loc:Localize.TooltipKey="panel.polls.cancel.tip"
+                                        loc:Localize.AutomationKey="panel.polls.cancel.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="11"
+                                                  Foreground="{StaticResource ErrBrush}" />
+                                        <TextBlock Text="CANCEL" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.polls.cancel.label" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ── Settings ── -->
+                    <Border Style="{StaticResource ToolSectionCardStyle}">
+                        <StackPanel Spacing="10">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="SETTINGS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           loc:Localize.Key="panel.polls.settings.eyebrow" />
+                                <Border Height="1" Background="{StaticResource CoalDividerBrush}" />
+                            </StackPanel>
+
+                            <!-- Command words -->
+                            <Border Style="{StaticResource PlRecessed}" Padding="12,8">
+                                <StackPanel Spacing="0">
+                                    <TextBlock Text="COMMAND WORDS" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,4"
+                                               loc:Localize.Key="panel.polls.commands.eyebrow" />
+
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <StackPanel Spacing="4">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="150" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Vote command" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                           loc:Localize.Key="panel.polls.commands.vote.label" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                                    <TextBox Text="{x:Bind ViewModel.VoteCommand, Mode=TwoWay}"
+                                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                             Width="150" PlaceholderText="vote"
+                                                             AutomationProperties.Name="Vote command word"
+                                                             loc:Localize.AutomationKey="panel.polls.commands.vote.a11y" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                           VerticalAlignment="Center"
+                                                           Text="chat: !&lt;word&gt; &lt;number&gt;"
+                                                           loc:Localize.Key="panel.polls.commands.vote.hint" />
+                                            </Grid>
+                                            <!-- An earlier built-in already answers this word: the chat dispatch is
+                                                 first-handled-wins and logs nothing, so this notice is the only
+                                                 place a shadowed verb is visible. -->
+                                            <TextBlock Style="{StaticResource ToolWarnTextStyle}"
+                                                       Visibility="{x:Bind ViewModel.VoteCommandWarningVisibility, Mode=OneWay}"
+                                                       Text="{x:Bind ViewModel.VoteCommandWarning, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border BorderThickness="0" Padding="0,5">
+                                        <StackPanel Spacing="4">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="150" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Bet command" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                           loc:Localize.Key="panel.polls.commands.bet.label" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                                    <TextBox Text="{x:Bind ViewModel.BetCommand, Mode=TwoWay}"
+                                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                             Width="150" PlaceholderText="bet"
+                                                             AutomationProperties.Name="Bet command word"
+                                                             loc:Localize.AutomationKey="panel.polls.commands.bet.a11y" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                           VerticalAlignment="Center"
+                                                           Text="chat: !&lt;word&gt; &lt;number&gt; &lt;amount&gt;"
+                                                           loc:Localize.Key="panel.polls.commands.bet.hint" />
+                                            </Grid>
+                                            <TextBlock Style="{StaticResource ToolWarnTextStyle}"
+                                                       Visibility="{x:Bind ViewModel.BetCommandWarningVisibility, Mode=OneWay}"
+                                                       Text="{x:Bind ViewModel.BetCommandWarning, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Poll shape -->
+                            <Border Style="{StaticResource PlRecessed}" Padding="12,8">
+                                <StackPanel Spacing="0">
+                                    <TextBlock Text="POLL" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,4"
+                                               loc:Localize.Key="panel.polls.poll.eyebrow" />
+
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Default length" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.polls.poll.default_length.label" />
+                                            <TextBox Grid.Column="1" Text="{x:Bind ViewModel.DefaultDurationSeconds, Mode=TwoWay}"
+                                                     FontFamily="{StaticResource MonoFont}" FontSize="11" Width="90"
+                                                     AutomationProperties.Name="Default poll length in seconds"
+                                                     loc:Localize.AutomationKey="panel.polls.poll.default_length.a11y" />
+                                            <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       VerticalAlignment="Center"
+                                                       Text="seconds, when a poll is started without one (5-3600)"
+                                                       loc:Localize.Key="panel.polls.poll.default_length.hint" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Max options" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.polls.poll.max_options.label" />
+                                            <TextBox Grid.Column="1" Text="{x:Bind ViewModel.MaxOptions, Mode=TwoWay}"
+                                                     FontFamily="{StaticResource MonoFont}" FontSize="11" Width="90"
+                                                     AutomationProperties.Name="Maximum number of options"
+                                                     loc:Localize.AutomationKey="panel.polls.poll.max_options.a11y" />
+                                            <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       VerticalAlignment="Center"
+                                                       Text="2-20. Twitch takes at most 5, so a wider poll stays chat-only."
+                                                       loc:Localize.Key="panel.polls.poll.max_options.hint" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Button Style="{StaticResource PlCheckButton}"
+                                                Click="OnToggleAllowVoteChangeClick"
+                                                ToolTipService.ToolTip="Off means the first vote stands and a second one is refused."
+                                                AutomationProperties.Name="Let a viewer change their vote"
+                                                loc:Localize.TooltipKey="panel.polls.poll.vote_change.tip"
+                                                loc:Localize.AutomationKey="panel.polls.poll.vote_change.label">
+                                            <common:TogglePill IsOn="{x:Bind ViewModel.AllowVoteChange, Mode=OneWay}"
+                                                               Label="Let a viewer change their vote"
+                                                               loc:Localize.Key="panel.polls.poll.vote_change.label" />
+                                        </Button>
+                                    </Border>
+
+                                    <Border BorderThickness="0" Padding="0,5">
+                                        <Button Style="{StaticResource PlCheckButton}"
+                                                Click="OnToggleAnnounceInChatClick"
+                                                ToolTipService.ToolTip="Off runs the poll silently — overlay only."
+                                                AutomationProperties.Name="Announce the poll and its result in chat"
+                                                loc:Localize.TooltipKey="panel.polls.poll.announce.tip"
+                                                loc:Localize.AutomationKey="panel.polls.poll.announce.label">
+                                            <common:TogglePill IsOn="{x:Bind ViewModel.AnnounceInChat, Mode=OneWay}"
+                                                               Label="Announce the poll and its result in chat"
+                                                               loc:Localize.Key="panel.polls.poll.announce.label" />
+                                        </Button>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Betting -->
+                            <Border Style="{StaticResource PlRecessed}" Padding="12,8">
+                                <StackPanel Spacing="0">
+                                    <TextBlock Text="BETTING" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,4"
+                                               loc:Localize.Key="panel.polls.betting.eyebrow" />
+
+                                    <!-- The pill label carries the SEMANTIC on/off content the
+                                         ToggleSwitch used to (a poll takes stakes, or it does
+                                         not) rather than a bare "On" / "Off". -->
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Button Style="{StaticResource PlCheckButton}"
+                                                Click="OnToggleBettingEnabledClick"
+                                                AutomationProperties.Name="Allow points betting on polls"
+                                                loc:Localize.AutomationKey="panel.polls.betting.enabled.a11y">
+                                            <common:TogglePill IsOn="{x:Bind ViewModel.BettingEnabled, Mode=OneWay}"
+                                                               Label="{x:Bind ViewModel.BettingToggleLabel, Mode=OneWay}" />
+                                        </Button>
+                                    </Border>
+
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Smallest stake" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.polls.betting.min.label" />
+                                            <TextBox Grid.Column="1" Text="{x:Bind ViewModel.MinBet, Mode=TwoWay}"
+                                                     FontFamily="{StaticResource MonoFont}" FontSize="11" Width="90"
+                                                     AutomationProperties.Name="Smallest stake"
+                                                     loc:Localize.AutomationKey="panel.polls.betting.min.label" />
+                                            <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       VerticalAlignment="Center" Text="points"
+                                                       loc:Localize.Key="panel.polls.betting.min.unit" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Largest stake" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.polls.betting.max.label" />
+                                            <TextBox Grid.Column="1" Text="{x:Bind ViewModel.MaxBet, Mode=TwoWay}"
+                                                     FontFamily="{StaticResource MonoFont}" FontSize="11" Width="90"
+                                                     AutomationProperties.Name="Largest stake"
+                                                     loc:Localize.AutomationKey="panel.polls.betting.max.label" />
+                                            <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       VerticalAlignment="Center" Text="points · 0 = no cap"
+                                                       loc:Localize.Key="panel.polls.betting.max.hint" />
+                                        </Grid>
+                                    </Border>
+
+                                    <Border BorderThickness="0" Padding="0,5">
+                                        <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   Text="{x:Bind ViewModel.BettingHint, Mode=OneWay}" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Twitch mirror -->
+                            <Border Style="{StaticResource PlRecessed}" Padding="12,8">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="TWITCH MIRROR" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,2"
+                                               loc:Localize.Key="panel.polls.mirror.eyebrow" />
+                                    <Button Style="{StaticResource PlCheckButton}"
+                                            Click="OnToggleMirrorToNativeClick"
+                                            AutomationProperties.Name="Also run polls started here on Twitch"
+                                            loc:Localize.AutomationKey="panel.polls.mirror.toggle.label">
+                                        <common:TogglePill IsOn="{x:Bind ViewModel.MirrorToNative, Mode=OneWay}"
+                                                           Label="Also run polls started here on Twitch"
+                                                           loc:Localize.Key="panel.polls.mirror.toggle.label" />
+                                    </Button>
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                               VerticalAlignment="Center"
+                                               Text="{x:Bind ViewModel.MirrorHint, Mode=OneWay}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Overlay -->
+                            <Border Style="{StaticResource PlRecessed}" Padding="12,8">
+                                <StackPanel Spacing="0">
+                                    <TextBlock Text="OVERLAY" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,4"
+                                               loc:Localize.Key="panel.polls.overlay.eyebrow" />
+
+                                    <!-- The tooltip is the only enumeration of the seven overlay
+                                         keys anywhere in the app. -->
+                                    <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                        <Button Style="{StaticResource PlCheckButton}"
+                                                Click="OnTogglePublishOverlayClick"
+                                                ToolTipService.ToolTip="Publishes poll.state / poll.title / poll.options / poll.total_votes / poll.leader / poll.seconds_left / poll.pot, which a Var.Live or List.Live widget reads."
+                                                AutomationProperties.Name="Publish the poll to the overlay live channel"
+                                                loc:Localize.TooltipKey="panel.polls.overlay.publish.tip"
+                                                loc:Localize.AutomationKey="panel.polls.overlay.publish.label">
+                                            <common:TogglePill IsOn="{x:Bind ViewModel.PublishOverlay, Mode=OneWay}"
+                                                               Label="Publish the poll to the overlay live channel"
+                                                               loc:Localize.Key="panel.polls.overlay.publish.label" />
+                                        </Button>
+                                    </Border>
+
+                                    <Border BorderThickness="0" Padding="0,5">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="150" />
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Show result for" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.polls.overlay.linger.label" />
+                                            <TextBox Grid.Column="1" Text="{x:Bind ViewModel.ResultLingerSeconds, Mode=TwoWay}"
+                                                     FontFamily="{StaticResource MonoFont}" FontSize="11" Width="90"
+                                                     AutomationProperties.Name="Seconds the result stays on the overlay"
+                                                     loc:Localize.AutomationKey="panel.polls.overlay.linger.a11y" />
+                                            <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                       VerticalAlignment="Center"
+                                                       Text="seconds after close, then the overlay keys are cleared"
+                                                       loc:Localize.Key="panel.polls.overlay.linger.hint" />
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Roles. Stacked rather than side by side: WrapRowPanel needs a
+                                 finite-width measure host in a star column, and two half-width
+                                 columns at this pane width fold every gate onto three rows. -->
+                            <Border Style="{StaticResource PlRecessed}" Padding="12,10">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="PERMISSIONS" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,0"
+                                               loc:Localize.Key="panel.polls.permissions.eyebrow" />
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="WHO CAN VOTE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                   loc:Localize.Key="panel.polls.permissions.vote.label" />
+                                        <common:RoleCheckRow Roles="{x:Bind ViewModel.VoteRoles, Mode=OneWay}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="WHO CAN BET" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                   loc:Localize.Key="panel.polls.permissions.bet.label" />
+                                        <common:RoleCheckRow Roles="{x:Bind ViewModel.BetRoles, Mode=OneWay}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </Border>
+
+                    <!-- What this tool answers to in chat. Last in the scroller, right
+                         under the boxes that name the two words, so the answer to "what
+                         did I just change" is the next thing on screen. It renders the
+                         WORKING config, so it moves with the keystroke rather than with
+                         the debounced save. -->
+                    <common:ToolCommandList Commands="{x:Bind ViewModel.ChatCommands, Mode=OneWay}"
+                                            AutomationProperties.Name="Poll chat commands"
+                                            loc:Localize.AutomationKey="panel.polls.chat_commands.a11y" />
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ───────── RIGHT: the live poll ───────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- The ONE count kept from the deleted tile strip rides here, in the
+                         header of the column that shows the thing it counts, beside the
+                         leader line it qualifies. A tile strip on the config side told the
+                         streamer "0 votes" while the rows that would show them were two
+                         panes away. MaxWidth drops to 150 because the column is 300 wide
+                         now and the leader has to share the row. -->
+                    <common:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="The poll"
+                                        EyebrowKey="panel.common.eyebrow.live"
+                                        TitleKey="panel.polls.live.title">
+                        <common:PanelHeader.RightContent>
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="{x:Bind ViewModel.LeaderText, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxWidth="150"
+                                           ToolTipService.ToolTip="{x:Bind ViewModel.LeaderText, Mode=OneWay}"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="{x:Bind ViewModel.TotalVotesValue, Mode=OneWay}"
+                                           FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource EmberPrimaryBrush}"
+                                           Visibility="{x:Bind ViewModel.PollVisibility, Mode=OneWay}"
+                                           ToolTipService.ToolTip="Votes cast"
+                                           AutomationProperties.Name="Total votes cast"
+                                           loc:Localize.TooltipKey="panel.polls.live.total_votes.tip"
+                                           loc:Localize.AutomationKey="panel.polls.live.total_votes.a11y"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </common:PanelHeader.RightContent>
+                    </common:PanelHeader>
+
+                    <!-- Question + the mirror verdict. MirrorStatusText names the mirror only
+                         when it actually engaged — a requested-but-refused mirror must never
+                         read as a running Twitch poll. -->
+                    <Border Grid.Row="1"
+                            Style="{StaticResource ToolBandBorderStyle}"
+                            Visibility="{x:Bind ViewModel.PollVisibility, Mode=OneWay}">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{x:Bind ViewModel.PollTitleText, Mode=OneWay}"
+                                       FontFamily="{StaticResource DisplayFont}"
+                                       FontSize="16"
+                                       Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                            <TextBlock Text="{x:Bind ViewModel.MirrorStatusText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="10"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="2"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled"
+                                  Visibility="{x:Bind ViewModel.PollVisibility, Mode=OneWay}">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Options, Mode=OneWay}"
+                                       common:RowDataContext.Supply="True"
+                                       ItemTemplate="{StaticResource PollOptionTemplate}"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       AutomationProperties.Name="Poll options and their share of the vote"
+                                       loc:Localize.AutomationKey="panel.polls.live.options.a11y" />
+                    </ScrollViewer>
+
+                    <!-- Empty state — a SIBLING in the same cell, never inside the scroller.
+                         ONE mono hint line, pinned to the top. It was a DisplayFont 20
+                         headline plus an explanatory sentence, centred in a full-height
+                         column: an absence rendered louder than any live poll would be, and
+                         it moved every time the window resized. An empty column says so
+                         once, quietly, where the first row will appear. -->
+                    <TextBlock Grid.Row="2"
+                               Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}"
+                               Style="{StaticResource ToolMonoHintTextStyle}"
+                               VerticalAlignment="Top"
+                               Margin="14,12,14,0"
+                               Text="No poll running."
+                               loc:Localize.Key="panel.polls.live.empty.body" />
+
+                    <!-- The activity feed that ended this column is gone. It is a watch
+                         surface — what happened forty seconds ago does not help anyone
+                         setting a stake ceiling — and it was session-scoped in-memory, so
+                         it had nothing to show on the open that matters. The ring itself
+                         (ToolActivityRing, keyed PollsService.ActivityTool) still records
+                         every open / close / settlement. -->
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

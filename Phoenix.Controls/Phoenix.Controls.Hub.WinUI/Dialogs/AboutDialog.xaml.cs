@@ -144,8 +144,11 @@ public sealed partial class AboutDialog : ContentDialog
         // BUILD — AssemblyConfigurationAttribute carries "Debug" / "Release"
         // (MSBuild populates it from $(Configuration) by default). The DEV /
         // RELEASE labelling matches the HubChrome's VersionStamp formatting.
+        // "Debug" / "Release" are MSBuild configuration identifiers and stay
+        // English; only the "we couldn't read one" placeholder is prose, so
+        // only that half is localized — matching the SHA / BRANCH rows above.
         string configuration = asm.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration
-                               ?? "Unknown";
+                               ?? Localizer.T("dialog.about.build_unavailable", "Unknown");
         BuildConfigValue.Text = string.Equals(configuration, "Release", StringComparison.OrdinalIgnoreCase)
             ? "Release"
             : configuration;

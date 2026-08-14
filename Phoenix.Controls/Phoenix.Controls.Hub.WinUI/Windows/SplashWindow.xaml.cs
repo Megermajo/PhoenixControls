@@ -167,6 +167,11 @@ public sealed partial class SplashWindow : Window
     /// so the eyebrow is seeded from the XAML literal and re-set here
     /// once a real localized lookup is possible. Safe to call multiple
     /// times; cheap when the bundle hasn't changed.
+    ///
+    /// <para>The footer tagline rides the same path for the same reason: a
+    /// markup-side <c>loc:Localize.Key</c> would resolve at the splash's
+    /// Loaded, which fires BEFORE Localizer.Init completes on the worker, so
+    /// it would bake in the English seed for every non-English user.</para>
     /// </summary>
     public void RefreshLocalizedStrings()
     {
@@ -174,6 +179,8 @@ public sealed partial class SplashWindow : Window
         try
         {
             BootEyebrow.Text = Localizer.T("splash.boot", "IGNITING…");
+            FooterTagline.Text = Localizer.T("splash.footer.tagline",
+                                             "FORGED FOR STREAMERS · 2026");
         }
         catch { /* window torn down mid-call — silent no-op */ }
     }

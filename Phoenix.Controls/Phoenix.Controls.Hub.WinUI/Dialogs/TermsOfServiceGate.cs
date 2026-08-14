@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using Phoenix.Controls.Shared.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 
@@ -70,7 +71,7 @@ public static class TermsOfServiceGate
 
             string docsDir = ResolveDocsDir();
             var window = new TermsOfServiceWindow(
-                "Phoenix Controls — Terms of Service",
+                Localizer.T("dialog.tos.window.title", "Phoenix Controls — Terms of Service"),
                 docsDir,
                 EssentialsFallback);
 
@@ -122,12 +123,25 @@ public static class TermsOfServiceGate
     // bundled Docs/terms-of-service.txt can't be read. Deliberately terse — the
     // full, authoritative text lives in the bundled document; this only
     // guarantees the user is never asked to accept a literally-blank screen.
-    private const string EssentialsFallback =
-        "PHOENIX CONTROLS — TERMS OF SERVICE (summary)\r\n\r\n" +
-        "The full terms could not be displayed. In short:\r\n\r\n" +
-        "• Phoenix Controls is provided free of charge and always will be — no fees, subscriptions or hidden costs of any kind.\r\n" +
-        "• It is provided \"as is\", without warranty. To the fullest extent permitted by law, Megermajo Productions is not liable for any damage or loss arising from downloading, installing or using it. Nothing here excludes liability that cannot be excluded by law (intent, gross negligence, or injury to life, body or health).\r\n" +
-        "• No personal data is collected. The software sends no telemetry to Megermajo Productions; everything it creates stays on your own computer. Any third-party services you connect (Streamer.bot, Twitch/YouTube/Kick, AI providers, webhooks) are governed by those parties' own terms.\r\n" +
-        "• Clicking \"I Accept\" forms a binding agreement to the full terms. If you do not agree, decline and the app will close.\r\n\r\n" +
-        "Please relaunch to view the complete document.";
+    //
+    // One key per paragraph rather than one key for the whole block: the
+    // \r\n structure stays in code, so a translator never has to reproduce
+    // escape sequences inside a legal string, and each clause is translatable
+    // on its own. A property (not a const) because Localizer.T is a call —
+    // it resolves per read, which is what a language switch needs.
+    private static string EssentialsFallback =>
+        Localizer.T("dialog.tos.fallback.title",
+            "PHOENIX CONTROLS — TERMS OF SERVICE (summary)") + "\r\n\r\n" +
+        Localizer.T("dialog.tos.fallback.intro",
+            "The full terms could not be displayed. In short:") + "\r\n\r\n" +
+        Localizer.T("dialog.tos.fallback.bullet_free",
+            "• Phoenix Controls is provided free of charge and always will be — no fees, subscriptions or hidden costs of any kind.") + "\r\n" +
+        Localizer.T("dialog.tos.fallback.bullet_warranty",
+            "• It is provided \"as is\", without warranty. To the fullest extent permitted by law, Megermajo Productions is not liable for any damage or loss arising from downloading, installing or using it. Nothing here excludes liability that cannot be excluded by law (intent, gross negligence, or injury to life, body or health).") + "\r\n" +
+        Localizer.T("dialog.tos.fallback.bullet_privacy",
+            "• No personal data is collected. The software sends no telemetry to Megermajo Productions; everything it creates stays on your own computer. Any third-party services you connect (Streamer.bot, Twitch/YouTube/Kick, AI providers, webhooks) are governed by those parties' own terms.") + "\r\n" +
+        Localizer.T("dialog.tos.fallback.bullet_accept",
+            "• Clicking \"I Accept\" forms a binding agreement to the full terms. If you do not agree, decline and the app will close.") + "\r\n\r\n" +
+        Localizer.T("dialog.tos.fallback.outro",
+            "Please relaunch to view the complete document.");
 }

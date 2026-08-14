@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.Common.ToolStatTile"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Shared stat tile for the Pre-Build tool pages — the house GvStatTile /
+         TmStatTile / AmStatTile recipe promoted into Panels/Common so the
+         config tools (Loyalty / Counters / Quotes / CustomCommands / Automod)
+         consume ONE control instead of minting a fourth per-tool copy:
+         ember SansFont eyebrow (caption) over a large DisplayFont value on a
+         coal-shell card, with the same one-tile ember accent (see Accent). -->
+    <Border Background="{StaticResource CoalShellBrush}"
+            BorderBrush="{StaticResource CoalCardBrush}"
+            BorderThickness="1"
+            CornerRadius="{StaticResource Radius1Corner}"
+            Padding="12,10"
+            MinWidth="150">
+        <StackPanel Spacing="6">
+            <TextBlock x:Name="CaptionText"
+                       FontFamily="{StaticResource SansFont}"
+                       FontSize="10"
+                       FontWeight="SemiBold"
+                       CharacterSpacing="180"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource EmberPrimaryBrush}" />
+            <!-- The default (non-accent) value brush is declared here rather than
+                 in ApplyAccent so a tile that never sets Accent renders without
+                 the code-behind ever running a resource lookup. Accent="True"
+                 swaps it to ember from code-behind — StaticResource cannot be
+                 picked at runtime. -->
+            <TextBlock x:Name="ValueText"
+                       FontFamily="{StaticResource DisplayFont}"
+                       FontSize="26"
+                       CharacterSpacing="20"
+                       Foreground="{StaticResource CoalPaperBrush}" />
+        </StackPanel>
+    </Border>
+</UserControl>

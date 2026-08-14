@@ -1104,14 +1104,12 @@ namespace Phoenix.Controls.Shared.Core
                             GlobalLogger.Log($"for_loop aggregate iteration cap ({MaxAggregateLoopIterations}) reached — halting.", "ScriptEngine", LogLevel.CriticalError);
                             return blockEnd + 1;
                         }
-                        vars[idxKey] = idx.ToString();
-                        vars[perLoopIdxKey] = idx.ToString();
-                        vars["loop.index"] = idx.ToString();
+                        string idxStr = idx.ToString();
+                        vars[idxKey] = idxStr;
+                        vars[perLoopIdxKey] = idxStr;
+                        vars["loop.index"] = idxStr;
                         await ExecuteBlock(lines, i + 1, blockEnd, indent + 1, vars);
                     }
-                    // Look for Completed block
-                    int compIdx = blockEnd + 1;
-                    while (compIdx <= end && string.IsNullOrWhiteSpace(lines[compIdx])) compIdx++;
                     return blockEnd + 1;
                 }
                 return i + 1;
@@ -1133,7 +1131,10 @@ namespace Phoenix.Controls.Shared.Core
                 // Registered-command calls in the condition are pre-executed
                 // EVERY iteration (template-only, injection-safe) so shapes like
                 // while_loop(cooldown.check(...)) re-evaluate instead of freezing.
-                while (EvaluateCondition(await PreExecuteConditionCallsAsync("if " + condRaw + ":", vars), vars))
+                // Header string is loop-invariant (condRaw is set once above and
+                // never reassigned in the body) — build it once instead of per iter.
+                string condHeader = "if " + condRaw + ":";
+                while (EvaluateCondition(await PreExecuteConditionCallsAsync(condHeader, vars), vars))
                 {
                     _executionCt.ThrowIfCancellationRequested();
                     // Interlocked so concurrent parallel_begin branches running
@@ -1212,17 +1213,40 @@ namespace Phoenix.Controls.Shared.Core
                 // serialize cross-branch access. Decremented in the finally below.
                 Interlocked.Increment(ref _parallelBranchDepth);
 
-                // Each top-level entry inside the block (at indent+1) becomes its own branch.
-                // FindBlockEnd finds the full extent of any sub-block under that entry so that
-                // multi-line branches (if:/for_loop:/etc.) are treated as a single unit.
+                // BRANCH GROUPING — two shapes, both supported.
+                //
+                //   (a) STRUCTURED (current exporter, ParallelHandler): each authored
+                //       branch is introduced by a `branch:` header at indent+1 and its
+                //       whole statement chain sits at indent+2. One header = one branch,
+                //       however many statements the chain contains, so a two-node branch
+                //       (delay_seconds(2) → twitch.send_chat(...)) runs IN ORDER inside a
+                //       single task and the second node sees what the first produced.
+                //
+                //   (b) LEGACY (any .phx emitted before the `branch:` header existed):
+                //       branch chains were emitted FLAT at indent+1 with no delimiter of
+                //       any kind, so the authored boundaries are simply not recoverable
+                //       from the file — each top-level entry stays its own branch, which
+                //       is exactly what those files have always done. Re-saving the graph
+                //       in Architect re-emits shape (a) and restores ordering.
+                //
+                // FindBlockEnd finds the full extent of any sub-block under an entry so a
+                // multi-line entry (if:/for_loop:/branch:) is treated as a single unit.
                 int j = i + 1;
+                int markerStart = -1;   // first line of the pending `# [...]` marker run
                 while (j <= pEnd)
                 {
                     if (j >= lines.Length) break;
                     string rawBranch = lines[j];
                     if (string.IsNullOrWhiteSpace(rawBranch)) { j++; continue; }
                     string trimmed = rawBranch.TrimStart();
-                    if (trimmed.StartsWith("#")) { j++; continue; }
+                    // Comment/marker lines preceding an entry belong to THAT entry — the
+                    // exporter writes the `# [Node.Title]` debug marker on the line above
+                    // the statement it annotates. Skipping past them (rather than folding
+                    // them into the branch's range) meant OnNodeExecuted never fired for
+                    // anything inside a parallel_begin block, silently killing Architect's
+                    // debug flash there. Remember where the marker run started so the
+                    // branch we build below covers it.
+                    if (trimmed.StartsWith("#")) { if (markerStart < 0) markerStart = j; j++; continue; }
 
                     int lineInd = GetIndent(rawBranch);
                     if (lineInd < indent + 1) break;   // Escaped block — shouldn't happen
@@ -1232,8 +1256,17 @@ namespace Phoenix.Controls.Shared.Core
                     int branchEnd = FindBlockEnd(lines, j, indent + 1);
                     branchEnd = Math.Min(branchEnd, pEnd);
 
-                    int capturedStart = j;
-                    int capturedEnd   = branchEnd;
+                    // Shape (a): `branch:` header — the body is the block under it, run at
+                    // indent+2 as ONE sequential unit. An empty branch (header with no body)
+                    // yields start > end, which ExecuteBlock treats as a no-op.
+                    bool structured = StripInlineComment(rawBranch.Trim()) == "branch:";
+
+                    int capturedStart = structured
+                        ? j + 1
+                        : (markerStart >= 0 ? markerStart : j);
+                    int capturedEnd    = branchEnd;
+                    int capturedIndent = structured ? indent + 2 : indent + 1;
+                    markerStart = -1;
                     var branchVars    = new Dictionary<string, string>(vars, StringComparer.OrdinalIgnoreCase);
                     var resultKeys    = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     branchVarsList.Add((branchVars, resultKeys));
@@ -1244,7 +1277,7 @@ namespace Phoenix.Controls.Shared.Core
                     // SetScriptVarAsync via the _branchResultKeysLocal AsyncLocal so
                     // parallel_begin's merge-back can propagate result-style writes only.
                     tasks.Add(Task.Run(() =>
-                        RunParallelBranch(lines, capturedStart, capturedEnd, indent + 1, branchVars, resultKeys, linkedCts)));
+                        RunParallelBranch(lines, capturedStart, capturedEnd, capturedIndent, branchVars, resultKeys, linkedCts)));
 
                     j = branchEnd + 1;
                 }
@@ -1282,6 +1315,17 @@ namespace Phoenix.Controls.Shared.Core
             }
             if (line == "parallel_end" || line == "join_wait")
                 return i + 1;
+
+            // A `branch:` header is normally consumed by parallel_begin's scanner
+            // above. Reaching ProcessLine means one was written outside a parallel
+            // block (hand-authored .phx) — run its body sequentially rather than
+            // falling through to "Unknown command: 'branch'".
+            if (line == "branch:")
+            {
+                int branchOnlyEnd = FindBlockEnd(lines, i, indent);
+                await ExecuteBlock(lines, i + 1, branchOnlyEnd, indent + 1, vars);
+                return branchOnlyEnd + 1;
+            }
 
             // ── Regular command call ─────────────────────────────────────
             await ExecuteCommand(line, vars);
@@ -1368,13 +1412,19 @@ namespace Phoenix.Controls.Shared.Core
             }
             if (expr.StartsWith("convert.to_int(", StringComparison.OrdinalIgnoreCase) && expr.EndsWith(")"))
             {
+                // InvariantCulture: every producer of a script numeric formats with
+                // InvariantCulture (NumericGuards.Sanitize, math.*, the compound-
+                // assignment writer below), so the reader must not use the host's
+                // CurrentCulture. On de-DE the culture-less overload read "5.00" as
+                // 500 ('.' = group separator); on fr-FR it failed outright.
                 string inner = StripQuotesAndUnescape(SubstituteVars(expr["convert.to_int(".Length..^1].Trim(), vars));
-                return double.TryParse(inner, out double iv) && iv != 0;
+                return double.TryParse(inner, NumberStyles.Float, CultureInfo.InvariantCulture, out double iv) && iv != 0;
             }
             if (expr.StartsWith("convert.to_float(", StringComparison.OrdinalIgnoreCase) && expr.EndsWith(")"))
             {
+                // InvariantCulture — see the convert.to_int arm above.
                 string inner = StripQuotesAndUnescape(SubstituteVars(expr["convert.to_float(".Length..^1].Trim(), vars));
-                return double.TryParse(inner, out double fv) && fv != 0;
+                return double.TryParse(inner, NumberStyles.Float, CultureInfo.InvariantCulture, out double fv) && fv != 0;
             }
             if (expr.StartsWith("convert.to_string(", StringComparison.OrdinalIgnoreCase) && expr.EndsWith(")"))
             {
@@ -1403,7 +1453,7 @@ namespace Phoenix.Controls.Shared.Core
             // the membership-check helper.
             string? bestOp  = null;
             int     bestIdx = int.MaxValue;
-            foreach (var op in new[] { "!=", ">=", "<=", "==", ">", "<" })
+            foreach (var op in ComparisonOps)
             {
                 int idx = IndexOfOutsideQuotes(expr, op);
                 if (idx >= 0 && idx < bestIdx)
@@ -1428,8 +1478,16 @@ namespace Phoenix.Controls.Shared.Core
                 // convert.to_bool wrappers behave intuitively.
                 string lNorm = NormalizeBoolish(L);
                 string rNorm = NormalizeBoolish(R);
-                bool   ln = double.TryParse(L, out double lv);
-                bool   rn = double.TryParse(R, out double rv);
+                // InvariantCulture on BOTH operands. Script numerics are string
+                // round-trips produced with InvariantCulture everywhere else
+                // (NumericGuards.Sanitize, math.add/divide, the compound-assignment
+                // writer below, CommandBinder.TryCoerce), so parsing them back with
+                // the host's CurrentCulture silently mis-read them off an anglophone
+                // locale: on de-DE/nl-NL "5.00" parsed as 500 (dot = group
+                // separator), so a $5 donation satisfied `>= 10`; on fr-FR/ru-RU the
+                // parse failed and every </>/<=/>= comparison evaluated FALSE forever.
+                bool   ln = double.TryParse(L, NumberStyles.Float, CultureInfo.InvariantCulture, out double lv);
+                bool   rn = double.TryParse(R, NumberStyles.Float, CultureInfo.InvariantCulture, out double rv);
                 return bestOp switch
                 {
                     "==" => lNorm == rNorm,
@@ -1540,9 +1598,10 @@ namespace Phoenix.Controls.Shared.Core
         /// expression isn't wrapped, returns it unchanged. Lets comparison
         /// operands tunnel through the typeless conversion calls.
         /// </summary>
+        private static readonly string[] ConvertWrappers = { "convert.to_int(", "convert.to_float(", "convert.to_string(", "convert.to_bool(" };
         private static string PeelConvertWrapper(string s)
         {
-            foreach (var p in new[] { "convert.to_int(", "convert.to_float(", "convert.to_string(", "convert.to_bool(" })
+            foreach (var p in ConvertWrappers)
             {
                 if (s.StartsWith(p, StringComparison.OrdinalIgnoreCase) && s.EndsWith(")"))
                     // StripQuotesAndUnescape so a wrapped literal like
@@ -1761,6 +1820,27 @@ namespace Phoenix.Controls.Shared.Core
                     string? innerResult = await ExecuteCommandWithResult(rawEqMatch.Groups[2].Value.Trim(), vars);
                     args[idx] = $"{rawEqMatch.Groups[1].Value}={innerResult ?? ""}";
                     continue;
+                }
+
+                // (3) `key="value"` — a kv-pair arg whose VALUE is a quoted literal.
+                //     The exporter quotes such a value so SplitArgs (quote-aware) keeps
+                //     a literal comma inside it from ending the argument; the quotes are
+                //     transport only, so they must come off HERE. Every kv consumer
+                //     (CommandBinder's variadic KvPairs branch, and the hand-rolled
+                //     Split('=', 2) fallbacks in event.trigger / visual.trigger_queued /
+                //     wait_for_visual / db.insert_row) takes the right-hand side
+                //     verbatim, so leaving them on would deliver `"Thanks, welcome!"`
+                //     WITH quotes to the widget. An UNQUOTED `key=value` arg is passed
+                //     through untouched, so .phx files emitted before the exporter
+                //     started quoting keep behaving exactly as they did.
+                if (rawEqMatch.Success)
+                {
+                    string rhs = rawEqMatch.Groups[2].Value.Trim();
+                    if (rhs.Length >= 2 && rhs[0] == '"' && rhs[^1] == '"')
+                    {
+                        args[idx] = $"{rawEqMatch.Groups[1].Value}={SubstituteVars(StripQuotesAndUnescape(rhs), vars)}";
+                        continue;
+                    }
                 }
 
                 // Default path: substitute and treat the result as data. No further

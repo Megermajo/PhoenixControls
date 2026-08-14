@@ -1,5 +1,6 @@
-using Microsoft.UI.Input;
+﻿using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Input;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
 using Windows.System;
@@ -958,6 +959,181 @@ public sealed partial class LogicCanvasView
         FitToBounds(ComputeNodesBounds(list), padding: 60.0);
     }
 
+    // Bounded retry for the post-load visibility check: HostRoot has no size
+    // during cold pillar bring-up, and a canvas that never gets shown must not
+    // re-enqueue for ever.
+    private int _visibilityCheckRetries;
+    private const int MaxVisibilityCheckRetries = 12;
+
+    // True while the post-load visibility check is parked on HostRoot.SizeChanged
+    // waiting for the host's FIRST real measure (never-measured cold/background
+    // bring-up). Keeps the arm idempotent — flag and subscription always move
+    // together via Arm/Disarm below.
+    private bool _visibilityCheckSizeHookArmed;
+
+    /// <summary>
+    /// Schedules <see cref="EnsureGraphVisibleAfterLoad"/> off the load handler.
+    /// Low priority so node sizes and layout have settled first.
+    /// </summary>
+    private void QueueGraphVisibilityCheck()
+    {
+        _visibilityCheckRetries = 0;
+        _ = DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            EnsureGraphVisibleAfterLoad);
+    }
+
+    /// <summary>
+    /// Recovers a camera that is pointing away from the graph after a load.
+    ///
+    /// A <c>.phxg</c> persists its own viewport, and nothing ever checked that
+    /// the restored camera still overlaps the nodes — so a graph last saved
+    /// while panned off into empty space re-opened invisible. Only pan/zoom was
+    /// wrong: the model, the links and the minimap were all intact, which is why
+    /// the minimap looked right while the canvas looked empty.
+    ///
+    /// Any overlap at all counts as visible. A deliberately corner-panned view is
+    /// legitimate and must never be yanked back to centre — this only fires when
+    /// the graph is entirely off-screen.
+    /// </summary>
+    private void EnsureGraphVisibleAfterLoad()
+    {
+        if (_vm is null || _vm.Nodes.Count == 0) return;
+
+        // ★ VISIBLE width, not painted width. A camera whose only on-screen
+        // nodes sit behind the floating inspector card used to pass this guard
+        // — they were "visible" to HostRoot.ActualWidth and invisible to the
+        // user — so the re-centre was declined and the canvas opened blank
+        // while the minimap, which ignores pan/zoom, looked perfectly healthy.
+        // That is the pairing the node-walk below was written to catch; the
+        // walk is right, the viewport it walked against was not.
+        // Measurement guards still key off the RAW host size: a zero there
+        // means "no layout pass yet", which the inset must not mask.
+        double rawW  = HostRoot.ActualWidth;
+        double viewW = VisibleViewportWidth;
+        double viewH = HostRoot.ActualHeight;
+        if (rawW == 0 || viewH == 0)
+        {
+            // NEVER measured (cold/background pillar tab: no layout pass has
+            // touched HostRoot, ActualWidth/Height are exactly 0 and none is
+            // scheduled). Dispatcher retries are useless here — all
+            // MaxVisibilityCheckRetries re-enqueues drain back-to-back before
+            // the first measure ever happens, the guard gives up silently and
+            // the blank-open persists for background-tab opens. Park the check
+            // on SizeChanged instead: it fires precisely when the first real
+            // layout lands, however far in the future that is.
+            ArmVisibilityCheckOnFirstMeasure();
+            return;
+        }
+        if (rawW < 1 || viewH < 1)
+        {
+            // Measured but degenerate (sub-pixel mid-layout). A layout pass IS
+            // running, so a bounded dispatcher hop lands after it settles.
+            if (++_visibilityCheckRetries > MaxVisibilityCheckRetries) return;
+            _ = DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                EnsureGraphVisibleAfterLoad);
+            return;
+        }
+
+        double zoom = _vm.Zoom > 0 ? _vm.Zoom : 1.0;
+
+        // ★ Test the NODES, not the graph's bounding box.
+        //
+        // The first version of this guard projected ComputeNodesBounds — the UNION
+        // rectangle of every node — and counted any overlap with the viewport as
+        // "visible". That catches only a camera parked entirely OUTSIDE the graph's
+        // extent, and real graphs are not solid: a 170+ node script has wide empty gaps
+        // between its clusters. A camera sitting in one of those gaps overlaps the union
+        // box, passes the check, and the canvas still opens blank — while the minimap,
+        // which renders the whole extent independently of pan/zoom, looks perfect. That
+        // is exactly the reported pairing, and it survived the first fix because the
+        // union box hid it.
+        //
+        // Walking the real node rects is O(nodes) once per load and short-circuits on the
+        // first hit — on a healthy open, the first node tested.
+        //
+        // Trade-off, stated deliberately: a view the author panned onto empty space
+        // INSIDE the graph and saved will now be re-centred on reopen. A camera showing
+        // zero nodes is indistinguishable from the bug, and showing the author their
+        // graph is the better failure. A corner view that still catches any node is
+        // untouched, which is the case the original "don't yank a deliberate view" note
+        // was protecting.
+        bool anyNodeVisible = false;
+        foreach (var n in _vm.Nodes)
+        {
+            double nl = n.X * zoom + _vm.PanX;
+            double nt = n.Y * zoom + _vm.PanY;
+            double nr = nl + n.Width * zoom;
+            double nb = nt + n.Height * zoom;
+            if (nr > 0 && nl < viewW && nb > 0 && nt < viewH) { anyNodeVisible = true; break; }
+        }
+        if (anyNodeVisible) return;
+
+        GlobalLogger.Log(
+            "Saved viewport put the whole graph off-screen — re-centred. "
+            + "(The graph loaded correctly; only the camera was wrong.)",
+            source: "Architect.Canvas",
+            level: LogLevel.System);
+
+        ZoomToFit();
+    }
+
+    /// <summary>
+    /// Parks <see cref="EnsureGraphVisibleAfterLoad"/> on the host's first real
+    /// measure. One-shot: the handler detaches itself the moment a usable size
+    /// arrives; the <c>_visibilityCheckSizeHookArmed</c> flag makes re-arming
+    /// idempotent (a second graph load while still parked just keeps the one
+    /// existing hook, which will evaluate whatever graph is current by then).
+    ///
+    /// Lifetime: this partial has no unload seam of its own (the 1:1 teardown
+    /// block lives in LogicCanvasView.xaml.cs's OnUnloaded, which mirrors the
+    /// OnLoaded subscriptions — this hook is armed lazily, not in OnLoaded, so
+    /// it doesn't belong in that block). Instead the arm subscribes its OWN
+    /// Unloaded disarm and Disarm removes it symmetrically, so a canvas
+    /// recycled while parked (tab-swap / SubGraphWindow) never carries a stale
+    /// SizeChanged handler into its next life.
+    /// </summary>
+    private void ArmVisibilityCheckOnFirstMeasure()
+    {
+        if (_visibilityCheckSizeHookArmed) return; // double-arm guard
+        _visibilityCheckSizeHookArmed = true;
+        HostRoot.SizeChanged += OnHostFirstMeasureForVisibilityCheck;
+        Unloaded += OnUnloadedWhileVisibilityCheckParked;
+    }
+
+    private void DisarmVisibilityCheckOnFirstMeasure()
+    {
+        if (!_visibilityCheckSizeHookArmed) return;
+        _visibilityCheckSizeHookArmed = false;
+        HostRoot.SizeChanged -= OnHostFirstMeasureForVisibilityCheck;
+        Unloaded -= OnUnloadedWhileVisibilityCheckParked;
+    }
+
+    private void OnUnloadedWhileVisibilityCheckParked(
+        object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+        => DisarmVisibilityCheckOnFirstMeasure();
+
+    private void OnHostFirstMeasureForVisibilityCheck(
+        object sender, Microsoft.UI.Xaml.SizeChangedEventArgs e)
+    {
+        // Collapse/expand transitions can deliver degenerate sizes — stay
+        // parked until a REAL measure lands.
+        if (e.NewSize.Width < 1 || e.NewSize.Height < 1) return;
+
+        DisarmVisibilityCheckOnFirstMeasure();
+
+        // Back onto the normal Low-priority dispatcher path rather than
+        // checking inline: SizeChanged fires mid-layout, and the hop lets node
+        // sizes settle first — same reason QueueGraphVisibilityCheck uses Low.
+        // The host is measured now, so the re-run takes the normal path (or,
+        // if the size is somehow degenerate again, the bounded retry path).
+        _visibilityCheckRetries = 0;
+        _ = DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            EnsureGraphVisibleAfterLoad);
+    }
+
     private (double X, double Y, double W, double H) ComputeNodesBounds(
         System.Collections.Generic.IEnumerable<NodeViewModel> nodes)
     {
@@ -978,7 +1154,13 @@ public sealed partial class LogicCanvasView
         if (_vm is null) return;
         double w = System.Math.Max(1, bounds.W + padding * 2);
         double h = System.Math.Max(1, bounds.H + padding * 2);
-        double viewW = System.Math.Max(1, HostRoot.ActualWidth);
+        // ★ VISIBLE width, not painted width. Against the painted width the
+        // width-limited branch (zoom = viewW / w) sized the graph to fill a
+        // viewport whose rightmost band sits under the floating inspector
+        // card, and the centring term below pushed the result half that band
+        // further right — so Home / F reliably parked graph content out of
+        // sight. See LogicCanvasView.ViewportInsetRight.
+        double viewW = System.Math.Max(1, VisibleViewportWidth);
         double viewH = System.Math.Max(1, HostRoot.ActualHeight);
         double zoom = System.Math.Min(viewW / w, viewH / h);
         zoom = System.Math.Clamp(zoom, 0.2, 2.0);
@@ -1052,7 +1234,8 @@ public sealed partial class LogicCanvasView
 
         var header = new Microsoft.UI.Xaml.Controls.TextBlock
         {
-            Text       = "Bookmarks (Ctrl+1..9 set · Alt+1..9 recall)",
+            Text       = Localizer.T("architect.canvas.bookmarks.legend.title",
+                             "Bookmarks (Ctrl+1..9 set · Alt+1..9 recall)"),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             FontSize   = 12,
         };
@@ -1063,13 +1246,18 @@ public sealed partial class LogicCanvasView
             string label;
             if (slot > bookmarks.Count)
             {
-                label = $"  {slot}: empty";
+                label = string.Format(
+                    Localizer.T("architect.canvas.bookmarks.legend.slot_empty", "  {0}: empty"), slot);
             }
             else
             {
                 var bm = bookmarks[slot - 1];
                 int zoomPct = (int)System.Math.Round((bm.Zoom > 0 ? bm.Zoom : 1.0) * 100);
-                label = $"  {slot}: {bm.Name ?? $"Bookmark {slot}"} · {zoomPct}%";
+                string slotName = bm.Name ?? string.Format(
+                    Localizer.T("architect.canvas.bookmarks.legend.slot_default_name", "Bookmark {0}"), slot);
+                label = string.Format(
+                    Localizer.T("architect.canvas.bookmarks.legend.slot_set", "  {0}: {1} · {2}%"),
+                    slot, slotName, zoomPct);
             }
             stack.Children.Add(new Microsoft.UI.Xaml.Controls.TextBlock
             {

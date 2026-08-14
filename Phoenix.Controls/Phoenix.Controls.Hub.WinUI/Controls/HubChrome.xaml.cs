@@ -26,11 +26,14 @@ public sealed partial class HubChrome : UserControl
 {
     public event EventHandler<MenuItemInvokedEventArgs>? MenuItemInvoked;
     public event EventHandler<PillarKind>? PillarTabClicked;
-    // 4th tab — distinct from the PillarKind surface-swap tabs. Clicking it
-    // opens the Giveaway page in an independent pop-out window (MainWindow
-    // owns the single-instance window lifecycle). Kept off PillarKind so the
-    // enum's load-bearing ordinals stay limited to the three swap surfaces.
-    public event EventHandler? GiveawayTabClicked;
+    // 4th tab — distinct from the PillarKind surface-swap tabs, but it now swaps a
+    // surface like they do: clicking it foregrounds the Pre-Builds rail
+    // (PreBuildsHostView) in MainPaneRegion. It used to drop a MenuFlyout of the
+    // fourteen tools; Majo replaced that with the rail in 1.1.8, so the tab carries
+    // no payload any more and MainWindow decides which tool to show. Kept off
+    // PillarKind so the enum's load-bearing ordinals stay limited to the three
+    // pillar surfaces.
+    public event EventHandler? PreBuildsTabClicked;
     // Custom traffic-light clicks — surfaced as plain events so MainWindow
     // can wire each one to the active AppWindow's presenter without the
     // UserControl needing a Window reference.
@@ -119,49 +122,106 @@ public sealed partial class HubChrome : UserControl
         MaxButton.Clicked   += (_, _) => MaximizeRestoreClicked?.Invoke(this, EventArgs.Empty);
         CloseButton.Clicked += (_, _) => CloseClicked?.Invoke(this, EventArgs.Empty);
 
-        // Localized label for the 4th (Giveaway) tab — matches the PillarTab
+        // Localized label for the 4th (Pre-Builds) tab — matches the PillarTab
         // localization posture (visible label + screen-reader name follow the
-        // active language; the "G" sigil glyph is a typographic affordance,
-        // not a translation target).
-        GiveawayTabLabel.Text = Localizer.T("pillartab.giveaway.label", "GIVEAWAY");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(GiveawayTab,
-            string.Format(Localizer.T("pillartab.aria.name_format", "{0} pillar tab"), GiveawayTabLabel.Text));
-        ToolTipService.SetToolTip(GiveawayTab,
-            Localizer.T("pillartab.giveaway.tooltip", "Giveaway — opens in its own window"));
+        // active language; the sigil glyph is a typographic affordance, not a
+        // translation target). The fourteen tool names moved to the rail with the
+        // flyout and are localized there from the same pillartab.prebuilds.* keys.
+        PreBuildsTabLabel.Text = Localizer.T("pillartab.prebuilds.label", "Pre-Builds");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(PreBuildsTab,
+            string.Format(Localizer.T("pillartab.aria.name_format", "{0} pillar tab"), PreBuildsTabLabel.Text));
+        ToolTipService.SetToolTip(PreBuildsTab,
+            Localizer.T("pillartab.prebuilds.tooltip", "Pre-built stream tools"));
     }
 
-    // ── Giveaway tab (4th tab) ───────────────────────────────────────────
-    // The tab never becomes "active" (it opens a window rather than swapping
-    // a surface), so it lives permanently in the inactive PillarTab visual
-    // state with a simple hover fill / brighter-label affordance, mirroring
-    // PillarTab.OnPointerEntered/Exited's non-active hover. Colors are set
-    // directly (no ColorAnimation) — the hover is a binary affordance here.
-    private static readonly global::Windows.UI.Color GvColorTransparent = global::Windows.UI.Color.FromArgb(0x00, 0x00, 0x00, 0x00);
-    private static readonly global::Windows.UI.Color GvColorCoalHover    = global::Windows.UI.Color.FromArgb(0xFF, 0x2C, 0x25, 0x1D);
-    private static readonly global::Windows.UI.Color GvColorCoalBody     = global::Windows.UI.Color.FromArgb(0xFF, 0xA8, 0x96, 0x83);
-    private static readonly global::Windows.UI.Color GvColorCoalSecondary = global::Windows.UI.Color.FromArgb(0xFF, 0x9C, 0x8A, 0x72);
+    // ── Pre-Builds tab (4th tab) ─────────────────────────────────────────
+    // A real selectable tab since 1.1.8: pressing it raises PreBuildsTabClicked,
+    // MainWindow foregrounds the Pre-Builds rail, and SetPreBuildsActive(true)
+    // paints this tab raised while UpdateTabSelection clears the three pillar
+    // tabs. Colors mirror PillarTab's tokens and are assigned directly rather
+    // than animated — PillarTab owns the 120 ms ColorAnimation because it has a
+    // per-instance brush per state; this tab has two states and one brush each.
+    private static readonly global::Windows.UI.Color PbColorTransparent   = global::Windows.UI.Color.FromArgb(0x00, 0x00, 0x00, 0x00);
+    private static readonly global::Windows.UI.Color PbColorCoalCard      = global::Windows.UI.Color.FromArgb(0xFF, 0x22, 0x1C, 0x16);
+    private static readonly global::Windows.UI.Color PbColorCoalHover     = global::Windows.UI.Color.FromArgb(0xFF, 0x2C, 0x25, 0x1D);
+    private static readonly global::Windows.UI.Color PbColorEmberDeep     = global::Windows.UI.Color.FromArgb(0xFF, 0xC8, 0x82, 0x2B);
+    private static readonly global::Windows.UI.Color PbColorCoalPaper     = global::Windows.UI.Color.FromArgb(0xFF, 0xF5, 0xEF, 0xE3);
+    private static readonly global::Windows.UI.Color PbColorCoalBody      = global::Windows.UI.Color.FromArgb(0xFF, 0xA8, 0x96, 0x83);
+    private static readonly global::Windows.UI.Color PbColorCoalSecondary = global::Windows.UI.Color.FromArgb(0xFF, 0x9C, 0x8A, 0x72);
 
-    private void OnGiveawayTabPointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    private bool _preBuildsActive;
+
+    /// <summary>
+    /// Paints the Pre-Builds tab raised (or not). MainWindow calls this on both
+    /// edges: true when the Pre-Builds surface comes up, false when a pillar tab
+    /// takes the pane back. Clearing the pillar tabs is <see cref="SetPillar"/>'s
+    /// job and vice versa, so the strip always has exactly one raised tab.
+    /// </summary>
+    public void SetPreBuildsActive(bool active)
     {
-        GiveawayTab.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(GvColorCoalHover);
-        GiveawayTabLabelBrush.Color = GvColorCoalBody;
+        _preBuildsActive = active;
+        ApplyPreBuildsTabState();
+        if (active) UpdateTabSelection(null);
     }
 
-    private void OnGiveawayTabPointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    /// <summary>
+    /// Drops the Pre-Builds tab's raised state and re-raises the active pillar's
+    /// tab. For the no-swap dismissal path only — clicking the pillar tab you were
+    /// already on before opening Pre-Builds short-circuits MainWindow's swap, so
+    /// <see cref="SetPillar"/> (which would otherwise restore the strip) never
+    /// runs, and without this the strip would be left with no raised tab at all.
+    /// </summary>
+    public void ClearPreBuildsSelection()
     {
-        GiveawayTab.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(GvColorTransparent);
-        GiveawayTabLabelBrush.Color = GvColorCoalSecondary;
+        _preBuildsActive = false;
+        ApplyPreBuildsTabState();
+        UpdateTabSelection(_activePillar);
     }
 
-    private void OnGiveawayTabPointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-        => GiveawayTabClicked?.Invoke(this, EventArgs.Empty);
+    private void ApplyPreBuildsTabState()
+    {
+        if (_preBuildsActive)
+        {
+            // Raised active tab — coal card body, ember top edge, paper text.
+            PreBuildsTab.Background      = new Microsoft.UI.Xaml.Media.SolidColorBrush(PbColorCoalCard);
+            PreBuildsTabBorderBrush.Color = PbColorEmberDeep;
+            PreBuildsTab.BorderThickness = new Thickness(0, 1, 0, 0);
+            PreBuildsTabLabelBrush.Color = PbColorCoalPaper;
+        }
+        else
+        {
+            PreBuildsTab.Background      = new Microsoft.UI.Xaml.Media.SolidColorBrush(PbColorTransparent);
+            PreBuildsTabBorderBrush.Color = PbColorTransparent;
+            PreBuildsTab.BorderThickness = new Thickness(0);
+            PreBuildsTabLabelBrush.Color = PbColorCoalSecondary;
+        }
+    }
 
-    private void OnGiveawayTabKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    private void OnPreBuildsTabPointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        // Active tab keeps its raised look — hover only affects the inactive state
+        // (same rule PillarTab.OnPointerEntered applies).
+        if (_preBuildsActive) return;
+        PreBuildsTab.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(PbColorCoalHover);
+        PreBuildsTabLabelBrush.Color = PbColorCoalBody;
+    }
+
+    private void OnPreBuildsTabPointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_preBuildsActive) return;
+        PreBuildsTab.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(PbColorTransparent);
+        PreBuildsTabLabelBrush.Color = PbColorCoalSecondary;
+    }
+
+    private void OnPreBuildsTabPointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        => PreBuildsTabClicked?.Invoke(this, EventArgs.Empty);
+
+    private void OnPreBuildsTabKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
         if (e.Key == global::Windows.System.VirtualKey.Enter || e.Key == global::Windows.System.VirtualKey.Space)
         {
             e.Handled = true;
-            GiveawayTabClicked?.Invoke(this, EventArgs.Empty);
+            PreBuildsTabClicked?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -188,6 +248,16 @@ public sealed partial class HubChrome : UserControl
         // Hub tab stayed "raised" forever).
         UpdateTabSelection(kind);
 
+        // A pillar becoming active means the Pre-Builds surface is not: clear the
+        // 4th tab here so the strip can never show two raised tabs. MainWindow
+        // also clears it on the path where a pillar-tab click short-circuits
+        // without a swap (clicking the pillar you were already on).
+        if (_preBuildsActive)
+        {
+            _preBuildsActive = false;
+            ApplyPreBuildsTabState();
+        }
+
         // Detach the previous undo source first so the swap doesn't fire a
         // CanExecuteChanged into the outgoing bundle's MenuFlyoutItem refs
         // (which RefreshUndoRedoEnabled then resolves against the new
@@ -212,7 +282,9 @@ public sealed partial class HubChrome : UserControl
         AttachUndoRedoSource(undoRedoSource);
     }
 
-    private void UpdateTabSelection(PillarKind kind)
+    // null = no pillar is showing, which is the Pre-Builds case: all three pillar
+    // tabs drop to inactive while the 4th tab carries the raised state.
+    private void UpdateTabSelection(PillarKind? kind)
     {
         HubTab.IsActive       = kind == PillarKind.Hub;
         ArchitectTab.IsActive = kind == PillarKind.Architect;

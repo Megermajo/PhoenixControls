@@ -105,6 +105,8 @@ public sealed partial class DatabankBrowserView : UserControl
             case nameof(DatabankBrowserViewModel.HasSelectedRow):
             case nameof(DatabankBrowserViewModel.IsSystemTableSelected):
             case nameof(DatabankBrowserViewModel.CanMutateSelectedTable):
+            case nameof(DatabankBrowserViewModel.IsAppOwnedTableSelected):
+            case nameof(DatabankBrowserViewModel.CanMutateSelectedTableSchema):
                 SyncToolbarEnableStates();
                 break;
             case nameof(DatabankBrowserViewModel.SortColumn):
@@ -160,20 +162,63 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>
-    /// Gate the destructive toolbar buttons on CanMutateSelectedTable so
-    /// selecting a system row (Vars / EventLog / SystemHistory / paired-device
-    /// table) visibly disables + Row / + Column / Delete Row. + Table stays
-    /// enabled at all times because creating a new user table is never tied
-    /// to the current selection.
+    /// Gate the toolbar against the TWO databank registries, not one.
+    ///
+    /// <para>Row affordances (+ Row / Delete Row) follow
+    /// <c>CanMutateSelectedTable</c> — the write lock, which since the 2026-08
+    /// unlock is only PairedDevices / RemoteAuditLog. Schema affordances
+    /// (+ Column, and the sidebar's Delete-table button) follow
+    /// <c>CanMutateSelectedTableSchema</c>, because DDL is refused for all 25
+    /// app-owned tables even though their rows are open. Gating both on the
+    /// write lock is what left + Column and Delete enabled over tables where
+    /// the click could only ever produce a System Log line.</para>
+    ///
+    /// <para>+ Table stays enabled at all times because creating a new user
+    /// table is never tied to the current selection.</para>
     /// </summary>
     private void SyncToolbarEnableStates()
     {
         if (_vm is null) return;
-        bool canMutate = _vm.CanMutateSelectedTable;
-        bool canDelRow = canMutate && _vm.HasSelectedRow;
-        if (NewRowButton    is not null) NewRowButton.IsEnabled    = canMutate;
-        if (NewColumnButton is not null) NewColumnButton.IsEnabled = canMutate;
-        if (DeleteRowButton is not null) DeleteRowButton.IsEnabled = canDelRow;
+        bool canMutateData   = _vm.CanMutateSelectedTable;
+        bool canMutateSchema = _vm.CanMutateSelectedTableSchema;
+        bool canDelRow       = canMutateData && _vm.HasSelectedRow;
+        if (NewRowButton      is not null) NewRowButton.IsEnabled      = canMutateData;
+        if (DeleteRowButton   is not null) DeleteRowButton.IsEnabled   = canDelRow;
+        if (NewColumnButton   is not null) NewColumnButton.IsEnabled   = canMutateSchema;
+        if (DeleteTableButton is not null) DeleteTableButton.IsEnabled = canMutateSchema;
+        LogSchemaLockOnce();
+    }
+
+    // Name of the table whose schema lock has already been explained in the
+    // System Log, so arrowing through the sidebar doesn't repeat the line for
+    // the same table. Cleared implicitly by moving to a different table.
+    private string? _schemaLockLoggedFor;
+
+    /// <summary>
+    /// Say WHY the schema affordances just greyed out. A disabled control
+    /// carries no tooltip in WinUI (IsEnabled=false stops the pointer events
+    /// ToolTipService listens for), so silently dimming + Column and Delete
+    /// would leave a streamer guessing. The house rule for a rejection that
+    /// can repeat is a System Log line, never a modal — this is that line,
+    /// emitted once per table the user lands on, in the same words the
+    /// banner and the persistence layer use.
+    /// </summary>
+    private void LogSchemaLockOnce()
+    {
+        if (_vm is null) return;
+        var table = _vm.SelectedTable;
+        if (table is null || !table.IsAppOwned)
+        {
+            _schemaLockLoggedFor = null;
+            return;
+        }
+        if (string.Equals(_schemaLockLoggedFor, table.Name, StringComparison.OrdinalIgnoreCase)) return;
+        _schemaLockLoggedFor = table.Name;
+        Phoenix.Controls.Shared.Services.GlobalLogger.Log(
+            DatabankBrowserViewModel.SchemaLockMessage(table.Name) +
+            " (That is why + Column, Delete table and the column right-click menu are greyed out.)",
+            "DatabankBrowserView",
+            Phoenix.Controls.Shared.Models.LogLevel.System);
     }
 
     private void OnTableSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -469,10 +514,16 @@ public sealed partial class DatabankBrowserView : UserControl
     /// nested under a "Spawn graph node…" item so both gestures stay
     /// reachable.
     ///
-    /// System-table + primary-key rejections gray the items out rather
+    /// Schema-lock + primary-key rejections gray the items out rather
     /// than popping a modal. The three confirmation dialogs the user
     /// clicks through ARE user-initiated and confirmation-shaped, which
     /// is the carve-out.
+    ///
+    /// The schema gate is <c>CanMutateSelectedTableSchema</c> (the app-owned
+    /// registry), NOT the write lock: all three items are DDL, and the
+    /// persistence layer refuses DDL on every app-owned table even where the
+    /// rows are open. When that is what greys them, one System Log line says
+    /// so — a disabled MenuFlyoutItem shows no tooltip to explain itself.
     /// </summary>
     private void OnColumnHeaderRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
@@ -490,9 +541,18 @@ public sealed partial class DatabankBrowserView : UserControl
             return;
         }
 
-        bool isSystem = _vm.IsSystemTableSelected;
-        bool isPk     = IsPrimaryKeyColumn(col.Name);
-        bool canMutate = !isSystem && !isPk;
+        bool schemaLocked = _vm.IsAppOwnedTableSelected;
+        bool isPk         = IsPrimaryKeyColumn(col.Name);
+        bool canMutate    = !schemaLocked && !isPk;
+
+        if (schemaLocked)
+        {
+            Phoenix.Controls.Shared.Services.GlobalLogger.Log(
+                DatabankBrowserViewModel.SchemaLockMessage(tableName!) +
+                $" (Rename / Change type / Delete column are greyed out for '{col.Name}' for that reason.)",
+                "DatabankBrowserView",
+                Phoenix.Controls.Shared.Models.LogLevel.System);
+        }
 
         try
         {
@@ -876,9 +936,11 @@ public sealed partial class DatabankBrowserView : UserControl
     }
 
     /// <summary>Right-click context menu on a table-list row. Open just nudges
-    /// the selection; Delete / Export are disabled for system tables since the
-    /// persistence layer rejects them and a greyed-out item is clearer than a
-    /// silent error.</summary>
+    /// the selection; Delete is disabled for app-owned tables (DROP TABLE is
+    /// DDL, which the persistence layer refuses for all 25 of them) since a
+    /// greyed-out item is clearer than a silent error, and a System Log line
+    /// carries the reason a disabled menu item cannot. Export stays enabled
+    /// for every table — reading is never restricted.</summary>
     private void OnTableListRightTapped(object sender, RightTappedRoutedEventArgs e)
     {
         if (_vm is null) return;
@@ -910,17 +972,28 @@ public sealed partial class DatabankBrowserView : UserControl
         var del = new MenuFlyoutItem
         {
             Text = Localizer.T("architect.databank.context.delete_table", "Delete table…"),
-            IsEnabled = !table.IsSystem,
+            // App-owned, not write-locked: dropping a table is a schema change,
+            // so this follows the DDL registry. Leaving it on IsSystem would
+            // enable it over 23 tables whose DROP the DB layer refuses.
+            IsEnabled = !table.IsAppOwned,
         };
         del.Click += async (_, _) => await ConfirmAndDropTableAsync(table);
         flyout.Items.Add(del);
+        if (table.IsAppOwned)
+        {
+            Phoenix.Controls.Shared.Services.GlobalLogger.Log(
+                DatabankBrowserViewModel.SchemaLockMessage(table.Name) +
+                " (That is why 'Delete table…' is greyed out for it.)",
+                "DatabankBrowserView",
+                Phoenix.Controls.Shared.Models.LogLevel.System);
+        }
 
         var export = new MenuFlyoutItem
         {
             Text = Localizer.T("architect.databank.context.export_csv", "Export as CSV…"),
-            // System tables are read-only but legitimate to inspect/export —
-            // allow the export so streamers can copy Vars / EventLog into
-            // analysis tools without going through SQLite directly.
+            // Protected tables are legitimate to inspect/export — allow the
+            // export so streamers can copy Vars / EventLog into analysis tools
+            // without going through SQLite directly.
             IsEnabled = true,
         };
         export.Click += async (_, _) => await ExportTableAsCsvAsync(table);
@@ -975,7 +1048,8 @@ public sealed partial class DatabankBrowserView : UserControl
                 hwnd,
                 defaultFolder: null,
                 suggestedFileName: suggested,
-                filters: new[] { ("CSV (Comma-separated)", ".csv") });
+                filters: new[] {
+                    (Localizer.T("architect.databank.export.filter.csv", "CSV (Comma-separated)"), ".csv") });
             if (string.IsNullOrEmpty(path)) return;
 
             await _vm.ExportSnapshotAsync(table, async snapshot =>
@@ -1512,9 +1586,19 @@ public sealed partial class DatabankBrowserView : UserControl
         };
 
         var stack = new StackPanel { Spacing = 8, MinWidth = 380 };
-        stack.Children.Add(new TextBlock { Text = "Table name", FontSize = 11, Opacity = 0.75 });
+        stack.Children.Add(new TextBlock
+        {
+            Text     = Localizer.T("architect.databank.dialog.create_table.name.label", "Table name"),
+            FontSize = 11,
+            Opacity  = 0.75,
+        });
         stack.Children.Add(nameBox);
-        stack.Children.Add(new TextBlock { Text = "Columns", FontSize = 11, Opacity = 0.75 });
+        stack.Children.Add(new TextBlock
+        {
+            Text     = Localizer.T("architect.databank.dialog.create_table.columns.label", "Columns"),
+            FontSize = 11,
+            Opacity  = 0.75,
+        });
         stack.Children.Add(columnsList);
         stack.Children.Add(addColumnButton);
         stack.Children.Add(help);
@@ -1564,17 +1648,27 @@ public sealed partial class DatabankBrowserView : UserControl
             SelectedIndex = 0,
         };
         var stack = new StackPanel { Spacing = 6, MinWidth = 320 };
-        stack.Children.Add(new TextBlock { Text = "Column name", FontSize = 11, Opacity = 0.75 });
+        stack.Children.Add(new TextBlock
+        {
+            Text     = Localizer.T("architect.databank.dialog.add_column.name.label", "Column name"),
+            FontSize = 11,
+            Opacity  = 0.75,
+        });
         stack.Children.Add(nameBox);
-        stack.Children.Add(new TextBlock { Text = "SQL type",    FontSize = 11, Opacity = 0.75 });
+        stack.Children.Add(new TextBlock
+        {
+            Text     = Localizer.T("architect.databank.dialog.add_column.type.label", "SQL type"),
+            FontSize = 11,
+            Opacity  = 0.75,
+        });
         stack.Children.Add(typeCombo);
 
         var dialog = new ContentDialog
         {
-            Title             = "Add column",
+            Title             = Localizer.T("architect.databank.dialog.add_column.title", "Add column"),
             Content           = stack,
-            PrimaryButtonText = "Add",
-            CloseButtonText   = "Cancel",
+            PrimaryButtonText = Localizer.T("common.button.add", "Add"),
+            CloseButtonText   = Localizer.T("common.button.cancel", "Cancel"),
             DefaultButton     = ContentDialogButton.Primary,
             XamlRoot          = XamlRoot,
         };

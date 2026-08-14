@@ -8,8 +8,18 @@ namespace Phoenix.Controls.Hub.Core
 {
     // Partial split: chat.* command registrations.
     // Two awaiters that drain the WS chat ring buffer
-    // (chat.wait_for_next blocking, chat.peek_recent non-blocking) plus the
-    // two HUD-overlay broadcasts (chat.overlay.push / chat.overlay.clear).
+    // (chat.wait_for_next blocking, chat.peek_recent non-blocking).
+    //
+    // The two HUD-overlay broadcasts that used to live here
+    // (chat.overlay.push / chat.overlay.clear) lost their bodies in V4 part C:
+    // compositor.js never had a handler for their STEP payloads (op
+    // "chat_push" / "chat_clear"), so both had shipped inert. An on-overlay
+    // chat widget is authored in Visualist and fed by the Overlay Live
+    // Channel now — there is no per-widget push command any more. The two NAMES
+    // are still registered, as no-op shims in
+    // ScriptManager.RetiredCommands.cs, so an unmigrated `.phx` that still
+    // calls them stays quiet instead of tripping the engine's CriticalError
+    // unknown-command path.
     // Per-node result-var defaults (`global._chat_wait_*`, `global._chat_peek_*`)
     // are honored when the caller passes empty names so two Chat.WaitForNext /
     // Chat.PeekRecent nodes can coexist in one script without clobbering.
@@ -86,52 +96,15 @@ namespace Phoenix.Controls.Hub.Core
             // round-trips this return value into the node's Count output
             // (mirrors queue.length() / giveaway.default_id()). No result-var
             // base, no flow, no args.
+            //
+            // Arrived with the Dev merge. Its two former neighbours from that
+            // same Dev region — chat.overlay.push / chat.overlay.clear — are
+            // deliberately NOT re-registered here: V4 part C retired them into
+            // ScriptManager.RetiredCommands.cs (compositor.js never handled
+            // their STEP payloads, so both shipped inert). Re-adding the bodies
+            // would double-register the names against those shims.
             _engine.RegisterCommand("chat.message_count", async (args) =>
                 ChatActivityCounter.Current.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-            // ── Phase 3E: Chat overlay ──────────────────────────────────────
-            // chat.overlay.push(widgetId, username, message, color?)
-            // Broadcasts a HUD_BROADCAST → chat_push step to all connected browsers.
-            _engine.RegisterCommand("chat.overlay.push", async (args) => {
-                var bound = _engine.CurrentBoundArgs;
-                string widgetId = bound?.GetOrDefault<string>("WidgetID", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                string username = bound?.GetOrDefault<string>("Username", ArgOrEmpty(args, 1)) ?? ArgOrEmpty(args, 1);
-                string message  = bound?.GetOrDefault<string>("Message", ArgOrEmpty(args, 2)) ?? ArgOrEmpty(args, 2);
-                string colorRaw = bound?.GetOrDefault<string>("Color", ArgOrEmpty(args, 3)) ?? ArgOrEmpty(args, 3);
-                if (string.IsNullOrEmpty(widgetId) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(message))
-                    return null;
-                string color = string.IsNullOrEmpty(colorRaw) ? "#7fff7f" : colorRaw;
-                string payload  = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    type = "STEP",
-                    step = new { op = "chat_push", widgetId, username, text = message, color },
-                });
-                // Null-guard so chat that arrives before
-                // InitializeLayout finishes building HUDServer doesn't NRE.
-                var hud = HubHost.HUD;
-                if (hud is null)
-                    GlobalLogger.Log("chat.overlay.push: HUDServer not ready — dropping.", "Script", LogLevel.System);
-                else
-                    await hud.BroadcastRawAsync(payload);
-                return null;
-            });
-
-            // chat.overlay.clear(widgetId)
-            _engine.RegisterCommand("chat.overlay.clear", async (args) => {
-                string widgetId = _engine.CurrentBoundArgs?.GetOrDefault<string>("WidgetID", ArgOrEmpty(args, 0)) ?? ArgOrEmpty(args, 0);
-                if (string.IsNullOrEmpty(widgetId)) return null;
-                string payload = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    type = "STEP",
-                    step = new { op = "chat_clear", widgetId },
-                });
-                var hud = HubHost.HUD;
-                if (hud is null)
-                    GlobalLogger.Log("chat.overlay.clear: HUDServer not ready — dropping.", "Script", LogLevel.System);
-                else
-                    await hud.BroadcastRawAsync(payload);
-                return null;
-            });
         }
     }
 #pragma warning restore CS1998

@@ -1,0 +1,872 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.AutomodPanel.AutomodView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.AutomodPanel"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Automod page"
+    AutomationProperties.HelpText="Configure the spam filter: enable the tool, choose rules and thresholds, edit the block lists, set the escalation ladder, and review the moderation log."
+    loc:Localize.AutomationKey="panel.automod.page.a11y"
+    loc:Localize.HelpTextKey="panel.automod.page.help">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- ToolControlStyles is still required. After the conversions below this
+                     page holds no ToggleSwitch, no CheckBox and no Pivot, but it keeps
+                     TEXTBOX (every threshold, the four verbatim list areas, the pardon
+                     name) and COMBOBOX (the four-action pickers on each rule and each
+                     ladder rung), and both of those draw their coal/ember chrome from
+                     the implicit styles in that dictionary. RoleCheckRow merges it for
+                     itself, so the six role boxes are covered either way. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only shell recipes (cards, bands, strip buttons, text tiers). -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- ══════════ Page-local literals only ══════════ -->
+
+            <Style x:Key="AmHairline" TargetType="Border">
+                <Setter Property="Height" Value="1" />
+                <Setter Property="Background" Value="{StaticResource CoalDividerBrush}" />
+            </Style>
+
+            <!-- Numeric threshold boxes — mono, right-aligned (Timer idiom). -->
+            <Style x:Key="AmNumBox" TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+                <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="TextAlignment" Value="Right" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <!-- Borderless host for a display-only TogglePill. The pill owns no input:
+                 the Click, the accessible name and any gate all live on this Button. -->
+            <Style x:Key="AmToggleHost" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="0,2" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+            </Style>
+
+            <!-- Fold host for a rule row. Stretches across the rest of the 44 px row
+                 so the whole right-hand region is the accordion's hit target, and
+                 stays a SIBLING of the enable pill's host Button rather than
+                 wrapping it — one Button inside another would leave the enable
+                 toggle depending on WinUI's pointer-handled bubbling to keep the two
+                 gestures apart. Transparent, not null: a null Background is not
+                 hit-testable. -->
+            <Style x:Key="AmFoldHost" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="0" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Right" />
+                <Setter Property="VerticalAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+            </Style>
+
+            <!-- ══════════ Rule row — 44 px collapsed, accordion ══════════
+
+                 WAS: eight cards at ~135-150 px each, ~1400 px of scroll for a
+                 section whose job is eight booleans and a threshold or two — and
+                 every one of the eight repeated an IDENTICAL
+                 "ACTION / Use ladder / Timeout / 600 sec" strip.
+
+                 That strip is gone from the row. AutomodRuleBase.ActionMode
+                 defaults to Ladder for every rule, so on a stock config all eight
+                 said the same thing: it is now ONE "Default action" statement at the
+                 top of the section, and what stays here is the OVERRIDE — inside the
+                 expansion, with a reset back to the default beside it.
+
+                 The collapsed row carries only what is worth a glance: the rule's
+                 enable pill (a mid-stream setting — never fold one of those) and,
+                 ONLY when the rule overrides the default, the action it issues.
+                 Eight rules on a stock config therefore carry no repeated text at
+                 all, and a single override is the one thing on the strip that reads.
+
+                 One 1 px CoalCard hairline per row and no card: eight nested cards
+                 inside a scroller inside a page was three levels of ground for a
+                 list of eight items.
+
+                 ★ The two-gate chain stays on ComboBox and TextBox, both Controls.
+                 Do NOT hoist either IsEnabled onto the row's Border: IsEnabled is
+                 declared on Control, not on UIElement as in WPF, and binding it on a
+                 Border / Grid / StackPanel kills the XAML markup compiler with a bare
+                 MSB3073 and no diagnostic at any verbosity. -->
+            <DataTemplate x:Key="RuleRowTemplate" x:DataType="local:AutomodRuleRowVm">
+                <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1">
+                    <StackPanel>
+
+                        <!-- ── Collapsed row — 44 px ── -->
+                        <Grid Height="44" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />   <!-- 0: rule glyph        -->
+                                <ColumnDefinition Width="Auto" />   <!-- 1: enable pill       -->
+                                <ColumnDefinition Width="*" />      <!-- 2: fold + override   -->
+                            </Grid.ColumnDefinitions>
+
+                            <FontIcon Grid.Column="0" FontFamily="Segoe MDL2 Assets" Glyph="{x:Bind Glyph}" FontSize="14"
+                                      Foreground="{StaticResource EmberPrimaryBrush}"
+                                      VerticalAlignment="Center" />
+
+                            <Button Grid.Column="1" Style="{StaticResource AmToggleHost}"
+                                    VerticalAlignment="Center"
+                                    Click="OnRuleEnabledClick"
+                                    AutomationProperties.Name="{x:Bind Title}"
+                                    ToolTipService.ToolTip="Enable or disable this rule."
+                                    loc:Localize.TooltipKey="panel.automod.rule.enabled.tip">
+                                <cmn:TogglePill IsOn="{x:Bind Enabled, Mode=OneWay}" Label="{x:Bind Title}" />
+                            </Button>
+
+                            <Button Grid.Column="2" Style="{StaticResource AmFoldHost}"
+                                    Click="OnRuleFoldClick"
+                                    AutomationProperties.Name="{x:Bind FoldAutomationName, Mode=OneWay}">
+                                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <TextBlock Text="{x:Bind ActionSummary, Mode=OneWay}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind ChevronGlyph, Mode=OneWay}"
+                                               FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                               Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <!-- ── Expansion — one open at a time (OnRuleFoldClick) ── -->
+                        <StackPanel Visibility="{x:Bind ExpandedVisibility, Mode=OneWay}"
+                                    Spacing="10" Margin="24,2,0,14">
+
+                            <!-- LINK PERMIT — the FIRST field of the Links expansion,
+                                 because Links is the rule it grants a bypass to. It was
+                                 a card in the General section, two sections away from
+                                 the rule, with the verb itself named only in a page-wide
+                                 CHAT COMMANDS block: three surfaces for one setting.
+
+                                 Collapsed on the other seven rows (PermitVisibility is
+                                 constant per row, hence OneTime). The '!' stays a
+                                 separate TextBlock: the field is saved as typed and
+                                 ChatVerb strips a leading bang at the COMPARISON, so the
+                                 box shows the word and the bang beside it shows how chat
+                                 types it, with neither rewriting the other. No
+                                 PlaceholderText, deliberately — an empty box has a
+                                 MEANING here (the line below says so) and a ghosted
+                                 "permit" would read as "blank still answers to permit". -->
+                            <StackPanel Spacing="8" Visibility="{x:Bind PermitVisibility}">
+                                <TextBlock Text="LINK PERMIT" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           loc:Localize.Key="panel.automod.permit.eyebrow" />
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="A permitted user may post a link for the grace window without this rule firing."
+                                           loc:Localize.Key="panel.automod.permit.hint" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock Text="Command word" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.automod.permit.command.label" />
+                                    <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                    <TextBox Text="{x:Bind PermitCommand, Mode=TwoWay}"
+                                             Width="{StaticResource ToolFieldWidthSm}"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             AutomationProperties.Name="Permit command word"
+                                             loc:Localize.AutomationKey="panel.automod.permit.command.a11y" />
+                                    <TextBlock Text="Grace window (s)" Style="{StaticResource ToolSettingsLabelTextStyle}" Margin="8,0,0,0"
+                                               loc:Localize.Key="panel.automod.permit.grace.label" />
+                                    <TextBox Text="{x:Bind PermitSecondsText, Mode=TwoWay}" Width="70"
+                                             Style="{StaticResource AmNumBox}"
+                                             AutomationProperties.Name="Permit grace window in seconds"
+                                             loc:Localize.AutomationKey="panel.automod.permit.grace.a11y" />
+                                </StackPanel>
+                                <!-- Says what an empty box DOES rather than refusing it. A
+                                     blank verb canonicalizes to empty, ChatVerb.Matches
+                                     refuses an empty configured side, and the branch in
+                                     TryHandleAutomodAsync therefore never fires. -->
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Leave the word blank to switch the command off — nobody can grant a link pass then."
+                                           loc:Localize.Key="panel.automod.permit.blank_hint" />
+                                <TextBlock Text="Who can use the permit command" Style="{StaticResource ToolMonoHintTextStyle}"
+                                           loc:Localize.Key="panel.automod.permit.roles.label" />
+                                <cmn:RoleCheckRow Roles="{x:Bind PermitRoles}" />
+                                <Border Style="{StaticResource AmHairline}" />
+                            </StackPanel>
+
+                            <TextBlock Text="{x:Bind Description}" Style="{StaticResource ToolMonoHintTextStyle}"
+                                       Visibility="{x:Bind DescriptionVisibility}" />
+
+                            <!-- ★ 2026-08-14 — this panel now has a Visibility of its own.
+                                 All three of its children carried one and it carried none,
+                                 so on Blocklist words and Blocklist regex (no threshold, no
+                                 toggle) it collapsed to zero content but still drew its
+                                 share of the parent's Spacing on both sides: ~20 px of
+                                 nothing, in 2 of the 8 rules. FieldsVisibility follows the
+                                 three children. -->
+                            <StackPanel Orientation="Horizontal" Spacing="14" Visibility="{x:Bind FieldsVisibility}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind T1Visibility}" VerticalAlignment="Center">
+                                    <TextBlock Text="{x:Bind T1Label}" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                    <TextBox Text="{x:Bind T1Text, Mode=TwoWay}" Width="70" Style="{StaticResource AmNumBox}" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind T2Visibility}" VerticalAlignment="Center">
+                                    <TextBlock Text="{x:Bind T2Label}" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                    <TextBox Text="{x:Bind T2Text, Mode=TwoWay}" Width="70" Style="{StaticResource AmNumBox}" />
+                                </StackPanel>
+                                <Button Style="{StaticResource AmToggleHost}"
+                                        Visibility="{x:Bind ToggleVisibility}"
+                                        VerticalAlignment="Center"
+                                        Click="OnRuleToggleValueClick"
+                                        AutomationProperties.Name="{x:Bind ToggleLabel}">
+                                    <cmn:TogglePill IsOn="{x:Bind ToggleValue, Mode=OneWay}" Label="{x:Bind ToggleLabel}" />
+                                </Button>
+                            </StackPanel>
+
+                            <TextBlock Text="{x:Bind ListsHint}" Style="{StaticResource ToolMonoHintTextStyle}" Visibility="{x:Bind ListsHintVisibility}" />
+
+                            <Border Style="{StaticResource AmHairline}" />
+
+                            <!-- The OVERRIDE. "Use ladder" IS the default, so a rule sitting
+                                 on it shows no summary in the collapsed row and no reset
+                                 verb here; both appear the moment it is overridden. -->
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <TextBlock Text="Action for this rule" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.automod.rule.action.label" />
+                                <Button Style="{StaticResource ToolChipButtonStyle}"
+                                        VerticalAlignment="Center"
+                                        Click="OnRuleUseLadderClick"
+                                        AutomationProperties.Name="Action mode"
+                                        ToolTipService.ToolTip="ON follows the escalation ladder; OFF issues the fixed action beside it."
+                                        loc:Localize.AutomationKey="panel.automod.rule.action_mode.a11y"
+                                        loc:Localize.TooltipKey="panel.automod.rule.action_mode.tip">
+                                    <cmn:TogglePill IsOn="{x:Bind UseLadder, Mode=OneWay}" Label="{x:Bind UseLadderLabel, Mode=OneWay}" />
+                                </Button>
+                                <ComboBox SelectedIndex="{x:Bind FixedActionIndex, Mode=TwoWay}" IsEnabled="{x:Bind FixedEnabled, Mode=OneWay}" Width="120">
+                                    <ComboBoxItem Content="Warn" loc:Localize.Key="panel.automod.rule.action.warn" />
+                                    <ComboBoxItem Content="Delete" loc:Localize.Key="panel.automod.rule.action.delete" />
+                                    <ComboBoxItem Content="Timeout" loc:Localize.Key="panel.automod.rule.action.timeout" />
+                                    <ComboBoxItem Content="Ban" loc:Localize.Key="panel.automod.rule.action.ban" />
+                                </ComboBox>
+                                <TextBox Text="{x:Bind FixedDurationText, Mode=TwoWay}" Width="80" IsEnabled="{x:Bind FixedDurationEnabled, Mode=OneWay}"
+                                         Style="{StaticResource AmNumBox}" />
+                                <TextBlock Text="sec" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                           loc:Localize.Key="panel.automod.rule.action.unit" />
+                                <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                        Visibility="{x:Bind OverriddenVisibility, Mode=OneWay}"
+                                        Click="OnRuleResetActionClick"
+                                        AutomationProperties.Name="Reset this rule to the default action"
+                                        loc:Localize.AutomationKey="panel.automod.rule.reset.a11y">
+                                    <TextBlock Text="RESET TO DEFAULT" Style="{StaticResource ToolStripLabelTextStyle}"
+                                               loc:Localize.Key="panel.automod.rule.reset.label" />
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- ══════════ Ladder rung ══════════ -->
+            <DataTemplate x:Key="LadderRowTemplate" x:DataType="local:AutomodLadderStepVm">
+                <Border Background="{StaticResource CoalShellBrush}"
+                        BorderBrush="{StaticResource CoalCardBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{StaticResource Radius1Corner}"
+                        Padding="10,8">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{x:Bind StepLabel}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11" FontWeight="SemiBold"
+                                   Foreground="{StaticResource Ember200Brush}"
+                                   MinWidth="72" VerticalAlignment="Center" />
+                        <ComboBox Grid.Column="1" SelectedIndex="{x:Bind ActionIndex, Mode=TwoWay}" Width="120" VerticalAlignment="Center">
+                            <ComboBoxItem Content="Warn" loc:Localize.Key="panel.automod.ladder.action.warn" />
+                            <ComboBoxItem Content="Delete" loc:Localize.Key="panel.automod.ladder.action.delete" />
+                            <ComboBoxItem Content="Timeout" loc:Localize.Key="panel.automod.ladder.action.timeout" />
+                            <ComboBoxItem Content="Ban" loc:Localize.Key="panel.automod.ladder.action.ban" />
+                        </ComboBox>
+                        <TextBox Grid.Column="2" Text="{x:Bind DurationText, Mode=TwoWay}" Width="80" IsEnabled="{x:Bind DurationEnabled, Mode=OneWay}"
+                                 Style="{StaticResource AmNumBox}" />
+                        <TextBlock Grid.Column="3" Text="sec" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                   loc:Localize.Key="panel.automod.ladder.rung.unit" />
+                        <Button Grid.Column="5" Style="{StaticResource ToolDangerButtonStyle}"
+                                Click="OnRemoveLadderStepClick"
+                                AutomationProperties.Name="Remove rung"
+                                loc:Localize.AutomationKey="panel.automod.ladder.remove.a11y">
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                          Foreground="{StaticResource ErrBrush}" />
+                                <TextBlock Text="REMOVE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                           loc:Localize.Key="panel.automod.ladder.remove.label" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Border>
+            </DataTemplate>
+
+            <!-- ══════════ Moderation row ══════════
+                 The timestamp stacks (date over clock) because the column cannot hold
+                 "yyyy-MM-dd HH:mm:ss" on one line; the full stamp is also the row's
+                 tooltip. The action stays a tinted badge pill whose hue is resolved by
+                 PREFIX in AutomodListRowVm, so "Timeout (dry-run)" keeps the Timeout
+                 hue instead of falling to neutral.
+
+                 ★ 2026-08-14 — TWO LINES, not four columns across. The live column is
+                 now a fixed 300 px, and the old 78 / 92 / * / Auto row does not survive
+                 that: 78 + 92 + a ~67 px badge + spacing leaves the star column about
+                 14 px, which trims RULE to an ellipsis and wraps REASON into a tower.
+                 Time, user and the action badge share line one; rule and reason take
+                 line two under the user, where they have the full width. All four data
+                 points still render — nothing was dropped to make it fit. -->
+            <DataTemplate x:Key="ActivityRowTemplate" x:DataType="local:AutomodListRowVm">
+                <Grid Padding="12,6" ColumnSpacing="8" RowSpacing="2"
+                      BorderBrush="{StaticResource CoalRaisedBrush}"
+                      BorderThickness="0,0,0,1"
+                      ToolTipService.ToolTip="{x:Bind Time}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="62" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind DateText}"
+                                   Visibility="{x:Bind DateVisibility}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="9"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                        <TextBlock Text="{x:Bind ClockText}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind Name}"
+                               FontFamily="{StaticResource SansFont}" FontSize="12" FontWeight="Medium"
+                               Foreground="{StaticResource CoalPrimaryTextBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center" />
+                    <Border Grid.Row="0" Grid.Column="2"
+                            Background="{x:Bind ActionFillBrush}"
+                            BorderBrush="{x:Bind ActionBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource Radius1Corner}"
+                            Padding="6,2"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="{x:Bind ActionLabel}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="9" FontWeight="Bold" CharacterSpacing="120"
+                                   Foreground="{x:Bind ActionTextBrush}"
+                                   VerticalAlignment="Center" />
+                    </Border>
+
+                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Spacing="1">
+                        <TextBlock Text="{x:Bind Rule}"
+                                   FontFamily="{StaticResource MonoFont}" FontSize="10" CharacterSpacing="40"
+                                   Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind Reason}" Style="{StaticResource ToolMonoHintTextStyle}" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- 48 px header band -->
+            <RowDefinition Height="*" />      <!-- two-column body   -->
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+             ONE 48 px row replaces THREE: the action strip (master chip + status
+             pill), the pinned state-sentence banner below it, and the strip of hero
+             stat tiles at the top of the scroller. Three of those said the same
+             thing — whether the tool is on — in three vocabularies (OFF / dormant /
+             "DISABLED — nothing is scanned or moderated.").
+
+             ★ ToolStatusPill is NOT retired. Its four states and the predicates
+             behind them (dry-run outranks the connection state; only the fourth
+             state pulses) are the 1.1.7 honesty work and stay exactly as they were —
+             see AutomodViewModel.StatusPillText. What moved is WHERE the result
+             renders: the code-behind maps the SAME chain onto the band's one
+             lowercase phrase. Watch surfaces keep the pill; a config page does not
+             need a light on it.
+
+             No header CTA and no header refresh, deliberately. The page's one brass
+             CTA (ADD RUNG) appends to the ladder list and would sit inert on three
+             of four sections up here; REFRESH acts on the moderation log and stays
+             in the live column beside it. -->
+        <cmn:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />     <!-- LEFT: config detail  -->
+                <ColumnDefinition Width="300" />   <!-- RIGHT: moderation    -->
+            </Grid.ColumnDefinitions>
+            <!-- No ColumnSpacing. The right column's left border IS the divider.
+                 The live column is a FIXED 300 px: at 0.9* it took roughly two
+                 fifths of every window width, so the config column — the half the
+                 page exists for — shrank as the window grew. -->
+
+            <!-- ───────────── LEFT: config sections ───────────── -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />  <!-- section nav    -->
+                    <RowDefinition Height="*" />     <!-- gated scroller -->
+                </Grid.RowDefinitions>
+
+                <!-- Section nav — the Pivot's four config tabs. Deliberately OUTSIDE
+                     the gate, like the Pivot headers were: the streamer can still read
+                     every section while the tool is dormant.
+
+                     Zero vertical padding: the selector is a 40 px text nav whose
+                     selected chip carries a 2 px ember bottom edge, and that edge is
+                     meant to sit ON this row's hairline. Padding here would float it
+                     in the middle of a taller band and put the row back to the ~57 px
+                     of chrome it used to cost. -->
+                <Border Grid.Row="0"
+                        Background="{StaticResource CoalSurfaceBrush}"
+                        BorderBrush="{StaticResource CoalDividerBrush}"
+                        BorderThickness="0,0,0,1"
+                        Padding="14,0">
+                    <cmn:ToolSectionSelector Sections="{x:Bind ViewModel.SectionNames}"
+                                             SelectedIndex="{x:Bind ViewModel.SelectedSection, Mode=TwoWay}"
+                                             AutomationProperties.Name="Automod section"
+                                             loc:Localize.AutomationKey="panel.automod.nav.a11y" />
+                </Border>
+
+                <!-- ★ THE GATE GOES HERE AND NOWHERE ELSE.
+                     IsEnabled is declared on Control; ScrollViewer derives
+                     ContentControl, so the gate belongs on it and disables the whole
+                     subtree regardless. Binding it on the nav's Border, or on any
+                     StackPanel / Grid inside, kills XamlCompiler with a bare non-zero
+                     exit and NO diagnostic at any verbosity — bisection is the only
+                     way to find it.
+
+                     Scope of the gate is unchanged from the Pivot: the four CONFIG
+                     sections are gated, the nav and the entire moderation column are
+                     not. The master switch lives in the header band, so gating this
+                     can never lock the user out.
+
+                     ★ The stat strip that used to be this scroller's first child
+                     (ACTIONS TODAY / ACTIVE STRIKES / TOP OFFENDER) is GONE with no
+                     replacement, and so is the one-row CHAT COMMANDS block above it.
+                     Between them they cost ~183 px of a config page's first screen to
+                     show three zeroes on a fresh install and name one verb. The verb
+                     now lives beside the field that sets it (Links rule → LINK PERMIT);
+                     the three counts are readable in the moderation column itself.
+                     AutomodViewModel.StatActionsToday / StatActiveStrikes /
+                     StatTopOffender and .ChatCommands are deliberately LEFT IN PLACE —
+                     see the delivery report. -->
+                <ScrollViewer Grid.Row="1" x:Name="DetailScroll"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled"
+                              IsEnabled="{x:Bind ViewModel.MasterEnabled, Mode=OneWay}">
+                    <StackPanel Spacing="12" Padding="14">
+
+                        <!-- ══════ SECTION 1 — GENERAL ══════ -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.GeneralVisibility, Mode=OneWay}">
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="PLATFORMS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.platforms.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Text="Unticked platforms are never scanned."
+                                               loc:Localize.Key="panel.automod.platforms.hint" />
+                                    <StackPanel Orientation="Horizontal" Spacing="18">
+                                        <Button Style="{StaticResource AmToggleHost}" Click="OnScopeTwitchClick"
+                                                AutomationProperties.Name="Scan Twitch chat"
+                                                loc:Localize.AutomationKey="panel.automod.platforms.twitch.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.ScopeTwitch, Mode=OneWay}" Label="Twitch" />
+                                        </Button>
+                                        <Button Style="{StaticResource AmToggleHost}" Click="OnScopeYouTubeClick"
+                                                AutomationProperties.Name="Scan YouTube chat"
+                                                loc:Localize.AutomationKey="panel.automod.platforms.youtube.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.ScopeYouTube, Mode=OneWay}" Label="YouTube" />
+                                        </Button>
+                                        <Button Style="{StaticResource AmToggleHost}" Click="OnScopeKickClick"
+                                                AutomationProperties.Name="Scan Kick chat"
+                                                loc:Localize.AutomationKey="panel.automod.platforms.kick.a11y">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.ScopeKick, Mode=OneWay}" Label="Kick" />
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ExemptRoles is REPLACED wholesale on a foreign ConfigChanged,
+                                 so the binding must stay OneWay and must never be cached. -->
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="EXEMPT ROLES" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.exempt.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Text="A ticked role skips every rule."
+                                               loc:Localize.Key="panel.automod.exempt.hint" />
+                                    <cmn:RoleCheckRow Roles="{x:Bind ViewModel.ExemptRoles, Mode=OneWay}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="BEHAVIOUR" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.behaviour.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <Button Style="{StaticResource AmToggleHost}" Click="OnDryRunClick"
+                                            AutomationProperties.Name="Dry-run"
+                                            loc:Localize.AutomationKey="panel.automod.behaviour.dry_run.a11y">
+                                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.DryRun, Mode=OneWay}" VerticalAlignment="Center" />
+                                            <TextBlock Text="Dry-run (log the intended action, don't dispatch it)"
+                                                       Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.automod.behaviour.dry_run.label" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource AmToggleHost}" Click="OnSuppressDispatchClick"
+                                            AutomationProperties.Name="Suppress chat scripts for a moderated message"
+                                            loc:Localize.AutomationKey="panel.automod.behaviour.suppress.a11y">
+                                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                            <cmn:TogglePill IsOn="{x:Bind ViewModel.SuppressDispatchWhenModerated, Mode=OneWay}" VerticalAlignment="Center" />
+                                            <TextBlock Text="Suppress the author's chat scripts for a moderated message"
+                                                       Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                       loc:Localize.Key="panel.automod.behaviour.suppress.label" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ★ The LINK PERMIT card USED TO BE HERE, in General, two
+                                 sections away from the single rule it bypasses — and the verb
+                                 it answers to was named a third time in the page-wide CHAT
+                                 COMMANDS block. It is now the FIRST field of the Links rule's
+                                 expansion (Rules section); see the RuleRowTemplate comment.
+                                 The VM properties are unchanged and still own the
+                                 verbatim-save contract — the row reaches them through
+                                 accessors handed in by BuildRules. -->
+
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 2 — RULES ══════
+                             The eight rules and the default field fit one 1080p screen
+                             without scrolling: 8 × (44 px row + 1 px hairline) plus this
+                             header block. Before, the same eight were ~1400 px of cards. -->
+                        <StackPanel Spacing="10" Visibility="{x:Bind ViewModel.RulesVisibility, Mode=OneWay}">
+
+                            <!-- DEFAULT ACTION — the row that used to be repeated eight
+                                 times, stated once.
+
+                                 It is a statement, not a picker, and deliberately so:
+                                 AutomodRuleBase.ActionMode defaults to Ladder for every
+                                 rule, so this reports the model's actual default rather
+                                 than inventing a config field to hold a value the model
+                                 does not have. The ladder itself is edited in the Ladder
+                                 section; a rule that needs something else overrides it in
+                                 its own expansion, and says so on its collapsed row. -->
+                            <StackPanel Spacing="6">
+                                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <TextBlock Text="Default action" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                               loc:Localize.Key="panel.automod.rules.default.label" />
+                                    <TextBlock Text="the escalation ladder" Style="{StaticResource ToolMonoBodyTextStyle}"
+                                               VerticalAlignment="Center"
+                                               loc:Localize.Key="panel.automod.rules.default.value" />
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Unless a rule says otherwise, act on the ladder. Open a rule to override it; the rungs live in the Ladder section."
+                                           loc:Localize.Key="panel.automod.rules.default.hint" />
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Thresholds are validated; every other field is saved verbatim."
+                                           loc:Localize.Key="panel.automod.rules.verbatim_hint" />
+                            </StackPanel>
+
+                            <!-- No card around the list, and Spacing="0": each row draws
+                                 its own 1 px CoalCard hairline, so the eight read as one
+                                 list instead of eight stacked surfaces. -->
+                            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Rules, Mode=OneWay}"
+                                           cmn:RowDataContext.Supply="True"
+                                           ItemTemplate="{StaticResource RuleRowTemplate}"
+                                           AutomationProperties.Name="Automod rules"
+                                           loc:Localize.AutomationKey="panel.automod.rules.list.a11y">
+                                <ItemsRepeater.Layout>
+                                    <StackLayout Orientation="Vertical" Spacing="0" />
+                                </ItemsRepeater.Layout>
+                            </ItemsRepeater>
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 3 — LISTS ══════ -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.ListsVisibility, Mode=OneWay}">
+                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Text="One entry per line, saved verbatim."
+                                       loc:Localize.Key="panel.automod.lists.hint" />
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="URL ALLOW-LIST" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.lists.url_allow.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <TextBox Text="{x:Bind ViewModel.UrlAllowText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" PlaceholderText="youtube.com&#x0a;clips.twitch.tv" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="URL BLOCK-LIST" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.lists.url_block.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <TextBox Text="{x:Bind ViewModel.UrlBlockText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" PlaceholderText="bit.ly&#x0a;free-nitro.example" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="BLOCKLIST WORDS / PHRASES" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.lists.words.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <TextBox Text="{x:Bind ViewModel.WordsText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="BLOCKLIST REGEX PATTERNS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.lists.regex.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Text="Each pattern runs with a 100 ms match timeout; a timeout or an invalid pattern is treated as no-match and logged once."
+                                               loc:Localize.Key="panel.automod.lists.regex.hint" />
+                                    <TextBox Text="{x:Bind ViewModel.RegexText, Mode=TwoWay}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="70" FontFamily="{StaticResource MonoFont}" />
+                                    <!-- PASSIVE compile cue — names the patterns the service could
+                                         not compile on the last save. The text is stored verbatim
+                                         either way; this never rejects input or opens a dialog. -->
+                                    <TextBlock Text="{x:Bind ViewModel.RegexIssueText, Mode=OneWay}"
+                                               Visibility="{x:Bind ViewModel.RegexIssueVisibility, Mode=OneWay}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               Foreground="{StaticResource WarnBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ══════ SECTION 4 — LADDER ══════ -->
+                        <StackPanel Spacing="12" Visibility="{x:Bind ViewModel.LadderVisibility, Mode=OneWay}">
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="STRIKE DECAY" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.automod.decay.eyebrow" />
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="Hours (0 = never)" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                   loc:Localize.Key="panel.automod.decay.hours.label" />
+                                        <TextBox Text="{x:Bind ViewModel.StrikeDecayHoursText, Mode=TwoWay}" Width="80" Style="{StaticResource AmNumBox}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource ToolSectionCardStyle}">
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="ESCALATION LADDER" Style="{StaticResource ToolEyebrowTextStyle}" VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.automod.ladder.eyebrow" />
+                                        <!-- The page's ONE brass CTA. It stays beside the rung
+                                             list it appends to rather than moving to the strip,
+                                             where it would sit inert on three of four sections. -->
+                                        <Button Grid.Column="1" Style="{StaticResource ToolBrassCtaStyle}"
+                                                Click="OnAddLadderStepClick"
+                                                AutomationProperties.Name="Add rung"
+                                                loc:Localize.AutomationKey="panel.automod.ladder.add.a11y">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                                          Foreground="{StaticResource CoalShellBrush}" />
+                                                <TextBlock Text="ADD RUNG" Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                                           loc:Localize.Key="panel.automod.ladder.add.label" />
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+                                    <Border Style="{StaticResource AmHairline}" />
+                                    <!-- Delete is no longer a dead rung: WS.cs now fills
+                                         ChatMessage.MessageId on all three platforms, so
+                                         ResolveAutomodDeleteAction's remaining gate is the
+                                         Streamer.bot wrapper. Both refusal shapes named here
+                                         are real — ResolveLadderWithoutDelete for a rung,
+                                         FallbackAction = None for a fixed rule. -->
+                                    <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Text="Strike N uses rung N; the last rung repeats. A Delete rung needs a message id and a Streamer.bot delete action for the platform — without both, a ladder rung falls to the next non-Delete rung and a fixed Delete issues nothing."
+                                               loc:Localize.Key="panel.automod.ladder.hint" />
+
+                                    <ItemsRepeater ItemsSource="{x:Bind ViewModel.Ladder, Mode=OneWay}"
+                                                   cmn:RowDataContext.Supply="True"
+                                                   ItemTemplate="{StaticResource LadderRowTemplate}"
+                                                   AutomationProperties.Name="Escalation ladder"
+                                                   loc:Localize.AutomationKey="panel.automod.ladder.list.a11y">
+                                        <ItemsRepeater.Layout>
+                                            <StackLayout Orientation="Vertical" Spacing="6" />
+                                        </ItemsRepeater.Layout>
+                                    </ItemsRepeater>
+
+                                    <!-- PASSIVE order cue — a de-escalating ladder is legal and
+                                         saved verbatim; this only names it. Never blocks a save. -->
+                                    <TextBlock Text="{x:Bind ViewModel.LadderOrderHint, Mode=OneWay}"
+                                               Visibility="{x:Bind ViewModel.LadderOrderHintVisibility, Mode=OneWay}"
+                                               Style="{StaticResource ToolMonoHintTextStyle}"
+                                               Foreground="{StaticResource WarnBrush}" />
+
+                                    <StackPanel Visibility="{x:Bind ViewModel.LadderEmptyVisibility, Mode=OneWay}"
+                                                HorizontalAlignment="Center" Spacing="6" Margin="0,18,0,18">
+                                        <TextBlock Text="No rungs yet" Style="{StaticResource ToolEmptyTitleTextStyle}"
+                                                   loc:Localize.Key="panel.automod.ladder.empty.title" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ───────────── RIGHT: moderation (never gated) ─────────────
+                 This column IS Automod's activity surface. It is not the shared
+                 ToolActivityFeed: that card renders a 86 / 38 / * time-kind-message
+                 row, and this feed is DB-backed AutomodLog with a user, a rule, a
+                 reason and a prefix-tinted action badge. Restyling onto the shared
+                 three-column card would silently drop three of those. Same source as
+                 before the rebuild (AutomodService.GetLogAsync), same 400 ms burst
+                 debounce, same empty state. -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />  <!-- header            -->
+                        <RowDefinition Height="Auto" />  <!-- pardon + refresh  -->
+                        <RowDefinition Height="Auto" />  <!-- column band       -->
+                        <RowDefinition Height="*" />     <!-- rows + empty state-->
+                    </Grid.RowDefinitions>
+
+                    <cmn:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Moderation"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.automod.moderation.title">
+                        <cmn:PanelHeader.RightContent>
+                            <TextBlock Text="latest 200"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.automod.moderation.count" />
+                        </cmn:PanelHeader.RightContent>
+                    </cmn:PanelHeader>
+
+                    <!-- PARDON stays adjacent to the log it acts on, and stays usable
+                         while the filter is off — clearing strikes is a legitimate
+                         write on a dormant tool. -->
+                    <Border Grid.Row="1" Style="{StaticResource ToolBandBorderStyle}">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="PARDON" Style="{StaticResource ToolEyebrowTextStyle}"
+                                           VerticalAlignment="Center"
+                                           loc:Localize.Key="panel.automod.pardon.eyebrow" />
+                                <Button Grid.Column="1" Style="{StaticResource ToolSecondaryButtonStyle}"
+                                        Click="OnRefreshClick"
+                                        AutomationProperties.Name="Refresh activity"
+                                        loc:Localize.AutomationKey="panel.automod.moderation.refresh.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="11"
+                                                  Foreground="{StaticResource CoalBodyTextBrush}" />
+                                        <TextBlock Text="REFRESH" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.automod.moderation.refresh.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" MinWidth="0"
+                                         Text="{x:Bind ViewModel.PardonName, Mode=TwoWay}"
+                                         PlaceholderText="username"
+                                         AutomationProperties.Name="User to pardon"
+                                         loc:Localize.PlaceholderKey="panel.automod.pardon.name.placeholder"
+                                         loc:Localize.AutomationKey="panel.automod.pardon.name.a11y" />
+                                <Button Grid.Column="1" Style="{StaticResource ToolSecondaryButtonStyle}"
+                                        Click="OnPardonClick"
+                                        AutomationProperties.Name="Pardon user"
+                                        loc:Localize.AutomationKey="panel.automod.pardon.submit.a11y">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8FB;" FontSize="11"
+                                                  Foreground="{StaticResource ErrBrush}" />
+                                        <TextBlock Text="PARDON" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                   loc:Localize.Key="panel.automod.pardon.submit.label" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <TextBlock Style="{StaticResource ToolMonoHintTextStyle}" Text="Reset a user's strikes."
+                                       loc:Localize.Key="panel.automod.pardon.hint" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Column band — the row's FIRST line. RULE · REASON dropped out of
+                         the band along with its column: it is now the row's second line,
+                         directly under the user it belongs to, where a band label over an
+                         empty column would be pointing at nothing. -->
+                    <Border Grid.Row="2"
+                            Background="{StaticResource CoalRaisedBrush}"
+                            BorderBrush="{StaticResource CoalDividerBrush}"
+                            BorderThickness="0,0,0,1"
+                            Padding="12,5">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="62" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="TIME" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.automod.moderation.column.time" />
+                            <TextBlock Grid.Column="1" Text="USER · RULE" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.automod.moderation.column.user_rule" />
+                            <TextBlock Grid.Column="2" Text="ACTION" Style="{StaticResource ToolColumnLabelTextStyle}"
+                                       loc:Localize.Key="panel.automod.moderation.column.action" />
+                        </Grid>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Activity, Mode=OneWay}"
+                                       cmn:RowDataContext.Supply="True"
+                                       ItemTemplate="{StaticResource ActivityRowTemplate}"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       AutomationProperties.Name="Recent moderation, newest first"
+                                       loc:Localize.AutomationKey="panel.automod.moderation.list.a11y" />
+                    </ScrollViewer>
+
+                    <!-- Empty state — a SIBLING of the scroller in the same cell.
+                         ONE line, top-aligned, in the hint tier. It was a DisplayFont
+                         headline plus an explanatory line, centred in a column that is
+                         most of the window tall: an absence rendered larger than any
+                         live row that would replace it. -->
+                    <TextBlock Grid.Row="3"
+                               Visibility="{x:Bind ViewModel.ActivityEmptyVisibility, Mode=OneWay}"
+                               Text="Nothing moderated yet."
+                               Style="{StaticResource ToolMonoHintTextStyle}"
+                               HorizontalAlignment="Left" VerticalAlignment="Top"
+                               Margin="12,10,12,0"
+                               loc:Localize.Key="panel.automod.moderation.empty.body" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

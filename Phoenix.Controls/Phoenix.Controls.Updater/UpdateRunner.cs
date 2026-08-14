@@ -41,13 +41,12 @@ public enum UpdateOutcome
 /// purpose — keeping it in sync with <c>Paths.AppDataFolderName</c> is the
 /// price for keeping the Updater self-contained.
 ///
-/// Two flows coexist:
-///   • <b>Update flow</b>: caller pre-downloaded a <c>.phxupdate</c>
-///     archive and verified its SHA before invoking us with <c>--update</c>.
-///     We re-verify the archive SHA + Authenticode, stop the suite, swap.
-///   • <b>Releases flow</b> (legacy URL-based): caller passes
-///     <c>--asset-url</c> + <c>--asset-sha256</c>; we download the zip,
-///     verify, swap. Kept so the WinForms Hub's auto-update keeps working.
+/// One shipped flow: the <b>Releases flow</b> — caller passes
+/// <c>--asset-url</c> + <c>--asset-sha256</c>; we download the GitHub
+/// Releases zip, verify its SHA-256, swap. That verification is integrity
+/// only (the hash pins the bytes the caller vouched for) — there is NO
+/// Authenticode / code-signature check; archive signing is a future rollout
+/// (TODO §3).
 ///
 /// The legacy <c>git fetch + dotnet build</c> path was removed in the 0.6.2
 /// cleanup — distribution runs entirely through release archives now.
@@ -120,24 +119,15 @@ public sealed class UpdateRunner
     public async Task<UpdateOutcome> RunAsync()
     {
         Log("--- Phoenix.Controls.Updater starting ---");
-        Log($"  installRoot   = {_args.InstallRoot ?? "(infer)"}");
+        Log($"  installRoot   = {_args.InstallRoot ?? "(none)"}");
         Log($"  hubPid        = {_args.HubPid}");
         Log($"  launchScript  = {_args.LaunchScript}");
         Log($"  noRelaunch    = {_args.NoRelaunch}");
         Log($"  releaseTag    = {_args.ReleaseTag ?? "(none)"}");
-        Log($"  updateArchive = {_args.UpdateArchive ?? "(none)"}");
-        Log($"  archiveSha256 = {_args.ArchiveSha256 ?? "(none)"}");
 
         try
         {
-            // Update mode: caller already downloaded an archive.
-            if (_args.IsUpdateMode)
-            {
-                await WaitForSuiteShutdownAsync().ConfigureAwait(false);
-                return await RunUpdateFlowAsync().ConfigureAwait(false);
-            }
-
-            // Releases mode (legacy URL-based): we download the asset.
+            // Releases mode: we download the asset.
             if (_args.IsReleasesMode)
             {
                 await WaitForSuiteShutdownAsync().ConfigureAwait(false);
@@ -149,7 +139,7 @@ public sealed class UpdateRunner
             Log("refusing to update -- legacy git-checkout update flow has been removed.");
             WriteResult(UpdateOutcome.Failed, oldSha: null, newSha: null,
                 error: "The legacy git-checkout update flow has been removed. " +
-                       "Use --update <archive> (preferred) or --asset-url/--asset-sha256 (Releases mode).");
+                       "Use --asset-url/--asset-sha256 (Releases mode).");
             return UpdateOutcome.Failed;
         }
         catch (Exception ex)
@@ -164,183 +154,7 @@ public sealed class UpdateRunner
         }
     }
 
-    // ── Update flow (.phxupdate) ────────────────────────────────────────
-
-    private async Task<UpdateOutcome> RunUpdateFlowAsync()
-    {
-        await Task.Yield();
-
-        string archive = _args.UpdateArchive!;
-        if (!File.Exists(archive))
-        {
-            Log($"archive not found: {archive}");
-            WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag, error: $"archive not found: {archive}");
-            return UpdateOutcome.Failed;
-        }
-
-        // Defensive staging-dir cleanup. The Update-flow consumes a
-        // caller-provided archive, so we MUST NOT delete the archive itself;
-        // the Releases flow's "wipe downloadDir on entry" pattern (line ~360)
-        // can't be applied verbatim here. Instead, age out any *other* file
-        // in the archive's directory that hasn't been touched in 7+ days, so
-        // half-downloaded retries, orphaned .meta sidecars, and stale extract
-        // dirs from interrupted prior runs don't accumulate indefinitely.
-        TryAgeOutStaging(archive, ageDays: 7);
-
-        long bytes = new FileInfo(archive).Length;
-        Log($"archive size: {bytes:N0} bytes");
-
-        // 1. Contract: --update REQUIRES --archive-sha256. Skipping the
-        //    archive-wide hash collapses to "trust any file on local disk",
-        //    which means a malicious local writer can substitute the staging
-        //    archive between download and apply. Manifest-per-file hashes are
-        //    defence-in-depth, NOT a substitute (a malicious archive can ship
-        //    its own manifest).
-        if (string.IsNullOrEmpty(_args.ArchiveSha256))
-        {
-            Log("refusing to apply -- --update mode requires --archive-sha256.");
-            WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                error: "--update mode requires --archive-sha256. Aborted to protect the install.");
-            return UpdateOutcome.Failed;
-        }
-        {
-            string actual;
-            try { actual = ComputeSha256(archive); }
-            catch (Exception ex)
-            {
-                Log($"sha256 read failed: {ex.Message}");
-                WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag, error: $"sha256 read failed: {ex.Message}");
-                return UpdateOutcome.Failed;
-            }
-            // Constant-time hex compare.
-            if (!HexEqualsFixedTime(actual, _args.ArchiveSha256))
-            {
-                Log($"sha256 mismatch -- expected {_args.ArchiveSha256}, got {actual}");
-                WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                    error: $"SHA-256 mismatch on update archive (expected {_args.ArchiveSha256}, got {actual}). Aborted.");
-                return UpdateOutcome.Failed;
-            }
-            Log($"sha256 verified: {actual}");
-        }
-
-        // 2. Contract: Authenticode Unsigned is REJECTED in --update
-        //    mode. Today's pipeline doesn't sign archives, so this hard-gates
-        //    behind the signing infrastructure -- which is the intended fail-
-        //    closed posture until that ships. Untrusted has always failed.
-        Authenticode.VerifyResult ac = Authenticode.Verify(archive, out string acDetail);
-        Log($"authenticode: {ac} ({acDetail})");
-        if (ac == Authenticode.VerifyResult.Untrusted)
-        {
-            WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                error: $"Authenticode verification failed on the update archive: {acDetail}. Aborted to protect the install.");
-            return UpdateOutcome.Failed;
-        }
-        if (ac == Authenticode.VerifyResult.Unsigned)
-        {
-            WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                error: "Update archive is unsigned. Refusing to apply in --update mode until signing infrastructure ships.");
-            return UpdateOutcome.Failed;
-        }
-
-        // 3. Resolve the install root -- explicit --target / --install-root
-        //    wins, otherwise the Updater is sitting next to the suite at
-        //    <installRoot>/Updater/Phoenix.Controls.Updater.exe, so the parent
-        //    of AppContext.BaseDirectory is the install root.
-        string installRoot = ResolveInstallRoot();
-        Log($"installRoot resolved to: {installRoot}");
-
-        // Reject system-critical install-root targets up-front.
-        // Combined with the Zip Slip primitives the install-root was a
-        // swap-anywhere vector; the elevated-installer flow will tighten this
-        // further when it ships.
-        if (!IsInstallRootSafe(installRoot, out string rootReason))
-        {
-            Log($"refusing to update -- unsafe install root: {rootReason}");
-            WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                error: $"--target / --install-root rejected: {rootReason}");
-            WriteProgress("failed", -1, $"Unsafe install root: {rootReason}");
-            return UpdateOutcome.Failed;
-        }
-
-        // 4. Read the manifest if the archive carries one. Manifest-free zips
-        //    (legacy phoenix-controls/ root) work too -- fall through to the
-        //    same swap routine the Releases flow uses.
-        UpdateManifest? manifest = UpdateManifest.LoadFromArchive(archive);
-        if (manifest is not null)
-            Log($"manifest: version={manifest.Version}, files={manifest.Files.Count}");
-        else
-            Log("manifest: (none -- treating as legacy zip with phoenix-controls/ root)");
-
-        // 5. Extract + atomic swap.
-        WriteProgress("await_hub_exit", -1, "Waiting for Hub to exit before applying swap...");
-        if (!await AwaitSentinelHubExitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
-        {
-            Log("aborting -- Hub PID from sentinel did not exit within 30s; refusing to mutate files.");
-            WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                error: "Hub did not exit within 30 seconds after the update was authorized. Aborted to protect the install. Restart Hub and retry.");
-            WriteProgress("failed", -1, "Hub did not exit in time — aborted to protect the install.");
-            return UpdateOutcome.Failed;
-        }
-
-        _swapInFlight = true;
-        WriteProgress("swap", -1, "Applying atomic swap...");
-        UpdateOutcome outcome = ApplyArchiveSwap(archive, installRoot, out string? retainedBackupDir);
-        if (outcome != UpdateOutcome.Success)
-        {
-            WriteProgress("failed", -1, "Swap failed.");
-            return outcome;
-        }
-
-        // 6. Verify per-file hashes via the manifest (defence in depth).
-        if (manifest is not null)
-        {
-            var problems = manifest.VerifyInstall(installRoot);
-            if (problems.Count > 0)
-            {
-                Log("manifest verification FAILED:");
-                foreach (string p in problems) Log("  " + p);
-                WriteResult(UpdateOutcome.Failed, null, _args.ReleaseTag,
-                    error: $"manifest verification failed after extract: {problems.Count} problem(s) (see updater.log)");
-                WriteProgress("failed", -1, "Manifest verification failed after extract.");
-                return UpdateOutcome.Failed;
-            }
-            Log($"manifest verification: ok ({manifest.Files.Count} files)");
-        }
-
-        // 7. Merge user state back from the retained backup. Deliberately
-        //    AFTER the manifest verification -- the manifest hashes the
-        //    shipped payload, and the merge overwrites shipped files
-        //    (config.json) with the user's copies where the user wins.
-        RestoreUserState(retainedBackupDir, installRoot);
-
-        // Relaunch + hubAlive verification must precede WriteResult(Success).
-        // The new Hub's ReadAndClearLastUpdateResult otherwise races + clears the
-        // success-file before a relaunch-failure overwrite has a chance to land,
-        // so the user sees "Update applied" when it actually failed to relaunch.
-        TryPruneBackups(installRoot, ageDays: 7);
-        bool relaunchOk = true;
-        string? relaunchError = null;
-        if (!_args.NoRelaunch)
-            (relaunchOk, relaunchError) = await MaybeRelaunchAsync(installRoot).ConfigureAwait(false);
-
-        if (relaunchOk)
-        {
-            WriteResult(UpdateOutcome.Success, oldSha: null, newSha: _args.ReleaseTag, error: null);
-            WriteProgress("complete", 100, "Update complete.");
-            TryDeleteSentinel();
-            return UpdateOutcome.Success;
-        }
-        else
-        {
-            WriteResult(UpdateOutcome.Failed, oldSha: null, newSha: _args.ReleaseTag,
-                error: relaunchError ?? "Update applied but Hub did not come back up after relaunch.");
-            WriteProgress("failed", -1, relaunchError ?? "Update applied but Hub did not relaunch.");
-            TryDeleteSentinel();
-            return UpdateOutcome.Failed;
-        }
-    }
-
-    // ── Releases flow (legacy URL-based; download + verify + swap) ──────
+    // ── Releases flow (download + verify + swap) ────────────────────────
 
     private async Task<UpdateOutcome> RunReleasesFlowAsync()
     {
@@ -351,7 +165,7 @@ public sealed class UpdateRunner
         // from a flat project bin). The WinForms Hub.exe was retired
         // in T15 and is no longer staged in either the zip or the installer.
         string installRoot = _args.InstallRoot!;
-        // Same install-root sanity gate as Update mode.
+        // Install-root sanity gate — reject system-critical targets up-front.
         if (!IsInstallRootSafe(installRoot, out string rootReason))
         {
             Log($"refusing to update -- unsafe install root: {rootReason}");
@@ -483,7 +297,7 @@ public sealed class UpdateRunner
         }
     }
 
-    // ── Archive swap helper (shared between Update + Releases flows) ────
+    // ── Archive swap helper ─────────────────────────────────────────────
 
     /// <summary>
     /// Merges user-authored state (scripts, layers, media, config) from the
@@ -517,8 +331,8 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// Extracts <paramref name="archivePath"/> (zip or .phxupdate -- same
-    /// format) into a staging directory next to it, then atomically renames
+    /// Extracts the release zip at <paramref name="archivePath"/> into a
+    /// staging directory next to it, then atomically renames
     /// the current install to a timestamped backup and the staging dir into
     /// the install path. Tolerates two archive layouts: a top-level
     /// <c>phoenix-controls/</c> wrapper, or a flat layout where the suite
@@ -743,30 +557,11 @@ public sealed class UpdateRunner
         }
     }
 
-    /// <summary>
-    /// Resolves the install root for Update mode. Caller-supplied --target /
-    /// --install-root wins. Otherwise: assume the Updater is sitting at
-    /// <c>&lt;installRoot&gt;/Updater/Phoenix.Controls.Updater.exe</c> per the
-    /// installer layout, so the parent of <see cref="AppContext.BaseDirectory"/>
-    /// is the install root. As a final fallback, return the Updater's own
-    /// directory (dev-tree case where Hub and Updater coexist in one bin).
-    /// </summary>
-    private string ResolveInstallRoot()
-    {
-        if (!string.IsNullOrEmpty(_args.InstallRoot)) return _args.InstallRoot;
-
-        string baseDir = AppContext.BaseDirectory;
-        // Trim trailing separator so DirectoryInfo.Parent works.
-        baseDir = Path.TrimEndingDirectorySeparator(baseDir);
-
-        var di = new DirectoryInfo(baseDir);
-        // If we're under <root>/Updater/, the parent is the install root.
-        if (string.Equals(di.Name, "Updater", StringComparison.OrdinalIgnoreCase) && di.Parent is not null)
-            return di.Parent.FullName;
-
-        // Dev-tree case: the Updater lives alongside Hub in a flat bin.
-        return baseDir;
-    }
+    // Dev's ResolveInstallRoot() came with this block and is deliberately NOT
+    // carried over: D15 removed the --update flow that called it, and
+    // Bootstrap.ResolveEffectiveInstallRoot is the live equivalent on this
+    // branch. MoveDirectoryWithUnlockRetry above IS kept — ApplyArchiveSwap
+    // still calls it.
 
     /// <summary>
     /// Install-root sanity gate. Rejects targets that are obviously
@@ -1360,86 +1155,6 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// Defensive cleanup: age out anything in <paramref name="protectedFile"/>'s
-    /// directory older than <paramref name="ageDays"/>, while preserving the
-    /// caller-provided archive itself. The staging dir is treated as scratch
-    /// space — orphaned .meta sidecars, half-downloaded .zips, stale extract
-    /// folders from interrupted prior runs all accumulate here and would
-    /// otherwise leak disk space across releases.
-    /// </summary>
-    private void TryAgeOutStaging(string protectedFile, int ageDays)
-    {
-        try
-        {
-            string? dir = Path.GetDirectoryName(Path.GetFullPath(protectedFile));
-            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
-
-            // Blast-radius guard (2026-07-14): the caller-provided archive can
-            // live ANYWHERE — `--update D:\Downloads\x.phxupdate` would treat
-            // the user's Downloads folder as scratch space and age-delete its
-            // contents. Only clean when the directory is the Updater's own
-            // state dir (or inside it); anything else is a user-chosen folder
-            // we must never touch beyond reading the archive.
-            string stateFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_stateDir));
-            string dirFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
-            bool insideStateDir =
-                string.Equals(dirFull, stateFull, StringComparison.OrdinalIgnoreCase) ||
-                dirFull.StartsWith(stateFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-            if (!insideStateDir)
-            {
-                Log($"staging cleanup skipped: {dirFull} is outside the updater state dir ({stateFull}).");
-                return;
-            }
-
-            string protectedFull;
-            try { protectedFull = Path.GetFullPath(protectedFile); }
-            catch { return; }
-
-            DateTime cutoff = DateTime.UtcNow - TimeSpan.FromDays(ageDays);
-
-            foreach (string file in Directory.EnumerateFiles(dir))
-            {
-                try
-                {
-                    string full = Path.GetFullPath(file);
-                    // Never touch the archive the caller asked us to apply.
-                    if (string.Equals(full, protectedFull, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    DateTime mtime = File.GetLastWriteTimeUtc(file);
-                    if (mtime < cutoff)
-                    {
-                        File.Delete(file);
-                        // Communication-level log per spec: surfaces the
-                        // cleanup in the user-facing update log without
-                        // spamming Debug-only consumers.
-                        Log($"staging cleanup: deleted stale file (mtime {mtime:O} < cutoff {cutoff:O}): {file}");
-                    }
-                }
-                catch (Exception ex) { Log($"staging cleanup: could not inspect {file}: {ex.Message}"); }
-            }
-
-            // Also age out stale extracted-* subdirectories from interrupted
-            // ApplyArchiveSwap runs. They sit next to the archive (see
-            // line ~478) and would otherwise leak GBs across releases.
-            foreach (string sub in Directory.EnumerateDirectories(dir))
-            {
-                try
-                {
-                    DateTime mtime = Directory.GetLastWriteTimeUtc(sub);
-                    if (mtime < cutoff)
-                    {
-                        Directory.Delete(sub, recursive: true);
-                        Log($"staging cleanup: deleted stale directory (mtime {mtime:O} < cutoff {cutoff:O}): {sub}");
-                    }
-                }
-                catch (Exception ex) { Log($"staging cleanup: could not inspect {sub}: {ex.Message}"); }
-            }
-        }
-        catch (Exception ex) { Log($"staging cleanup: scan failed: {ex.Message}"); }
-    }
-
-    /// <summary>
     /// Marker the Hub-side self-heal (<c>UpdateBackupSelfHeal</c> in
     /// Phoenix.Controls.Hub) drops into a backup once it has been mined for
     /// user data. Keep the two literals in sync by hand — the Updater is
@@ -1585,7 +1300,9 @@ public sealed class UpdateRunner
     /// code around it — the backup exists only to preserve user data and every
     /// release re-ships its own code. STRICTLY data-preserving: it walks only
     /// the path segments leading to the data root, deleting siblings at each
-    /// level, and NEVER enters or removes the data subtree itself. Any IO fault
+    /// level, and NEVER enters or removes the data subtree itself — nor the
+    /// self-heal marker at the backup root, which certifies that Hub already
+    /// drained this backup cleanly. Any IO fault
     /// leaves the backup untouched (wasted disk, never data loss); best-effort
     /// and non-fatal to the update. Only runs when exactly ONE data-root
     /// candidate is present — zero means nothing to preserve (the caller only
@@ -1615,9 +1332,20 @@ public sealed class UpdateRunner
                     if (!string.Equals(Path.GetFileName(sub), seg, StringComparison.OrdinalIgnoreCase))
                         Directory.Delete(sub, recursive: true);
                 }
-                // Loose files at an ancestor level are release code, never data.
+                // Loose files at an ancestor level are release code, never data —
+                // with ONE exception at the backup root: the self-heal marker.
+                // It is a data-safety certificate (clean drain), not code:
+                // deleting it re-arms a full re-scan of this backup on every Hub
+                // boot and re-tightens the prune gate to content-sensitive, so a
+                // later user edit that makes a live file differ resurrects the
+                // "backup still holds unrestored user data" CriticalError.
                 foreach (string file in Directory.GetFiles(level))
+                {
+                    if (string.Equals(level, backupDir, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(Path.GetFileName(file), SelfHealMarkerFileName, StringComparison.OrdinalIgnoreCase))
+                        continue;
                     File.Delete(file);
+                }
                 level = Path.Combine(level, seg);
             }
         }
@@ -1721,21 +1449,42 @@ public sealed class UpdateRunner
 
     // ── Shutdown coordination ───────────────────────────────────────────
 
+    // The single-HUB collapse (T15) turned the pillar projects into
+    // libraries hosted inside Hub.WinUI — Architect.WinUI / Visualist.WinUI
+    // no longer produce exes, so their old image names can never match a
+    // process. Phoenix.Controls.Viewer IS still a WinExe staged by the
+    // installer at {app}\Viewer\ — it must be stopped too, or the swap
+    // mutates files under a running Viewer.
+    private const string ViewerImageName = "Phoenix.Controls.Viewer";
+
     private static readonly string[] SuiteImageNames =
     {
-        "Phoenix.Controls.Hub",
         "Phoenix.Controls.Hub.WinUI",
-        "Phoenix.Controls.Architect",
-        "Phoenix.Controls.Architect.WinUI",
-        "Phoenix.Controls.Visualist",
-        "Phoenix.Controls.Visualist.WinUI",
         // The slim WebView2 viewer shell runs from {app}\Viewer and maps its
         // images from the install tree like the pillars do. It was missing
         // from this list, so a running Viewer sailed past the graceful-close
         // + force-kill passes and only surfaced at swap time as a Restart-
         // Manager locker.
-        "Phoenix.Controls.Viewer",
+        //
+        // Dev's copy of this list also names Phoenix.Controls.Architect(.WinUI)
+        // and Phoenix.Controls.Visualist(.WinUI). Those are NOT carried over:
+        // D15 verified against the csproj PropertyGroups that all four are
+        // LIBRARIES post-T15 — no such process can ever exist, so waiting on
+        // and force-killing them is dead work.
+        ViewerImageName,
     };
+
+    /// <summary>
+    /// Whether the Viewer was alive when the shutdown pass began, sampled BEFORE
+    /// anything is closed.
+    ///
+    /// <para>The suite stop list and the relaunch list were asymmetric: the Viewer was
+    /// force-killed so the swap could mutate <c>{app}\Viewer\</c>, and then only Hub
+    /// was spawned again — so a streamer with the Viewer open lost it on every update,
+    /// with nothing in the log saying why. Recording it here is the only honest way to
+    /// answer the question later; by relaunch time the process is gone by our own hand.</para>
+    /// </summary>
+    private bool _viewerWasRunning;
 
     /// <summary>
     /// True if any process with the given image
@@ -1752,15 +1501,13 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// Stops the suite. In Releases mode the caller supplied <c>--hub-pid</c>
+    /// Stops the suite. The caller supplied <c>--hub-pid</c> (parser-required)
     /// so we can wait specifically for that PID to exit (it's about to call
-    /// <c>Application.Exit()</c> on its own). In Update mode the caller IS
-    /// the Hub itself which is exiting before we run, so we skip the
-    /// wait-for-PID step and go straight to image-name discovery.
+    /// <c>Application.Exit()</c> on its own).
     ///
-    /// After the (optional) wait, we close anything still alive across every
-    /// WinForms + WinUI image name. Spec: graceful first, then
-    /// <c>Process.Kill</c> after a 10s budget.
+    /// After the wait, we close anything still alive across every suite
+    /// image name. Spec: graceful first, then <c>Process.Kill</c> after a
+    /// 10s budget.
     /// </summary>
     private async Task WaitForSuiteShutdownAsync()
     {
@@ -1803,10 +1550,19 @@ public sealed class UpdateRunner
         }
         else
         {
-            // Update-mode best-effort: wait briefly so any in-flight CloseMainWindow
-            // calls land before we start force-killing.
+            // Defensive: the parser requires --hub-pid, but a directly
+            // constructed UpdaterArgs (tests) may carry 0 — wait briefly so
+            // any in-flight CloseMainWindow calls land before force-killing.
             await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
         }
+
+        // Record what we are about to stop, BEFORE stopping it — the relaunch pass
+        // cannot ask "was the Viewer running?" after it has killed the Viewer. Only
+        // the Viewer is tracked: Hub is relaunched unconditionally because the update
+        // flow is initiated from it.
+        _viewerWasRunning = AnyLiveProcess(ViewerImageName);
+        if (_viewerWasRunning)
+            Log("Viewer was running before the swap -- it will be relaunched if the update completes and Hub comes back up");
 
         // Graceful pass first -- request main-window close; give it 10s, then kill.
         DateTime gracefulDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
@@ -1891,8 +1647,8 @@ public sealed class UpdateRunner
     }
 
     /// <summary>
-    /// Spawns the Hub after a successful swap. WinUI Hub wins when its exe is
-    /// present at the post-swap location; falls back to the WinForms Hub.exe.
+    /// Spawns the Hub after a successful swap (Hub.WinUI — the only shipped
+    /// Hub exe since T15).
     /// Must precede WriteResult(Success) — returns true iff Hub came
     /// back up within the verification window, so the caller can write
     /// Success only after the suite is confirmed alive.
@@ -1921,21 +1677,28 @@ public sealed class UpdateRunner
             // Process.Start success doesn't prove the launch target actually
             // brought Hub back up. AV quarantine, missing .NET runtime, or a
             // corrupt install all leave us logging "spawned" while the suite
-            // never reappears. Wait briefly then verify Hub.exe is in the
-            // process list; the caller writes Success / Failed accordingly.
+            // never reappears. Wait briefly then verify the Hub.WinUI image
+            // is in the process list; the caller writes Success / Failed
+            // accordingly. (The WinForms Phoenix.Controls.Hub exe was retired
+            // in T15 — Phoenix.Controls.Hub is a library now.)
             await Task.Delay(3000).ConfigureAwait(false);
             // route the post-relaunch liveness
             // probe through AnyLiveProcess so the Process handles returned by
             // GetProcessesByName are disposed instead of leaked.
-            bool hubAlive = AnyLiveProcess("Phoenix.Controls.Hub")
-                         || AnyLiveProcess("Phoenix.Controls.Hub.WinUI");
+            bool hubAlive = AnyLiveProcess("Phoenix.Controls.Hub.WinUI");
             if (!hubAlive)
             {
                 Log("relaunch verification failed: no Hub image in the process list 3s after spawn");
+                // The swap SUCCEEDED even though Hub did not verify — the tree is the new
+                // version and the user is about to be told to start Hub by hand. Bring the
+                // Viewer back anyway rather than making a Hub-verification miss silently
+                // cost them a second window they had open.
+                RelaunchViewerIfItWasRunning(installRoot);
                 error = $"Update applied but Hub did not come back up after relaunch. Open {target} manually.";
                 return (false, error);
             }
             Log("relaunch verified -- Hub is back");
+            RelaunchViewerIfItWasRunning(installRoot);
             return (true, error);
         }
         catch (Exception ex)
@@ -1943,6 +1706,51 @@ public sealed class UpdateRunner
             Log($"relaunch failed: {ex.Message}");
             error = $"relaunch failed: {ex.Message}";
             return (false, error);
+        }
+    }
+
+    /// <summary>
+    /// Brings the Viewer back if the shutdown pass took it down.
+    ///
+    /// <para>Best-effort and deliberately non-fatal: the update itself has already
+    /// succeeded by the time this runs, and Hub — the thing the user is waiting for —
+    /// is verified alive. A Viewer that fails to respawn is worth a log line and
+    /// nothing more, which is why this returns void and never touches the outcome.</para>
+    ///
+    /// <para>No liveness verification either, unlike Hub's relaunch: there is nothing
+    /// useful to do with a negative answer, and a second 3-second wait would delay the
+    /// updater's exit — which the Hub sentinel is timing.</para>
+    /// </summary>
+    private void RelaunchViewerIfItWasRunning(string installRoot)
+    {
+        if (!_viewerWasRunning) return;
+
+        try
+        {
+            string viewer = Path.Combine(installRoot, "Viewer", ViewerImageName + ".exe");
+            if (!File.Exists(viewer))
+            {
+                // Staged under {app}\Viewer\ by the installer; a flat-bin dev tree has
+                // it beside Hub instead. Neither is an error worth failing the update.
+                viewer = Path.Combine(installRoot, ViewerImageName + ".exe");
+                if (!File.Exists(viewer))
+                {
+                    Log("Viewer was running before the swap but no Viewer exe was found to relaunch");
+                    return;
+                }
+            }
+
+            var psi = new ProcessStartInfo(viewer)
+            {
+                WorkingDirectory = Path.GetDirectoryName(viewer) ?? installRoot,
+                UseShellExecute  = true,
+            };
+            using var spawned = Process.Start(psi);
+            Log($"relaunched Viewer: {viewer}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Viewer relaunch failed (update itself succeeded): {ex.Message}");
         }
     }
 

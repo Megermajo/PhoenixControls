@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Phoenix.Controls.Shared.Core;
+using Phoenix.Controls.Shared.Localization;
 using Phoenix.Controls.Shared.Services;
 
 namespace Phoenix.Controls.Visualist.WinUI.Canvas;
@@ -24,6 +25,11 @@ public sealed partial class HotkeyCheatsheet : UserControl
     {
         InitializeComponent();
         _expanded = ConfigManager.Current.VisualistHotkeyCheatsheetExpanded;
+        // The XAML literal is the design-time default for the same context the
+        // field starts on; resolving it here is what makes the FIRST paint
+        // translated (SetContext early-returns for an unchanged context, so it
+        // would never run for the default).
+        ContextLabel.Text = LabelFor(_context);
         ApplyExpandedVisual();
         RebuildBody();
     }
@@ -42,15 +48,15 @@ public sealed partial class HotkeyCheatsheet : UserControl
 
     private static string LabelFor(VisualistHotkeyContext context) => context switch
     {
-        VisualistHotkeyContext.LayerCanvas                => "LAYER CANVAS",
-        VisualistHotkeyContext.LayerWidgetSelected        => "WIDGET SELECTED",
-        VisualistHotkeyContext.LayerMultiSelection        => "MULTI-SELECTION",
-        VisualistHotkeyContext.WidgetGraph                => "WIDGET GRAPH",
-        VisualistHotkeyContext.WidgetGraphNodeSelected    => "NODE SELECTED",
-        VisualistHotkeyContext.WidgetGraphMultiSelection  => "MULTI-SELECTION",
-        VisualistHotkeyContext.WidgetGraphDraggingWire    => "DRAGGING WIRE",
-        VisualistHotkeyContext.WidgetGraphPanning         => "PANNING",
-        _                                                 => "CANVAS",
+        VisualistHotkeyContext.LayerCanvas                => Localizer.T("visualist.canvas.cheatsheet.context.layer_canvas", "LAYER CANVAS"),
+        VisualistHotkeyContext.LayerWidgetSelected        => Localizer.T("visualist.canvas.cheatsheet.context.widget_selected", "WIDGET SELECTED"),
+        VisualistHotkeyContext.LayerMultiSelection        => Localizer.T("visualist.canvas.cheatsheet.context.multi_selection", "MULTI-SELECTION"),
+        VisualistHotkeyContext.WidgetGraph                => Localizer.T("visualist.canvas.cheatsheet.context.widget_graph", "WIDGET GRAPH"),
+        VisualistHotkeyContext.WidgetGraphNodeSelected    => Localizer.T("visualist.canvas.cheatsheet.context.node_selected", "NODE SELECTED"),
+        VisualistHotkeyContext.WidgetGraphMultiSelection  => Localizer.T("visualist.canvas.cheatsheet.context.multi_selection", "MULTI-SELECTION"),
+        VisualistHotkeyContext.WidgetGraphDraggingWire    => Localizer.T("visualist.canvas.cheatsheet.context.dragging_wire", "DRAGGING WIRE"),
+        VisualistHotkeyContext.WidgetGraphPanning         => Localizer.T("visualist.canvas.cheatsheet.context.panning", "PANNING"),
+        _                                                 => Localizer.T("visualist.canvas.cheatsheet.context.generic", "CANVAS"),
     };
 
     // ── Toggle wiring ────────────────────────────────────────────────────
@@ -78,9 +84,13 @@ public sealed partial class HotkeyCheatsheet : UserControl
         BodyHairline.Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
         BodyBorder  .Visibility = _expanded ? Visibility.Visible : Visibility.Collapsed;
         ToggleButton.Content    = _expanded ? "—" : "+";
-        ToolTipService.SetToolTip(ToggleButton, _expanded ? "Collapse" : "Expand");
+        ToolTipService.SetToolTip(ToggleButton, _expanded
+            ? Localizer.T("visualist.canvas.cheatsheet.collapse.tip", "Collapse")
+            : Localizer.T("visualist.canvas.cheatsheet.expand.tip", "Expand"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-            ToggleButton, _expanded ? "Collapse hotkey cheatsheet" : "Expand hotkey cheatsheet");
+            ToggleButton, _expanded
+                ? Localizer.T("visualist.canvas.cheatsheet.collapse.a11y", "Collapse hotkey cheatsheet")
+                : Localizer.T("visualist.canvas.cheatsheet.expand.a11y", "Expand hotkey cheatsheet"));
     }
 
     // ── Hover affordance ─────────────────────────────────────────────────
@@ -120,7 +130,7 @@ public sealed partial class HotkeyCheatsheet : UserControl
             EntryGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var hint = new TextBlock
             {
-                Text = "No context-specific chords.",
+                Text = Localizer.T("visualist.canvas.cheatsheet.empty", "No context-specific chords."),
                 Style = (Style)Resources["CheatsheetDescription"],
                 Opacity = 0.7,
                 Margin = new Thickness(0, 2, 0, 2),

@@ -97,6 +97,7 @@ namespace Phoenix.Controls.Architect.Core
                     AddRange(tokens,
                         "user.message", "user.name", "user.command", "user.args",
                         "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster",
+                        "user.is_regular",
                         "user.color_hex", "user.sub_months",
                         "event.iscommand");
                     return;
@@ -133,11 +134,18 @@ namespace Phoenix.Controls.Architect.Core
                 case "Chat.Message":
                     // Unified multi-platform chat trigger — Twitch.ChatMessage's
                     // set plus the platform discriminator. The legacy titles
-                    // above stay handled for graphs not yet re-saved through
-                    // migration.
+                    // "Twitch.ChatMessage" / "YouTube.Message" above stay handled
+                    // for graphs not yet re-saved through migration: they match no
+                    // NodeRegistry template and therefore LOOK like phantom arms,
+                    // but GraphSerializer.MigrateNodes only retitles them to
+                    // Chat.Message on load, so an in-memory node still carries the
+                    // legacy title before migration runs, and the exporter still
+                    // honours both. DO NOT delete them —
+                    // AnalyzerNodeKeyIntegrityTests allow-lists exactly these two.
                     AddRange(tokens,
                         "user.message", "user.name", "user.command", "user.args",
                         "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster",
+                        "user.is_regular",
                         "user.color_hex", "user.sub_months",
                         "event.iscommand", "user.platform", "event.message_id");
                     return;
@@ -159,6 +167,15 @@ namespace Phoenix.Controls.Architect.Core
                 case "HTTP.WebhookListener":
                     AddRange(tokens, "event.payload", "event.body", "event.method", "event.path");
                     return;
+                case "WS.Server":
+                    // Synced with VarChainAnalyzer.ResultEmitterMap["WS.Server"].
+                    // ScriptManager.ExecuteOnWebSocketScriptsAsync binds
+                    // event.body / event.payload / event.path — no event.method,
+                    // because a WS frame carries no HTTP verb. Pre-fix this arm
+                    // was missing entirely, so the popup offered nothing on a
+                    // WS.Server-rooted chain even though the trace picker did.
+                    AddRange(tokens, "event.payload", "event.body", "event.path");
+                    return;
                 case "Schedule.Cron":
                 case "Schedule.RunAt":
                     tokens.Add("event.timestamp");
@@ -170,6 +187,146 @@ namespace Phoenix.Controls.Architect.Core
                     return;
                 case "State.OnChange":
                     AddRange(tokens, "event.name", "event.oldvalue", "event.newvalue");
+                    return;
+                case "Counter.OnChanged":
+                    // Synced with the CountersService runtime vars (event.counter /
+                    // event.count) and the Counter.OnChanged arm in
+                    // ScriptExporter.ResolveOutputFromNode.
+                    AddRange(tokens, "event.counter", "event.count");
+                    return;
+                case "Automod.OnViolation":
+                    // Synced with the AutomodService runtime vars and the
+                    // Automod.OnViolation arm in ScriptExporter.ResolveOutputFromNode.
+                    AddRange(tokens, "event.user", "event.rule", "event.action", "event.reason", "event.message");
+                    return;
+                case "Quote.OnAdded":
+                    // Synced with the QuotesService runtime vars (event.number /
+                    // event.text / event.name) and the Quote.OnAdded arm in
+                    // ScriptExporter.ResolveOutputFromNode.
+                    AddRange(tokens, "event.number", "event.text", "event.name");
+                    return;
+                case "Command.OnCustom":
+                    // Synced with the CustomCommandsService runtime vars (event.command /
+                    // event.user / event.args) and the Command.OnCustom arm in
+                    // ScriptExporter.ResolveOutputFromNode.
+                    AddRange(tokens, "event.command", "event.user", "event.args");
+                    return;
+                case "Queue.OnChanged":
+                    // Synced with the NamedQueueService runtime vars (event.queue /
+                    // event.entry / event.action / event.length) and the Queue.OnChanged
+                    // arm in ScriptExporter.ResolveOutputFromNode.
+                    AddRange(tokens, "event.queue", "event.entry", "event.action", "event.length");
+                    return;
+
+                // ── Song Request event roots. Synced with the SongRequestService raise
+                // sites (RaiseSongEvent binds three base tokens plus one extra per root)
+                // and the shared Song.On* arm in ScriptExporter.ResolveOutputFromNode.
+                // Note the snake_case spellings — event.video_id / event.duration_seconds
+                // / event.skipped_by — which are the RUNTIME's, and deliberately not what
+                // the exporter's generic tail would have produced from the socket names.
+                case "Song.OnQueued":
+                    AddRange(tokens, "event.title", "event.requester", "event.video_id", "event.position");
+                    return;
+                case "Song.OnPlay":
+                    AddRange(tokens, "event.title", "event.requester", "event.video_id", "event.duration_seconds");
+                    return;
+                case "Song.OnSkip":
+                    AddRange(tokens, "event.title", "event.requester", "event.video_id", "event.skipped_by");
+                    return;
+
+                // ── Polls & Betting event roots. Synced with the PollsService raise sites
+                // (RaiseOpened / RaiseClosed / RaiseSettled) and the shared Poll.On* arm in
+                // ScriptExporter.ResolveOutputFromNode. Note the snake_case spellings —
+                // event.total_votes / event.winner_votes / event.winner_count /
+                // event.duration_seconds — which are the RUNTIME's, and deliberately not
+                // what the exporter's generic tail would have produced from the socket
+                // names. event.option_count has no output socket (the Options string
+                // carries the labels) but is a live var on the run, so the picker lists it
+                // — the same rule the Timer roots follow.
+                case "Poll.OnOpened":
+                    AddRange(tokens, "event.title", "event.options", "event.option_count",
+                        "event.duration_seconds", "event.betting");
+                    return;
+                case "Poll.OnClosed":
+                    AddRange(tokens, "event.title", "event.winner", "event.winner_votes",
+                        "event.total_votes", "event.options");
+                    return;
+                case "Poll.OnSettled":
+                    AddRange(tokens, "event.title", "event.winner", "event.outcome", "event.pot",
+                        "event.winners", "event.winner_count", "event.currency");
+                    return;
+
+                // ── Ranks ladder event root. Synced with the RanksService raise site
+                // (RaiseRankUp) and the Rank.OnRankUp arm in
+                // ScriptExporter.ResolveOutputFromNode. event.login DOES have an output
+                // socket (Login) — the login is what the ladder, the watch-minute store and
+                // the group grants are all keyed on, so it is wireable rather than hidden.
+                // event.user_login is the same login under the suite-wide spelling every
+                // Rank.* node's empty-User fallback resolves through, and event.unit is the
+                // word a message wanting to say "minutes" needs; neither has a socket, and
+                // the picker lists them for the same reason the Timer and User-Management
+                // roots list theirs.
+                case "Rank.OnRankUp":
+                    AddRange(tokens, "event.user", "event.login", "event.user_login",
+                        "event.rankname", "event.value", "event.unit", "event.next");
+                    return;
+
+                // ── Soundboard clip-playback event root. Synced with the SoundboardService
+                // raise site (RaisePlayed) and the Soundboard.OnPlay arm in
+                // ScriptExporter.ResolveOutputFromNode. user.name has no output socket but
+                // is bound by the raise, because a graph moved here off an on_chat handler
+                // (which is what this root exists for — the built-in consumes the word and
+                // suppresses the author fan-out) is already reaching for that token.
+                case "Soundboard.OnPlay":
+                    AddRange(tokens, "event.command", "event.user", "event.clip", "user.name");
+                    return;
+
+                case "User.OnFirstMessage":
+                    // Synced with the UserManagementService raise (event.user / event.login /
+                    // event.message / event.platform / event.first_ever) and the
+                    // User.OnFirstMessage arm in ScriptExporter.ResolveOutputFromNode.
+                    // event.login has no output socket — the node exposes the display name,
+                    // which is what a greeting prints — but the raise binds it because a
+                    // group / databank lookup needs the stable login, so the picker lists it.
+                    AddRange(tokens, "event.user", "event.login", "event.message",
+                        "event.platform", "event.first_ever");
+                    return;
+
+                // ── Timer event roots. Sourced from TimerService's Fire*Async
+                // raise sites, which bind the socket-derived event.* keys plus the
+                // slug / remaining extras and the raw timer.* aliases — every one
+                // of them is a live var on the run, so surface them all.
+                case "Timer.OnZero":
+                    AddRange(tokens, "event.timername", "event.slug", "timer.name", "timer.slug");
+                    return;
+                case "Timer.OnMilestone":
+                    AddRange(tokens, "event.timername", "event.milestoneid", "event.label", "event.slug",
+                        "timer.name", "timer.slug", "timer.milestone_id", "timer.label");
+                    return;
+                case "Timer.OnAdd":
+                    AddRange(tokens, "event.timername", "event.source", "event.seconds", "event.slug", "event.remaining",
+                        "timer.name", "timer.slug", "timer.source", "timer.seconds", "timer.remaining");
+                    return;
+
+                // ── Loyalty event roots. Sourced from LoyaltyService's RaiseScript
+                // sites (Earn.cs OnEarn/OnPayout, LoyaltyService.cs OnRedeem,
+                // Games.cs OnRaffle) and matching the Loyalty arm in
+                // ScriptExporter.ResolveOutputFromNode. The un-namespaced
+                // reward / cost / balance aliases the redeem raise also sets are
+                // deliberately not surfaced — the event.* form is the documented one.
+                case "Loyalty.OnEarn":
+                    AddRange(tokens, "event.user", "event.amount", "event.reason", "event.balance",
+                        "event.currency", "user.name");
+                    return;
+                case "Loyalty.OnPayout":
+                    AddRange(tokens, "event.count", "event.total", "event.amount", "event.currency");
+                    return;
+                case "Loyalty.OnRedeem":
+                    AddRange(tokens, "event.user", "event.reward", "event.cost", "event.balance",
+                        "event.currency", "user.name");
+                    return;
+                case "Loyalty.OnRaffle":
+                    AddRange(tokens, "event.winners", "event.count", "event.pot", "event.entrants", "event.currency");
                     return;
 
                 // ── Event.Trigger / Event.Executor expose their non-placeholder
@@ -209,15 +366,33 @@ namespace Phoenix.Controls.Architect.Core
 
                 // ── Twitch lookup nodes — fixed result-key sets.
                 case "Twitch.GetUser":
+                case "StreamerBot.GetUser":
+                    // Both nodes land on ScriptManager.Twitch.cs's ApplyUserGlobals
+                    // (streamerbot.get_user is an exact by-name mirror of
+                    // twitch.get_user), so they bind an identical user.* set.
+                    // StreamerBot.GetUser was absent from this table entirely.
                     AddRange(tokens, "user.id", "user.display_name", "user.login", "user.profile_image",
                         "user.account_created", "user.game", "user.channel_title",
-                        "user.is_mod", "user.is_sub", "user.is_vip");
+                        "user.is_mod", "user.is_sub", "user.is_vip", "user.is_regular");
                     return;
                 case "Twitch.GetStream":
                     AddRange(tokens, "stream.title", "stream.game", "stream.viewers", "stream.is_live", "stream.uptime");
                     return;
                 case "Twitch.CheckRole":
-                    AddRange(tokens, "role.is_mod", "role.is_sub", "role.is_vip", "role.is_broadcaster");
+                    AddRange(tokens, "role.is_mod", "role.is_sub", "role.is_vip", "role.is_broadcaster", "role.is_regular");
+                    return;
+                case "User.GetGroups":
+                    // Standard group keys; custom groups additionally surface as
+                    // group.<sanitized> from the node's Groups attribute below.
+                    AddRange(tokens, "group.moderator", "group.vip", "group.subscriber", "group.regular");
+                    if (n.Attributes.TryGetValue("Groups", out var grpCsv) && !string.IsNullOrWhiteSpace(grpCsv))
+                    {
+                        foreach (var g in grpCsv.Split(',', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries))
+                        {
+                            var key = Phoenix.Controls.Shared.Models.UserGroupKeys.VarKeyFor(g);
+                            if (key.Length > "group.".Length) tokens.Add(key);
+                        }
+                    }
                     return;
                 case "Twitch.GetFollowAge":
                     AddRange(tokens, "follow.days", "follow.formatted", "follow.date", "follow.is_following");
@@ -227,14 +402,16 @@ namespace Phoenix.Controls.Architect.Core
                     return;
 
                 // ── Hub-side result.* emitters with fixed keys.
-                case "File.Read":
-                case "File.ReadAll":
+                // The registered File.* templates are the ReadText / ReadJSON /
+                // WriteText / WriteJSON quartet. The bare "File.Read" /
+                // "File.ReadAll" / "File.Write" / "File.Append" labels that used
+                // to sit here matched no NodeRegistry template, so they were
+                // unreachable arms — dropped. AnalyzerNodeKeyIntegrityTests now
+                // fails the build if a phantom title creeps back in.
                 case "File.ReadText":
                 case "File.ReadJSON":
                     AddRange(tokens, "result.file_content", "result.file_error");
                     return;
-                case "File.Write":
-                case "File.Append":
                 case "File.WriteText":
                 case "File.WriteJSON":
                     tokens.Add("result.file_error");
@@ -246,13 +423,18 @@ namespace Phoenix.Controls.Architect.Core
                 case "HTTP.Delete":
                     AddRange(tokens, "result.http_status", "result.http_body", "result.http_error");
                     return;
-                case "HTTP.Api":
+                case "API.Call":
+                    // Registered title is "API.Call" (Platforms band); the old
+                    // "HTTP.Api" label matched no template, so the api.call
+                    // node's two result vars never reached the popup.
+                    // ScriptManager.Http.cs writes both.
                     AddRange(tokens, "result.api_response", "result.api_error");
                     return;
                 case "HTTP.ParseJson":
                     tokens.Add("result.json_value");
                     return;
-                case "AI.GenerateText":
+                // "AI.GenerateText" removed — no such template; ai.prompt's node
+                // is titled AI.Prompt and already covered below.
                 case "AI.Prompt":
                     AddRange(tokens, "result.ai_response", "result.ai_error");
                     return;
@@ -264,8 +446,12 @@ namespace Phoenix.Controls.Architect.Core
                     // the cumulative text (updated per chunk); result.ai_done
                     // flips on stream close; result.ai_error carries any
                     // error message. Same surface as AI.Prompt + the
-                    // streaming-completion sentinel.
-                    AddRange(tokens, "result.ai_response", "result.ai_error", "result.ai_done");
+                    // streaming-completion sentinel, plus the two failure
+                    // classifiers ScriptManager.AI.cs's ai.stream_text handler
+                    // writes (result.ai_error_kind / result.ai_retry_after) —
+                    // both were listed in VarChainAnalyzer but missing here.
+                    AddRange(tokens, "result.ai_response", "result.ai_error", "result.ai_done",
+                        "result.ai_error_kind", "result.ai_retry_after");
                     return;
                 case "AI.GenerateImage":
                     // Single-shot image generation. result.ai_image_url
@@ -291,8 +477,12 @@ namespace Phoenix.Controls.Architect.Core
                     AddRange(tokens, "result.ai_response", "result.ai_tool_calls", "result.ai_error", "result.ai_done");
                     return;
                 case "Audio.Play":
-                case "Audio.Stop":
+                case "Audio.PlayTts":
                 case "Audio.SetVolume":
+                    // "Audio.Stop" used to sit here and matched no template.
+                    // Audio.PlayTts is the real, fully-wired third audio node
+                    // (exporter handler + ScriptManager.Audio.cs command) and
+                    // writes the same result.audio_error contract.
                     tokens.Add("result.audio_error");
                     return;
                 case "Discord.SendMessage":
@@ -310,8 +500,16 @@ namespace Phoenix.Controls.Architect.Core
                         "result.discord_user_global_name", "result.discord_user_avatar",
                         "result.discord_error");
                     return;
-                case "Streamerbot.DoAction":
-                case "System.DoAction":
+                // LIVE BUG, not dead weight: the registered template is
+                // "StreamerBot.DoAction" with a CAPITAL B. This arm keyed the
+                // lowercase-b spelling and the switch compares ordinally, so it
+                // never matched a real node — meaning result.sb_dispatched has
+                // never been offered in autocomplete for the one node that
+                // produces it, even though NodeProse documents the variable to
+                // users ("{result.sb_dispatched} reports whether it went out").
+                // The sibling "System.DoAction" label matched no template at all
+                // and is dropped.
+                case "StreamerBot.DoAction":
                     tokens.Add("result.sb_dispatched");
                     return;
             }

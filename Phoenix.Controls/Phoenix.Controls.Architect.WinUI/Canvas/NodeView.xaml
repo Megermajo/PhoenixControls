@@ -10,6 +10,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:conv="using:Phoenix.Controls.Architect.WinUI.Canvas.Converters"
     xmlns:canvas="using:Phoenix.Controls.Architect.WinUI.Canvas"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization"
     IsTabStop="True"
     UseSystemFocusVisuals="True"
     FocusVisualPrimaryBrush="{StaticResource NodeFocusRingBrush}"
@@ -28,11 +29,7 @@
     </UserControl.KeyboardAccelerators>
 
     <UserControl.Resources>
-        <conv:HexStringToBrushConverter x:Key="HexBrush" />
         <conv:BoolToVisibilityConverter x:Key="BoolVis" />
-        <conv:DropStateToBrushConverter x:Key="DropHaloBrush" />
-        <conv:DropStateToVisibilityConverter x:Key="DropHaloVis" />
-        <conv:PinDashArrayConverter x:Key="PinDash" />
         <conv:FallbackPillBorderBrushConverter x:Key="FallbackPillBorder" />
 
         <!-- Required-but-empty halo brush — yellow ring around inputs that
@@ -266,6 +263,7 @@
                         Content="&#xE70D;"
                         Loaded="OnDatabankPickerLoaded"
                         AutomationProperties.Name="Pick from databank"
+                        loc:Localize.AutomationKey="architect.canvas.node.databank_picker.a11y"
                         Visibility="{Binding HasDatabankPicker, Converter={StaticResource BoolVis}}"
                         Click="OnDatabankPickerClicked" />
             </Grid>
@@ -451,6 +449,8 @@
                         canvas:CanvasInteraction.IsEditAffordance="True"
                         ToolTipService.ToolTip="Pick from available processes / macros"
                         AutomationProperties.Name="Pick target"
+                        loc:Localize.TooltipKey="architect.canvas.node.target_picker.tip"
+                        loc:Localize.AutomationKey="architect.canvas.node.target_picker.a11y"
                         Visibility="{Binding HasOptionsPicker, Converter={StaticResource BoolVis}}"
                         Click="OnMiddleAttrPickerClicked" />
             </Grid>

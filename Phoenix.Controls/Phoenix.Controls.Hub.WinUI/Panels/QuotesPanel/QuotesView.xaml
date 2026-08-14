@@ -1,0 +1,595 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="Phoenix.Controls.Hub.WinUI.Panels.QuotesPanel.QuotesView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Phoenix.Controls.Hub.WinUI.Panels.QuotesPanel"
+    xmlns:cmn="using:Phoenix.Controls.Hub.WinUI.Panels.Common"
+    xmlns:loc="using:Phoenix.Controls.Hub.WinUI.Localization"
+    HorizontalAlignment="Stretch"
+    VerticalAlignment="Stretch"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch"
+    AutomationProperties.Name="Quotes page"
+    AutomationProperties.HelpText="Manage a quote store: enable the tool, add / edit / delete quotes, and configure the chat command words and role gates."
+    loc:Localize.AutomationKey="panel.quotes.page.a11y"
+    loc:Localize.HelpTextKey="panel.quotes.page.help">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Checked type by type per the shell contract. After the conversions
+                     this page still declares TextBox (the add form, the selected
+                     quote's editor, the three command words, the reply template) so
+                     the merge stays: it moves their hover / focus / placeholder /
+                     selection states off the viewer's OS accent and onto the house
+                     tokens. There is no ComboBox, no ToggleSwitch, no CheckBox and no
+                     Pivot left in this file — the master switch is the header band's,
+                     inside cmn:ToolPageHeader, and the six role boxes live inside
+                     RoleCheckRow; both controls merge their dictionaries themselves. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolControlStyles.xaml" />
+                <!-- Keyed-only style dictionary: strip buttons, section cards, band
+                     borders and the recurring text tiers. Contains no implicit Style. -->
+                <ResourceDictionary Source="ms-appx:///Panels/Common/ToolShellStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Inner group box inside a section card. Same tokens as the card: the
+                 CoalCard outline is what separates the group from the card around it. -->
+            <Style x:Key="QtRecessed" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource CoalShellBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CoalCardBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource Radius1Corner}" />
+            </Style>
+
+            <!-- The mono subsection label (was QtStripCaption) and the roster
+                 column caption (was QtColumnCaption) are now the house tiers
+                 ToolSubLabelTextStyle / ToolColumnLabelTextStyle from
+                 ToolShellStyles.xaml. The column caption's one extra setter,
+                 VerticalAlignment="Center", is applied inline at its two usages. -->
+
+            <!-- ══════════════ Roster row (300px column) ══════════════
+                 A Button so the whole row is the selection surface, with the house
+                 list-row geometry (Padding 14,7 · ColumnSpacing 8 · the row's own
+                 bottom hairline as the separator). Background comes from the row VM
+                 and is Transparent when unselected — never null, which would not be
+                 hit-testable.
+
+                 The per-row SAVE / DELETE that used to live here moved to the detail
+                 column with the editor; what stays is the "unsaved" marker, so a row
+                 whose draft has not been committed is still visibly pending after the
+                 selection moves on. -->
+            <DataTemplate x:Key="QuoteRosterRowTemplate" x:DataType="local:QuoteRowVm">
+                <Button HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Padding="14,7"
+                        CornerRadius="0"
+                        Background="{x:Bind RowBackground, Mode=OneWay}"
+                        BorderBrush="{StaticResource CoalRaisedBrush}"
+                        BorderThickness="0,0,0,1"
+                        Click="OnQuoteRowClick"
+                        AutomationProperties.Name="{x:Bind NumberText}">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="{x:Bind NumberText}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="11" FontWeight="SemiBold"
+                                   Foreground="{StaticResource EmberPrimaryBrush}"
+                                   VerticalAlignment="Top"
+                                   Margin="0,1,0,0" />
+
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="{x:Bind TextPreview, Mode=OneWay}"
+                                       FontFamily="{StaticResource SansFont}"
+                                       FontSize="12"
+                                       Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       TextWrapping="NoWrap" />
+                            <TextBlock Text="{x:Bind ProvenanceHint, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}"
+                                       FontSize="10"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       TextTrimming="CharacterEllipsis"
+                                       TextWrapping="NoWrap" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Column="2"
+                                   Text="UNSAVED"
+                                   Visibility="{x:Bind DirtyVisibility, Mode=OneWay}"
+                                   FontFamily="{StaticResource MonoFont}"
+                                   FontSize="9" FontWeight="Bold" CharacterSpacing="140"
+                                   Foreground="{StaticResource WarnBrush}"
+                                   VerticalAlignment="Top"
+                                   Margin="0,2,0,0"
+                                   ToolTipService.ToolTip="This quote has an uncommitted edit. Select it and press SAVE."
+                                   loc:Localize.Key="panel.quotes.roster.unsaved.label"
+                                   loc:Localize.TooltipKey="panel.quotes.roster.unsaved.tip" />
+                    </Grid>
+                </Button>
+            </DataTemplate>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Background="{StaticResource CoalSurfaceBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />   <!-- 48px header band -->
+            <RowDefinition Height="*" />      <!-- two-column body  -->
+        </Grid.RowDefinitions>
+
+        <!-- ══════════════════ ROW 0 — HEADER BAND ══════════════════
+             One 48px row where three used to stand: the action strip (master chip
+             + ToolStatusPill) and the pinned state-sentence banner that headed the
+             detail column. Between them they rendered the SAME boolean three
+             times, in three vocabularies — "Chat commands off" on the chip,
+             "dormant · databank still writable" on the pill, "DISABLED — …" on the
+             banner — before one editable field was visible.
+
+             Title, switch and state phrase are set from code-behind. The phrase
+             reuses StatusPillText's predicate verbatim (master flag first, then
+             roster size); see SyncHeaderState. ToolStatusPill itself is NOT
+             deleted from the codebase — its service-side honesty audit stands, only
+             the render site moved.
+
+             No header verbs, and that is the same reasoning the old strip carried:
+             ADD is a two-field form and lives with its fields in the detail column,
+             REFRESH sits beside the roster it refreshes, SAVE / DELETE stay paired
+             inside the editor they act on. -->
+        <cmn:ToolPageHeader Grid.Row="0" x:Name="PageHeader" />
+
+        <!-- ══════════════════ ROW 1 — TWO-COLUMN BODY ══════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />     <!-- LEFT: detail -->
+                <!-- The live column is a fixed 300px, not a proportion: at 0.9* the
+                     roster grew with the window and stole width from the fields,
+                     which are the reason the page is open. -->
+                <ColumnDefinition Width="300" />   <!-- RIGHT: roster -->
+            </Grid.ColumnDefinitions>
+            <!-- No ColumnSpacing. The right column's left border IS the divider. -->
+
+            <!-- ───────────── LEFT: detail ─────────────
+                 Single row now. The pinned state band that used to sit above this
+                 scroller repeated the header band's state phrase a second time in a
+                 second vocabulary. -->
+            <Grid Grid.Column="0">
+
+                <!-- ★ NO IsEnabled GATE HERE, and that is deliberate. The master
+                     switch gates the CHAT COMMANDS only: the Quotes table stays fully
+                     writable while the tool is dormant (the header's state phrase says
+                     so), and the panel's add / edit / delete write straight through
+                     QuotesService to the databank. Greying this scroller out would
+                     remove working functionality, not reflect it. -->
+                <ScrollViewer x:Name="DetailScroll"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollMode="Disabled">
+                    <StackPanel Spacing="12" Padding="14">
+
+                        <!-- The QUOTES / LATEST hero tiles are gone. A config page is
+                             where you go to CHANGE a setting; two 26pt numbers reading
+                             0 and "—" on a fresh install are a dashboard, and they cost
+                             ~76px directly above the first field. The one count worth a
+                             glance already lives in the roster column's own header
+                             ("N stored"), beside the list it counts. -->
+                        <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                   Text="Numbered quote store · open Quotes table, shared with db.* and Quote.* nodes."
+                                   loc:Localize.Key="panel.quotes.intro.hint" />
+
+                        <!-- ═══ CHAT COMMANDS ═══
+                             What chat can type, stated once at the top instead of
+                             inferred from three text boxes at the bottom. The words
+                             and the three permission rows are edited in SETTINGS
+                             further down this same scroller; this block is that
+                             card's read-out and moves with it, so the streamer never
+                             has to hold "add is mods-only, get is everyone" in their
+                             head while scrolling between them.
+
+                             It is also the only place the ARGUMENT shapes appear in
+                             the streamer's own words — the SETTINGS card's hints
+                             spell them with a "!<word>" placeholder because the word
+                             is the field beside them; here the word is filled in. -->
+                        <cmn:ToolCommandList Commands="{x:Bind ViewModel.ChatCommands, Mode=OneWay}"
+                                             AutomationProperties.Name="Quotes chat commands"
+                                             loc:Localize.AutomationKey="panel.quotes.commands.list.a11y" />
+
+                        <!-- ═══ ADD A QUOTE ═══ -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="ADD A QUOTE" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.quotes.add.eyebrow" />
+                                    <Border Height="1" Background="{StaticResource CoalDividerBrush}" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0"
+                                             Text="{x:Bind ViewModel.NewName, Mode=TwoWay}"
+                                             PlaceholderText="name" Width="160"
+                                             AutomationProperties.Name="New quote name"
+                                             loc:Localize.PlaceholderKey="panel.quotes.add.name.placeholder"
+                                             loc:Localize.AutomationKey="panel.quotes.add.name.a11y" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{x:Bind ViewModel.NewText, Mode=TwoWay}"
+                                             PlaceholderText="the quote text"
+                                             HorizontalAlignment="Stretch"
+                                             AutomationProperties.Name="New quote text"
+                                             loc:Localize.PlaceholderKey="panel.quotes.add.text.placeholder"
+                                             loc:Localize.AutomationKey="panel.quotes.add.text.a11y" />
+                                    <!-- The page's one brass CTA. -->
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource ToolBrassCtaStyle}"
+                                            VerticalAlignment="Center"
+                                            Click="OnAddQuoteClick"
+                                            AutomationProperties.Name="Add quote"
+                                            loc:Localize.AutomationKey="panel.quotes.add.cta.a11y">
+                                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="11"
+                                                      Foreground="{StaticResource CoalShellBrush}" />
+                                            <TextBlock Text="ADD" Style="{StaticResource ToolBrassCtaLabelTextStyle}"
+                                                       loc:Localize.Key="panel.quotes.add.cta.label" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Both fields are required — a blank name or blank text adds nothing."
+                                           loc:Localize.Key="panel.quotes.add.hint" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ═══ SELECTED QUOTE — the editor that used to be inline
+                             on every roster row ═══ -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}"
+                                Visibility="{x:Bind ViewModel.DetailVisibility, Mode=OneWay}">
+                            <StackPanel Spacing="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                        <TextBlock Text="EDIT QUOTE" Style="{StaticResource ToolEyebrowTextStyle}"
+                                                   VerticalAlignment="Center"
+                                                   loc:Localize.Key="panel.quotes.editor.eyebrow" />
+                                        <TextBlock Text="{x:Bind ViewModel.SelectedQuote.NumberText, Mode=OneWay}"
+                                                   FontFamily="{StaticResource DisplayFont}"
+                                                   FontSize="18" CharacterSpacing="20"
+                                                   Foreground="{StaticResource EmberPrimaryBrush}"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                                VerticalAlignment="Center">
+                                        <Button Style="{StaticResource ToolSecondaryButtonStyle}"
+                                                Click="OnSaveQuoteClick"
+                                                AutomationProperties.Name="Save quote"
+                                                loc:Localize.AutomationKey="panel.quotes.editor.save.a11y">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74E;" FontSize="11"
+                                                          Foreground="{StaticResource CoalBodyTextBrush}" />
+                                                <TextBlock Text="SAVE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                           loc:Localize.Key="panel.quotes.editor.save.label" />
+                                            </StackPanel>
+                                        </Button>
+                                        <!-- Danger: identical chrome, only the glyph turns red. -->
+                                        <Button Style="{StaticResource ToolDangerButtonStyle}"
+                                                Click="OnDeleteQuoteClick"
+                                                AutomationProperties.Name="Delete quote"
+                                                loc:Localize.AutomationKey="panel.quotes.editor.delete.a11y">
+                                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE74D;" FontSize="11"
+                                                          Foreground="{StaticResource ErrBrush}" />
+                                                <TextBlock Text="DELETE" Style="{StaticResource ToolStripLabelTextStyle}"
+                                                           loc:Localize.Key="panel.quotes.editor.delete.label" />
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                                <Border Height="1" Background="{StaticResource CoalDividerBrush}" />
+
+                                <TextBox Text="{x:Bind ViewModel.SelectedQuote.Text, Mode=TwoWay}"
+                                         PlaceholderText="the quote text"
+                                         FontFamily="{StaticResource SansFont}"
+                                         FontSize="13"
+                                         Foreground="{StaticResource CoalPrimaryTextBrush}"
+                                         TextWrapping="Wrap" AcceptsReturn="False"
+                                         HorizontalAlignment="Stretch"
+                                         AutomationProperties.Name="Quote text"
+                                         loc:Localize.PlaceholderKey="panel.quotes.editor.text.placeholder"
+                                         loc:Localize.AutomationKey="panel.quotes.editor.text.a11y" />
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="—"
+                                               Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{x:Bind ViewModel.SelectedQuote.Name, Mode=TwoWay}"
+                                             PlaceholderText="name"
+                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                             Width="180"
+                                             AutomationProperties.Name="Quote attribution"
+                                             loc:Localize.PlaceholderKey="panel.quotes.editor.name.placeholder"
+                                             loc:Localize.AutomationKey="panel.quotes.editor.name.a11y" />
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind ViewModel.SelectedQuote.AddedByHint, Mode=OneWay}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Text="{x:Bind ViewModel.SelectedQuote.AddedAtHint, Mode=OneWay}"
+                                                   Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                           Text="Edits are not auto-saved — SAVE writes this quote by its number."
+                                           loc:Localize.Key="panel.quotes.editor.hint" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Editor placeholder. It stands in for the editor card ONLY;
+                             the add form, the settings and the feed stay reachable
+                             with nothing selected because none of them is scoped to a
+                             single quote. -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}"
+                                Visibility="{x:Bind ViewModel.EmptyVisibility, Mode=OneWay}">
+                            <StackPanel Spacing="6" HorizontalAlignment="Center" Padding="0,14">
+                                <TextBlock Text="No quote selected"
+                                           FontFamily="{StaticResource DisplayFont}"
+                                           FontSize="20"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           HorizontalAlignment="Center"
+                                           loc:Localize.Key="panel.quotes.empty.title" />
+                                <TextBlock Text="Pick one from the list on the right to edit it, or add a new quote above."
+                                           FontFamily="{StaticResource SansFont}"
+                                           FontSize="12"
+                                           Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                           HorizontalAlignment="Center" TextAlignment="Center"
+                                           loc:Localize.Key="panel.quotes.empty.body" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ═══ SETTINGS ═══ -->
+                        <Border Style="{StaticResource ToolSectionCardStyle}">
+                            <StackPanel Spacing="10">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="SETTINGS" Style="{StaticResource ToolEyebrowTextStyle}"
+                                               loc:Localize.Key="panel.quotes.settings.eyebrow" />
+                                    <Border Height="1" Background="{StaticResource CoalDividerBrush}" />
+                                </StackPanel>
+
+                                <!-- Command words -->
+                                <Border Style="{StaticResource QtRecessed}" Padding="12,8">
+                                    <StackPanel Spacing="0">
+                                        <TextBlock Text="COMMAND WORDS" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,4"
+                                                   loc:Localize.Key="panel.quotes.settings.words.label" />
+
+                                        <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="150" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Add command" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                           loc:Localize.Key="panel.quotes.settings.add_word.label" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                                    <TextBox Text="{x:Bind ViewModel.AddCommand, Mode=TwoWay}"
+                                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                             Width="180" PlaceholderText="addquote"
+                                                             AutomationProperties.Name="Add command word"
+                                                             loc:Localize.AutomationKey="panel.quotes.settings.add_word.a11y" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                           VerticalAlignment="Center"
+                                                           Text="chat: !&lt;word&gt; &lt;name&gt; &lt;quote text&gt;"
+                                                           loc:Localize.Key="panel.quotes.settings.add_word.hint" />
+                                            </Grid>
+                                        </Border>
+
+                                        <Border BorderBrush="{StaticResource CoalCardBrush}" BorderThickness="0,0,0,1" Padding="0,5">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="150" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Get command" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                           loc:Localize.Key="panel.quotes.settings.get_word.label" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                                    <TextBox Text="{x:Bind ViewModel.GetCommand, Mode=TwoWay}"
+                                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                             Width="180" PlaceholderText="quote"
+                                                             AutomationProperties.Name="Get command word"
+                                                             loc:Localize.AutomationKey="panel.quotes.settings.get_word.a11y" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                           VerticalAlignment="Center"
+                                                           Text="chat: !&lt;word&gt; (random) or !&lt;word&gt; N"
+                                                           loc:Localize.Key="panel.quotes.settings.get_word.hint" />
+                                            </Grid>
+                                        </Border>
+
+                                        <Border BorderThickness="0" Padding="0,5">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="150" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="Delete command" Style="{StaticResource ToolSettingsLabelTextStyle}"
+                                                           loc:Localize.Key="panel.quotes.settings.delete_word.label" />
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                                    <TextBlock Text="!" Style="{StaticResource ToolSettingsLabelTextStyle}" />
+                                                    <TextBox Text="{x:Bind ViewModel.DeleteCommand, Mode=TwoWay}"
+                                                             FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                             Width="180" PlaceholderText="delquote"
+                                                             AutomationProperties.Name="Delete command word"
+                                                             loc:Localize.AutomationKey="panel.quotes.settings.delete_word.a11y" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Style="{StaticResource ToolMonoHintTextStyle}"
+                                                           VerticalAlignment="Center"
+                                                           Text="chat: !&lt;word&gt; N"
+                                                           loc:Localize.Key="panel.quotes.settings.delete_word.hint" />
+                                            </Grid>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Reply template -->
+                                <Border Style="{StaticResource QtRecessed}" Padding="12,8">
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Text="GET-REPLY TEMPLATE" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,2"
+                                                   loc:Localize.Key="panel.quotes.settings.template.label" />
+                                        <TextBox Text="{x:Bind ViewModel.ReplyTemplate, Mode=TwoWay}"
+                                                 PlaceholderText="{}Quote #{number}: {text} — {name}"
+                                                 FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                                 HorizontalAlignment="Stretch"
+                                                 AutomationProperties.Name="Get-reply template"
+                                                 loc:Localize.PlaceholderKey="panel.quotes.settings.template.placeholder"
+                                                 loc:Localize.AutomationKey="panel.quotes.settings.template.a11y" />
+                                        <TextBlock Style="{StaticResource ToolMonoHintTextStyle}"
+                                                   Text="{}{number} / {text} / {name} · empty = default"
+                                                   loc:Localize.Key="panel.quotes.settings.template.hint" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Roles. Stacked, not three side-by-side columns: at
+                                     1.4* a third of the card is not a finite width a
+                                     six-box role row can lay out in, and WrapRowPanel
+                                     would fold each gate onto three cramped lines.
+                                     Each gate now gets the card's full star width. -->
+                                <Border Style="{StaticResource QtRecessed}" Padding="12,10">
+                                    <StackPanel Spacing="10">
+                                        <TextBlock Text="PERMISSIONS" Style="{StaticResource ToolSubLabelTextStyle}" Margin="0,2,0,0"
+                                                   loc:Localize.Key="panel.quotes.settings.permissions.label" />
+
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="WHO CAN ADD" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.quotes.settings.permissions.add.label" />
+                                            <cmn:RoleCheckRow Roles="{x:Bind ViewModel.AddRoles, Mode=OneWay}" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="WHO CAN GET" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.quotes.settings.permissions.get.label" />
+                                            <cmn:RoleCheckRow Roles="{x:Bind ViewModel.GetRoles, Mode=OneWay}" />
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="WHO CAN DELETE" Style="{StaticResource ToolSubLabelTextStyle}"
+                                                       loc:Localize.Key="panel.quotes.settings.permissions.delete.label" />
+                                            <cmn:RoleCheckRow Roles="{x:Bind ViewModel.DeleteRoles, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ───────────── RIGHT: quote roster ───────────── -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource CoalSurfaceBrush}"
+                    BorderBrush="{StaticResource CoalCardBrush}"
+                    BorderThickness="1,0,0,0">
+                <Grid>
+                    <!-- Three rows. The fourth held the RECENTLY ADDED feed, which is
+                         a watch surface: what was added 40 seconds ago does not help
+                         anyone editing a command word. -->
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />  <!-- header                -->
+                        <RowDefinition Height="Auto" />  <!-- column band + REFRESH -->
+                        <RowDefinition Height="*" />     <!-- roster                -->
+                    </Grid.RowDefinitions>
+
+                    <cmn:PanelHeader Grid.Row="0" Eyebrow="LIVE" Title="Quotes"
+                                     EyebrowKey="panel.common.eyebrow.live"
+                                     TitleKey="panel.quotes.roster.title">
+                        <cmn:PanelHeader.RightContent>
+                            <TextBlock Text="{x:Bind ViewModel.CountText, Mode=OneWay}"
+                                       FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                       Foreground="{StaticResource CoalSecondaryTextBrush}"
+                                       VerticalAlignment="Center" />
+                        </cmn:PanelHeader.RightContent>
+                    </cmn:PanelHeader>
+
+                    <Border Grid.Row="1" Style="{StaticResource ToolBandBorderStyle}">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="#" Style="{StaticResource ToolColumnLabelTextStyle}" VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.quotes.roster.column.number" />
+                            <TextBlock Grid.Column="1" Text="QUOTE" Style="{StaticResource ToolColumnLabelTextStyle}" VerticalAlignment="Center"
+                                       loc:Localize.Key="panel.quotes.roster.column.quote" />
+                            <Button Grid.Column="2"
+                                    Height="24" Padding="10,0"
+                                    Background="{StaticResource CoalCardBrush}"
+                                    BorderBrush="{StaticResource CoalDividerBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{StaticResource Radius1Corner}"
+                                    Click="OnRefreshClick"
+                                    AutomationProperties.Name="Refresh quotes"
+                                    loc:Localize.AutomationKey="panel.quotes.roster.refresh.a11y">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="10"
+                                              Foreground="{StaticResource CoalBodyTextBrush}" />
+                                    <TextBlock Text="REFRESH" Style="{StaticResource ToolStripLabelTextStyle}"
+                                               loc:Localize.Key="panel.quotes.roster.refresh.label" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="2"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollMode="Disabled">
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.Quotes, Mode=OneWay}"
+                                       cmn:RowDataContext.Supply="True"
+                                       ItemTemplate="{StaticResource QuoteRosterRowTemplate}"
+                                       AutomationProperties.Name="Stored quotes"
+                                       loc:Localize.AutomationKey="panel.quotes.roster.list.a11y" />
+                    </ScrollViewer>
+
+                    <!-- Store-empty state — a sibling in the roster cell, never inside
+                         the scroller. This is "the store has no quotes", which is a
+                         different statement from "nothing is selected".
+
+                         ONE line, hint tier, top aligned: it was a 20pt DisplayFont
+                         headline plus an explanatory second line, centred in a
+                         full-height empty column, which announced the emptiness louder
+                         than the page announces its own name. No literal command word
+                         here either — the add / get / delete words are editable in
+                         SETTINGS, so naming "!addquote" would be wrong for anyone who
+                         renamed it. -->
+                    <TextBlock Grid.Row="2"
+                               Visibility="{x:Bind ViewModel.NoQuotesVisibility, Mode=OneWay}"
+                               Text="No quotes yet — add one on the left."
+                               Style="{StaticResource ToolMonoHintTextStyle}"
+                               VerticalAlignment="Top"
+                               Margin="14,10,14,0"
+                               loc:Localize.Key="panel.quotes.roster.empty.body" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -78,10 +78,10 @@ internal static class UpdaterBootstrap
 
             var newArgs = new List<string>(originalArgs);
             // Guarantee the temp copy swaps the ORIGINAL tree, not its own temp
-            // location. Releases mode + --target already carry an explicit root
-            // on argv; only Update-mode-inferring (no root passed) needs it
-            // injected — the temp copy would otherwise infer the root from its
-            // %TEMP% base dir and swap the wrong thing.
+            // location. Every parsed mode requires an explicit root on argv, so
+            // this injection is defensive (a directly constructed UpdaterArgs
+            // could omit it) — the temp copy would otherwise infer the root
+            // from its %TEMP% base dir and swap the wrong thing.
             if (string.IsNullOrEmpty(args.InstallRoot))
             {
                 newArgs.Add("--target");

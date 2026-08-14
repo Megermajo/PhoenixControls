@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading.Tasks;
 using Phoenix.Controls.Shared.Models;
 using Phoenix.Controls.Shared.Services;
+using Phoenix.Controls.Shared.WinUI.Contracts;
 
 // Namespace deliberately uses `Hosting` rather than `Windows` to avoid
 // shadowing the `Windows.*` system namespace inside the Visualist.WinUI
@@ -35,6 +36,29 @@ namespace Phoenix.Controls.Visualist.WinUI.Hosting;
 public static class VisualistWindowRegistry
 {
     private const string UntitledKeyPrefix = "__untitled:";
+
+    /// <summary>
+    /// The process-wide layer-presence source every Visualist window reads.
+    ///
+    /// <para>Hub owns the real one and hands it to the EMBEDDED MainView at
+    /// construction; siblings had no route to it and were built with
+    /// <c>layerSource: null</c>. That was described as cosmetic — "live-presence dots
+    /// will be inactive in sibling windows" — but the same flag also gates DISPATCH:
+    /// <c>WidgetEditorView.HasProductionPresence</c> walks the rail rows for an Active
+    /// one, and with no source no row is ever Active, so a sibling concluded "OBS is
+    /// not attached" even when it was. Test Run then took BOTH the preview path and
+    /// the bus path, and Hub's fan-out is kind-blind, so one widget was driven twice —
+    /// double audio activation and two transports fighting one timeline, which the
+    /// region's own invariant forbids.</para>
+    ///
+    /// <para>Static because the source is genuinely process-wide (one Hub, one layer
+    /// registry) and a sibling can be spawned from a context that has no reference to
+    /// Hub at all — drag-drop, the Window menu, a recent-files entry. Set-once from
+    /// Hub; null in a standalone/test host, where every window behaves exactly as
+    /// siblings did before, which is the honest fallback rather than a fabricated
+    /// presence.</para>
+    /// </summary>
+    public static ILayerRegistrySource? AmbientLayerSource { get; set; }
 
     // Concurrent so future dispatcher-hop callers (bus / IPC opens off the
     // UI thread, drag-drop handoffs) don't race on the process-wide

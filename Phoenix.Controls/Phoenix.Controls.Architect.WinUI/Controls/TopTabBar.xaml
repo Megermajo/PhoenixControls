@@ -8,7 +8,8 @@
 <UserControl
     x:Class="Phoenix.Controls.Architect.WinUI.Controls.TopTabBar"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:Phoenix.Controls.Architect.WinUI.Localization">
 
     <Border Height="28"
             Background="{StaticResource CoalSurfaceBrush}"
@@ -23,9 +24,11 @@
                     Height="24"
                     Padding="14,0,14,0"
                     CornerRadius="3,3,0,0"
-                    AutomationProperties.Name="Logic Canvas tab">
+                    AutomationProperties.Name="Logic Canvas tab"
+                    loc:Localize.AutomationKey="chrome.architect.tab.logic.a11y">
                 <TextBlock x:Name="LogicLabel"
                            Text="Logic Canvas"
+                           loc:Localize.Key="chrome.architect.tab.logic"
                            VerticalAlignment="Center"
                            FontFamily="{StaticResource DisplayFont}"
                            FontSize="12"
@@ -37,9 +40,11 @@
                     Height="24"
                     Padding="14,0,14,0"
                     CornerRadius="3,3,0,0"
-                    AutomationProperties.Name="Databank Browser tab">
+                    AutomationProperties.Name="Databank Browser tab"
+                    loc:Localize.AutomationKey="chrome.architect.tab.databank.a11y">
                 <TextBlock x:Name="DatabankLabel"
                            Text="Databank Browser"
+                           loc:Localize.Key="chrome.architect.tab.databank"
                            VerticalAlignment="Center"
                            FontFamily="{StaticResource DisplayFont}"
                            FontSize="12"

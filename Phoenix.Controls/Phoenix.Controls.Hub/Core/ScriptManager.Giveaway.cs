@@ -258,9 +258,11 @@ namespace Phoenix.Controls.Hub.Core
         // ── Pre-draw subscriber gather ───────────────────────────────────────
         // Resolves the CURRENT subscription status of the given entrants for
         // GiveawayService.DrawWinnerAsync's sub-bonus weighting. Two stages:
-        //   1. ONE GetActiveViewers request — Streamer.bot's chatter list
-        //      carries a `subscribed` flag per viewer, covering everyone still
-        //      active in chat in a single round-trip.
+        //   1. ONE GetActiveViewers request through the shared sweep
+        //      (FetchActiveViewersAsync, ScriptManager.ViewerPresence.cs) —
+        //      Streamer.bot's chatter list carries a `subscribed` flag per
+        //      viewer, covering everyone still active in chat in a single
+        //      round-trip.
         //   2. Entrants not in the active list fall back to a per-user
         //      "Phoenix: Get User" data-action round-trip (phx_user_sub). The
         //      per-user loop bails on the FIRST dead round-trip (action pack
@@ -279,34 +281,26 @@ namespace Phoenix.Controls.Hub.Core
             if (!WS.Instance.IsConnected) return null;
             var map = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
-            // Stage 1 — active-viewer sweep.
-            string reqId = WS.NewRequestId("phx-gw-subcheck");
-            string response = await WS.Instance.SendAndWaitAsync(
-                $@"{{""request"":""GetActiveViewers"",""id"":""{reqId}""}}",
-                reqId, 5000).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(response))
-            {
-                try
-                {
-                    using var doc = JsonDocument.Parse(response);
-                    if (doc.RootElement.TryGetProperty("viewers", out var viewers)
-                        && viewers.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var v in viewers.EnumerateArray())
-                        {
-                            if (!v.TryGetProperty("login", out var login)
-                                || login.GetString() is not { Length: > 0 } name)
-                                continue;
-                            map[name] = v.TryGetProperty("subscribed", out var sub) && JsonFlagIsTrue(sub);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    GlobalLogger.Log($"Giveaway sub check: GetActiveViewers parse failed: {ex.Message}",
-                        "Script", LogLevel.CriticalError);
-                }
-            }
+            // Stage 1 — active-viewer sweep, through the ONE shared implementation.
+            //
+            // ★ FRESH, not ViewerPresenceService's cached sample, and that is a
+            // deliberate exception to the "share the sample" rule the Loyalty payout
+            // follows. A draw is a MONEY decision made once: the sub bonus changes who
+            // wins, the result is announced, and it cannot be re-run because the
+            // weighting used a snapshot from a minute ago in which someone's sub had
+            // not yet lapsed (or had not yet started). Paying for one round-trip at the
+            // instant of the draw is the correct trade; the payout tick, which repeats
+            // every few minutes and must agree with the watch-minute accrual about who
+            // was present, is the case where the shared sample is the better answer.
+            //
+            // The map is OrdinalIgnoreCase, so the sweep's lowercased logins still
+            // match the entrant names Stage 2 and the service look up. NULL (the
+            // sweep failed) coalesces to empty: Stage 1 simply contributes nothing
+            // and Stage 2's per-user fallback resolves the entrants live — the
+            // exact degradation a timeout always produced here.
+            foreach (var v in await FetchActiveViewersAsync().ConfigureAwait(false)
+                              ?? (IReadOnlyList<ActiveViewer>)Array.Empty<ActiveViewer>())
+                map[v.Login] = v.Subscribed;
 
             // Stage 2 — per-user fallback for entrants who left chat, under an
             // aggregate wall-clock budget.
