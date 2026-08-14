@@ -7,6 +7,91 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Update - 1.1 - 2026.08.15
+
+> ## ⚠ Before you use this update — read this first
+>
+> **1. Re-import the Action Pack.** This update adds new Streamer.bot actions. Without them the new viewer-count and stream-uptime readouts stay blank and some Architect nodes do nothing. In Hub open the **File** menu and choose **"Open Action-Pack Folder"**, open the **PhoenixActionPack.sb** file and copy everything in it. Then in Streamer.bot open **Import**, paste it in and click **Import**.
+>
+> **2. Every ready-made tool starts switched off.** Version 1.1 adds fourteen of them and none of them touch your chat until you turn them on. Open the new **Pre-Builds** tab and switch on what you want, one at a time.
+>
+> **3. Moderator, VIP and Subscriber membership comes from the platform.** Those three groups are usable everywhere a group is usable — a role checkbox, a node, a script check — but who is in them is whatever Twitch, YouTube or Kick says. To grant rights the platform does not, use the **Regular** group or a custom group; both can also be earned through watch hours.
+
+**Version 1.1 — the ready-made tools**
+
+**New**
+- Phoenix now ships fourteen ready-made tools. Each is a page you switch on and fill in — no graph building required — and they live under a new **Pre-Builds** tab, listed down the left the way Settings does it and grouped by what they do.
+- **Loyalty** — a channel points system with a wallet, an earn engine, a reward store and built-in mini-games.
+- **Timer** — countdown, stopwatch and subathon clock that events can add time to, with goals that post to chat and play an overlay effect.
+- **Song Requests** — viewers request tracks from chat, with a queue, per-viewer limits and role rules, and a player that can run in your overlay.
+- **Polls & Betting** — run a poll from chat, or take bets and pay the winners out.
+- **Ranks** — viewers climb named ranks as they earn, and can check where they stand from chat.
+- **Soundboard** — chat-triggered sound effects, with cooldowns and role limits.
+- **Alerts** — tiered chat responses for follows, subs, gift subs, gift bombs, bits and raids, each with an optional overlay effect and a raid auto-shoutout.
+- **Automod** — a spam and word filter with rules, escalation and a permit command; it can delete a message outright instead of only timing the viewer out.
+- **User Management** — welcomes each viewer's first message per stream, greets brand-new chatters once ever, and grants rights through groups.
+- **Scheduling** — recurring timed chat messages, with an only-while-live gate and a hold-off so a quiet chat is not spammed.
+- **Counters** — named counts (deaths, wins, anything) that chat and your logic can read and change.
+- **Quotes** — save and recall chat quotes.
+- **Custom Commands** — your own text and variable chat commands without building a graph.
+- **Viewer queue** — viewers line up from chat, subscribers and VIPs can be weighted ahead of everyone else, and you can see and manage the line.
+- **Giveaway** works in both places — inline like every other tool, or in its own window for a second monitor.
+- Every tool shows the chat words it answers to, and you can change them.
+- The tools feed Architect as well. Twelve of the fourteen raise their own trigger nodes, and the data they keep sits in databank tables your graphs can read and write directly — so anything a tool does, you can also build on. Alerts and Scheduling are the two that do not expose nodes yet.
+- Every tool page carries an activity list showing what it has actually been doing, and a status light that says when something is on but waiting, or held up by something else being off.
+- Watch time is recorded in the background, with every tool switched off. It needs Streamer.bot connected, and by default it counts only while your stream is detected live.
+- The Regular group can be earned by watch hours. The number is checked live rather than written into a member list, so changing it applies to everyone at once.
+- Custom groups can carry a watch-hour rule of their own, readable from your scripts and nodes.
+
+**New — everywhere else**
+- German, French and Spanish coverage has been extended across the app.
+- Tips and donations from ten services reach your logic as trigger nodes, with the amount and currency worked out for you. Turning them into a chat line and an overlay effect is the Alerts tool's job, once you have set up a tier.
+- Twitch goals and charity campaigns reach your overlays.
+- Overlay widgets read live channel data, so counts and goals show real numbers.
+- Viewer count and stream uptime are real numbers.
+- Chat commands and scheduled messages can show your live stream title and game with {title} and {game}; scripts get them too.
+- New **Alert Box** preset in Visualist — a complete alert built from settings.
+- New Clock, Countdown and Stopwatch widgets for your overlays.
+- New **Custom Web Overlay** — put live HTML and CSS straight into an overlay.
+- A widget's media source can be picked at trigger time instead of being fixed when you build it.
+- Node thumbnails in Visualist follow the timeline as you scrub it.
+- Visualist gained a layer manager, resizable panels, composition guides for thirds, centre and safe areas, a richer inspector, a better timeline, and editing several widgets at once.
+- The databank is yours — 23 of the 25 built-in tables can be edited from your scripts and from the databank browser. Two stay protected: the paired-device list and the remote audit log.
+- Role checks offer Regular alongside Moderator, VIP and Subscriber.
+- Wider Twitch event coverage across the trigger nodes.
+- Motion throughout the app — tools fade in, values flash when they change, new rows slide into live lists.
+
+**Fixed**
+- Keyframe animation authored in Visualist now plays in OBS.
+- Architect's Inspector is a small panel in the top-right corner instead of a full-height side panel, and the part of the canvas it used to cover is usable again.
+- Home, F and clicking the mini-map centre your graph on the part of the canvas you can actually see.
+- A graph could open looking empty while the mini-map showed it perfectly. Fixed.
+- The mini-map no longer jumps when you move, add or delete a node at the edge of your graph.
+- Architect's Live Debug node flash fires again while a script runs. It had never once fired in a released build.
+- Architect: a chat command containing a quote mark no longer exports a broken script.
+- Architect: the Edit menu's Group command works, and no longer clashes with the show-grid shortcut.
+- Architect: a graph opened in a background tab re-centres itself when its saved view points off the canvas.
+- Architect: a pin whose variable is animated in Visualist shows its marker as soon as the keyframes are added.
+- Architect's graph checks no longer report node names that are not there.
+- The Live Feed no longer files chat commands as stream events. "!subs" from anyone was shown as a subscription, as was any command from a viewer whose name contains "sub".
+- The Live Feed's Who column shows the viewer again, on every kind of event, and right-click "filter to this user" works again.
+- The Scripts panel gives each running process its own row, instead of stacking them onto one row whose name kept changing.
+- Command detection agrees between the tools and your graphs. A line starting with an invisible character could raise a command nothing was able to answer.
+- Pop-ups — saving before exit, restoring a backup, recovering unsaved work — use the app's own dark styling instead of Windows'. Their main button is amber rather than system blue.
+- The remote relay's LAN switch stays on. It showed as off every time Settings opened, and saving Settings quietly switched it back off.
+- Hotkey and clipboard scripts have their own run limits instead of sharing one with webhook scripts.
+- Scripts still running when Phoenix closes are cancelled as part of the shutdown, and closing the app no longer loses the last lines of the log.
+- Hub's own panels receive the messages Hub itself broadcasts.
+- Overlay effects report back when they finish, so logic waiting on them carries on.
+- Resizing the layer canvas no longer distorts the widget preview.
+- Visualist's Inspector header shows its tooltips, and editing is steadier — reliable undo on QWERTZ keyboards and no more sticky drags.
+- Long streams with rotating image URLs no longer grow memory in the overlay asset cache.
+- The Documentation window no longer describes windows and buttons that were never shipped.
+- Faster, lighter performance across the whole suite.
+
+**Gone**
+- Removed the old (non-functioning) Remote Bridge. A working replacement for remote work will follow with v1.2.
+
 ## Hotfix - 1.0.2607261 - 2026.07.26
 
 > Heads up — if this particular update fails to install once, restart the PC and run it again; from this version on, that cause is gone.
