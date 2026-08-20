@@ -611,6 +611,22 @@ namespace Phoenix.Controls.Hub.Core
             return true;
         }
 
+        // True when an SB frame reports a refusal/failure: a non-null top-level
+        // "error" member (SB's {"error":"malformed command"} rejection shape)
+        // OR "status":"error" (the id-echoed refusal shape
+        // HandleAuthenticateResponse already parses). Shared by the two
+        // receive-loop surfacing branches — id-less rejections and un-pended
+        // id-echoed rejections — so their classification cannot drift apart,
+        // and kept a pure static so it is unit-testable without driving the
+        // receive loop. The ValueKind guard keeps a conventional success shape
+        // carrying "error": null from reading as a rejection.
+        internal static bool IsSbErrorFrame(System.Text.Json.JsonElement root)
+            => (root.TryGetProperty("error", out var err)
+                && err.ValueKind != System.Text.Json.JsonValueKind.Null)
+            || (root.TryGetProperty("status", out var status)
+                && status.ValueKind == System.Text.Json.JsonValueKind.String
+                && string.Equals(status.GetString(), "error", StringComparison.OrdinalIgnoreCase));
+
         // Streamer.bot's WebSocket server 0.2 greets every new connection with
         // an unsolicited Hello frame:
         //   { "request":"Hello", "id":"...", "info":{...},
@@ -1460,6 +1476,38 @@ namespace Phoenix.Controls.Hub.Core
                             HandleGetEventsResponse(root);
                         else if (_pendingRequests.TryRemove(reqId, out var tcs))
                             tcs.TrySetResult(json);
+                        else if (IsSbErrorFrame(root))
+                        {
+                            // Un-pended id frame carrying an error: the reply
+                            // to one of our fire-and-forget requests
+                            // (DispatchNamedAction / streamerbot.do_action send
+                            // without registering a pending wait). A clean ack
+                            // staying silent here is normal traffic; a refusal
+                            // ("action not found" after a wrapper rename, a
+                            // typo'd do_action name, an auth refusal) must not
+                            // be indistinguishable from success — that exact
+                            // invisibility is how the id-less DoAction
+                            // rejection class went unnoticed until 2026-08-19.
+                            GlobalLogger.Log(
+                                $"WS Message: Streamer.bot rejected request '{reqId}': {json.Substring(0, Math.Min(json.Length, 200))}",
+                                "WS", LogLevel.Communication);
+                        }
+                    }
+                    else if (IsSbErrorFrame(root))
+                    {
+                        // An id-less error frame is SB REFUSING one of our
+                        // requests outright (e.g. {"error":"malformed command"}
+                        // for a request it could not validate) — with no id
+                        // echoed there is no pending request to route it to, so
+                        // before this branch it drowned at Debug and a rejected
+                        // outbound call was indistinguishable from success.
+                        // That is exactly how the id-less DoAction rejection
+                        // went unnoticed (2026-08-19); surface it where the
+                        // streamer looks.
+                        GlobalLogger.Log(
+                            $"WS Message: Streamer.bot rejected a request: {json.Substring(0, Math.Min(json.Length, 200))} " +
+                            "(no request id echoed — the offending frame cannot be correlated).",
+                            "WS", LogLevel.Communication);
                     }
                     else
                     {

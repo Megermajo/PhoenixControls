@@ -80,11 +80,15 @@ namespace Phoenix.Controls.Hub.Core
                 // { name } — a bare string only resolved under the StreamSimulator,
                 // so this relay (the foundation every twitch.* action node and the
                 // Phoenix action pack lean on) silently no-op'd live. The arg can be
-                // a GUID (action id) or a name; pick the matching selector.
+                // a GUID (action id) or a name; pick the matching selector. The
+                // envelope goes through SelectorActionPayload so it carries the
+                // mandatory request `id` — SB rejects an id-less DoAction as
+                // {"error":"malformed command"} without executing it (observed
+                // live 2026-08-19; see NamedActionPayload in ScriptManager.cs).
                 object selector = Guid.TryParse(actionId, out _)
                     ? (object)new { id = actionId }
                     : new { name = actionId };
-                WS.Instance.Send(JsonSerializer.Serialize(new { request = "DoAction", action = selector }));
+                WS.Instance.Send(JsonSerializer.Serialize(SelectorActionPayload(selector)));
                 _engine.SetLocalResultVar("result.sb_dispatched", "true");
                 // Was LogLevel.VisualEvent — wrong category (no
                 // visual side-effect here). Streamer.bot dispatch is an

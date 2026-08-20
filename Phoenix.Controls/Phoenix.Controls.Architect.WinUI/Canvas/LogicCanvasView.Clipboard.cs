@@ -488,18 +488,32 @@ public sealed partial class LogicCanvasView
                 return "Visual.Trigger references unknown layer/widget (layer not found)";
 
             // Deserialise the layer and confirm the widget id lives inside it.
-            // Use a forgiving options object — layers are authored by
-            // Visualist and don't share Architect's converters.
+            // MUST go through the house LayerSerializer: .phxlayer files are
+            // written with its converters (Color as an ARGB number, lower-case
+            // LayerPreset/WidgetPreset enum strings, NaN-tolerant keyframe
+            // numbers). A bare JsonSerializer.Deserialize<Layer>() can read
+            // none of those, so this check reported "layer parse failed" for
+            // EVERY real layer carrying a widget graph and the badge marked
+            // perfectly valid references as unresolved (observed live
+            // 2026-08-19, deterministic 3-for-3). With the house reader, a
+            // parse failure here again means a genuinely corrupt file.
+            // Accepted side effect: LayerSerializer.Deserialize runs its
+            // load-time migration sweep, so a layer that already warns on
+            // Visualist load (legacy trigger name, >256-keyframe track) logs
+            // the same Communication lines once per paste. Pastes are rare,
+            // user-initiated actions and the affected population is exactly
+            // the one those warnings exist for.
             try
             {
-                string json = File.ReadAllText(match);
-                var layer = JsonSerializer.Deserialize<Layer>(json,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (layer is null)
-                    return "Visual.Trigger references unknown layer/widget (layer unreadable)";
+                var layer = LayerSerializer.Read(match);
                 bool widgetFound = false;
                 foreach (var w in layer.Widgets)
                 {
+                    // Null holes in the widgets array are a healed-around
+                    // class (LayerSerializer skips them, LayerRuntime guards
+                    // them, the layer loads fine everywhere else) — skip,
+                    // don't let an NRE masquerade as a parse failure.
+                    if (w is null) continue;
                     if (string.Equals(w.Id, snip.WidgetID, StringComparison.OrdinalIgnoreCase))
                     {
                         widgetFound = true;

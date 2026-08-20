@@ -83,10 +83,23 @@ namespace Phoenix.Controls.Hub.Core
         // twitch.* action node silently no-op'd against a live Streamer.bot.
         // Each live action node routes through here against a user-configured SB
         // wrapper action (the Phoenix Controls action pack); mirrors the
-        // twitch.send_chat reference path. No `id` — DoAction is fire-and-forget
-        // here (we don't await the response).
+        // twitch.send_chat reference path.
+        // The envelope MUST also carry an `id`. Streamer.bot validates the
+        // request id and answers an id-less DoAction with
+        // {"error":"malformed command"} WITHOUT executing it — observed live
+        // 2026-08-19: every id-less fire-only dispatch was rejected while the
+        // id-carrying chat/data-action DoActions (SendTwitchChatCore,
+        // FetchActionGlobalsAsync) worked in the same session. Fire-and-forget
+        // still never awaits the ack; the id exists so SB accepts the request
+        // and error replies can be correlated in a wire capture.
         internal static object NamedActionPayload(string actionName, object args)
-            => new { request = "DoAction", action = new { name = actionName }, args };
+            => new { request = "DoAction", id = WS.NewRequestId("do-action"), action = new { name = actionName }, args };
+
+        // streamerbot.do_action's variant of the envelope above — the caller
+        // resolved its own { id } / { name } action selector (GUID vs action
+        // name). Same mandatory request-`id` requirement; see NamedActionPayload.
+        internal static object SelectorActionPayload(object selector)
+            => new { request = "DoAction", id = WS.NewRequestId("do-action"), action = selector };
 
         // Visual.Trigger Args expansion — when the Architect node's fixed Args:Collection
         // input is wired (or a hand-authored visual.trigger() call passes Args="a,b,c"),
