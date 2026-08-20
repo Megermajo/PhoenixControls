@@ -7,6 +7,13 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.1 - 2026.08.20
+
+**Fixed**
+- Actions relayed to Streamer.bot silently did nothing. Streamer.bot requires a request id on every command and rejected the id-less ones Phoenix sent — timeouts, bans, whispers, replies, sub-only mode, reward toggles, OBS source moves via Streamer.bot, Kick and YouTube chat messages, and the "Trigger Streamer.bot action" node were all affected. Every request now carries the required id.
+- When Streamer.bot refuses a request, the System Log now shows the rejection. Refusals used to be invisible, which is how the problem above went unnoticed.
+- Pasting a trigger snippet from Visualist into Architect marked the Visual.Trigger node "unknown layer/widget (layer parse failed)" even when the layer and widget were perfectly valid. The check now reads the layer file the same way Visualist writes it, so the warning only appears for genuinely broken references.
+
 ## Update - 1.1 - 2026.08.15
 
 > ## ⚠ Before you use this update — read this first

@@ -387,6 +387,23 @@
     <article class="release">
       <header class="release-head">
         <div class="release-version">v1.1</div>
+        <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-08-20</div>
+      </header>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Actions relayed to Streamer.bot silently did nothing. Streamer.bot requires a request id on every command and rejected the id-less ones Phoenix sent &mdash; timeouts, bans, whispers, replies, sub-only mode, reward toggles, OBS source moves via Streamer.bot, Kick and YouTube chat messages, and the &quot;Trigger Streamer.bot action&quot; node were all affected. Every request now carries the required id.</li>
+          <li>When Streamer.bot refuses a request, the System Log now shows the rejection. Refusals used to be invisible, which is how the problem above went unnoticed.</li>
+          <li>Pasting a trigger snippet from Visualist into Architect marked the Visual.Trigger node &quot;unknown layer/widget (layer parse failed)&quot; even when the layer and widget were perfectly valid. The check now reads the layer file the same way Visualist writes it, so the warning only appears for genuinely broken references.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.1</div>
         <div class="release-name">Update</div>
         <div class="release-date">2026-08-15</div>
       </header>
