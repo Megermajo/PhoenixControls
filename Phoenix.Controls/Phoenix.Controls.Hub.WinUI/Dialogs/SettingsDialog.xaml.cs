@@ -349,6 +349,9 @@ public sealed partial class SettingsDialog : UserControl
         SuppressBroadcasterChatBox.Content = Localizer.T(
             "dialog.settings.checkbox.suppress_broadcaster_chat",
             "Suppress chat lines typed by the broadcaster account");
+        SharedChatGuestsTriggerBox.Content = Localizer.T(
+            "dialog.settings.checkbox.shared_chat_guests_trigger",
+            "Allow shared-chat guest messages to trigger commands, tools & scripts");
         ChatActionLabel.Text           = Localizer.T("dialog.settings.label.streamerbot_chat_action", "STREAMER.BOT CHAT ACTION");
         AutoStartBox.Content           = Localizer.T(
             "dialog.settings.checkbox.auto_start",
@@ -587,6 +590,7 @@ public sealed partial class SettingsDialog : UserControl
         SuppressBroadcasterFollowBox.IsChecked = cfg.SuppressBroadcasterFollow;
         SuppressBroadcasterChatBox.IsChecked   = cfg.SuppressBroadcasterChat;
         SuppressBroadcasterRedeemBox.IsChecked = cfg.SuppressBroadcasterRedeem;
+        SharedChatGuestsTriggerBox.IsChecked   = cfg.SharedChatGuestsCanTrigger;
         ChatActionBox.Text       = cfg.StreamerBotChatAction ?? "";
         AutoStartBox.IsChecked   = cfg.AutoStart;
         YouTubeDataApiKeyBox.Password = cfg.YouTubeDataApiKey ?? "";
@@ -968,6 +972,7 @@ public sealed partial class SettingsDialog : UserControl
             cfg.SuppressBroadcasterFollow = SuppressBroadcasterFollowBox.IsChecked ?? true;
             cfg.SuppressBroadcasterChat   = SuppressBroadcasterChatBox.IsChecked ?? false;
             cfg.SuppressBroadcasterRedeem = SuppressBroadcasterRedeemBox.IsChecked ?? true;
+            cfg.SharedChatGuestsCanTrigger = SharedChatGuestsTriggerBox.IsChecked ?? false;
             cfg.StreamerBotChatAction = ChatActionBox.Text?.Trim() ?? "";
             cfg.AutoStart             = AutoStartBox.IsChecked ?? true;
             // Written verbatim, unvalidated and untrimmed-of-nothing-but-nulls: it is a

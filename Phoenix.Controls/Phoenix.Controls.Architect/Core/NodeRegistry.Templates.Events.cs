@@ -68,7 +68,19 @@ namespace Phoenix.Controls.Architect.Core
                     // User-Management tool: Regular-GROUP membership (a Phoenix
                     // concept, no platform source). Additive — MigrateNodes
                     // back-fills; unwired it emits nothing (goldens stable).
-                    ("IsRegular",     ColBool)
+                    ("IsRegular",     ColBool),
+                    // Twitch Shared Chat (Stream Together) origin — appended LAST
+                    // (same additive order-preservation rule as Platform /
+                    // MessageId / IsRegular; MigrateNodes back-fills, unwired
+                    // sockets emit nothing so goldens stay byte-identical).
+                    // IsSharedChat → {event.is_shared_chat}; SourceChannel →
+                    // {event.source_channel} — the ORIGIN channel's login for
+                    // partner-channel lines, empty for own-channel chat, so a
+                    // non-empty value ⇔ guest line. Guest lines only reach
+                    // scripts at all when the Settings opt-in "shared-chat
+                    // guests can trigger" is on.
+                    ("IsSharedChat",  ColBool),
+                    ("SourceChannel", ColString)
                 },
                 new Dictionary<string, string>
                 {

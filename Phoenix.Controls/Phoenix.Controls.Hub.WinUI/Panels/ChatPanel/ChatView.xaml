@@ -90,7 +90,7 @@
                                     <!-- Role-glyph badge (always rendered — every role
                                          permutation resolves to a non-null geometry) -->
                                     <ColumnDefinition Width="16" />
-                                    <!-- Username (role-colored) -->
+                                    <!-- Username (role-colored) + shared-chat source chip -->
                                     <ColumnDefinition Width="Auto" />
                                     <!-- Body -->
                                     <ColumnDefinition Width="*" />
@@ -120,12 +120,30 @@
                                           AutomationProperties.Name="{x:Bind BadgeLabel}"
                                           local:ChatBadgeData.SafeData="{x:Bind BadgeGeometry}" />
 
-                                <TextBlock Grid.Column="3"
-                                           VerticalAlignment="Center"
-                                           Foreground="{x:Bind UsernameBrush, Mode=OneWay}"
-                                           FontWeight="SemiBold"
-                                           FontSize="12"
-                                           Text="{x:Bind Username}" />
+                                <!-- Username + shared-chat source chip share one Auto column:
+                                     a dedicated chip column would keep consuming the Grid's
+                                     ColumnSpacing slot even while Collapsed (WinUI spacing
+                                     ignores zero-width columns), shifting the body of EVERY
+                                     normal row 8px right. Inside the StackPanel a Collapsed
+                                     chip contributes nothing, so non-shared-chat rows render
+                                     byte-identically to the pre-fix layout. -->
+                                <StackPanel Grid.Column="3"
+                                            Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <TextBlock VerticalAlignment="Center"
+                                               Foreground="{x:Bind UsernameBrush, Mode=OneWay}"
+                                               FontWeight="SemiBold"
+                                               FontSize="12"
+                                               Text="{x:Bind Username}" />
+                                    <TextBlock Margin="6,0,0,0"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource CoalMutedTextBrush}"
+                                               FontSize="10"
+                                               Visibility="{x:Bind SourceVisibility}"
+                                               ToolTipService.ToolTip="{x:Bind SourceTooltip}"
+                                               AutomationProperties.Name="{x:Bind SourceTooltip}"
+                                               Text="{x:Bind SourceTag}" />
+                                </StackPanel>
 
                                 <TextBlock Grid.Column="4"
                                            Margin="6,0,0,0"

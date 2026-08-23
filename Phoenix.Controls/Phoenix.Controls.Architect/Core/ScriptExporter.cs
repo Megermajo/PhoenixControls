@@ -1379,6 +1379,12 @@ namespace Phoenix.Controls.Architect.Core
                     // IsRegular → {user.is_regular} (User-Management Regular-group
                     // membership; BuildChatVars binds it beside the role flags).
                     if (srcSocket.Name == "IsRegular")     return "{user.is_regular}";
+                    // Shared Chat origin outputs. Explicit mappings required —
+                    // the generic {event.<name>} default below would lowercase-
+                    // collapse them to {event.issharedchat}/{event.sourcechannel},
+                    // which BuildChatVars never binds.
+                    if (srcSocket.Name == "IsSharedChat")  return "{event.is_shared_chat}";
+                    if (srcSocket.Name == "SourceChannel") return "{event.source_channel}";
                     if (srcSocket.Name == "SubMonths")     return "{user.sub_months}";
                     if (srcSocket.Name == "ColorHex")      return "{user.color_hex}";
                     if (srcSocket.Name == "User")
@@ -1703,6 +1709,40 @@ namespace Phoenix.Controls.Architect.Core
                 if (src.Title == "Twitch.InWhisper" && srcSocket.Name == "UserId")
                     return "{user.id}";
 
+                // Bus.OnMessage outputs map to the {bus.*} vars the Hub bus
+                // dispatch populates (Bus.cs busVars). This guard used to sit
+                // BELOW this block's terminal switch and was UNREACHABLE — the
+                // pins exported the generic {event.type}/{event.payload}, which
+                // the bus path never writes, so both rendered as literal tokens.
+                if (src.Title == "Bus.OnMessage")
+                {
+                    if (srcSocket.Name == "Type")    return "{bus.type}";
+                    if (srcSocket.Name == "Payload") return "{bus.payload}";
+                }
+
+                // Schedule.Recurring's Count output is the fire counter
+                // SchedulerService binds as {event.count}; without this arm the
+                // generic switch's "Count" => {user.count} claimed the socket
+                // and the token never bound on the schedule dispatch path.
+                if (src.Title == "Schedule.Recurring" && srcSocket.Name == "Count")
+                    return "{event.count}";
+
+                // Timer.On* outputs happen to spell the generic lowercase
+                // collapse exactly ({event.timername}, {event.milestoneid}, …).
+                // Pinned explicitly so a socket rename can't silently retarget
+                // the token away from what TimerService raises.
+                if (src.Title is "Timer.OnZero" or "Timer.OnMilestone" or "Timer.OnAdd")
+                {
+                    switch (srcSocket.Name)
+                    {
+                        case "TimerName":   return "{event.timername}";
+                        case "MilestoneId": return "{event.milestoneid}";
+                        case "Label":       return "{event.label}";
+                        case "Source":      return "{event.source}";
+                        case "Seconds":     return "{event.seconds}";
+                    }
+                }
+
                 return srcSocket.Name switch
                 {
                     "Message"   => "{user.message}",
@@ -1996,18 +2036,10 @@ namespace Phoenix.Controls.Architect.Core
                 };
             }
 
-            // Bus.OnMessage Type/Payload outputs map to the {bus.*}
-            // vars the Hub bus dispatch populates (Bus.cs busVars); they previously
-            // resolved to {event.type}/{event.payload}, which that path never sets.
-            if (src.Title == "Bus.OnMessage")
-            {
-                return srcSocket.Name switch
-                {
-                    "Type"    => "{bus.type}",
-                    "Payload" => "{bus.payload}",
-                    _         => $"\"{src.Title}.{srcSocket.Name}\""
-                };
-            }
+            // (The Bus.OnMessage {bus.*} guard that used to sit here was dead
+            // code — Bus.OnMessage's template category is "Events", and the
+            // Events block above returns unconditionally, so control never got
+            // this far. It now lives INSIDE that block, where it can fire.)
 
             // Twitch.CreatePoll / CreatePrediction no longer expose a PollId /
             // PredictionId output — Streamer.bot's DoAction can't return the created

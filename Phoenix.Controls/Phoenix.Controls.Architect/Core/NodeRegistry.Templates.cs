@@ -121,6 +121,8 @@ namespace Phoenix.Controls.Architect.Core
                 { "Args",      "The text after the command, as a single space-separated string. Split on space with Text.Split before Flow.ForEach / Array.Get (Array nodes expect comma-separated lists)." },
                 { "IsCommand", "True when the message starts with ! (the Commands filter separately gates whether the flow fires at all)." },
                 { "Platform",  "Which platform sent the line: twitch, youtube or kick. Branch on it with Logic.Switch to answer per platform." },
+                { "IsSharedChat",  "True when a Twitch Shared Chat (Stream Together) session is involved — for own-channel AND partner-channel lines. Always false on YouTube/Kick." },
+                { "SourceChannel", "The Twitch channel the line was WRITTEN in during a Shared Chat session — empty for your own channel, so non-empty means a partner-channel (guest) line. Guest lines only trigger flows at all when the Settings opt-in \"shared-chat guests can trigger\" is enabled." },
             });
             SetSocketDescriptions("Chat.Send", new()
             {

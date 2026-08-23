@@ -388,6 +388,42 @@
       <header class="release-head">
         <div class="release-version">v1.1</div>
         <div class="release-name">Hotfix</div>
+        <div class="release-date">2026-08-23</div>
+      </header>
+
+      <div class="release-heads-up">
+        <strong>Heads up &mdash; Shared Chat guests are now display-only by default.</strong> During a Twitch Stream Together session, viewers from the partner channels no longer trigger your commands, points or greetings; their messages still appear in chat, tagged with their home channel. Turn on <strong>&quot;Shared Chat guests can trigger&quot;</strong> in Settings to allow it again.
+      </div>
+
+      <div class="bucket bucket-new">
+        <div class="bucket-label">New</div>
+        <ul>
+          <li>Chat messages arriving through Twitch Shared Chat are tagged with the channel they came from in the Chat panel.</li>
+          <li>A Settings switch controls whether Shared Chat guests can trigger commands and tools.</li>
+          <li>Architect&#39;s Chat.Message trigger gained two outputs: whether the message came through Shared Chat, and which channel it came from.</li>
+        </ul>
+      </div>
+
+      <div class="bucket bucket-fixed">
+        <div class="bucket-label">Fixed</div>
+        <ul>
+          <li>Raids announce the raider again &mdash; raid alerts and scripts no longer post a literal &quot;{user.name}&quot;.</li>
+          <li>Raid auto-shoutouts no longer skip silently when the raider&#39;s name arrives in an unexpected shape.</li>
+          <li>Follows, subs, resubs, cheers, gift subs and reward redemptions keep the viewer&#39;s name and details on newer Streamer.bot versions, which moved those fields around.</li>
+          <li>Chat keeps working after a Streamer.bot update &mdash; newer versions removed the old chat message format, and Phoenix now reads both.</li>
+          <li>The &quot;suppress broadcaster chat&quot; option keeps working on newer Streamer.bot versions.</li>
+          <li>Gift bombs report their full gift count instead of counting as a single gift.</li>
+          <li>Follower goals update again as progress comes in.</li>
+          <li>Loyalty points for raids and follows land again.</li>
+          <li>Several Architect event nodes (Bus message, Scheduling count, Timer events, State change) now deliver the values their outputs advertise &mdash; re-save the graph in Architect once for this to take effect.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="release">
+      <header class="release-head">
+        <div class="release-version">v1.1</div>
+        <div class="release-name">Hotfix</div>
         <div class="release-date">2026-08-20</div>
       </header>
 

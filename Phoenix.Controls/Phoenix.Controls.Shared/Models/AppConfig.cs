@@ -728,6 +728,23 @@ namespace Phoenix.Controls.Shared.Models
         /// </summary>
         public bool SuppressBroadcasterChat { get; set; } = false;
 
+        /// <summary>
+        /// When true, Twitch Shared Chat (Stream Together) messages that ORIGINATED
+        /// in a partner channel of the session may trigger on_chat scripts and the
+        /// built-in chat tools (commands, Loyalty earn, greeting, counters, …).
+        /// Default false: guest lines render in the Chat panel (tagged with their
+        /// source channel) but are otherwise display-only. Off-by-default matches
+        /// Streamer.bot's own posture (guest lines skip its Command handling since
+        /// SB 0.2.5) and the surveyed bot field (Firebot, Mix It Up, PhantomBot,
+        /// Twitchat all ignore guests by default) — and matters doubly here because
+        /// Streamer.bot sends chat with a user access token, so every bot reply a
+        /// guest triggers is broadcast into EVERY channel of the shared session and
+        /// Twitch offers no way to restrict that.
+        /// Read live per message at the ScriptManager dispatch chokepoint — no
+        /// restart needed.
+        /// </summary>
+        public bool SharedChatGuestsCanTrigger { get; set; } = false;
+
         // ── Auto-updater (UpdateChecker / Phoenix.Controls.Updater) ──────
         /// <summary>
         /// When true, Hub kicks off a background <c>UpdateChecker.CheckAsync</c> at

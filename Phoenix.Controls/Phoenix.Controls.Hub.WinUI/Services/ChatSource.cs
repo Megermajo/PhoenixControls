@@ -133,7 +133,13 @@ public sealed class ChatSource : IChatSource, IDisposable
         IsMod:         m.IsMod,
         IsVip:         m.IsVip,
         IsSubscriber:  m.IsSub,
-        Platform:      m.Platform ?? "twitch");
+        Platform:      m.Platform ?? "twitch",
+        // Shared-chat origin: only guest lines carry a source channel (login
+        // first, raw channel id as the last-resort fallback so a wire that only
+        // carried sourceRoomId still renders a distinguishable tag).
+        SourceChannel: m.IsSharedChatGuest
+            ? (!string.IsNullOrEmpty(m.SourceChannel) ? m.SourceChannel : m.SourceChannelId)
+            : "");
 
     private static ChatRole ToRole(ModelChatMessage m)
     {

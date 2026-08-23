@@ -160,7 +160,7 @@ namespace Phoenix.Controls.Architect.Core
                 // carries the legacy title before migration runs, and the
                 // exporter still honours both. DO NOT delete them —
                 // AnalyzerNodeKeyIntegrityTests allow-lists exactly these two.
-                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_regular", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform", "event.message_id" },
+                ["Chat.Message"]            = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_regular", "user.color_hex", "user.sub_months", "event.iscommand", "user.platform", "event.message_id", "event.is_shared_chat", "event.source_channel" },
                 ["Twitch.ChatMessage"]      = new[] { "user.message", "user.name", "user.command", "user.args", "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster", "user.is_regular", "user.color_hex", "user.sub_months", "event.iscommand", "event.message_id" },
                 ["Twitch.Subscription"]     = new[] { "user.name", "user.sub_months", "user.tier" },
                 // user.tier added: Twitch.Resub's template exposes a Tier output
@@ -197,7 +197,10 @@ namespace Phoenix.Controls.Architect.Core
                 ["Schedule.Cron"]           = new[] { "event.timestamp" },
                 ["Schedule.RunAt"]          = new[] { "event.timestamp" },
                 ["Schedule.Recurring"]      = new[] { "event.timestamp", "event.count" },
-                ["State.OnChange"]          = new[] { "event.name", "event.oldvalue", "event.newvalue" },
+                // State.OnChange — synced with the exporter arm and the runtime
+                // writes, which both use {state.*} (the old event.* roster here
+                // advertised tokens nothing wrote).
+                ["State.OnChange"]          = new[] { "state.name", "state.old_value", "state.new_value" },
                 // Counter.OnChanged — synced with AutocompleteScopeBuilder and the
                 // Counter.OnChanged arm in ScriptExporter.ResolveOutputFromNode
                 // (CountersService binds event.counter / event.count).

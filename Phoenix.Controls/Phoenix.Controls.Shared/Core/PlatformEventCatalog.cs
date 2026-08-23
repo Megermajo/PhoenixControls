@@ -352,8 +352,11 @@ namespace Phoenix.Controls.Shared.Core
                 Str("GoalId",        "goal.id",            "id"),
                 Str("GoalType",      "goal.type",          "type"),
                 Str("Description",   "goal.description",   "description"),
-                Int("CurrentAmount", "goal.currentAmount", "currentAmount"),
-                Int("TargetAmount",  "goal.targetAmount",  "targetAmount"),
+                // snake_case third: the live ≤1.0.4 wire spells the amounts
+                // current_amount/target_amount (2026-08-23 WarnOnce capture) —
+                // camelCase-only probes left the goal pins empty on real events.
+                Int("CurrentAmount", "goal.currentAmount", "currentAmount", "current_amount"),
+                Int("TargetAmount",  "goal.targetAmount",  "targetAmount",  "target_amount"),
             });
 
         // Un-ban / un-timeout carry no reason and no duration — Twitch models
@@ -878,8 +881,8 @@ namespace Phoenix.Controls.Shared.Core
                     Str("GoalId",        "goal.id",            "id"),
                     Str("GoalType",      "goal.type",          "type"),
                     Str("Description",   "goal.description",   "description"),
-                    Int("CurrentAmount", "goal.currentAmount", "currentAmount"),
-                    Int("TargetAmount",  "goal.targetAmount",  "targetAmount"),
+                    Int("CurrentAmount", "goal.currentAmount", "currentAmount", "current_amount"),
+                    Int("TargetAmount",  "goal.targetAmount",  "targetAmount",  "target_amount"),
                     Bool("IsAchieved",   "goal.isAchieved",    "isAchieved", "is_achieved"),
                 }),
 

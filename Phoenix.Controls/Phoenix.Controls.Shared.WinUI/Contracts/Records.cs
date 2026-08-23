@@ -61,7 +61,14 @@ public record ChatMessage(
     // Chat platform token ("twitch" / "youtube" / "kick"). Optional-with-default
     // so every pre-multi-platform construction site keeps compiling with its
     // original Twitch meaning.
-    string         Platform      = "twitch");
+    string         Platform      = "twitch",
+    // Twitch Shared Chat (Stream Together) ORIGIN channel for lines that came
+    // from a partner channel of the session; "" = own channel (the default, so
+    // every pre-shared-chat construction site keeps compiling with its original
+    // meaning — same additive pattern as Platform). ChatSource maps it from
+    // Models.ChatMessage (login-first, source-channel-id fallback); ChatRowVm
+    // renders it as the row's source tag.
+    string         SourceChannel = "");
 
 /// <summary>
 /// Precedence-collapsed chat-role classification derived from the four

@@ -1120,72 +1120,19 @@ namespace Phoenix.Controls.Hub.Core
 
                             if (chatPlatform == ChatPlatforms.Twitch)
                             {
-                                if (!chatDataRoot.TryGetProperty("message", out var data))
+                                // Dual-shape builder: SB ≤1.0.4 nests the line under the legacy
+                                // data.message object; SB 1.0.5+ removed that object entirely
+                                // (IRC→EventSub migration) and carries user/text/messageId at the
+                                // payload top level. TryBuildTwitchChatMessage handles both and
+                                // also extracts the Shared Chat origin fields (see the builder).
+                                if (!TryBuildTwitchChatMessage(chatDataRoot, out msg, out chatLogin, out chatUserId, out twitchMsgEl))
                                 {
                                     GlobalLogger.Log(
-                                        "Twitch.ChatMessage missing data.message — dropped",
+                                        "Twitch.ChatMessage carried neither the legacy data.message object (SB ≤1.0.4) " +
+                                        "nor a usable top-level user payload (SB 1.0.5+) — dropped",
                                         "WS", LogLevel.Communication);
                                     return;
                                 }
-                                twitchMsgEl = data;
-
-                                // Role-prefix-badge reliability fix.
-                                // Streamer.bot inconsistently populates `data.moderator` / `data.subscriber`
-                                // / `data.vip` vs the integer `data.role` (broadcaster=4, mod=3, vip=2,
-                                // sub=1, viewer=0). Pre-fix, mods/VIPs whose SB payload used `role:3`
-                                // without the booleans collapsed to "Viewer" in `ChatMessage.RoleBadge`
-                                // and through the role-color resolver. The reliable behavior is the
-                                // UNION: derive each flag from (role-int >= threshold) OR (legacy
-                                // boolean field) so either schema variant produces the right badge.
-                                // The correct badge for either payload shape is a load-bearing requirement.
-                                var roleFlags = ResolveChatRoleFlags(data);
-                                msg = new ChatMessage
-                                {
-                                    Platform      = ChatPlatforms.Twitch,
-                                    Username      = data.TryGetProperty("displayName",  out var dn)  ? dn.GetString()  ?? "" : "",
-                                    Message       = data.TryGetProperty("message",      out var txt) ? txt.GetString() ?? "" : "",
-                                    ColorHex      = data.TryGetProperty("color",        out var col) ? (col.GetString() is { Length: > 0 } c ? c : "#FFFFFF") : "#FFFFFF",
-                                    IsBroadcaster = roleFlags.IsBroadcaster,
-                                    IsMod         = roleFlags.IsMod,
-                                    IsSub         = roleFlags.IsSub,
-                                    IsVip         = roleFlags.IsVip,
-                                    // Streamer.bot has used at least three field names for the
-                                    // cumulative subscription-months counter across releases:
-                                    //   `cumMonths` (current SB schema)
-                                    //   `cumulativeMonths` (older SB)
-                                    //   `cumulative_months` (snake_case payloads from some forks)
-                                    // First non-null integer wins. ResolveSubMonths logs a one-time
-                                    // Debug warning if all three are missing on a sub gift event so
-                                    // we notice payload-shape drift without spamming the log.
-                                    SubMonths     = ResolveSubMonths(data, eventType),
-                                    // Message id — Streamer.bot's Twitch ChatMessage carries the
-                                    // IRC message id. Probe the known field names defensively
-                                    // (msgId is the current SB schema; messageId / id are
-                                    // fallbacks). Feeds {event.message_id} + Chat.Message.MessageId
-                                    // → reply / delete / automod.
-                                    MessageId     = FirstNonEmpty(JsonStringField(data, "msgId"), JsonStringField(data, "messageId"), JsonStringField(data, "id")),
-                                };
-                                if (msg.MessageId.Length == 0)
-                                    WarnMessageIdMissingOnce(ref _msgIdDiagTwitch, "Twitch", data);
-                                // Per-chat [RoleDebug] log was retired. Under busy chat
-                                // it burned every slot in the 2000-entry log ring within seconds,
-                                // crowding out the System / Critical events Majo actually needs to
-                                // see. The role-flag resolution is now exercised by
-                                // BugFixSweep7_SovereignWS_Tests; for live diagnosis, log a single
-                                // role-tag-map sample on connect (see EmitRoleTagMapDiagnosticOnce).
-
-                                // Match on Twitch `login` + `userId` (immutable) instead
-                                // of `displayName` alone. Twitch display names can be stylized or
-                                // non-ASCII (e.g. uppercase, Japanese characters) while the login
-                                // is always the lowercase ASCII handle. Comparing only displayName
-                                // missed every non-ASCII bot account; the guard checks all
-                                // three identifiers against the configured BotUsername list.
-                                chatLogin = ExtractTwitchChatLogin(data);
-                                chatUserId = data.TryGetProperty("userId", out var uidEl) && uidEl.ValueKind == System.Text.Json.JsonValueKind.String
-                                    ? (uidEl.GetString() ?? "")
-                                    : (data.TryGetProperty("user_id", out var uid2El) && uid2El.ValueKind == System.Text.Json.JsonValueKind.String
-                                        ? (uid2El.GetString() ?? "")
-                                        : "");
                             }
                             else if (chatPlatform == ChatPlatforms.YouTube)
                             {
@@ -1242,9 +1189,19 @@ namespace Phoenix.Controls.Hub.Core
                             // Config gate FIRST — IsBroadcasterActor allocates per call, and the
                             // feature is off by default, so the actor check must not run per chat
                             // line unless the operator opted in.
+                            // Twitch runs the element probe AND an identity match on the
+                            // already-extracted login/userId/display name: the Gen-2
+                            // (SB 1.0.5+) actor element renamed userId→id and
+                            // displayName→name, which IsBroadcasterActor's probe list
+                            // predates — without the identity arm an id-configured
+                            // setup (the AppConfig-preferred form) silently lost the
+                            // guard on the new wire. The element probe stays for its
+                            // Gen-1 field coverage; extending ITS probe list instead
+                            // would change every non-chat caller's semantics.
                             if (ConfigManager.Current?.SuppressBroadcasterChat == true
                                 && (chatPlatform == ChatPlatforms.Twitch
-                                        ? IsBroadcasterActor(twitchMsgEl)
+                                        ? (IsBroadcasterActor(twitchMsgEl)
+                                           || IsBroadcasterIdentityMatch(msg.Username, chatLogin, chatUserId))
                                         : msg.IsBroadcaster))
                             {
                                 GlobalLogger.Log(
@@ -1742,6 +1699,245 @@ namespace Phoenix.Controls.Hub.Core
                 JsonStringField(data, "userName"));
         }
 
+        /// <summary>
+        /// Builds a <see cref="ChatMessage"/> from a Twitch.ChatMessage event's `data`
+        /// element, handling BOTH Streamer.bot payload generations:
+        ///
+        ///   Gen-1 (SB ≤1.0.4, IRC transport): the line nests under `data.message`
+        ///   (msgId / userId / username / displayName / role / moderator / subscriber /
+        ///   vip / color / cumMonths / …). This is the shape every live capture on
+        ///   Majo's install has shown.
+        ///
+        ///   Gen-2 (SB 1.0.5 beta / 1.0.7 stable, EventSub transport): the legacy
+        ///   `message` object was REMOVED ("Breaking Changes" in the v1.0.7 changelog)
+        ///   and the line lives at the top level: `user{id,login,name,role,badges,
+        ///   color,subscribed,subscriptionTier,monthsSubscribed}`, `messageId`, `text`.
+        ///   Without this arm the Hub goes completely blind on Twitch chat the moment
+        ///   SB updates past 1.0.4 — while the connection dot stays green.
+        ///
+        /// Field names verified against both payload generations' published
+        /// schemas and live captures.
+        ///
+        /// `actorEl` is the element the SuppressBroadcasterChat guard's
+        /// <see cref="IsBroadcasterActor"/> probes for actor identity: the legacy
+        /// message object on Gen-1 (carries login/userLogin/username), the `user`
+        /// object on Gen-2 (carries login). Both generations also run
+        /// <see cref="ApplySharedChatOrigin"/> so Shared Chat (Stream Together)
+        /// guest lines are classified before any downstream consumer sees them.
+        /// </summary>
+        internal static bool TryBuildTwitchChatMessage(
+            System.Text.Json.JsonElement chatDataRoot,
+            out ChatMessage msg, out string chatLogin, out string chatUserId,
+            out System.Text.Json.JsonElement actorEl)
+        {
+            msg = new ChatMessage { Platform = ChatPlatforms.Twitch };
+            chatLogin = string.Empty;
+            chatUserId = string.Empty;
+            actorEl = default;
+
+            if (chatDataRoot.TryGetProperty("message", out var data)
+                && data.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                // ── Gen-1 (legacy data.message) ──────────────────────────────
+                actorEl = data;
+
+                // Role-prefix-badge reliability fix.
+                // Streamer.bot inconsistently populates `data.moderator` / `data.subscriber`
+                // / `data.vip` vs the integer `data.role` (broadcaster=4, mod=3, vip=2,
+                // sub=1, viewer=0). Mods/VIPs whose SB payload used `role:3` without the
+                // booleans used to collapse to "Viewer" in `ChatMessage.RoleBadge` and
+                // through the role-color resolver. The reliable behavior is the UNION:
+                // derive each flag from (role-int >= threshold) OR (legacy boolean field)
+                // so either schema variant produces the right badge.
+                var roleFlags = ResolveChatRoleFlags(data);
+                msg.Username      = data.TryGetProperty("displayName", out var dn)  ? dn.GetString()  ?? "" : "";
+                msg.Message       = data.TryGetProperty("message",     out var txt) ? txt.GetString() ?? "" : "";
+                msg.ColorHex      = data.TryGetProperty("color",       out var col) ? (col.GetString() is { Length: > 0 } c ? c : "#FFFFFF") : "#FFFFFF";
+                msg.IsBroadcaster = roleFlags.IsBroadcaster;
+                msg.IsMod         = roleFlags.IsMod;
+                msg.IsSub         = roleFlags.IsSub;
+                msg.IsVip         = roleFlags.IsVip;
+                // cumMonths (current) → cumulativeMonths (older) → cumulative_months
+                // (snake_case forks); first integer wins, one-time drift warning on
+                // sub-shaped events — see ResolveSubMonths.
+                msg.SubMonths     = ResolveSubMonths(data, "ChatMessage");
+                // IRC message id: msgId (current SB schema) → messageId / id fallbacks.
+                // Feeds {event.message_id} + Chat.Message.MessageId → reply / delete /
+                // automod.
+                msg.MessageId     = FirstNonEmpty(JsonStringField(data, "msgId"), JsonStringField(data, "messageId"), JsonStringField(data, "id"));
+                if (msg.MessageId.Length == 0)
+                    WarnMessageIdMissingOnce(ref _msgIdDiagTwitch, "Twitch", data);
+
+                // Match on Twitch `login` + `userId` (immutable) instead of
+                // `displayName` alone: display names can be stylized / non-ASCII
+                // while the login is always the lowercase ASCII handle. The bot
+                // self-guard checks all three identifiers.
+                chatLogin  = ExtractTwitchChatLogin(data);
+                chatUserId = FirstNonEmpty(JsonStringField(data, "userId"), JsonStringField(data, "user_id"));
+            }
+            else
+            {
+                // ── Gen-2 (SB 1.0.5+ top-level payload) ──────────────────────
+                if (!chatDataRoot.TryGetProperty("user", out var user)
+                    || user.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    return false;
+                actorEl = user;
+
+                // user.role is the same 0–4 ladder ResolveChatRoleFlags already
+                // reads; `subscribed` replaced the legacy `subscriber` boolean, so
+                // union it in beside the ladder-derived flag.
+                var roleFlags = ResolveChatRoleFlags(user);
+                msg.Username      = FirstNonEmpty(JsonStringField(user, "name"), JsonStringField(user, "login"));
+                msg.Message       = JsonStringField(chatDataRoot, "text");
+                msg.ColorHex      = JsonStringField(user, "color") is { Length: > 0 } gc ? gc : "#FFFFFF";
+                msg.IsBroadcaster = roleFlags.IsBroadcaster;
+                msg.IsMod         = roleFlags.IsMod;
+                msg.IsSub         = roleFlags.IsSub || JsonBoolField(user, "subscribed");
+                msg.IsVip         = roleFlags.IsVip;
+                // monthsSubscribed is Gen-2's rename of cumMonths; keep the legacy
+                // family as a fallback so a hybrid payload still resolves. ValueKind
+                // guard required — TryGetInt32 THROWS on a null/string kind rather
+                // than returning false (the ResolveChatRoleFlags pattern), and a
+                // thrown parse kills the whole chat line via ParseBotMessage's
+                // catch-all with a per-message error log.
+                msg.SubMonths     = user.TryGetProperty("monthsSubscribed", out var mEl)
+                        && mEl.ValueKind == System.Text.Json.JsonValueKind.Number
+                        && mEl.TryGetInt32(out int mv)
+                    ? mv
+                    : ResolveSubMonths(user, "ChatMessage");
+                msg.MessageId     = FirstNonEmpty(JsonStringField(chatDataRoot, "messageId"), JsonStringField(user, "msgId"));
+                if (msg.MessageId.Length == 0)
+                    WarnMessageIdMissingOnce(ref _msgIdDiagTwitch, "Twitch", chatDataRoot);
+
+                chatLogin  = JsonStringField(user, "login");
+                chatUserId = JsonStringField(user, "id");
+                if (msg.Username.Length == 0 && msg.Message.Length == 0)
+                    return false;
+
+                // Gen-2 has NO legacy message object — pass default so the
+                // shared-chat probe's legacy-location reads are no-ops and its
+                // missing-source diagnostic doesn't mislabel the user object's
+                // fields as "message.*" (they aren't).
+                ApplySharedChatOrigin(chatDataRoot, default, msg);
+                return true;
+            }
+
+            ApplySharedChatOrigin(chatDataRoot, actorEl, msg);
+            return true;
+        }
+
+        /// <summary>
+        /// Classifies a Twitch chat line's Shared Chat (Stream Together) origin and
+        /// stamps <see cref="ChatMessage.IsSharedChat"/> / <see cref="ChatMessage.IsSharedChatGuest"/> /
+        /// <see cref="ChatMessage.SourceChannel"/> / <see cref="ChatMessage.SourceChannelId"/>.
+        /// Production overload — reads the configured broadcaster identity live.
+        /// </summary>
+        internal static void ApplySharedChatOrigin(
+            System.Text.Json.JsonElement root, System.Text.Json.JsonElement legacyMsg, ChatMessage msg)
+        {
+            var cfg = ConfigManager.Current;
+            ApplySharedChatOrigin(root, legacyMsg, msg,
+                cfg?.BroadcasterUserId?.Trim() ?? string.Empty,
+                cfg?.BroadcasterUsername?.Trim() ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Identity-parameterised core (unit-testable without touching ConfigManager).
+        ///
+        /// Probe order across the three SB schema generations:
+        ///   1. top-level isFromSharedChatGuest / isInSharedChat / isSharedChatHost
+        ///      (the SB 1.0.0+ names; present on the 1.0.4 wire per the era schema)
+        ///   2. top-level sharedChatSource {id, login, name} — the origin channel
+        ///   3. the same flags duplicated INSIDE the legacy message object
+        ///   4. legacy message.sourceRoomId (IRC-derived origin-channel id)
+        ///   5. the pre-1.0 names fromSharedChat / inSharedChat (docs-drift hedge)
+        ///
+        /// ★ The sourceRoomId / sharedChatSource comparisons are INEQUALITY tests
+        /// against the configured broadcaster identity, never bare null-checks:
+        /// on IRC transport (SB ≤1.0.4) Twitch populates source-room-id on the
+        /// source channel's OWN copies too (equal to room-id), so "present" does
+        /// not mean "guest". With no broadcaster identity configured the id/login
+        /// comparisons stay silent and only the explicit guest flags classify —
+        /// own-channel-until-proven-guest by design.
+        /// </summary>
+        internal static void ApplySharedChatOrigin(
+            System.Text.Json.JsonElement root, System.Text.Json.JsonElement legacyMsg, ChatMessage msg,
+            string ownChannelId, string ownChannelLogin)
+        {
+            bool inShared =
+                JsonBoolField(root, "isInSharedChat")
+                || JsonBoolField(root, "isSharedChatHost")
+                || JsonBoolField(legacyMsg, "isInSharedChat")
+                || JsonBoolField(legacyMsg, "inSharedChat");
+            bool guestFlag =
+                JsonBoolField(root, "isFromSharedChatGuest")
+                || JsonBoolField(legacyMsg, "isFromSharedChatGuest")
+                || JsonBoolField(legacyMsg, "fromSharedChat");
+
+            string srcId = string.Empty, srcLogin = string.Empty, srcName = string.Empty;
+            if (root.TryGetProperty("sharedChatSource", out var src)
+                && src.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                srcId    = JsonStringField(src, "id");
+                srcLogin = JsonStringField(src, "login");
+                srcName  = JsonStringField(src, "name");
+            }
+            string sourceRoomId = JsonStringField(legacyMsg, "sourceRoomId");
+
+            bool guestById =
+                ownChannelId.Length > 0
+                && ((srcId.Length > 0 && !string.Equals(srcId, ownChannelId, StringComparison.Ordinal))
+                    || (sourceRoomId.Length > 0 && !string.Equals(sourceRoomId, ownChannelId, StringComparison.Ordinal)));
+            bool guestByLogin =
+                ownChannelLogin.Length > 0 && srcLogin.Length > 0
+                && !string.Equals(srcLogin, ownChannelLogin, StringComparison.OrdinalIgnoreCase);
+
+            msg.IsSharedChatGuest = guestFlag || guestById || guestByLogin;
+            msg.IsSharedChat = inShared || msg.IsSharedChatGuest
+                || srcId.Length > 0 || srcLogin.Length > 0 || srcName.Length > 0
+                || sourceRoomId.Length > 0;
+
+            if (msg.IsSharedChatGuest)
+            {
+                // Login-first (the suite's identity convention), display name as
+                // the fallback. May legitimately end up empty on a wire that only
+                // carried sourceRoomId — the panel then falls back to the id.
+                msg.SourceChannel   = FirstNonEmpty(srcLogin, srcName);
+                msg.SourceChannelId = FirstNonEmpty(srcId, sourceRoomId);
+                if (msg.SourceChannel.Length == 0 && msg.SourceChannelId.Length == 0)
+                    WarnSharedChatSourceMissingOnce(root, legacyMsg);
+            }
+        }
+
+        // One-time diagnostic (WarnMessageIdMissingOnce pattern): a line was
+        // positively flagged as a shared-chat guest message but no probe location
+        // yielded the origin channel — dump the payload's real field names once so
+        // the probe can be corrected from a live capture in a single line.
+        private static int _sharedChatSourceDiag;
+        private static void WarnSharedChatSourceMissingOnce(
+            System.Text.Json.JsonElement root, System.Text.Json.JsonElement legacyMsg)
+        {
+            if (System.Threading.Interlocked.Exchange(ref _sharedChatSourceDiag, 1) != 0) return;
+            var keys = new System.Text.StringBuilder();
+            void Dump(System.Text.Json.JsonElement el, string prefix)
+            {
+                if (el.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+                foreach (var p in el.EnumerateObject())
+                {
+                    if (keys.Length > 0) keys.Append(", ");
+                    keys.Append(prefix).Append(p.Name);
+                }
+            }
+            Dump(root, "");
+            Dump(legacyMsg, "message.");
+            GlobalLogger.Log(
+                "Twitch shared-chat guest message arrived with no resolvable source channel " +
+                "(probed sharedChatSource{id,login,name} + message.sourceRoomId). Available fields: " +
+                $"[{keys}]. The source-channel tag / {{event.source_channel}} will stay empty until " +
+                "the correct field is wired from a live capture.",
+                "WS", LogLevel.System);
+        }
+
         private static string JsonStringField(System.Text.Json.JsonElement obj, string name)
         {
             if (obj.ValueKind != System.Text.Json.JsonValueKind.Object) return string.Empty;
@@ -1790,6 +1986,41 @@ namespace Phoenix.Controls.Hub.Core
                 $"Available fields: [{keys}]. {{event.message_id}} / Chat.Message.MessageId will stay " +
                 "empty for this platform until the correct field is wired.",
                 "WS", LogLevel.System);
+        }
+
+        /// <summary>
+        /// Broadcaster-identity check against ALREADY-EXTRACTED actor fields (the
+        /// chat path's display name / login / user id) instead of a payload-element
+        /// probe. Exists because the Gen-2 (SB 1.0.5+) chat payload renamed
+        /// userId→id and displayName→name, which <see cref="IsBroadcasterActor"/>'s
+        /// probe list predates — the chat guard ORs this with the element probe so
+        /// both payload generations keep SuppressBroadcasterChat working. Mirrors
+        /// IsBroadcasterActor's tiers: configured id (ordinal), configured name
+        /// (case-insensitive vs display name AND login), then the BotUsername
+        /// blocked-account rescue for solo setups.
+        /// </summary>
+        internal bool IsBroadcasterIdentityMatch(string displayName, string login, string userId)
+        {
+            var cfg = ConfigManager.Current;
+            string? bcastName = cfg?.BroadcasterUsername;
+            string? bcastId   = cfg?.BroadcasterUserId;
+
+            if (!string.IsNullOrWhiteSpace(bcastId) && !string.IsNullOrWhiteSpace(userId)
+                && string.Equals(bcastId, userId, StringComparison.Ordinal))
+                return true;
+
+            if (!string.IsNullOrWhiteSpace(bcastName))
+            {
+                if (!string.IsNullOrWhiteSpace(displayName)
+                    && string.Equals(bcastName, displayName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (!string.IsNullOrWhiteSpace(login)
+                    && string.Equals(bcastName, login, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return (!string.IsNullOrWhiteSpace(displayName) && IsBlockedAccount(displayName))
+                || (!string.IsNullOrWhiteSpace(login) && IsBlockedAccount(login));
         }
 
         // Actor-vs-broadcaster check for non-chat events.
@@ -1906,7 +2137,10 @@ namespace Phoenix.Controls.Hub.Core
             return IsBroadcasterActor(data);
         }
 
-        private static string TryExtractActor(System.Text.Json.JsonElement data)
+        // internal (was private) so EventVarWireShapeTests can pin the feed-row
+        // actor attribution — the raid probes and the moderation-family guard
+        // are exactly the shapes live captures have shown on the wire.
+        internal static string TryExtractActor(System.Text.Json.JsonElement data)
         {
             if (data.TryGetProperty("user", out var u))
             {
@@ -1924,6 +2158,60 @@ namespace Phoenix.Controls.Hub.Core
             if (data.TryGetProperty("userName", out var un) && un.ValueKind == System.Text.Json.JsonValueKind.String)
             {
                 var s = un.GetString();
+                if (!string.IsNullOrEmpty(s)) return s!;
+            }
+            // Moderation-family shapes FIRST: on those payloads the acting user
+            // is the moderator, while user_name / targetUser name the moderated
+            // TARGET — probing the flat user_name below without this guard would
+            // render "UserBanned by <banned viewer>", attributing the action to
+            // its victim. Nested moderator{} covers the current wire; flat
+            // moderator_user_name covers the raw-EventSub pass-through.
+            if (data.TryGetProperty("moderator", out var mod) && mod.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (mod.TryGetProperty("name", out var mn)
+                    && mn.ValueKind == System.Text.Json.JsonValueKind.String
+                    && mn.GetString() is { Length: > 0 } modName)
+                    return modName;
+                if (mod.TryGetProperty("login", out var ml)
+                    && ml.ValueKind == System.Text.Json.JsonValueKind.String
+                    && ml.GetString() is { Length: > 0 } modLogin)
+                    return modLogin;
+            }
+            if (data.TryGetProperty("moderator_user_name", out var mun)
+                && mun.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = mun.GetString();
+                if (!string.IsNullOrEmpty(s)) return s!;
+            }
+            // Raw-EventSub pass-throughs spell the flat key snake_case. Reached
+            // only when no moderation-shape marker matched above.
+            if (data.TryGetProperty("user_name", out var usn) && usn.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = usn.GetString();
+                if (!string.IsNullOrEmpty(s)) return s!;
+            }
+            // Raid actors live under event-specific keys: raider{} on the current
+            // wire (nullable — test triggers send raider:null), and
+            // from_broadcaster_user_name on the legacy raw-EventSub wire. Without
+            // these the Live Feed row for a raid silently drops its "by <who>"
+            // clause. (No targetUser probe here on purpose: this helper has no
+            // eventType, and on the moderation family targetUser is the ban
+            // TARGET, not the actor.)
+            if (data.TryGetProperty("raider", out var raider) && raider.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                if (raider.TryGetProperty("name", out var rn)
+                    && rn.ValueKind == System.Text.Json.JsonValueKind.String
+                    && rn.GetString() is { Length: > 0 } raiderName)
+                    return raiderName;
+                if (raider.TryGetProperty("login", out var rl)
+                    && rl.ValueKind == System.Text.Json.JsonValueKind.String
+                    && rl.GetString() is { Length: > 0 } raiderLogin)
+                    return raiderLogin;
+            }
+            if (data.TryGetProperty("from_broadcaster_user_name", out var fb)
+                && fb.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var s = fb.GetString();
                 if (!string.IsNullOrEmpty(s)) return s!;
             }
             return "";
@@ -2046,6 +2334,15 @@ namespace Phoenix.Controls.Hub.Core
 
             void Handler(ChatMessage msg)
             {
+                // Shared-chat guest gate — same semantics as the ScriptManager
+                // dispatch chokepoint: unless the operator opted guests in, a line
+                // that originated in a partner channel of a Stream Together
+                // session must not drive script logic, and wait_for_next_chat IS
+                // script logic (an await inside a running script). Display
+                // surfaces are unaffected (this handler is wait-only).
+                if (msg.IsSharedChatGuest
+                    && ScriptManager.IsGatedSharedChatGuest(msg, ConfigManager.Current?.SharedChatGuestsCanTrigger == true))
+                    return;
                 if (!string.IsNullOrEmpty(userFilter)
                     && !string.Equals(msg.Username, userFilter, StringComparison.OrdinalIgnoreCase))
                     return;
@@ -2114,7 +2411,15 @@ namespace Phoenix.Controls.Hub.Core
                         // provider could ever match. Majo's call 2026-08-13: both halves
                         // agree on ordinal. The note is rewritten rather than deleted so
                         // this does not get reverted back to the culture overload.
-                        if (ChatVerb.LooksLikeCommand(msg.Message))
+                        // Shared-chat guest gate for the FEED ROW too: a gated guest's
+                        // !command will not run (ExecuteOnChatScriptsAsync returns at its
+                        // gate below), so painting a Live Feed command row for it would
+                        // be a row implying an execution that was suppressed — exactly
+                        // the false-alarm class the feed already struggles with. The
+                        // dispatch gate stays where it is (it also owns the
+                        // once-per-channel breadcrumb); this only quiets the row.
+                        if (ChatVerb.LooksLikeCommand(msg.Message)
+                            && !ScriptManager.IsGatedSharedChatGuest(msg, ConfigManager.Current?.SharedChatGuestsCanTrigger == true))
                         {
                             // First token only — avoid allocating the full Split array.
                             int __sp = msg.Message.IndexOf(' ');
@@ -2730,9 +3035,23 @@ namespace Phoenix.Controls.Hub.Core
         //     They can never fire; subscribing would be dead config.
         //   * HypeChat / HypeChatLevel — Twitch deprecated Hype Chat in 2023.
         //     Vestigial SB names for a product that no longer exists.
-        //   * The SharedChat* mirror family — every one duplicates an event we
-        //     already handle, and subscribing both would double-fire alerts and
-        //     payouts for a single action.
+        //   * The SharedChat* NOTIFICATION/MODERATION mirrors (SharedChatSub /
+        //     Resub / SubGift / Announcement / Raid / UserBanned / … ) — each
+        //     duplicates an event we already handle, and subscribing both would
+        //     double-fire alerts and payouts for a single action. Grounded
+        //     2026-08-23: Twitch mirrors these only as chat NOTIFICATIONS; the
+        //     underlying monetary EventSub events stay own-channel-only, so a
+        //     partner's sub can never reach our normal Sub subscription — the
+        //     exclusion is sufficient AND necessary exactly as written.
+        //     ★ NOT covered by that reasoning: SharedChatSessionBegin / Update /
+        //     End duplicate NOTHING — they are the only session-lifecycle signal
+        //     and Begin/Update carry the participant roster. Deliberately still
+        //     unsubscribed (the per-message origin fields the chat builder reads
+        //     make session tracking unnecessary for the guest gate), but if
+        //     session context is ever wanted, subscribing the trio is safe.
+        //     Casing traps for that day: SharedChatUserTimedout/…Untimedout use
+        //     lowercase "out" (plain events: UserTimedOut), SharedChatResub a
+        //     lowercase "s" (plain: ReSub) — confirm via live GetEvents.
         //
         // "Whisper" (from the Dev merge) = a private DM sent TO the bot account
         // (SB source "Twitch", type "Whisper"; requires the bot account connected

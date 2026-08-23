@@ -77,10 +77,36 @@ public sealed class ChatRowVm : INotifyPropertyChanged
                 _platformBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0xA9, 0x70, 0xFF));
                 break;
         }
+
+        // Shared-chat source chip. "↪" reads as "arrived from elsewhere"
+        // without inventing a color channel (stays in the muted body tint —
+        // see ChatView.xaml). Tooltip carries the localized explainer; the
+        // channel name itself is data, not UI text, and stays verbatim.
+        SourceChannel = msg.SourceChannel ?? "";
+        bool hasSource = SourceChannel.Length > 0;
+        SourceTag = hasSource ? "↪ " + SourceChannel : "";
+        SourceTooltip = hasSource
+            ? Localizer.T("panel.chat.shared_source.tooltip", "From shared chat channel") + ": " + SourceChannel
+            : "";
+        SourceVisibility = hasSource
+            ? Microsoft.UI.Xaml.Visibility.Visible
+            : Microsoft.UI.Xaml.Visibility.Collapsed;
     }
 
     public string PlatformTag { get; }
     public string PlatformName { get; }
+
+    // ── Twitch Shared Chat source tag ────────────────────────────────────
+    // Non-empty only for lines that originated in a PARTNER channel of a
+    // Stream Together session (ChatSource maps own-channel lines to "").
+    // Rendered as a small "↪ channel" chip between the username and the body
+    // so multistream chat stays glance-sortable by origin — additive beside
+    // the platform letter, role color/badge untouched (the standing rule:
+    // role color + badge are the row's functional encoding).
+    public string SourceChannel { get; }
+    public string SourceTag { get; }
+    public string SourceTooltip { get; }
+    public Microsoft.UI.Xaml.Visibility SourceVisibility { get; }
 
     private readonly Brush _platformBrush;
     public Brush PlatformBrush => _platformBrush;

@@ -147,7 +147,8 @@ namespace Phoenix.Controls.Architect.Core
                         "user.is_mod", "user.is_sub", "user.is_vip", "user.is_broadcaster",
                         "user.is_regular",
                         "user.color_hex", "user.sub_months",
-                        "event.iscommand", "user.platform", "event.message_id");
+                        "event.iscommand", "user.platform", "event.message_id",
+                        "event.is_shared_chat", "event.source_channel");
                     return;
                 // Unified stream-lifecycle triggers — the platform that fired plus
                 // the best-effort stream Title / Category (Hub dispatch binds
@@ -186,7 +187,12 @@ namespace Phoenix.Controls.Architect.Core
                     AddRange(tokens, "event.timestamp", "event.count");
                     return;
                 case "State.OnChange":
-                    AddRange(tokens, "event.name", "event.oldvalue", "event.newvalue");
+                    // Synced with the State.OnChange arm in
+                    // ScriptExporter.ResolveOutputFromNode and the runtime writes
+                    // in ScriptManager.ExecuteOnStateChangeScriptsAsync — both
+                    // use the {state.*} family. The old event.* roster here
+                    // advertised three tokens nothing ever wrote.
+                    AddRange(tokens, "state.name", "state.old_value", "state.new_value");
                     return;
                 case "Counter.OnChanged":
                     // Synced with the CountersService runtime vars (event.counter /

@@ -1843,6 +1843,37 @@ namespace Phoenix.Controls.Hub.Core
         }
 
         /// <summary>
+        /// Pure gate predicate for shared-chat guest lines (unit-testable; the
+        /// caller supplies the live AppConfig.SharedChatGuestsCanTrigger value).
+        /// True = the line must not reach script dispatch, built-in tools, or
+        /// wait_for_next_chat. Own-channel lines are never gated.
+        /// </summary>
+        internal static bool IsGatedSharedChatGuest(ChatMessage chatData, bool guestsCanTrigger)
+            => chatData.IsSharedChatGuest && !guestsCanTrigger;
+
+        // Once-per-source-channel gate breadcrumb. System level and latched per
+        // channel: an active shared session delivers guest lines at chat rate, so a
+        // per-message log would flood the 2000-entry ring (the retired [RoleDebug]
+        // lesson), while zero logging would make the gate look like message loss.
+        // One line per partner channel per Hub run says exactly what is happening
+        // and names the opt-in.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte>
+            _sharedChatGateLogged = new(StringComparer.OrdinalIgnoreCase);
+        private static void WarnSharedChatGuestGatedOncePerChannel(ChatMessage chatData)
+        {
+            string channel = !string.IsNullOrEmpty(chatData.SourceChannel) ? chatData.SourceChannel
+                : !string.IsNullOrEmpty(chatData.SourceChannelId) ? $"id {chatData.SourceChannelId}"
+                : "(unknown channel)";
+            if (!_sharedChatGateLogged.TryAdd(channel, 0)) return;
+            GlobalLogger.Log(
+                $"Shared chat: messages from partner channel '{channel}' are display-only — they will " +
+                "not trigger commands, tools or scripts. Opt in via Settings → Connection → " +
+                "\"Allow shared-chat guest messages to trigger commands, tools & scripts\". " +
+                "(Logged once per channel.)",
+                "ScriptManager", LogLevel.System);
+        }
+
+        /// <summary>
         /// Scans all .phx files in the logic directory and executes any that contain an
         /// on_chat: block. This allows any exported graph with a ChatMessage trigger to run
         /// without needing a fixed filename (unlike the command-based lookup).
@@ -1856,6 +1887,25 @@ namespace Phoenix.Controls.Hub.Core
             // Drop inbound chat cleanly so a late message can't enter a disposed _chatSemaphore
             // and abort the shutdown coordinator with ObjectDisposedException.
             if (System.Threading.Volatile.Read(ref _stopped) != 0 || GlobalShutdownToken.IsCancellationRequested) return;
+
+            // ── Shared-chat guest gate (Twitch Stream Together) ──────────────
+            // A line that ORIGINATED in a partner channel of a shared chat
+            // session is display-only unless the operator opted guests in
+            // (AppConfig.SharedChatGuestsCanTrigger, default off — matches
+            // Streamer.bot's own posture and the whole surveyed bot field).
+            // Sits ABOVE every per-message tap on purpose: the activity/dead-chat
+            // counters, the last-active stamp and the platform-role cache are all
+            // viewer-state writers, and a partner channel's viewers must not
+            // accrue state here — their role flags aren't even own-channel-scoped
+            // (the ChatMessage role-flag caveat), so letting NoteChatRoles record them would poison
+            // the role cache with another channel's mod/VIP standing. The Chat
+            // panel and the recent-chat ring are fed upstream in WS and keep
+            // showing guest lines (tagged) regardless of this gate.
+            if (IsGatedSharedChatGuest(chatData, ConfigManager.Current?.SharedChatGuestsCanTrigger == true))
+            {
+                WarnSharedChatGuestGatedOncePerChannel(chatData);
+                return;
+            }
 
             // Count every inbound (already bot-filtered) chat line for the Chat.MessageCount node.
             // Arrived with the Dev merge. Dev paired this with a `if
@@ -2110,11 +2160,22 @@ namespace Phoenix.Controls.Hub.Core
             }
         }
 
-        // Same key set as WS.ResolveSubMonths (+ legacy bare "cumulative") — hoisted
-        // static so a fresh array isn't allocated per sub/gift event dispatch.
-        private static readonly string[] SubMonthKeys = { "cumMonths", "cumulativeMonths", "cumulative_months", "cumulative" };
+        // Same key set as WS.ResolveSubMonths (+ legacy bare "cumulative", + the
+        // 1.0.5+ chat-family flat "monthsSubscribed") — hoisted static so a fresh
+        // array isn't allocated per sub/gift event dispatch. The NESTED
+        // user.monthsSubscribed and last-resort durationMonths probes live in
+        // BuildGenericEventVars itself (they need object walks, not flat keys).
+        private static readonly string[] SubMonthKeys = { "cumMonths", "cumulativeMonths", "cumulative_months", "cumulative", "monthsSubscribed" };
 
-        private static Dictionary<string, string> BuildChatVars(ChatMessage chatData)
+        // Sub-tier key across the SB payload generations: legacy "tier",
+        // 1.0.4-era snake "sub_tier", current camel "subTier" (nullable).
+        private static readonly string[] TierKeys = { "tier", "subTier", "sub_tier" };
+
+        // internal (was private) so SharedChatOriginTests can pin the
+        // {event.is_shared_chat} / {event.source_channel} bindings — the exporter
+        // side pins the same tokens from the node sockets, and a rename on either
+        // side would otherwise silently strand the token at "" forever.
+        internal static Dictionary<string, string> BuildChatVars(ChatMessage chatData)
         {
             string[] parts = chatData.Message.Split(' ');
             // ★ ORDINAL, via the shared ChatVerb helper — this line used to call the
@@ -2181,6 +2242,18 @@ namespace Phoenix.Controls.Hub.Core
                 // instead, which is what lets the usermgmt.get_groups handler pair a
                 // login with the display-name {user.name} it is handed.
                 { "event.user_login",    string.IsNullOrWhiteSpace(chatData.Login) ? userLower : chatData.Login.Trim() },
+                // Twitch Shared Chat (Stream Together) origin. is_shared_chat =
+                // a session is involved at all; source_channel = the ORIGIN
+                // channel's login/name for guest lines, "" for own-channel lines
+                // — so a non-empty {event.source_channel} ⇔ guest line. With the
+                // guest gate at its default these vars only ever show a guest
+                // origin when SharedChatGuestsCanTrigger is on (gated lines never
+                // reach a script). Mapped from the Chat.Message node's
+                // IsSharedChat / SourceChannel output sockets.
+                { "event.is_shared_chat", chatData.IsSharedChat ? "true" : "false" },
+                { "event.source_channel", chatData.IsSharedChatGuest
+                    ? (!string.IsNullOrEmpty(chatData.SourceChannel) ? chatData.SourceChannel : chatData.SourceChannelId)
+                    : "" },
             };
         }
 
@@ -3233,10 +3306,57 @@ namespace Phoenix.Controls.Hub.Core
                         vars["user.message"] = wtext.GetString() ?? "";
                 }
 
-                if (data.TryGetProperty("displayName", out var name))
-                    vars["user.name"] = name.GetString() ?? "unknown";
-                else if (data.TryGetProperty("user_name", out var uname))
-                    vars["user.name"] = uname.GetString() ?? "unknown";
+                // ── Acting user's display name ───────────────────────────────
+                // Streamer.bot has shipped at least three payload generations
+                // for the Twitch event family: flat displayName/userName (the
+                // legacy chat-family shape), raw-EventSub snake_case user_name
+                // (pass-through events), and the 1.0.0+ nested
+                // user{id,login,name,type} object — the ONLY shape from SB 1.0.5
+                // on. Two events additionally carry their actor under an
+                // event-specific key with no "user" anywhere: Twitch.Raid
+                // (raider{} on the current wire — required but NULLABLE, test
+                // triggers send raider:null — and from_broadcaster_user_* on the
+                // legacy raw-EventSub wire) and Twitch.Follow (targetUser{}
+                // since 1.0.5). ResolveActorName covers the three general
+                // shapes; ResolveEventSpecificActorName covers the two odd ones.
+                // ContainsKey guard: the Whisper arm above already wrote
+                // user.name from its dedicated nested probe.
+                //
+                // A displayName that is JSON null no longer mints the literal
+                // identity "unknown" — leaving the key unwritten lets the login
+                // backfill at the bottom of this method supply a usable identity
+                // instead (an "unknown" here used to flow all the way into a
+                // Loyalty wallet row).
+                if (!vars.ContainsKey("user.name"))
+                {
+                    string actorName;
+                    if (DonationIngest.IsMoneyEvent(eventType))
+                    {
+                        // Broker/money payloads keep the LEGACY narrow pre-seed
+                        // (flat displayName/user_name only): donor naming belongs
+                        // to DonationIngest's DonorProbes (donationFrom /
+                        // tipUsername / …), which fill user.name AFTERWARDS
+                        // if-absent — the wider nested/camel probes here would
+                        // pre-empt them on relay shapes carrying both a relay
+                        // user object and the real donor field.
+                        actorName =
+                            data.TryGetProperty("displayName", out var flatDn)
+                                && flatDn.ValueKind == System.Text.Json.JsonValueKind.String
+                                && flatDn.GetString() is { Length: > 0 } dnVal ? dnVal
+                            : data.TryGetProperty("user_name", out var flatUn)
+                                && flatUn.ValueKind == System.Text.Json.JsonValueKind.String
+                                && flatUn.GetString() is { Length: > 0 } unVal ? unVal
+                            : "";
+                    }
+                    else
+                    {
+                        actorName = ResolveActorName(data);
+                        if (actorName.Length == 0)
+                            actorName = ResolveEventSpecificActorName(eventType, data);
+                    }
+                    if (actorName.Length > 0)
+                        vars["user.name"] = actorName;
+                }
 
                 // Cumulative subscribed months → {user.sub_months} (the Months socket).
                 // Streamer.bot carries this under cumMonths / cumulativeMonths /
@@ -3252,6 +3372,24 @@ namespace Phoenix.Controls.Hub.Core
                         vars["user.sub_months"] = months.ToString();
                         break;
                     }
+                }
+                // SB 1.0.5+ nests the cumulative count on the user object
+                // (user.monthsSubscribed). durationMonths — the purchased span,
+                // usually 1 — is the last-resort stand-in when nothing
+                // cumulative exists on the payload; probed LAST so a real
+                // cumulative field always wins over it.
+                if (!vars.ContainsKey("user.sub_months"))
+                {
+                    if (data.TryGetProperty("user", out var monthsUser)
+                        && monthsUser.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && monthsUser.TryGetProperty("monthsSubscribed", out var nestedMonths)
+                        && nestedMonths.ValueKind is System.Text.Json.JsonValueKind.Number
+                            or System.Text.Json.JsonValueKind.String)
+                        vars["user.sub_months"] = nestedMonths.ToString();
+                    else if (data.TryGetProperty("durationMonths", out var durMonths)
+                        && durMonths.ValueKind is System.Text.Json.JsonValueKind.Number
+                            or System.Text.Json.JsonValueKind.String)
+                        vars["user.sub_months"] = durMonths.ToString();
                 }
                 // Rename user.sub_tier → user.tier to align with the Subscription/GiftSub
                 // Tier socket name emitted by ScriptExporter.cs.
@@ -3271,17 +3409,48 @@ namespace Phoenix.Controls.Hub.Core
                 // ToString(); NormalizeSubTier maps to the bare form (unknown/already-
                 // normalized values pass through). Graphs that compared user.tier == "1000"
                 // must compare against "1" now — the intended behavior change.
-                if (data.TryGetProperty("tier", out var tier))
+                // Tier key drifted with the payload generations: legacy `tier`,
+                // 1.0.4-era snake `sub_tier`, current camel `subTier` (nullable).
+                // First non-empty wins; NormalizeSubTier maps every raw encoding
+                // to the user-facing 1 / 2 / 3 / prime form.
+                foreach (var tierKey in TierKeys)
                 {
-                    string tierStr = tier.ValueKind == System.Text.Json.JsonValueKind.String
-                        ? (tier.GetString() ?? "")
-                        : tier.ToString();
-                    vars["user.tier"] = NormalizeSubTier(tierStr);
+                    if (data.TryGetProperty(tierKey, out var tier)
+                        && tier.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    {
+                        string tierStr = tier.ValueKind == System.Text.Json.JsonValueKind.String
+                            ? (tier.GetString() ?? "")
+                            : tier.ToString();
+                        if (tierStr.Length > 0)
+                        {
+                            vars["user.tier"] = NormalizeSubTier(tierStr);
+                            break;
+                        }
+                    }
                 }
                 if (data.TryGetProperty("bits",        out var bits))   vars["user.bits"]        = bits.ToString();
                 if (data.TryGetProperty("viewers",     out var viewers))vars["user.viewers"]     = viewers.ToString();
-                if (data.TryGetProperty("title",       out var reward)) vars["user.reward"]      = reward.GetString() ?? "";
                 if (data.TryGetProperty("totalGifts",  out var gifts))  vars["user.total_gifts"] = gifts.ToString();
+
+                // user.reward is the PointRedeem node's Reward pin — GATED to the
+                // redemption events. The old ungated flat-`title` write stamped
+                // user.reward with poll / prediction / stream titles on every
+                // event that carried one. The current wire nests the reward
+                // (reward.title); the flat form is the legacy shape. ValueKind
+                // guards: a non-string title used to throw GetString() inside the
+                // one swallowing catch and silently kill the REST of extraction.
+                if (eventType.Equals("Twitch.PointRedeem", StringComparison.OrdinalIgnoreCase) ||
+                    eventType.Equals("Twitch.RewardRedemption", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (data.TryGetProperty("title", out var reward)
+                        && reward.ValueKind == System.Text.Json.JsonValueKind.String)
+                        vars["user.reward"] = reward.GetString() ?? "";
+                    else if (data.TryGetProperty("reward", out var rewardObj)
+                        && rewardObj.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && rewardObj.TryGetProperty("title", out var rewardTitle)
+                        && rewardTitle.ValueKind == System.Text.Json.JsonValueKind.String)
+                        vars["user.reward"] = rewardTitle.GetString() ?? "";
+                }
 
                 // PointRedeem reward + redemption ids → event.reward_id / event.redemption_id,
                 // consumed by Twitch.FulfillRedemption / RejectRedemption (auto-source, zero-input).
@@ -3302,13 +3471,32 @@ namespace Phoenix.Controls.Hub.Core
                             string dv = dEl.ValueKind == System.Text.Json.JsonValueKind.String ? (dEl.GetString() ?? "") : dEl.GetRawText();
                             if (dv.Length > 0) { vars["event.redemption_id"] = dv; break; }
                         }
+                    // Current wire nests the reward id (reward.id); the flat
+                    // rewardId/reward_id spellings above are the legacy shapes.
+                    if (!vars.ContainsKey("event.reward_id")
+                        && data.TryGetProperty("reward", out var rewardIdObj)
+                        && rewardIdObj.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && rewardIdObj.TryGetProperty("id", out var nestedRewardId))
+                    {
+                        string rv = nestedRewardId.ValueKind == System.Text.Json.JsonValueKind.String
+                            ? (nestedRewardId.GetString() ?? "")
+                            : nestedRewardId.GetRawText();
+                        if (rv.Length > 0) vars["event.reward_id"] = rv;
+                    }
                 }
 
                 // PointRedeem userInput goes to user.input (the redeem-input socket).
                 // For chat-style events the same field name carries the chat message body.
-                if (data.TryGetProperty("userInput", out var input))
+                if (data.TryGetProperty("userInput", out var input)
+                    && input.ValueKind is System.Text.Json.JsonValueKind.String
+                        or System.Text.Json.JsonValueKind.Null)
                 {
-                    string inputText = input.GetString() ?? "";
+                    // Null tolerated as "" — a no-input redemption arrives as an
+                    // empty string on every documented wire, but an explicit null
+                    // must degrade to empty, never to a literal {user.input}.
+                    string inputText = input.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? (input.GetString() ?? "")
+                        : "";
                     if (eventType.Equals("Twitch.PointRedeem", StringComparison.OrdinalIgnoreCase) ||
                         eventType.Equals("Twitch.RewardRedemption", StringComparison.OrdinalIgnoreCase))
                         vars["user.input"] = inputText;
@@ -3324,11 +3512,26 @@ namespace Phoenix.Controls.Hub.Core
                 // greeting + the gift acknowledgement all surface in the same
                 // SB `message` slot, so the routing should be consistent across
                 // Sub / Resub / GiftSub / GiftBomb / YouTube.Message.
-                if (data.TryGetProperty("message", out var msgEl))
+                // SB 1.0.5+ renamed the body slot `message` → `text` for the
+                // sub/cheer family; probe both. And on the 1.0.0–1.0.4 dual-shape
+                // wire, Cheer's `message` is the legacy NESTED object whose body
+                // lives at message.message — reading the object's raw JSON into
+                // user.message (the old ToString() path) dumped the whole payload
+                // into chat-facing text.
+                if (data.TryGetProperty("message", out var msgEl)
+                    || data.TryGetProperty("text", out msgEl))
                 {
-                    string msgStr = msgEl.ValueKind == System.Text.Json.JsonValueKind.String
-                        ? (msgEl.GetString() ?? "")
-                        : msgEl.ToString();
+                    string msgStr;
+                    if (msgEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                        msgStr = msgEl.GetString() ?? "";
+                    else if (msgEl.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && msgEl.TryGetProperty("message", out var legacyBody)
+                        && legacyBody.ValueKind == System.Text.Json.JsonValueKind.String)
+                        msgStr = legacyBody.GetString() ?? "";
+                    else if (msgEl.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        msgStr = "";
+                    else
+                        msgStr = msgEl.ToString();
                     // Twitch.Cheer added to the list. SB cheer events
                     // carry the bits message in the same `message` slot, but the
                     // Cheer node's Message output (mapped to {user.message}) was
@@ -3355,11 +3558,14 @@ namespace Phoenix.Controls.Hub.Core
                     string gifter = ResolveGifter(data);
                     if (!string.IsNullOrEmpty(gifter)) vars["user.gifter"] = gifter;
 
-                    // Count: SB exposes either "gifts" or "count"
+                    // Count: SB exposes "gifts" or "count" (legacy shapes); the
+                    // 1.0.5+ community-gift shape carries the bomb size as "total".
                     if (data.TryGetProperty("gifts", out var giftsEl))
                         vars["user.count"] = giftsEl.ToString();
                     else if (data.TryGetProperty("count", out var countEl))
                         vars["user.count"] = countEl.ToString();
+                    else if (data.TryGetProperty("total", out var totalEl))
+                        vars["user.count"] = totalEl.ToString();
 
                     // Propagate the isAnonymous flag for community-gift
                     // bursts. SB sets "isAnonymous":true plus
@@ -3387,53 +3593,91 @@ namespace Phoenix.Controls.Hub.Core
                     SetAnonymousFlag(vars, data);
                 }
 
-                // Catalog-driven extraction for the YouTube/Kick event surface.
-                // The bespoke Twitch probes above stay behavior-frozen; every
-                // event declared in PlatformEventCatalog resolves its vars (and
-                // the raw event.payload fallback) through the shared resolver.
-                // FindForEvent, not Find: this is the RAW WIRE type. For the entries whose
-                // node title had to differ from the event name Streamer.bot sends
-                // (Twitch.Announcement → Twitch.AnnouncementReceived) a title-keyed lookup
-                // returns null and the node's pins stay permanently empty, with nothing
-                // logged anywhere to say so.
+            }
+            catch { /* Best effort extraction */ }
+
+            // Catalog-driven extraction for the YouTube/Kick event surface.
+            // The bespoke Twitch probes above stay behavior-frozen; every
+            // event declared in PlatformEventCatalog resolves its vars (and
+            // the raw event.payload fallback) through the shared resolver.
+            // FindForEvent, not Find: this is the RAW WIRE type. For the entries whose
+            // node title had to differ from the event name Streamer.bot sends
+            // (Twitch.Announcement → Twitch.AnnouncementReceived) a title-keyed lookup
+            // returns null and the node's pins stay permanently empty, with nothing
+            // logged anywhere to say so.
+            // Catalog resolution in its OWN try: a throw in the bespoke probes
+            // above used to skip the resolver (and the money normalisation
+            // below) entirely — one malformed field silently blanked a whole
+            // catalog event's pin set with nothing logged.
+            try
+            {
                 var platformDef = PlatformEventCatalog.FindForEvent(eventType);
                 if (platformDef is not null)
                     PlatformEventVarResolver.Apply(platformDef, data, vars);
+            }
+            catch { /* Best effort extraction */ }
 
-                // Canonical money — LAST, so it wins over whatever raw shape the
-                // catalog resolver or the bespoke probes above left in
-                // event.amount. Rewrites the money vars into one invariant form
-                // (decimal + integer minor units + ISO currency) so every consumer
-                // — subathon seconds, loyalty points, alert text — reads the same
-                // number instead of each re-parsing a broker-specific string.
+            // Canonical money — LAST, so it wins over whatever raw shape the
+            // catalog resolver or the bespoke probes above left in
+            // event.amount. Rewrites the money vars into one invariant form
+            // (decimal + integer minor units + ISO currency) so every consumer
+            // — subathon seconds, loyalty points, alert text — reads the same
+            // number instead of each re-parsing a broker-specific string.
+            // Own try: a throw in the bespoke probes above used to skip this
+            // entirely (one malformed field silently blanked the money vars).
+            try
+            {
                 DonationIngest.NormalizeMoneyVars(eventType, data, vars);
             }
             catch { /* Best effort extraction */ }
 
-            // Group overlay (User-Management tool): surface Regular-group membership
-            // on every user-carrying event so event scripts can gate on
-            // {user.is_regular} — the same key Chat.Message-triggered scripts get.
-            // False while the tool is dormant. Resolved LOGIN-first with the display
-            // name as the fallback — the identical pairing the chat overlay applies:
-            // group members are keyed by login, while user.name above is the payload's
-            // DISPLAY name, so a localized display name matched nothing on its own.
             try
             {
-                if (vars.TryGetValue("user.name", out var evUser))
+                // Login resolved INDEPENDENTLY of the display name. The login
+                // and display probes cover different payload shapes, and gating
+                // the login on the display name (the pre-fix shape) collapsed
+                // BOTH identity keys on a single display-probe miss — Loyalty's
+                // two-key fallback chain (event.user_login → user.name) then
+                // refused the credit with no log. Left unset when the payload
+                // genuinely carries no login.
+                //
+                // MONEY events keep the legacy display-name gate: a broker relay
+                // shape can carry a relay user object whose login is NOT the
+                // donor, and event.user_login doubles as Loyalty's verified-donor
+                // discriminator — un-gating it there would launder an unverified
+                // donor into a verified one (and backfill the relay account as
+                // the visible identity).
+                bool moneyEvent = DonationIngest.IsMoneyEvent(eventType);
+                string evLogin = (!moneyEvent || vars.ContainsKey("user.name"))
+                    ? ResolveActorLogin(data)
+                    : "";
+                if (evLogin.Length == 0 && !moneyEvent)
+                    evLogin = ResolveEventSpecificActorLogin(eventType, data);
+                if (evLogin.Length > 0)
                 {
-                    // Resolved once, consumed twice: the overlay below, and the same
-                    // {event.user_login} pairing key BuildChatVars writes on the chat
-                    // path — so a User.GetGroups node in an on_event script gets the
-                    // login treatment too instead of only chat-triggered ones. Left
-                    // unset when the payload carried no login (the handler then falls
-                    // back to the display name it was handed).
-                    string evLogin = ResolveActorLogin(data);
-                    if (evLogin.Length > 0) vars["event.user_login"] = evLogin;
+                    vars["event.user_login"] = evLogin;
+                    // Display backfill: a login-only payload still gives scripts
+                    // and tools a usable identity instead of a literal token.
+                    if (!moneyEvent && !vars.ContainsKey("user.name"))
+                        vars["user.name"] = evLogin;
+                }
+
+                // Group overlay (User-Management tool): surface Regular-group
+                // membership on every user-carrying event so event scripts can
+                // gate on {user.is_regular} — the same key Chat.Message-triggered
+                // scripts get. False while the tool is dormant. Login-first with
+                // the display name as fallback — the identical pairing the chat
+                // overlay applies: group members are keyed by login, and a
+                // localized display name matches nothing on its own.
+                if (vars.TryGetValue("user.name", out var evUser))
                     vars["user.is_regular"] =
                         UserManagementService.Instance.IsRegular(evLogin, evUser) ? "true" : "false";
-                }
             }
             catch { /* overlay is best-effort — never break event dispatch */ }
+
+            // One-shot wire-drift diagnostic — AFTER the login backfill so it
+            // only fires when every identity probe genuinely came up empty.
+            WarnActorMissingOnce(eventType, data, vars);
             return vars;
         }
 
@@ -3547,6 +3791,102 @@ namespace Phoenix.Controls.Hub.Core
                     if (!string.IsNullOrEmpty(s)) return s!;
                 }
             return "";
+        }
+
+        // Event-specific actor keys that carry the acting user under something
+        // other than "user": the raid's raider{} (current wire; required but
+        // NULLABLE — test triggers send raider:null) / from_broadcaster_user_*
+        // (legacy raw-EventSub wire), and the follow's targetUser{} (1.0.5+).
+        // targetUser is deliberately Follow-gated: on the moderation family
+        // targetUser names the ban TARGET (PlatformEventCatalog owns that
+        // write), and a generic probe here would mislabel the actor.
+        private static string ResolveEventSpecificActorName(string eventType, System.Text.Json.JsonElement data)
+        {
+            if (eventType.Equals("Twitch.Raid", StringComparison.OrdinalIgnoreCase))
+            {
+                if (data.TryGetProperty("raider", out var raider))
+                {
+                    var n = ExtractName(raider);
+                    if (n.Length > 0) return n;
+                }
+                if (data.TryGetProperty("from_broadcaster_user_name", out var fb)
+                    && fb.ValueKind == System.Text.Json.JsonValueKind.String)
+                    return fb.GetString() ?? "";
+            }
+            else if (eventType.Equals("Twitch.Follow", StringComparison.OrdinalIgnoreCase)
+                && data.TryGetProperty("targetUser", out var follower))
+            {
+                return ExtractName(follower);
+            }
+            return "";
+        }
+
+        // Login-side twin of ResolveEventSpecificActorName — same two events,
+        // same gating rationale.
+        private static string ResolveEventSpecificActorLogin(string eventType, System.Text.Json.JsonElement data)
+        {
+            if (eventType.Equals("Twitch.Raid", StringComparison.OrdinalIgnoreCase))
+            {
+                if (data.TryGetProperty("raider", out var raider)
+                    && raider.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && raider.TryGetProperty("login", out var rl)
+                    && rl.ValueKind == System.Text.Json.JsonValueKind.String
+                    && rl.GetString() is { Length: > 0 } raiderLogin)
+                    return raiderLogin;
+                if (data.TryGetProperty("from_broadcaster_user_login", out var fbl)
+                    && fbl.ValueKind == System.Text.Json.JsonValueKind.String)
+                    return fbl.GetString() ?? "";
+            }
+            else if (eventType.Equals("Twitch.Follow", StringComparison.OrdinalIgnoreCase)
+                && data.TryGetProperty("targetUser", out var follower)
+                && follower.ValueKind == System.Text.Json.JsonValueKind.Object
+                && follower.TryGetProperty("login", out var fl)
+                && fl.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                return fl.GetString() ?? "";
+            }
+            return "";
+        }
+
+        // The Twitch events whose payload always names an acting user — the set
+        // the one-shot wire-drift diagnostic below watches. Deliberately absent:
+        // StreamOnline/Offline/Update, the Goal family (broadcaster-only
+        // payloads), Poll/Prediction (no actor), and every catalog-declared
+        // event (their probes are per-event already).
+        private static readonly HashSet<string> ActorBearingEventTypes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Twitch.Sub", "Twitch.ReSub", "Twitch.Resub", "Twitch.GiftSub", "Twitch.GiftBomb",
+            "Twitch.Cheer", "Twitch.Follow", "Twitch.Raid",
+            "Twitch.PointRedeem", "Twitch.RewardRedemption", "Twitch.Whisper",
+        };
+        private static readonly HashSet<string> _actorMissWarned = new(StringComparer.OrdinalIgnoreCase);
+        internal static void ResetActorMissWarningsForTest() { lock (_actorMissWarned) _actorMissWarned.Clear(); }
+
+        // One System-tier log per event type per session when a subscribed
+        // actor-bearing Twitch event yields no user.name after every probe —
+        // names the payload's real top-level fields so a wire drift becomes a
+        // one-line probe fix instead of a silent literal token in chat. Same
+        // pattern as the WS MessageId probe diagnostic.
+        private static void WarnActorMissingOnce(string eventType, System.Text.Json.JsonElement data, Dictionary<string, string> vars)
+        {
+            try
+            {
+                if (vars.ContainsKey("user.name")) return;
+                if (!ActorBearingEventTypes.Contains(eventType)) return;
+                lock (_actorMissWarned)
+                {
+                    if (!_actorMissWarned.Add(eventType)) return;
+                }
+                string fields = data.ValueKind == System.Text.Json.JsonValueKind.Object
+                    ? string.Join(", ", data.EnumerateObject().Select(p => p.Name))
+                    : data.ValueKind.ToString();
+                GlobalLogger.Log(
+                    $"{eventType} carried no resolvable actor name — payload fields: [{fields}]. " +
+                    "The {user.name} token renders literally in scripts until the probe list covers " +
+                    "this shape; capture this payload to extend it.",
+                    "ScriptManager", LogLevel.System);
+            }
+            catch { /* diagnostics must never break dispatch */ }
         }
 
         // Gifter for a gift / gift-bomb event: explicit "gifter" key (string or nested

@@ -397,6 +397,14 @@ namespace Phoenix.Controls.Hub.Core
             var tier = PickTier(ev.Tiers, size);
 
             string user = ResolveActingUser(vars);
+            // Shoutout target prefers the LOGIN: twitch.shoutout resolves its
+            // target via a Helix lookup, and a localized display name
+            // (CJK/Cyrillic) shares nothing with the login — the display name
+            // stays the visible identity for the chat line and overlay, the
+            // login is the addressable one. BuildGenericEventVars resolves
+            // event.user_login for both raid payload generations.
+            string shoutoutTarget = vars.TryGetValue("event.user_login", out var loginForShoutout)
+                && !string.IsNullOrWhiteSpace(loginForShoutout) ? loginForShoutout : user;
             bool firedAnything = false;
             // Per-effect outcome, for the activity row only — three independent try/catches
             // already make "the chat line went out but the visual threw" a distinguishable
@@ -422,13 +430,22 @@ namespace Phoenix.Controls.Hub.Core
             //    Deliberately independent of a tier match — the checkbox is a standalone
             //    toggle, not a tier effect. The channel's OWN accounts are excluded so a
             //    self-raid or a bot-account raid never shouts the channel out to itself.
-            if (family == AlertFamily.Raid && ev.AutoShoutout
-                && !string.IsNullOrWhiteSpace(user) && !IsOwnAccount(user))
+            //    A NAMELESS raid (payload-probe miss) used to skip in TOTAL silence —
+            //    checkbox on, raid arrived, nothing fired, nothing logged anywhere. The
+            //    self-raid skip stays silent on purpose; the no-name skip does not.
+            if (family == AlertFamily.Raid && ev.AutoShoutout && string.IsNullOrWhiteSpace(shoutoutTarget))
+            {
+                GlobalLogger.Log(
+                    "Raid auto-shoutout skipped — the raid event carried no resolvable raider name.",
+                    "AlertsService", LogLevel.System);
+            }
+            else if (family == AlertFamily.Raid && ev.AutoShoutout
+                && !string.IsNullOrWhiteSpace(shoutoutTarget) && !IsOwnAccount(shoutoutTarget))
             {
                 var so = Shoutout;
                 if (so is not null)
                 {
-                    try { await so(user).ConfigureAwait(false); firedAnything = true; }
+                    try { await so(shoutoutTarget).ConfigureAwait(false); firedAnything = true; }
                     catch (Exception ex) { shoutoutFailed = true; GlobalLogger.Error("AlertsService", "alert shoutout failed", ex); }
                 }
             }

@@ -78,7 +78,18 @@ namespace Phoenix.Controls.Hub.Core
                 if (string.IsNullOrWhiteSpace(usersVar)) usersVar = "global._chat_peek_users";
                 if (string.IsNullOrWhiteSpace(msgsVar))  msgsVar  = "global._chat_peek_msgs";
 
-                var snapshot = WS.Instance.PeekRecentChat(n);
+                // Shared-chat guest gate: peek_recent hands the ring's content to
+                // SCRIPT logic (usernames + full message text into script vars),
+                // and the sibling awaiter chat.wait_for_next is gated for exactly
+                // that reason — an ungated peek would let a "repeat last chat"
+                // script re-broadcast a partner channel's text into every channel
+                // of the session (the outbound fan-out cannot be restricted). The
+                // ring itself stays unfiltered: it also feeds the Chat panel
+                // backlog, which deliberately shows guest lines (tagged).
+                bool guestsCanTrigger = ConfigManager.Current?.SharedChatGuestsCanTrigger == true;
+                var snapshot = WS.Instance.PeekRecentChat(n)
+                    .Where(m => !IsGatedSharedChatGuest(m, guestsCanTrigger))
+                    .ToList();
                 string users = string.Join(",", snapshot.Select(m => m.Username));
                 // Engine substitution doesn't escape commas inside list elements,
                 // so per-message commas are preserved as-is. This matches array.make

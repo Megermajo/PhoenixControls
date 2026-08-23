@@ -119,10 +119,16 @@ namespace Phoenix.Controls.Hub.Core
         // Streamer.bot's WebSocket payload nests while its trigger-variable export flattens the
         // same data into dotted key names.
 
+        // snake_case entries: the live ≤1.0.4 wire spells the goal amounts
+        // current_amount/target_amount (captured 2026-08-23 — the producer's own
+        // WarnOnce printed the real field names after five GoalProgress events
+        // updated nothing), matching the snake_case charity shape DonationIngest
+        // already documents. camelCase kept first for the trigger-variable
+        // surface and newer wires.
         private static readonly string[] GoalTypeProbes    = { "goal.type",          "type" };
         private static readonly string[] GoalLabelProbes   = { "goal.description",   "description" };
-        private static readonly string[] GoalCurrentProbes = { "goal.currentAmount", "currentAmount" };
-        private static readonly string[] GoalTargetProbes  = { "goal.targetAmount",  "targetAmount" };
+        private static readonly string[] GoalCurrentProbes = { "goal.currentAmount", "currentAmount", "current_amount" };
+        private static readonly string[] GoalTargetProbes  = { "goal.targetAmount",  "targetAmount",  "target_amount" };
 
         private static readonly string[] CharityLabelProbes = { "charity.name", "charityName" };
 
