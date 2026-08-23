@@ -7,6 +7,26 @@ release lists what's **New**, **Fixed**, and **Gone** in plain language.
 
 ---
 
+## Hotfix - 1.1 - 2026.08.23
+
+> **Heads up — Shared Chat guests are now display-only by default.** During a Twitch Stream Together session, viewers from the partner channels no longer trigger your commands, points or greetings; their messages still appear in chat, tagged with their home channel. Turn on **"Shared Chat guests can trigger"** in Settings to allow it again.
+
+**New**
+- Chat messages arriving through Twitch Shared Chat are tagged with the channel they came from in the Chat panel.
+- A Settings switch controls whether Shared Chat guests can trigger commands and tools.
+- Architect's Chat.Message trigger gained two outputs: whether the message came through Shared Chat, and which channel it came from.
+
+**Fixed**
+- Raids announce the raider again — raid alerts and scripts no longer post a literal "{user.name}".
+- Raid auto-shoutouts no longer skip silently when the raider's name arrives in an unexpected shape.
+- Follows, subs, resubs, cheers, gift subs and reward redemptions keep the viewer's name and details on newer Streamer.bot versions, which moved those fields around.
+- Chat keeps working after a Streamer.bot update — newer versions removed the old chat message format, and Phoenix now reads both.
+- The "suppress broadcaster chat" option keeps working on newer Streamer.bot versions.
+- Gift bombs report their full gift count instead of counting as a single gift.
+- Follower goals update again as progress comes in.
+- Loyalty points for raids and follows land again.
+- Several Architect event nodes (Bus message, Scheduling count, Timer events, State change) now deliver the values their outputs advertise — re-save the graph in Architect once for this to take effect.
+
 ## Hotfix - 1.1 - 2026.08.20
 
 **Fixed**
